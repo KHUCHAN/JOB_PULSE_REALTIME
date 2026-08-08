@@ -92,7 +92,7 @@ export function JobsScreen({ initialQuery = "" }: { initialQuery?: string }): Re
       <section className="surface jobs-surface">
         <div className="section-heading">
           <div><h2>Matching roles</h2><p>Newest first, then strongest relevance.</p></div>
-          <span className="demo-note">Demo data · official links open separately</span>
+          <span className="demo-note"><strong>Demo data</strong> · official links open separately</span>
         </div>
 
         {query.loading ? <LoadingState label="Loading jobs" /> : null}

@@ -41,7 +41,7 @@ export function SourcesScreen(): ReactElement {
       <section className="surface sources-surface">
         <div className="section-heading">
           <div><h2>Monitored career sources</h2><p>Frontend preview of the verified company dataset.</p></div>
-          <span className="demo-note">Demo data · no request is sent</span>
+          <span className="demo-note"><strong>Demo data</strong> · no request is sent</span>
         </div>
         {query.loading ? <LoadingState label="Loading sources" /> : null}
         {query.error ? <ErrorState retry={query.retry} /> : null}
