@@ -155,13 +155,13 @@ describe("crawlSource", () => {
     const fetcher: typeof fetch = async (input, init) => {
       requests.push({ url: String(input), init });
       return new Response(JSON.stringify({
-        total: 1,
+        total: 2,
         jobPostings: [{
           title: "Security Engineer",
           externalPath: "/job/Austin-TX/Security-Engineer_JR-100",
           locations: ["Austin, TX"],
           bulletFields: ["Engineering", "Full time"],
-        }],
+        }, { title: "Non-job card" }],
       }), { status: 200, headers: { "content-type": "application/json" } });
     };
 

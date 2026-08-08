@@ -41,8 +41,8 @@ type GreenhouseJob = {
 };
 
 type WorkdayJob = {
-  title: string;
-  externalPath: string;
+  title?: string;
+  externalPath?: string;
   locations?: string[];
   bulletFields?: string[];
   postedOn?: string;
@@ -332,9 +332,12 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
       // Some Workday tenants report a window-relative `total` on subsequent
       // pages. The first page is the only reliable total for pagination.
       if (!Number.isFinite(total)) total = payload.total ?? page.length;
-      jobs.push(...page.map((job) => {
+      jobs.push(...page.flatMap((job) => {
+        // Workday tenants occasionally include non-job cards alongside postings.
+        // Skip those records instead of failing an otherwise valid source crawl.
+        if (!job.title || !job.externalPath) return [];
         const externalId = job.externalPath.split("_").at(-1) ?? null;
-        return {
+        return [{
           externalId,
           title: job.title,
           company: source.company,
@@ -344,7 +347,7 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
           summary: job.bulletFields?.join(" · ") ?? null,
           officialUrl: new URL(job.externalPath, source.postingUrl).href,
           publishedAt: null,
-        };
+        }];
       }));
       if (page.length === 0) break;
       offset += page.length;
