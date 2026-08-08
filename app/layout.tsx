@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { AppShell } from "../components/app-shell";
+import { FixtureProvider } from "../components/fixture-provider";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -13,8 +15,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Starter Project",
-  description: "A clean starting point for building your site.",
+  title: "Job Pulse Realtime",
+  description:
+    "Personal job monitoring, alerts, source health, and Talent workflow console.",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",
@@ -31,7 +34,9 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        {children}
+        <FixtureProvider>
+          <AppShell>{children}</AppShell>
+        </FixtureProvider>
       </body>
     </html>
   );
