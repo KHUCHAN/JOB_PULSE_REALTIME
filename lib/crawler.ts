@@ -25,6 +25,10 @@ export type SourceCrawlResult = {
   error: string | null;
 };
 
+export type DiscoveredAts =
+  | { kind: "lever"; endpoint: string }
+  | { kind: "smartrecruiters"; endpoint: string };
+
 type GreenhouseJob = {
   id: number | string;
   title: string;
@@ -42,6 +46,14 @@ type WorkdayJob = {
   postedOn?: string;
 };
 
+type LeverJob = {
+  id: string;
+  text: string;
+  hostedUrl: string;
+  categories?: { location?: string; commitment?: string };
+  descriptionPlain?: string;
+};
+
 const plainText = (value: string | null | undefined): string | null => {
   const text = value?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
   return text || null;
@@ -53,6 +65,72 @@ const greenhouseBoard = (postingUrl: string): string | null => {
   const board = url.pathname.split("/").filter(Boolean).at(0);
   return board || null;
 };
+
+export function discoverAts(html: string, _pageUrl: string): DiscoveredAts | null {
+  void _pageUrl;
+  const lever = html.match(/https?:\/\/jobs\.lever\.co\/([a-z0-9-]+)/i);
+  if (lever) return { kind: "lever", endpoint: `https://api.lever.co/v0/postings/${lever[1]}?mode=json` };
+
+  const smartRecruiters = html.match(/https?:\/\/jobs\.smartrecruiters\.com\/([a-z0-9-]+)/i);
+  if (smartRecruiters) return { kind: "smartrecruiters", endpoint: `https://api.smartrecruiters.com/v1/companies/${smartRecruiters[1]}/postings` };
+
+  return null;
+}
+
+async function crawlDiscoveredFeed(source: CrawlSource, discovered: DiscoveredAts, fetcher: typeof fetch): Promise<SourceCrawlResult> {
+  try {
+    const response = await fetcher(discovered.endpoint);
+    if (!response.ok) return {
+      status: [401, 403, 429].includes(response.status) ? "blocked" : "failed",
+      responseStatus: response.status,
+      completeListing: false,
+      jobs: [],
+      error: `${discovered.kind} returned HTTP ${response.status}.`,
+    };
+
+    if (discovered.kind === "lever") {
+      const payload = await response.json() as LeverJob[];
+      return {
+        status: "succeeded",
+        responseStatus: response.status,
+        completeListing: true,
+        jobs: payload.map((job) => ({
+          externalId: job.id,
+          title: job.text,
+          company: source.company,
+          location: job.categories?.location ?? null,
+          arrangement: job.categories?.location?.toLowerCase().includes("remote") ? "remote" : "unknown",
+          employmentType: job.categories?.commitment ?? null,
+          summary: plainText(job.descriptionPlain),
+          officialUrl: job.hostedUrl,
+          publishedAt: null,
+        })),
+        error: null,
+      };
+    }
+
+    const payload = await response.json() as { content?: Array<{ id: string; name: string; ref: string; location?: { city?: string; region?: string }; typeOfEmployment?: { label?: string } }> };
+    return {
+      status: "succeeded",
+      responseStatus: response.status,
+      completeListing: true,
+      jobs: (payload.content ?? []).map((job) => ({
+        externalId: job.id,
+        title: job.name,
+        company: source.company,
+        location: [job.location?.city, job.location?.region].filter(Boolean).join(", ") || null,
+        arrangement: "unknown",
+        employmentType: job.typeOfEmployment?.label ?? null,
+        summary: null,
+        officialUrl: job.ref,
+        publishedAt: null,
+      })),
+      error: null,
+    };
+  } catch (error) {
+    return { status: "failed", responseStatus: null, completeListing: false, jobs: [], error: error instanceof Error ? error.message : "Unknown crawler error." };
+  }
+}
 
 const workdayFeed = (postingUrl: string): string | null => {
   const url = new URL(postingUrl);
@@ -146,7 +224,10 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch): Promise<
         error: `Career site returned HTTP ${response.status}.`,
       };
     }
-    const nodes = jsonLdScripts(await response.text()).flatMap(jobPostingNodes);
+    const html = await response.text();
+    const discovered = discoverAts(html, source.postingUrl);
+    if (discovered) return crawlDiscoveredFeed(source, discovered, fetcher);
+    const nodes = jsonLdScripts(html).flatMap(jobPostingNodes);
     return {
       status: "succeeded",
       responseStatus: response.status,

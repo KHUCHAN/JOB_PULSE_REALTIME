@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { crawlSource } from "./crawler";
+import { crawlSource, discoverAts } from "./crawler";
 
 describe("crawlSource", () => {
+  it("discovers a public Lever JSON feed from a careers page link", () => {
+    expect(discoverAts(
+      '<a href="https://jobs.lever.co/acme">Open jobs</a>',
+      "https://acme.example/careers",
+    )).toEqual({
+      kind: "lever",
+      endpoint: "https://api.lever.co/v0/postings/acme?mode=json",
+    });
+  });
+
   it("uses the public Greenhouse board API and normalizes its open roles", async () => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input) => {
@@ -77,6 +87,47 @@ describe("crawlSource", () => {
       }],
       error: null,
     });
+  });
+
+  it("follows a discovered Lever feed and treats its response as a complete listing", async () => {
+    const requests: string[] = [];
+    const responses = [
+      new Response('<a href="https://jobs.lever.co/acme">Open roles</a>', { status: 200 }),
+      new Response(JSON.stringify([{
+        id: "lever-7",
+        text: "Risk Analyst",
+        hostedUrl: "https://jobs.lever.co/acme/lever-7",
+        categories: { location: "Remote, US", commitment: "Full-time" },
+        descriptionPlain: "Find material risk signals.",
+      }]), { status: 200, headers: { "content-type": "application/json" } }),
+    ];
+    const fetcher: typeof fetch = async (input) => {
+      requests.push(String(input));
+      return responses.shift()!;
+    };
+
+    const result = await crawlSource({
+      id: "acme",
+      company: "Acme",
+      postingUrl: "https://acme.example/careers",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-08T12:30:00Z"));
+
+    expect(requests).toEqual([
+      "https://acme.example/careers",
+      "https://api.lever.co/v0/postings/acme?mode=json",
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      jobs: [expect.objectContaining({
+        externalId: "lever-7",
+        title: "Risk Analyst",
+        location: "Remote, US",
+        employmentType: "Full-time",
+        officialUrl: "https://jobs.lever.co/acme/lever-7",
+      })],
+    }));
   });
 
   it("uses Workday's public search endpoint for a direct Workday careers URL", async () => {
