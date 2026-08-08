@@ -13,7 +13,7 @@ export default {
   async scheduled(event: ScheduledEvent, env: CrawlerEnv, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(runDueCrawls(new D1CrawlStore(env.DB), fetch, new Date(event.scheduledTime), {
       concurrency: 8,
-      limit: 500,
+      limit: 1_500,
     }));
   },
 };
