@@ -28,9 +28,7 @@ export function JobDetailDrawer({
   }, [onClose]);
 
   return (
-    <div className="drawer-backdrop" onMouseDown={(event) => {
-      if (event.currentTarget === event.target) onClose();
-    }}>
+    <div className="drawer-backdrop">
       <aside className="job-drawer" role="dialog" aria-modal="true" aria-label="Job details">
         <header>
           <div>

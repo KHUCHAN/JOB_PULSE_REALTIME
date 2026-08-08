@@ -4,7 +4,6 @@ import {
   createContext,
   useCallback,
   useContext,
-  useRef,
   useState,
 } from "react";
 import type { ReactElement, ReactNode } from "react";
@@ -21,12 +20,8 @@ export interface JobPulseContextValue {
 const JobPulseContext = createContext<JobPulseContextValue | null>(null);
 
 export function FixtureProvider({ children }: { children: ReactNode }): ReactElement {
-  const repositoryRef = useRef<JobPulseRepository | null>(null);
+  const [repository] = useState<JobPulseRepository>(() => createFixtureRepository());
   const [revision, setRevision] = useState(0);
-
-  if (!repositoryRef.current) {
-    repositoryRef.current = createFixtureRepository();
-  }
 
   const mutate = useCallback(async <T,>(operation: () => Promise<T>): Promise<T> => {
     const result = await operation();
@@ -37,7 +32,7 @@ export function FixtureProvider({ children }: { children: ReactNode }): ReactEle
   return (
     <JobPulseContext.Provider
       value={{
-        repository: repositoryRef.current,
+        repository,
         revision,
         demoMode: true,
         mutate,

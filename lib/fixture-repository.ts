@@ -3,12 +3,10 @@ import type {
   ActivityFilters,
   CreateKeywordInput,
   JobFilters,
-  JobPosting,
   JobState,
   KeywordRule,
   SourceRecord,
   TalentState,
-  TalentTarget,
 } from "./domain";
 import {
   fixtureActivity,
@@ -29,10 +27,10 @@ const defaultFilters: JobFilters = {
 const copy = <T>(value: T): T => structuredClone(value);
 
 export function createFixtureRepository(): JobPulseRepository {
-  let jobs = copy(fixtureJobs);
-  let sources = copy(fixtureSources);
+  const jobs = copy(fixtureJobs);
+  const sources = copy(fixtureSources);
   let keywords = copy(fixtureKeywords);
-  let talentTargets = copy(fixtureTalentTargets);
+  const talentTargets = copy(fixtureTalentTargets);
   let activity = copy(fixtureActivity);
 
   const requireRecord = <T extends { id: string }>(
