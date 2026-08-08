@@ -12,6 +12,26 @@ describe("crawlSource", () => {
     });
   });
 
+  it("discovers a Greenhouse board behind a company careers page", () => {
+    expect(discoverAts(
+      '<a href="https://job-boards.greenhouse.io/acme">Open jobs</a>',
+      "https://acme.example/careers",
+    )).toEqual({
+      kind: "greenhouse",
+      endpoint: "https://boards-api.greenhouse.io/v1/boards/acme/jobs?content=true",
+    });
+  });
+
+  it("discovers a direct Workday search feed behind a company careers page", () => {
+    expect(discoverAts(
+      '<a href="https://acme.wd5.myworkdayjobs.com/Careers">Open jobs</a>',
+      "https://acme.example/careers",
+    )).toEqual({
+      kind: "workday",
+      endpoint: "https://acme.wd5.myworkdayjobs.com/wday/cxs/acme/Careers/jobs",
+    });
+  });
+
   it("uses the public Greenhouse board API and normalizes its open roles", async () => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input) => {
@@ -156,7 +176,13 @@ describe("crawlSource", () => {
       url: "https://acme.wd5.myworkdayjobs.com/wday/cxs/acme/Careers/jobs",
       init: expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ limit: 100, offset: 0, searchText: "" }),
+        body: JSON.stringify({ appliedFacets: {}, limit: 20, offset: 0, searchText: "" }),
+        headers: expect.objectContaining({
+          accept: "application/json",
+          origin: "https://acme.wd5.myworkdayjobs.com",
+          referer: "https://acme.wd5.myworkdayjobs.com/Careers",
+          "user-agent": "JobPulseCrawler/1.0 (+https://job-pulse.local)",
+        }),
       }),
     }]);
     expect(result).toEqual(expect.objectContaining({

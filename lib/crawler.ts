@@ -26,6 +26,8 @@ export type SourceCrawlResult = {
 };
 
 export type DiscoveredAts =
+  | { kind: "greenhouse"; endpoint: string }
+  | { kind: "workday"; endpoint: string }
   | { kind: "lever"; endpoint: string }
   | { kind: "smartrecruiters"; endpoint: string };
 
@@ -68,6 +70,13 @@ const greenhouseBoard = (postingUrl: string): string | null => {
 
 export function discoverAts(html: string, _pageUrl: string): DiscoveredAts | null {
   void _pageUrl;
+  const greenhouse = html.match(/https?:\/\/(?:job-boards|boards)\.greenhouse\.io\/([a-z0-9-]+)/i);
+  if (greenhouse) return { kind: "greenhouse", endpoint: `https://boards-api.greenhouse.io/v1/boards/${greenhouse[1]}/jobs?content=true` };
+
+  const workday = html.match(/https?:\/\/[^\s"'<>]+\.myworkdayjobs\.com\/[^\s"'<>?#]+/i);
+  const workdayEndpoint = workday ? workdayFeed(workday[0]) : null;
+  if (workdayEndpoint) return { kind: "workday", endpoint: workdayEndpoint };
+
   const lever = html.match(/https?:\/\/jobs\.lever\.co\/([a-z0-9-]+)/i);
   if (lever) return { kind: "lever", endpoint: `https://api.lever.co/v0/postings/${lever[1]}?mode=json` };
 
@@ -104,6 +113,27 @@ async function crawlDiscoveredFeed(source: CrawlSource, discovered: DiscoveredAt
           summary: plainText(job.descriptionPlain),
           officialUrl: job.hostedUrl,
           publishedAt: null,
+        })),
+        error: null,
+      };
+    }
+
+    if (discovered.kind === "greenhouse") {
+      const payload = await response.json() as { jobs?: GreenhouseJob[] };
+      return {
+        status: "succeeded",
+        responseStatus: response.status,
+        completeListing: true,
+        jobs: (payload.jobs ?? []).map((job) => ({
+          externalId: String(job.id),
+          title: job.title,
+          company: source.company,
+          location: job.location?.name ?? null,
+          arrangement: "unknown",
+          employmentType: null,
+          summary: plainText(job.content),
+          officialUrl: job.absolute_url,
+          publishedAt: job.updated_at ? new Date(job.updated_at).toISOString() : null,
         })),
         error: null,
       };
@@ -226,6 +256,7 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch): Promise<
     }
     const html = await response.text();
     const discovered = discoverAts(html, source.postingUrl);
+    if (discovered?.kind === "workday") return crawlWorkday(source, discovered.endpoint, fetcher);
     if (discovered) return crawlDiscoveredFeed(source, discovered, fetcher);
     const nodes = jsonLdScripts(html).flatMap(jobPostingNodes);
     return {
@@ -248,6 +279,9 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch): Promise<
 
 async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: typeof fetch): Promise<SourceCrawlResult> {
   try {
+    const endpointUrl = new URL(endpoint);
+    const site = endpointUrl.pathname.split("/").at(-2);
+    const referer = site ? `${endpointUrl.origin}/${site}` : endpointUrl.origin;
     const jobs: CrawledJob[] = [];
     let offset = 0;
     let total = Number.POSITIVE_INFINITY;
@@ -256,8 +290,15 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
     while (offset < total && offset < 2_000) {
       const response = await fetcher(endpoint, {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ limit: 100, offset, searchText: "" }),
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+          origin: endpointUrl.origin,
+          referer,
+          "user-agent": "JobPulseCrawler/1.0 (+https://job-pulse.local)",
+        },
+        // Workday's public CXS endpoint rejects page sizes above 20.
+        body: JSON.stringify({ appliedFacets: {}, limit: 20, offset, searchText: "" }),
       });
       responseStatus = response.status;
       if (!response.ok) {
@@ -272,7 +313,9 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
 
       const payload = await response.json() as { total?: number; jobPostings?: WorkdayJob[] };
       const page = payload.jobPostings ?? [];
-      total = payload.total ?? page.length;
+      // Some Workday tenants report a window-relative `total` on subsequent
+      // pages. The first page is the only reliable total for pagination.
+      if (!Number.isFinite(total)) total = payload.total ?? page.length;
       jobs.push(...page.map((job) => {
         const externalId = job.externalPath.split("_").at(-1) ?? null;
         return {
