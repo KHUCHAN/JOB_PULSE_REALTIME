@@ -8,6 +8,7 @@ coverage/
 .env.*
 !.env.example
 .DS_Store
+.worktrees/
 
 # Private or raw project data
 private/
@@ -17,4 +18,3 @@ applications/
 *.xlsx
 *.xls
 *.pdf
-
