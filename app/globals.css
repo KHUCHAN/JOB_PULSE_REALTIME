@@ -266,6 +266,53 @@ a { color: inherit; }
   .page-canvas { padding: 20px 16px 28px; }
 }
 
+.delivery-target { min-height: 48px; padding: 0 13px; display: flex; align-items: center; gap: 10px; color: var(--info); background: #edf4fb; border: 1px solid #d8e6f5; border-radius: 12px; }
+.delivery-target span { display: block; color: var(--muted); font-size: 9px; }
+.delivery-target strong { display: block; margin-top: 3px; color: var(--ink); font-size: 10px; }
+.inline-feedback { display: flex; align-items: center; gap: 8px; }
+.inline-error { padding: 11px 14px; color: #87261e; background: #fff0ee; border: 1px solid #efb8b3; border-radius: 11px; font-size: 12px; font-weight: 600; }
+.alerts-layout { display: grid; grid-template-columns: minmax(300px, .72fr) minmax(0, 1.35fr); gap: 20px; align-items: start; }
+.rule-composer, .rules-surface { overflow: hidden; }
+.rule-composer form { padding: 18px; display: grid; gap: 15px; }
+.form-field { display: grid; gap: 6px; }
+.form-field label, .delivery-mode legend { color: #455468; font-size: 10px; font-weight: 750; }
+.form-field input, .form-field textarea { width: 100%; padding: 0 11px; color: var(--ink); background: #fafbfc; border: 1px solid var(--line); border-radius: 10px; font-size: 12px; resize: vertical; }
+.form-field textarea { min-height: 86px; padding-top: 10px; line-height: 1.5; }
+.form-field input:focus, .form-field textarea:focus { outline: 0; border-color: #79aeea; box-shadow: 0 0 0 3px rgba(29,94,168,.1); }
+.delivery-mode { margin: 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; border: 0; }
+.delivery-mode legend { margin-bottom: 7px; }
+.delivery-mode label { min-height: 64px; padding: 10px; display: flex; align-items: center; gap: 9px; color: var(--muted); background: #fafbfc; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+.delivery-mode label:has(input:checked) { color: var(--info); background: #edf4fb; border-color: #9dc0e7; }
+.delivery-mode input { width: 15px; height: 15px; accent-color: var(--info); }
+.delivery-mode strong { display: block; color: var(--ink); font-size: 10px; }
+.delivery-mode small { display: block; margin-top: 3px; font-size: 8px; }
+.full-button { width: 100%; }
+.rules-list { display: grid; }
+.rule-row { min-height: 105px; padding: 16px 18px; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 18px; border-bottom: 1px solid var(--line); transition: opacity 150ms ease; }
+.rule-row:last-child { border-bottom: 0; }
+.rule-row.is-disabled { opacity: .53; }
+.rule-title-line { display: flex; align-items: center; gap: 10px; }
+.rule-title-line strong { font-size: 12px; }
+.rule-title-line > span { color: var(--info); font-size: 9px; font-weight: 700; }
+.compact-terms { margin-top: 10px; }
+.compact-terms span { padding: 4px 7px; font-size: 9px; }
+.rule-main p { margin: 8px 0 0; color: var(--muted); font-size: 9px; }
+.rule-delivery { min-width: 105px; text-align: right; }
+.rule-delivery span { display: block; color: var(--muted); font-size: 9px; }
+.rule-delivery strong { display: block; margin-top: 5px; font-size: 10px; }
+.toggle { position: relative; width: 48px; min-height: 28px; height: 28px; padding: 0; background: #c9d0d9; border: 0; border-radius: 999px; cursor: pointer; }
+.toggle span { position: absolute; top: 4px; left: 4px; width: 20px; height: 20px; background: #fff; border-radius: 50%; box-shadow: 0 2px 5px rgba(7,20,38,.2); transition: transform 160ms ease; }
+.toggle.is-on { background: var(--success); }
+.toggle.is-on span { transform: translateX(20px); }
+
+@media (max-width: 1080px) { .alerts-layout { grid-template-columns: 1fr; } }
+@media (max-width: 760px) {
+  .delivery-target { display: none; }
+  .delivery-mode { grid-template-columns: 1fr; }
+  .rule-row { grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }
+  .rule-delivery { grid-column: 1 / -1; grid-row: 2; text-align: left; }
+}
+
 .source-summary { min-height: 38px; padding: 0 12px; display: inline-flex; align-items: center; gap: 8px; color: var(--success); background: #eaf7f0; border: 1px solid #b5dbc7; border-radius: 10px; font-size: 11px; font-weight: 700; }
 .compact-filter { padding: 13px 15px; display: flex; align-items: flex-end; gap: 16px; }
 .compact-filter .filter-control { width: min(260px, 100%); flex: 0 0 auto; }
