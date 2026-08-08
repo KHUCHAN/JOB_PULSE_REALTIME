@@ -149,4 +149,41 @@ describe("publishCatalogArtifacts", () => {
     await expect(readFile(paths.migration, "utf8")).resolves.toBe("recovered-migration");
     await expect(readFile(paths.journal, "utf8")).resolves.toBe("recovered-journal");
   });
+
+  it("allows only one of two concurrent stale-lock recoverers to publish", async () => {
+    const paths = await fixture();
+    await writeFile(paths.lock, JSON.stringify({ pid: 2_147_483_647, token: "dead-owner", createdAt: Date.now() - 60_000 }));
+    const input = (label: string) => ({
+      seedJson: { path: paths.seedJson, content: `${label}-json` },
+      seedSql: { path: paths.seedSql, content: `${label}-sql` },
+      journalGuard: { path: paths.journal, expectedContent: "old-journal" },
+      reconciliation: { migrationDirectory: paths.migrationDir, metaDirectory: paths.metaDir, nextIndex: 2 },
+      migration: {
+        journal: { path: paths.journal, content: `${label}-journal` },
+        snapshot: { path: paths.snapshot, content: `${label}-snapshot` },
+        sql: { path: paths.migration, content: `${label}-migration` },
+      },
+    });
+
+    const results = await Promise.allSettled([
+      publishCatalogArtifacts(input("alpha")),
+      publishCatalogArtifacts(input("beta")),
+    ]);
+    const fulfilled = results.filter((result) => result.status === "fulfilled");
+    const rejected = results.filter((result) => result.status === "rejected") as PromiseRejectedResult[];
+
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0].reason).toHaveProperty("message", expect.stringContaining("Catalog journal changed"));
+
+    const journal = await readFile(paths.journal, "utf8");
+    const winner = journal.startsWith("alpha") ? "alpha" : "beta";
+    expect(journal).toBe(`${winner}-journal`);
+    await expect(readFile(paths.seedJson, "utf8")).resolves.toBe(`${winner}-json`);
+    await expect(readFile(paths.seedSql, "utf8")).resolves.toBe(`${winner}-sql`);
+    await expect(readFile(paths.snapshot, "utf8")).resolves.toBe(`${winner}-snapshot`);
+    await expect(readFile(paths.migration, "utf8")).resolves.toBe(`${winner}-migration`);
+    await expect(readFile(paths.lock, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(`${paths.lock}.recovering`, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
 });

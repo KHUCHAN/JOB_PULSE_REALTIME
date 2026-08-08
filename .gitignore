@@ -22,6 +22,7 @@
 .DS_Store
 *.pem
 *.refresh.lock
+*.refresh.lock.recovering
 *.catalog-*.tmp
 
 # debug

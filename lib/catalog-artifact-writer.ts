@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { open, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { link, open, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -76,30 +76,70 @@ const processIsAlive = (pid: number): boolean => {
   }
 };
 
-const recoverStaleLock = async (path: string): Promise<boolean> => {
+const lockIsStale = async (path: string, content: string): Promise<boolean> => {
+  const owner = parseLockOwner(content);
+  if (owner) return !processIsAlive(owner.pid);
+  try {
+    return Date.now() - (await stat(path)).mtimeMs > 30_000;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    throw error;
+  }
+};
+
+const finishClaimedRecovery = async (path: string, recoveryPath: string): Promise<boolean> => {
+  const claimedContent = await readOptional(recoveryPath);
+  if (claimedContent === null) return true;
+  if (!await lockIsStale(recoveryPath, claimedContent)) {
+    await unlinkOptional(recoveryPath);
+    return false;
+  }
+
+  try {
+    const [current, claimed] = await Promise.all([stat(path), stat(recoveryPath)]);
+    if (current.dev === claimed.dev && current.ino === claimed.ino) await unlinkOptional(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  await unlinkOptional(recoveryPath);
+  return true;
+};
+
+const recoverStaleLock = async (path: string, recoveryPath: string): Promise<boolean> => {
+  if (await readOptional(recoveryPath) !== null) {
+    return finishClaimedRecovery(path, recoveryPath);
+  }
+
   const observedContent = await readOptional(path);
   if (observedContent === null) return true;
+  if (!await lockIsStale(path, observedContent)) return false;
 
-  const owner = parseLockOwner(observedContent);
-  let stale = owner ? !processIsAlive(owner.pid) : false;
-  if (!owner) {
-    try {
-      stale = Date.now() - (await stat(path)).mtimeMs > 30_000;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
-      throw error;
-    }
+  try {
+    await link(path, recoveryPath);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return true;
+    if (code === "EEXIST") return finishClaimedRecovery(path, recoveryPath);
+    throw error;
   }
-  if (!stale || await readOptional(path) !== observedContent) return false;
 
-  await unlinkOptional(path);
-  return true;
+  if (await readOptional(recoveryPath) !== observedContent) {
+    await unlinkOptional(recoveryPath);
+    return false;
+  }
+  return finishClaimedRecovery(path, recoveryPath);
 };
 
 const acquireRefreshLock = async (path: string): Promise<() => Promise<void>> => {
   const deadline = Date.now() + 30_000;
+  const recoveryPath = `${path}.recovering`;
 
   while (true) {
+    if (await readOptional(recoveryPath) !== null) {
+      await finishClaimedRecovery(path, recoveryPath);
+      await delay(25);
+      continue;
+    }
     try {
       const handle = await open(path, "wx");
       const owner: RefreshLockOwner = { pid: process.pid, token: randomUUID(), createdAt: Date.now() };
@@ -118,7 +158,7 @@ const acquireRefreshLock = async (path: string): Promise<() => Promise<void>> =>
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      if (await recoverStaleLock(path)) continue;
+      if (await recoverStaleLock(path, recoveryPath)) continue;
       if (Date.now() >= deadline) throw new Error(`Timed out waiting for catalog refresh lock: ${path}`);
       await delay(25);
     }
