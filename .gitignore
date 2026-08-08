@@ -1,0 +1,20 @@
+node_modules/
+.next/
+dist/
+coverage/
+.wrangler/
+.dev.vars
+.env
+.env.*
+!.env.example
+.DS_Store
+
+# Private or raw project data
+private/
+data/raw/
+outputs/
+applications/
+*.xlsx
+*.xls
+*.pdf
+
