@@ -32,3 +32,5 @@ npm run db:seed:build -- path/to/batch_1.json path/to/batch_2.json path/to/batch
 ```
 
 The generated seed uses upserts, so refreshing verified URLs does not delete crawled jobs, matches, notifications, or external Talent history.
+
+The same upserts are included in `drizzle/0001_seed_sources.sql`, which initializes a newly provisioned Sites D1 database during deployment. Refresh both files whenever the audited catalog changes.
