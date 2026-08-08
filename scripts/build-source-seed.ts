@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { normalizeAuditRecord, type AuditSourceRecord } from "../lib/audit-source-normalizer.ts";
+import { publishCatalogArtifacts } from "../lib/catalog-artifact-writer.ts";
 import {
   advanceSeedSnapshot,
   planSeedMigration,
@@ -70,10 +71,10 @@ const sql = [
 
 const seedDir = resolve(projectRoot, "db/seed");
 await mkdir(seedDir, { recursive: true });
-await writeFile(resolve(seedDir, "sources.json"), `${JSON.stringify({ generatedAt: rows[0]?.checkedAt ?? null, sources: rows, talentTargets: talentRows }, null, 2)}\n`);
-await writeFile(resolve(seedDir, "sources.sql"), sql);
+const seedJson = `${JSON.stringify({ generatedAt: rows[0]?.checkedAt ?? null, sources: rows, talentTargets: talentRows }, null, 2)}\n`;
 
 let migrationMessage = "";
+let migrationArtifacts: Parameters<typeof publishCatalogArtifacts>[0]["migration"];
 if (createMigration) {
   const migrationDir = resolve(projectRoot, "drizzle");
   const metaDir = resolve(migrationDir, "meta");
@@ -93,13 +94,21 @@ if (createMigration) {
     const previousSnapshot = JSON.parse(await readFile(previousSnapshotPath, "utf8"));
     const nextSnapshotPath = resolve(metaDir, `${String(plan.snapshotIndex).padStart(4, "0")}_snapshot.json`);
 
-    await writeFile(nextSnapshotPath, `${JSON.stringify(advanceSeedSnapshot(previousSnapshot, randomUUID()), null, 2)}\n`, { flag: "wx" });
-    await writeFile(resolve(migrationDir, plan.fileName), sql, { flag: "wx" });
-    await writeFile(journalPath, `${JSON.stringify(plan.journal, null, 2)}\n`);
+    migrationArtifacts = {
+      journal: { path: journalPath, content: `${JSON.stringify(plan.journal, null, 2)}\n` },
+      snapshot: { path: nextSnapshotPath, content: `${JSON.stringify(advanceSeedSnapshot(previousSnapshot, randomUUID()), null, 2)}\n` },
+      sql: { path: resolve(migrationDir, plan.fileName), content: sql },
+    };
     migrationMessage = ` Created immutable migration ${plan.fileName}.`;
   } else {
     migrationMessage = " Catalog SQL already has an immutable migration; no new migration created.";
   }
 }
+
+await publishCatalogArtifacts({
+  seedJson: { path: resolve(seedDir, "sources.json"), content: seedJson },
+  seedSql: { path: resolve(seedDir, "sources.sql"), content: sql },
+  migration: migrationArtifacts,
+});
 
 process.stdout.write(`Built ${rows.length} sources (${rows.filter((row) => row.postingUrl).length} posting URLs) and ${talentRows.length} Talent targets.${migrationMessage}\n`);
