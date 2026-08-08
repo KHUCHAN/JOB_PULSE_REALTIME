@@ -56,6 +56,22 @@ type LeverJob = {
   descriptionPlain?: string;
 };
 
+const REQUEST_TIMEOUT_MS = 15_000;
+
+const fetchWithTimeout = async (
+  fetcher: typeof fetch,
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort("15 second crawl timeout"), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetcher(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
 const plainText = (value: string | null | undefined): string | null => {
   const text = value?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
   return text || null;
@@ -88,7 +104,7 @@ export function discoverAts(html: string, _pageUrl: string): DiscoveredAts | nul
 
 async function crawlDiscoveredFeed(source: CrawlSource, discovered: DiscoveredAts, fetcher: typeof fetch): Promise<SourceCrawlResult> {
   try {
-    const response = await fetcher(discovered.endpoint);
+    const response = await fetchWithTimeout(fetcher, discovered.endpoint);
     if (!response.ok) return {
       status: [401, 403, 429].includes(response.status) ? "blocked" : "failed",
       responseStatus: response.status,
@@ -244,7 +260,7 @@ const jsonLdJob = (value: JsonLdValue, source: CrawlSource): CrawledJob | null =
 
 async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> {
   try {
-    const response = await fetcher(source.postingUrl);
+    const response = await fetchWithTimeout(fetcher, source.postingUrl);
     if (!response.ok) {
       return {
         status: [401, 403, 429].includes(response.status) ? "blocked" : "failed",
@@ -288,7 +304,7 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
     let responseStatus = 200;
 
     while (offset < total && offset < 2_000) {
-      const response = await fetcher(endpoint, {
+      const response = await fetchWithTimeout(fetcher, endpoint, {
         method: "POST",
         headers: {
           accept: "application/json",
@@ -356,7 +372,7 @@ export async function crawlSource(source: CrawlSource, fetcher: typeof fetch, no
   }
 
   try {
-    const response = await fetcher(`https://boards-api.greenhouse.io/v1/boards/${board}/jobs?content=true`);
+    const response = await fetchWithTimeout(fetcher, `https://boards-api.greenhouse.io/v1/boards/${board}/jobs?content=true`);
     if (!response.ok) {
       return {
         status: [401, 403, 429].includes(response.status) ? "blocked" : "failed",
