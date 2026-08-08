@@ -79,16 +79,21 @@ const journalContent = await readFile(journalPath, "utf8");
 
 let migrationMessage = "";
 let migrationArtifacts: Parameters<typeof publishCatalogArtifacts>[0]["migration"];
+let reconciliation: Parameters<typeof publishCatalogArtifacts>[0]["reconciliation"];
 const journalGuard: Parameters<typeof publishCatalogArtifacts>[0]["journalGuard"] = {
   path: journalPath,
   expectedContent: journalContent,
 };
 if (createMigration) {
+  const journal = JSON.parse(journalContent) as DrizzleJournal;
+  const journalMigrationNames = new Set(journal.entries.map((entry) => `${entry.tag}.sql`));
   const catalogMigrationFiles = (await readdir(migrationDir))
     .filter((name) => name === "0001_seed_sources.sql" || /^\d{4}_refresh_sources_.+\.sql$/.test(name))
+    .filter((name) => journalMigrationNames.has(name))
     .sort();
   const catalogSqlHistory = await Promise.all(catalogMigrationFiles.map((name) => readFile(resolve(migrationDir, name), "utf8")));
-  const journal = JSON.parse(journalContent) as DrizzleJournal;
+  const nextIndex = Math.max(-1, ...journal.entries.map((entry) => entry.idx)) + 1;
+  reconciliation = { migrationDirectory: migrationDir, metaDirectory: metaDir, nextIndex };
   const plan = planSeedMigration({ journal, catalogSqlHistory, nextSql: sql, now: new Date() });
 
   if (plan) {
@@ -117,6 +122,7 @@ await publishCatalogArtifacts({
   seedJson: { path: resolve(seedDir, "sources.json"), content: seedJson },
   seedSql: { path: resolve(seedDir, "sources.sql"), content: sql },
   journalGuard,
+  reconciliation,
   migration: migrationArtifacts,
 });
 

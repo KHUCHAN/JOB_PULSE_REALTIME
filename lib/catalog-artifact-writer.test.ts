@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -18,13 +18,15 @@ const fixture = async () => {
   await mkdir(join(root, "drizzle/meta"), { recursive: true });
 
   const paths = {
+    migrationDir: join(root, "drizzle"),
+    metaDir: join(root, "drizzle/meta"),
     seedJson: join(root, "db/seed/sources.json"),
     seedSql: join(root, "db/seed/sources.sql"),
     journal: join(root, "drizzle/meta/_journal.json"),
     snapshot: join(root, "drizzle/meta/0002_snapshot.json"),
     migration: join(root, "drizzle/0002_refresh_sources_test.sql"),
+    lock: join(root, "db/seed/sources.sql.refresh.lock"),
   };
-  const { writeFile } = await import("node:fs/promises");
   await Promise.all([
     writeFile(paths.seedJson, "old-json"),
     writeFile(paths.seedSql, "old-sql"),
@@ -41,6 +43,7 @@ describe("publishCatalogArtifacts", () => {
       seedJson: { path: paths.seedJson, content: "new-json" },
       seedSql: { path: paths.seedSql, content: "new-sql" },
       journalGuard: { path: paths.journal, expectedContent: "old-journal" },
+      reconciliation: { migrationDirectory: paths.migrationDir, metaDirectory: paths.metaDir, nextIndex: 2 },
       migration: {
         journal: { path: paths.journal, content: "new-journal" },
         snapshot: { path: paths.snapshot, content: "new-snapshot" },
@@ -80,6 +83,7 @@ describe("publishCatalogArtifacts", () => {
       seedJson: { path: paths.seedJson, content: "winner-json" },
       seedSql: { path: paths.seedSql, content: "winner-sql" },
       journalGuard: { path: paths.journal, expectedContent: "old-journal" },
+      reconciliation: { migrationDirectory: paths.migrationDir, metaDirectory: paths.metaDir, nextIndex: 2 },
       migration: {
         journal: { path: paths.journal, content: "winner-journal" },
         snapshot: { path: paths.snapshot, content: "winner-snapshot" },
@@ -95,6 +99,7 @@ describe("publishCatalogArtifacts", () => {
       seedJson: { path: paths.seedJson, content: "stale-json" },
       seedSql: { path: paths.seedSql, content: "stale-sql" },
       journalGuard: { path: paths.journal, expectedContent: "old-journal" },
+      reconciliation: { migrationDirectory: paths.migrationDir, metaDirectory: paths.metaDir, nextIndex: 2 },
       migration: {
         journal: { path: paths.journal, content: "stale-journal" },
         snapshot: { path: paths.snapshot, content: "stale-snapshot" },
@@ -115,5 +120,33 @@ describe("publishCatalogArtifacts", () => {
     await expect(readFile(paths.journal, "utf8")).resolves.toBe("winner-journal");
     await expect(readFile(paths.snapshot, "utf8")).resolves.toBe("winner-snapshot");
     await expect(readFile(paths.migration, "utf8")).resolves.toBe("winner-migration");
+  });
+
+  it("recovers a dead process lock and removes only unjournaled next-index artifacts", async () => {
+    const paths = await fixture();
+    const orphanMigration = join(paths.migrationDir, "0002_refresh_sources_crashed.sql");
+    await Promise.all([
+      writeFile(paths.lock, JSON.stringify({ pid: 2_147_483_647, token: "dead-owner", createdAt: Date.now() - 60_000 })),
+      writeFile(paths.snapshot, "orphan-snapshot"),
+      writeFile(orphanMigration, "orphan-migration"),
+    ]);
+
+    await publishCatalogArtifacts({
+      seedJson: { path: paths.seedJson, content: "recovered-json" },
+      seedSql: { path: paths.seedSql, content: "recovered-sql" },
+      journalGuard: { path: paths.journal, expectedContent: "old-journal" },
+      reconciliation: { migrationDirectory: paths.migrationDir, metaDirectory: paths.metaDir, nextIndex: 2 },
+      migration: {
+        journal: { path: paths.journal, content: "recovered-journal" },
+        snapshot: { path: paths.snapshot, content: "recovered-snapshot" },
+        sql: { path: paths.migration, content: "recovered-migration" },
+      },
+    });
+
+    await expect(readFile(paths.lock, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(orphanMigration, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(paths.snapshot, "utf8")).resolves.toBe("recovered-snapshot");
+    await expect(readFile(paths.migration, "utf8")).resolves.toBe("recovered-migration");
+    await expect(readFile(paths.journal, "utf8")).resolves.toBe("recovered-journal");
   });
 });

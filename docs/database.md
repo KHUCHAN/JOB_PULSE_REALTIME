@@ -39,6 +39,8 @@ npm run db:catalog:refresh -- path/to/batch_1.json path/to/batch_2.json path/to/
 
 This command refreshes `db/seed/*` and creates the next numbered `drizzle/*_refresh_sources_*.sql` migration only when the generated catalog SQL differs from a committed migration. Commit the migration, its journal update, and its advanced schema snapshot together. Never edit or replace a numbered migration that may already have run in production.
 
+Refresh writers are serialized with an ownership lock and a journal compare-and-swap guard. A retry recovers locks owned by a dead process and removes only unjournaled artifacts at the next migration index before publishing a consistent replacement.
+
 The generated catalog SQL uses upserts, so refreshing verified URLs does not delete crawled jobs, matches, notifications, or external Talent history.
 
 `drizzle/0001_seed_sources.sql` initializes a newly provisioned Sites D1 database. Later refresh migrations apply the same upserts to both new and existing deployments.
