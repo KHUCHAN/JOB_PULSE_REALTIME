@@ -14,5 +14,9 @@ describe("OverviewScreen", () => {
     expect(await screen.findByText("New matching jobs")).toBeInTheDocument();
     expect(screen.getByText("Latest matching jobs")).toBeInTheDocument();
     expect(screen.getByText("Recent activity")).toBeInTheDocument();
+    expect(screen.getByText("Every 2 hours")).toBeInTheDocument();
+    expect(screen.getByText("Talent Harness coverage")).toBeInTheDocument();
+    expect(screen.getByText(/links and capability checks only/i)).toBeInTheDocument();
+    expect(screen.queryByText("Next Talent tasks")).not.toBeInTheDocument();
   });
 });

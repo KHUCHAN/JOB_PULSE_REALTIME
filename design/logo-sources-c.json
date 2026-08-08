@@ -1,0 +1,50 @@
+[
+  {
+    "company": "Toyota",
+    "file": "public/company-logos/toyota.png",
+    "officialDomain": "www.toyota.com",
+    "sourceUrl": "https://www.google.com/s2/favicons?domain_url=https%3A%2F%2Fwww.toyota.com&sz=128",
+    "sourceType": "Google S2 favicon service for official domain",
+    "dimensions": "128x128 PNG"
+  },
+  {
+    "company": "Merck",
+    "file": "public/company-logos/merck.png",
+    "officialDomain": "www.merck.com",
+    "sourceUrl": "https://www.google.com/s2/favicons?domain_url=https%3A%2F%2Fwww.merck.com&sz=128",
+    "sourceType": "Google S2 favicon service for official domain",
+    "dimensions": "128x128 PNG"
+  },
+  {
+    "company": "MetLife",
+    "file": "public/company-logos/metlife.png",
+    "officialDomain": "www.metlife.com",
+    "sourceUrl": "https://www.google.com/s2/favicons?domain_url=https%3A%2F%2Fwww.metlife.com&sz=128",
+    "sourceType": "Google S2 favicon service for official domain",
+    "dimensions": "128x128 PNG"
+  },
+  {
+    "company": "Bristol Myers Squibb",
+    "file": "public/company-logos/bristol-myers-squibb.png",
+    "officialDomain": "www.bms.com",
+    "sourceUrl": "https://www.google.com/s2/favicons?domain_url=https%3A%2F%2Fwww.bms.com&sz=128",
+    "sourceType": "Google S2 favicon service for official domain",
+    "dimensions": "128x128 PNG"
+  },
+  {
+    "company": "Etsy",
+    "file": "public/company-logos/etsy.png",
+    "officialDomain": "www.etsy.com",
+    "sourceUrl": "https://www.google.com/s2/favicons?domain_url=https%3A%2F%2Fwww.etsy.com&sz=128",
+    "sourceType": "Google S2 favicon service for official domain",
+    "dimensions": "128x128 PNG"
+  },
+  {
+    "company": "Genentech",
+    "file": "public/company-logos/genentech.png",
+    "officialDomain": "www.gene.com",
+    "sourceUrl": "https://www.google.com/s2/favicons?domain_url=https%3A%2F%2Fwww.gene.com&sz=128",
+    "sourceType": "Google S2 favicon service for official domain",
+    "dimensions": "128x128 PNG"
+  }
+]

@@ -7,15 +7,12 @@ import {
   Building2,
   Gauge,
   Menu,
-  Play,
   Search,
-  Sparkles,
   UserRoundSearch,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import type { ReactElement, ReactNode } from "react";
-import { useJobPulse } from "./fixture-provider";
 
 const navigation = [
   { href: "/", label: "Overview", icon: Gauge },
@@ -26,30 +23,26 @@ const navigation = [
   { href: "/activity", label: "Activity", icon: Activity },
 ];
 
-export function AppShell({ children }: { children: ReactNode }): ReactElement {
-  const { repository, mutate } = useJobPulse();
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [crawlMessage, setCrawlMessage] = useState("");
-  const [crawling, setCrawling] = useState(false);
-  const pathname = typeof window === "undefined" ? "/" : window.location.pathname;
+const subscribeToLocation = (notify: () => void) => {
+  window.addEventListener("popstate", notify);
+  return () => window.removeEventListener("popstate", notify);
+};
 
-  const runDemoCrawl = async () => {
-    setCrawling(true);
-    setCrawlMessage("");
-    try {
-      const event = await mutate(() => repository.simulateCrawl());
-      setCrawlMessage(event.summary);
-    } finally {
-      setCrawling(false);
-    }
-  };
+const currentPathname = () => window.location.pathname;
+const serverPathname = () => "/";
+
+export function AppShell({ children }: { children: ReactNode }): ReactElement {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const pathname = useSyncExternalStore(subscribeToLocation, currentPathname, serverPathname);
 
   return (
     <div className="app-frame">
       <aside className={`sidebar ${menuOpen ? "is-open" : ""}`}>
         <div className="brand-block">
           <div className="brand-mark" aria-hidden="true">
-            <Sparkles size={18} />
+            {/* The generated transparent PNG is already display-sized and served locally. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/brand/job-pulse-logo.png" alt="" width="42" height="42" />
           </div>
           <div>
             <strong>Job Pulse</strong>
@@ -79,7 +72,7 @@ export function AppShell({ children }: { children: ReactNode }): ReactElement {
             <span />
           </div>
           <p>Personal workspace</p>
-          <span>6-hour monitoring cadence</span>
+          <span>Automatic · every 2 hours</span>
         </div>
       </aside>
 
@@ -107,15 +100,10 @@ export function AppShell({ children }: { children: ReactNode }): ReactElement {
           </form>
 
           <span className="demo-badge">Demo data</span>
-          <button
-            className="button primary crawl-button"
-            type="button"
-            onClick={runDemoCrawl}
-            disabled={crawling}
-          >
-            <Play size={16} fill="currentColor" aria-hidden="true" />
-            {crawling ? "Running…" : "Crawl now"}
-          </button>
+          <div className="batch-status" aria-label="Crawl schedule">
+            <i aria-hidden="true" />
+            <span><strong>Automatic</strong>Every 2 hours</span>
+          </div>
         </header>
 
         <div className="mobile-search-row">
@@ -125,12 +113,6 @@ export function AppShell({ children }: { children: ReactNode }): ReactElement {
             <input id="mobile-keyword" name="q" placeholder="Search a keyword" />
           </form>
         </div>
-
-        {crawlMessage ? (
-          <div className="notice-bar" aria-live="polite">
-            {crawlMessage}
-          </div>
-        ) : null}
 
         <main className="page-canvas">{children}</main>
       </section>

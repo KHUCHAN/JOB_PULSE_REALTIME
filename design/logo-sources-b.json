@@ -1,0 +1,50 @@
+[
+  {
+    "company": "Notion",
+    "file": "public/company-logos/notion.png",
+    "sourceUrl": "https://www.google.com/s2/favicons?domain=notion.so&sz=128",
+    "officialDomain": "notion.so",
+    "format": "PNG",
+    "dimensions": "128x128"
+  },
+  {
+    "company": "Cloudflare",
+    "file": "public/company-logos/cloudflare.png",
+    "sourceUrl": "https://www.google.com/s2/favicons?domain=cloudflare.com&sz=128",
+    "officialDomain": "cloudflare.com",
+    "format": "PNG",
+    "dimensions": "128x128"
+  },
+  {
+    "company": "Snowflake",
+    "file": "public/company-logos/snowflake.png",
+    "sourceUrl": "https://www.google.com/s2/favicons?domain=snowflake.com&sz=128",
+    "officialDomain": "snowflake.com",
+    "format": "PNG",
+    "dimensions": "128x128"
+  },
+  {
+    "company": "Datadog",
+    "file": "public/company-logos/datadog.png",
+    "sourceUrl": "https://www.google.com/s2/favicons?domain=datadoghq.com&sz=128",
+    "officialDomain": "datadoghq.com",
+    "format": "PNG",
+    "dimensions": "128x128"
+  },
+  {
+    "company": "Atlassian",
+    "file": "public/company-logos/atlassian.png",
+    "sourceUrl": "https://www.google.com/s2/favicons?domain=atlassian.com&sz=128",
+    "officialDomain": "atlassian.com",
+    "format": "PNG",
+    "dimensions": "128x128"
+  },
+  {
+    "company": "GitHub",
+    "file": "public/company-logos/github.png",
+    "sourceUrl": "https://www.google.com/s2/favicons?domain=github.com&sz=128",
+    "officialDomain": "github.com",
+    "format": "PNG",
+    "dimensions": "128x128"
+  }
+]

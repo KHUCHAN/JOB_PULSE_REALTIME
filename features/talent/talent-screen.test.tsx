@@ -1,19 +1,18 @@
-import userEvent from "@testing-library/user-event";
 import { render, screen } from "@testing-library/react";
 import { expect, it } from "vitest";
 import { FixtureProvider } from "../../components/fixture-provider";
 import { TalentScreen } from "./talent-screen";
 
-it("marks a target blocked with a visible gate reason", async () => {
-  const user = userEvent.setup();
+it("provides verified Talent links without running registration in the app", async () => {
   render(
     <FixtureProvider>
       <TalentScreen />
     </FixtureProvider>,
   );
-  const blockButtons = await screen.findAllByRole("button", { name: /Mark .* blocked/ });
-  await user.click(blockButtons[0]);
-  await user.selectOptions(screen.getByLabelText("Blocker reason"), "captcha");
-  await user.click(screen.getByRole("button", { name: "Save blocker" }));
-  expect(await screen.findByText("CAPTCHA — user action required")).toBeInTheDocument();
+  expect(await screen.findByText("Verified Talent directory")).toBeInTheDocument();
+  expect(screen.getAllByRole("link", { name: /Open .* official Talent page/ }).length).toBeGreaterThan(0);
+  expect(screen.getByText(/opens the official page and provides a checklist/i)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Start .* assisted flow/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Mark .* completed/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Mark .* blocked/ })).not.toBeInTheDocument();
 });

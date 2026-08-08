@@ -1,15 +1,16 @@
 # Job Pulse Realtime
 
-Job Pulse Realtime is a personal job-monitoring console built with OpenAI Sites. This first slice is a polished, responsive frontend backed by sanitized in-memory demo data.
+Job Pulse Realtime is a personal job-monitoring console built with OpenAI Sites. The current slice combines a responsive demo UI with a Cloudflare D1 source catalog seeded from the verified public URL audit.
 
 ## Frontend routes
 
-- `/` — operational overview, latest matches, source health, Talent tasks, and activity
+- `/` — operational overview, latest matches, source health, Talent coverage, and activity
 - `/jobs` — keyword, status, arrangement, and location filtering with an accessible detail drawer
 - `/sources` — official career-source health, adapter status, and crawl timing
 - `/alerts` — keyword-rule creation, delivery mode, exclusions, and enable/disable controls
-- `/talent` — assisted Talent Community registration queue with explicit user-only gates
+- `/talent` — provider-only directory of official Talent Community links and capabilities
 - `/activity` — filterable event history with expandable technical details
+- `/api/catalog` — paginated D1 source/Talent catalog (`q`, `talent`, `limit`, `offset`)
 
 ## Run locally
 
@@ -18,15 +19,18 @@ npm install
 npm run dev
 npm test
 npm run build
+npm run db:migrate:local
+npm run db:seed:local
+npm run db:verify:local
 ```
 
 Node.js `>=22.13.0` is required.
 
-## Demo-data boundary
+## Current boundary
 
-This frontend does not crawl live career sites, send email, persist records, upload resumes, or submit Talent forms. `Crawl now` creates an in-memory demo event only. Changes reset when the preview reloads.
+The operational job, alert, health, and activity screens still use sanitized in-memory demo records. The D1 catalog now persists 445 verified company sources, 444 career-posting URLs, and 109 Talent endpoints locally, and exposes them through `/api/catalog`.
 
-The next backend slices will add D1 persistence, source adapters and conditional HTTP monitoring, scheduling, internal webhook events, and email delivery. Those capabilities are intentionally separate from this frontend implementation.
+The UI displays the planned automatic two-hour crawl cadence and has no manual crawl action. Source adapters, the deployed scheduler, conditional HTTP crawling, webhook events, and email delivery remain the next backend slices. Talent Harness only opens official employer pages; it never uploads or submits anything inside Job Pulse.
 
 ## Public-repository safety
 
@@ -38,5 +42,8 @@ Never commit resumes, application records, confirmation screenshots, personal co
 - `components/` — application shell, fixture provider, and reusable UI primitives
 - `features/` — route-level product screens
 - `lib/` — domain contract, sanitized fixtures, and repository implementation
+- `db/` and `drizzle/` — D1 schema, generated migration, and public source seed
 - `design/concepts/` — approved visual direction used for implementation QA
-- `.openai/hosting.json` — Sites capability declaration; D1 and R2 remain disabled for this slice
+- `.openai/hosting.json` — Sites capability declaration with the logical D1 binding `DB`
+
+See [`docs/database.md`](docs/database.md) for the data flow and local D1 commands.

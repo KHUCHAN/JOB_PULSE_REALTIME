@@ -13,8 +13,9 @@ import { ErrorState } from "../../components/ui/error-state";
 import { LoadingState } from "../../components/ui/loading-state";
 import { MetricCard } from "../../components/ui/metric-card";
 import { StatusBadge } from "../../components/ui/status-badge";
+import { CompanyLogo } from "../../components/ui/company-logo";
 import { useJobPulse } from "../../components/fixture-provider";
-import { formatDateTime, formatRelativeDate } from "../../lib/format";
+import { formatRelativeDate } from "../../lib/format";
 import { useRepositoryQuery } from "../../lib/use-repository-query";
 
 export function OverviewScreen(): ReactElement {
@@ -36,7 +37,7 @@ export function OverviewScreen(): ReactElement {
 
   const { overview, sources, talent } = query.data;
   const sourceRail = sources.slice(0, 5);
-  const nextTalent = talent.filter((target) => target.state !== "completed").slice(0, 3);
+  const talentCoverage = talent.slice(0, 3);
 
   return (
     <div className="page-stack overview-page">
@@ -47,7 +48,7 @@ export function OverviewScreen(): ReactElement {
         </div>
         <div className="run-context">
           <span>Next scheduled pass</span>
-          <strong>In 5h 42m</strong>
+          <strong>Every 2 hours</strong>
         </div>
       </header>
 
@@ -56,7 +57,7 @@ export function OverviewScreen(): ReactElement {
         <MetricCard label="Active sources" value={overview.activeSources} detail="Extracting normally" icon={Building2} />
         <MetricCard label="Source errors" value={overview.sourceErrors} detail="Need a closer look" icon={AlertTriangle} />
         <MetricCard label="Unsent alerts" value={overview.unsentAlerts} detail="Waiting for backend" icon={BellDot} />
-        <MetricCard label="Open Talent tasks" value={overview.openTalentTasks} detail="Assisted workflow" icon={UserRoundSearch} />
+        <MetricCard label="Talent links" value={talent.length} detail="Verified directory" icon={UserRoundSearch} />
       </section>
 
       <div className="overview-grid">
@@ -100,7 +101,7 @@ export function OverviewScreen(): ReactElement {
             <div className="health-list">
               {sourceRail.map((source) => (
                 <div className="health-row" key={source.id}>
-                  <span className="company-avatar" aria-hidden="true">{source.company.slice(0, 1)}</span>
+                  <CompanyLogo company={source.company} />
                   <div><strong>{source.company}</strong><span>{source.currentJobs} current roles</span></div>
                   <StatusBadge status={source.health} />
                 </div>
@@ -127,15 +128,15 @@ export function OverviewScreen(): ReactElement {
 
       <section className="surface talent-preview">
         <div className="section-heading">
-          <div><h2>Next Talent tasks</h2><p>Assisted registration stops before user-only gates.</p></div>
-          <a className="text-link" href="/talent">Open harness</a>
+          <div><h2>Talent Harness coverage</h2><p>Verified links and capability checks only — registration runs on the official site.</p></div>
+          <a className="text-link" href="/talent">Browse directory</a>
         </div>
         <div className="talent-preview-list">
-          {nextTalent.map((target) => (
+          {talentCoverage.map((target) => (
             <article key={target.id}>
-              <span className="company-avatar large" aria-hidden="true">{target.company.slice(0, 1)}</span>
-              <div><strong>{target.company}</strong><span>{target.ats} · {target.blocker ?? "Ready for assisted flow"}</span></div>
-              <div className="talent-meta"><StatusBadge status={target.state} /><span>{formatDateTime(target.lastAttemptAt)}</span></div>
+              <CompanyLogo company={target.company} large />
+              <div className="talent-preview-copy"><strong>{target.company}</strong><span>{target.ats} · Official Talent endpoint</span></div>
+              <a className="talent-preview-link" href={target.talentUrl} target="_blank" rel="noreferrer">Open</a>
             </article>
           ))}
         </div>

@@ -1,12 +1,10 @@
-import userEvent from "@testing-library/user-event";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { AppShell } from "./app-shell";
 import { FixtureProvider } from "./fixture-provider";
 
 describe("AppShell", () => {
-  it("shows every route and runs a demo-only crawl", async () => {
-    const user = userEvent.setup();
+  it("shows every route and the automatic two-hour crawl cadence", () => {
     render(
       <FixtureProvider>
         <AppShell>
@@ -26,7 +24,7 @@ describe("AppShell", () => {
       expect(screen.getByRole("link", { name })).toBeInTheDocument();
     }
     expect(screen.getByText("Demo data")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Crawl now" }));
-    expect(await screen.findByText(/simulated crawl completed/i)).toBeInTheDocument();
+    expect(screen.getByText("Automatic · every 2 hours")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Crawl now" })).not.toBeInTheDocument();
   });
 });

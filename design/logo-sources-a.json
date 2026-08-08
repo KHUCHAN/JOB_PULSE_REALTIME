@@ -1,0 +1,50 @@
+[
+  {
+    "company": "Stripe",
+    "file": "public/company-logos/stripe.png",
+    "officialDomain": "stripe.com",
+    "sourceUrl": "https://www.google.com/s2/favicons?domain=stripe.com&sz=128",
+    "sourceType": "Google S2 favicon for official domain",
+    "notes": "Google 이미지 검색으로 브랜드 마크를 대조했고, 128px Google S2 PNG를 사용."
+  },
+  {
+    "company": "Block",
+    "file": "public/company-logos/block.png",
+    "officialDomain": "block.xyz",
+    "sourceUrl": "https://www.google.com/s2/favicons?domain=block.xyz&sz=128",
+    "sourceType": "Google S2 favicon for official domain",
+    "notes": "Google 이미지 검색 결과의 Block 공식 Media Kit(block.xyz) 브랜드 마크와 대조."
+  },
+  {
+    "company": "Airbnb",
+    "file": "public/company-logos/airbnb.png",
+    "officialDomain": "airbnb.com",
+    "sourceUrl": "https://www.google.com/s2/favicons?domain=airbnb.com&sz=128",
+    "sourceType": "Google S2 favicon for official domain",
+    "notes": "Google 이미지 검색으로 Bélo 브랜드 마크를 대조. 원본 favicon이 28px여서 128px PNG로 리샘플링."
+  },
+  {
+    "company": "Coinbase",
+    "file": "public/company-logos/coinbase.png",
+    "officialDomain": "coinbase.com",
+    "sourceUrl": "https://www.google.com/s2/favicons?domain=coinbase.com&sz=128",
+    "sourceType": "Google S2 favicon for official domain",
+    "notes": "Google 이미지 검색으로 Coinbase C 브랜드 마크를 대조."
+  },
+  {
+    "company": "Palantir",
+    "file": "public/company-logos/palantir.png",
+    "officialDomain": "palantir.com",
+    "sourceUrl": "https://www.google.com/s2/favicons?domain=palantir.com&sz=128",
+    "sourceType": "Google S2 favicon for official domain",
+    "notes": "Google 이미지 검색으로 Palantir 원형 브랜드 마크를 대조. 원본 favicon이 32px여서 128px PNG로 리샘플링."
+  },
+  {
+    "company": "Figma",
+    "file": "public/company-logos/figma.png",
+    "officialDomain": "figma.com",
+    "sourceUrl": "https://www.google.com/s2/favicons?domain=figma.com&sz=128",
+    "sourceType": "Google S2 favicon for official domain",
+    "notes": "Google 이미지 검색으로 Figma 다색 브랜드 마크를 대조."
+  }
+]
