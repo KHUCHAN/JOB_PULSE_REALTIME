@@ -1,7 +1,7 @@
 # Personal Job Monitor — Product and Frontend Design
 
 **Date:** 2026-08-08  
-**Status:** Draft for user review  
+**Status:** Approved for implementation
 **Delivery platform:** OpenAI Sites  
 
 ## 1. Product goal
