@@ -31,6 +31,14 @@ Rebuild the committed public seed from audited JSON exports by passing their pat
 npm run db:seed:build -- path/to/batch_1.json path/to/batch_2.json path/to/batch_3.json
 ```
 
-The generated seed uses upserts, so refreshing verified URLs does not delete crawled jobs, matches, notifications, or external Talent history.
+For a catalog change that must reach an already-deployed D1 database, create a new immutable data migration instead:
 
-The same upserts are included in `drizzle/0001_seed_sources.sql`, which initializes a newly provisioned Sites D1 database during deployment. Refresh both files whenever the audited catalog changes.
+```bash
+npm run db:catalog:refresh -- path/to/batch_1.json path/to/batch_2.json path/to/batch_3.json
+```
+
+This command refreshes `db/seed/*` and creates the next numbered `drizzle/*_refresh_sources_*.sql` migration only when the generated catalog SQL differs from a committed migration. Commit the migration, its journal update, and its advanced schema snapshot together. Never edit or replace a numbered migration that may already have run in production.
+
+The generated catalog SQL uses upserts, so refreshing verified URLs does not delete crawled jobs, matches, notifications, or external Talent history.
+
+`drizzle/0001_seed_sources.sql` initializes a newly provisioned Sites D1 database. Later refresh migrations apply the same upserts to both new and existing deployments.

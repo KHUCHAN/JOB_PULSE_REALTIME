@@ -16,6 +16,7 @@
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
     "db:seed:build": "node scripts/build-source-seed.ts",
+    "db:catalog:refresh": "node scripts/build-source-seed.ts --migration",
     "db:migrate:local": "wrangler d1 migrations apply site-creator-d1 --config wrangler.local.jsonc --local --persist-to .wrangler/state",
     "db:seed:local": "wrangler d1 execute site-creator-d1 --config wrangler.local.jsonc --local --persist-to .wrangler/state --file db/seed/sources.sql",
     "db:verify:local": "wrangler d1 execute site-creator-d1 --config wrangler.local.jsonc --local --persist-to .wrangler/state --json --command 'SELECT (SELECT count(*) FROM sources) AS sources, (SELECT count(*) FROM talent_targets) AS talent_targets, (SELECT count(*) FROM sources WHERE posting_url IS NOT NULL) AS posting_urls, (SELECT count(*) FROM sources WHERE talent_url IS NOT NULL) AS talent_urls'"

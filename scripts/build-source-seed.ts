@@ -1,10 +1,17 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { normalizeAuditRecord, type AuditSourceRecord } from "../lib/audit-source-normalizer.ts";
+import {
+  advanceSeedSnapshot,
+  planSeedMigration,
+  type DrizzleJournal,
+} from "../lib/seed-migration.ts";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const inputPaths = process.argv.slice(2);
+const createMigration = process.argv.includes("--migration");
+const inputPaths = process.argv.slice(2).filter((argument) => argument !== "--migration");
 
 if (!inputPaths.length) {
   throw new Error("Pass one or more audit result JSON files to db:seed:build.");
@@ -66,4 +73,33 @@ await mkdir(seedDir, { recursive: true });
 await writeFile(resolve(seedDir, "sources.json"), `${JSON.stringify({ generatedAt: rows[0]?.checkedAt ?? null, sources: rows, talentTargets: talentRows }, null, 2)}\n`);
 await writeFile(resolve(seedDir, "sources.sql"), sql);
 
-process.stdout.write(`Built ${rows.length} sources (${rows.filter((row) => row.postingUrl).length} posting URLs) and ${talentRows.length} Talent targets.\n`);
+let migrationMessage = "";
+if (createMigration) {
+  const migrationDir = resolve(projectRoot, "drizzle");
+  const metaDir = resolve(migrationDir, "meta");
+  const journalPath = resolve(metaDir, "_journal.json");
+  const catalogMigrationFiles = (await readdir(migrationDir))
+    .filter((name) => name === "0001_seed_sources.sql" || /^\d{4}_refresh_sources_.+\.sql$/.test(name))
+    .sort();
+  const catalogSqlHistory = await Promise.all(catalogMigrationFiles.map((name) => readFile(resolve(migrationDir, name), "utf8")));
+  const journal = JSON.parse(await readFile(journalPath, "utf8")) as DrizzleJournal;
+  const plan = planSeedMigration({ journal, catalogSqlHistory, nextSql: sql, now: new Date() });
+
+  if (plan) {
+    const previousIndex = journal.entries.at(-1)?.idx;
+    if (previousIndex === undefined) throw new Error("Cannot create a catalog migration without a Drizzle snapshot.");
+
+    const previousSnapshotPath = resolve(metaDir, `${String(previousIndex).padStart(4, "0")}_snapshot.json`);
+    const previousSnapshot = JSON.parse(await readFile(previousSnapshotPath, "utf8"));
+    const nextSnapshotPath = resolve(metaDir, `${String(plan.snapshotIndex).padStart(4, "0")}_snapshot.json`);
+
+    await writeFile(nextSnapshotPath, `${JSON.stringify(advanceSeedSnapshot(previousSnapshot, randomUUID()), null, 2)}\n`, { flag: "wx" });
+    await writeFile(resolve(migrationDir, plan.fileName), sql, { flag: "wx" });
+    await writeFile(journalPath, `${JSON.stringify(plan.journal, null, 2)}\n`);
+    migrationMessage = ` Created immutable migration ${plan.fileName}.`;
+  } else {
+    migrationMessage = " Catalog SQL already has an immutable migration; no new migration created.";
+  }
+}
+
+process.stdout.write(`Built ${rows.length} sources (${rows.filter((row) => row.postingUrl).length} posting URLs) and ${talentRows.length} Talent targets.${migrationMessage}\n`);
