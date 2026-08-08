@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { publishCatalogArtifacts } from "./catalog-artifact-writer";
 
 const temporaryDirectories: string[] = [];
@@ -39,6 +40,7 @@ describe("publishCatalogArtifacts", () => {
     const input = {
       seedJson: { path: paths.seedJson, content: "new-json" },
       seedSql: { path: paths.seedSql, content: "new-sql" },
+      journalGuard: { path: paths.journal, expectedContent: "old-journal" },
       migration: {
         journal: { path: paths.journal, content: "new-journal" },
         snapshot: { path: paths.snapshot, content: "new-snapshot" },
@@ -66,5 +68,52 @@ describe("publishCatalogArtifacts", () => {
     await expect(readFile(paths.journal, "utf8")).resolves.toBe("new-journal");
     await expect(readFile(paths.snapshot, "utf8")).resolves.toBe("new-snapshot");
     await expect(readFile(paths.migration, "utf8")).resolves.toBe("new-migration");
+  });
+
+  it("serializes concurrent refreshes and rejects a stale journal writer", async () => {
+    const paths = await fixture();
+    let releaseFirst!: () => void;
+    let markSnapshotWritten!: () => void;
+    const holdFirst = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const snapshotWritten = new Promise<void>((resolve) => { markSnapshotWritten = resolve; });
+    const firstInput = {
+      seedJson: { path: paths.seedJson, content: "winner-json" },
+      seedSql: { path: paths.seedSql, content: "winner-sql" },
+      journalGuard: { path: paths.journal, expectedContent: "old-journal" },
+      migration: {
+        journal: { path: paths.journal, content: "winner-journal" },
+        snapshot: { path: paths.snapshot, content: "winner-snapshot" },
+        sql: { path: paths.migration, content: "winner-migration" },
+      },
+      afterStep: async (step: string) => {
+        if (step !== "snapshot") return;
+        markSnapshotWritten();
+        await holdFirst;
+      },
+    };
+    const staleInput = {
+      seedJson: { path: paths.seedJson, content: "stale-json" },
+      seedSql: { path: paths.seedSql, content: "stale-sql" },
+      journalGuard: { path: paths.journal, expectedContent: "old-journal" },
+      migration: {
+        journal: { path: paths.journal, content: "stale-journal" },
+        snapshot: { path: paths.snapshot, content: "stale-snapshot" },
+        sql: { path: paths.migration, content: "stale-migration" },
+      },
+    };
+
+    const first = publishCatalogArtifacts(firstInput);
+    await snapshotWritten;
+    const stale = publishCatalogArtifacts(staleInput);
+    await delay(30);
+    releaseFirst();
+
+    await first;
+    await expect(stale).rejects.toThrow("Catalog journal changed while waiting for the refresh lock");
+    await expect(readFile(paths.seedJson, "utf8")).resolves.toBe("winner-json");
+    await expect(readFile(paths.seedSql, "utf8")).resolves.toBe("winner-sql");
+    await expect(readFile(paths.journal, "utf8")).resolves.toBe("winner-journal");
+    await expect(readFile(paths.snapshot, "utf8")).resolves.toBe("winner-snapshot");
+    await expect(readFile(paths.migration, "utf8")).resolves.toBe("winner-migration");
   });
 });

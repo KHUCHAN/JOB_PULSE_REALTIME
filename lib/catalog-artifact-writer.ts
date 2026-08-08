@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { open, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 
 type Artifact = {
   path: string;
@@ -11,6 +12,10 @@ export type CatalogArtifactStep = "snapshot" | "migration" | "journal" | "seed-j
 type PublishCatalogArtifactsInput = {
   seedJson: Artifact;
   seedSql: Artifact;
+  journalGuard?: {
+    path: string;
+    expectedContent: string;
+  };
   migration?: {
     journal: Artifact;
     snapshot: Artifact;
@@ -38,6 +43,32 @@ const unlinkOptional = async (path: string): Promise<void> => {
 
 const temporaryPath = (path: string): string => `${path}.catalog-${randomUUID()}.tmp`;
 
+const acquireRefreshLock = async (path: string): Promise<() => Promise<void>> => {
+  const deadline = Date.now() + 30_000;
+
+  while (true) {
+    try {
+      const handle = await open(path, "wx");
+      try {
+        await handle.writeFile(`${process.pid}\n`);
+      } catch (error) {
+        await handle.close();
+        await unlinkOptional(path);
+        throw error;
+      }
+
+      return async () => {
+        await handle.close();
+        await unlinkOptional(path);
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (Date.now() >= deadline) throw new Error(`Timed out waiting for catalog refresh lock: ${path}`);
+      await delay(25);
+    }
+  }
+};
+
 const replaceAtomically = async (artifact: Artifact): Promise<void> => {
   const stagedPath = temporaryPath(artifact.path);
   try {
@@ -48,7 +79,7 @@ const replaceAtomically = async (artifact: Artifact): Promise<void> => {
   }
 };
 
-export async function publishCatalogArtifacts({
+async function publishCatalogArtifactsUnlocked({
   seedJson,
   seedSql,
   migration,
@@ -62,6 +93,7 @@ export async function publishCatalogArtifacts({
   const originals = new Map<string, string | null>();
   const staged = new Map<string, string>();
   const created: string[] = [];
+  const published = new Set<string>();
 
   for (const { artifact } of replacements) {
     originals.set(artifact.path, await readOptional(artifact.path));
@@ -87,6 +119,7 @@ export async function publishCatalogArtifacts({
     for (const { artifact, step } of replacements) {
       await rename(staged.get(artifact.path)!, artifact.path);
       staged.delete(artifact.path);
+      published.add(artifact.path);
       await afterStep?.(step);
     }
   } catch (error) {
@@ -100,7 +133,7 @@ export async function publishCatalogArtifacts({
       }
     }
 
-    for (const { artifact } of replacements.reverse()) {
+    for (const { artifact } of replacements.reverse().filter(({ artifact }) => published.has(artifact.path))) {
       try {
         const original = originals.get(artifact.path);
         if (original === null) await unlinkOptional(artifact.path);
@@ -116,5 +149,20 @@ export async function publishCatalogArtifacts({
     throw error;
   } finally {
     await Promise.all([...staged.values()].map(unlinkOptional));
+  }
+}
+
+export async function publishCatalogArtifacts(input: PublishCatalogArtifactsInput): Promise<void> {
+  const releaseLock = await acquireRefreshLock(`${input.seedSql.path}.refresh.lock`);
+  try {
+    if (input.journalGuard) {
+      const currentJournal = await readOptional(input.journalGuard.path);
+      if (currentJournal !== input.journalGuard.expectedContent) {
+        throw new Error("Catalog journal changed while waiting for the refresh lock; rerun the refresh command.");
+      }
+    }
+    await publishCatalogArtifactsUnlocked(input);
+  } finally {
+    await releaseLock();
   }
 }

@@ -72,18 +72,23 @@ const sql = [
 const seedDir = resolve(projectRoot, "db/seed");
 await mkdir(seedDir, { recursive: true });
 const seedJson = `${JSON.stringify({ generatedAt: rows[0]?.checkedAt ?? null, sources: rows, talentTargets: talentRows }, null, 2)}\n`;
+const migrationDir = resolve(projectRoot, "drizzle");
+const metaDir = resolve(migrationDir, "meta");
+const journalPath = resolve(metaDir, "_journal.json");
+const journalContent = await readFile(journalPath, "utf8");
 
 let migrationMessage = "";
 let migrationArtifacts: Parameters<typeof publishCatalogArtifacts>[0]["migration"];
+const journalGuard: Parameters<typeof publishCatalogArtifacts>[0]["journalGuard"] = {
+  path: journalPath,
+  expectedContent: journalContent,
+};
 if (createMigration) {
-  const migrationDir = resolve(projectRoot, "drizzle");
-  const metaDir = resolve(migrationDir, "meta");
-  const journalPath = resolve(metaDir, "_journal.json");
   const catalogMigrationFiles = (await readdir(migrationDir))
     .filter((name) => name === "0001_seed_sources.sql" || /^\d{4}_refresh_sources_.+\.sql$/.test(name))
     .sort();
   const catalogSqlHistory = await Promise.all(catalogMigrationFiles.map((name) => readFile(resolve(migrationDir, name), "utf8")));
-  const journal = JSON.parse(await readFile(journalPath, "utf8")) as DrizzleJournal;
+  const journal = JSON.parse(journalContent) as DrizzleJournal;
   const plan = planSeedMigration({ journal, catalogSqlHistory, nextSql: sql, now: new Date() });
 
   if (plan) {
@@ -95,7 +100,10 @@ if (createMigration) {
     const nextSnapshotPath = resolve(metaDir, `${String(plan.snapshotIndex).padStart(4, "0")}_snapshot.json`);
 
     migrationArtifacts = {
-      journal: { path: journalPath, content: `${JSON.stringify(plan.journal, null, 2)}\n` },
+      journal: {
+        path: journalPath,
+        content: `${JSON.stringify(plan.journal, null, 2)}\n`,
+      },
       snapshot: { path: nextSnapshotPath, content: `${JSON.stringify(advanceSeedSnapshot(previousSnapshot, randomUUID()), null, 2)}\n` },
       sql: { path: resolve(migrationDir, plan.fileName), content: sql },
     };
@@ -108,6 +116,7 @@ if (createMigration) {
 await publishCatalogArtifacts({
   seedJson: { path: resolve(seedDir, "sources.json"), content: seedJson },
   seedSql: { path: resolve(seedDir, "sources.sql"), content: sql },
+  journalGuard,
   migration: migrationArtifacts,
 });
 
