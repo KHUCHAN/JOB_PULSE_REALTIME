@@ -42,6 +42,11 @@ export class D1CrawlStore implements CrawlStore {
     const id = crypto.randomUUID();
     const startedAt = new Date().toISOString();
     await this.db.prepare(`
+      UPDATE crawl_runs
+      SET status = 'failed', error = 'Superseded by a later crawl attempt.', finished_at = ?
+      WHERE source_id = ? AND status = 'running'
+    `).bind(startedAt, source.id).run();
+    await this.db.prepare(`
       INSERT INTO crawl_runs (id, source_id, scheduled_for, started_at, status)
       VALUES (?, ?, ?, ?, 'running')
     `).bind(id, source.id, scheduledFor, startedAt).run();
