@@ -89,6 +89,13 @@ export const jobs = sqliteTable("jobs", {
   uniqueIndex("jobs_source_url_unique").on(table.sourceId, table.officialUrl),
   index("jobs_status_first_seen_idx").on(table.status, table.firstSeenAt),
   index("jobs_company_idx").on(table.company),
+  index("jobs_status_company_idx").on(table.status, table.company),
+  index("jobs_status_arrangement_idx").on(table.status, table.arrangement),
+  index("jobs_status_employment_type_idx").on(table.status, table.employmentType),
+  index("jobs_status_published_at_idx").on(table.status, table.publishedAt),
+  index("jobs_location_country_state_city_idx").on(table.locationCountry, table.locationState, table.locationCity),
+  index("jobs_experience_level_idx").on(table.experienceLevel),
+  index("jobs_salary_currency_min_max_idx").on(table.salaryCurrency, table.salaryMin, table.salaryMax),
 ]);
 
 export const sourceFacets = sqliteTable("source_facets", {

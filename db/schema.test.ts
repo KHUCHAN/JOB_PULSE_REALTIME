@@ -1,4 +1,5 @@
 import { getTableColumns } from "drizzle-orm";
+import { getTableConfig } from "drizzle-orm/sqlite-core";
 import { describe, expect, it } from "vitest";
 import * as schema from "./schema";
 
@@ -22,5 +23,22 @@ describe("filterable job schema", () => {
 
   it("stores a per-source facet generation lease for overlap-safe cleanup", () => {
     expect(Object.keys(getTableColumns(schema.sources))).toContain("facetSyncGeneration");
+  });
+
+  it("indexes the structured equality and range predicates used by job search", () => {
+    const indexes = getTableConfig(schema.jobs).indexes.map((entry) => [
+      entry.config.name,
+      entry.config.columns.map((column) => "name" in column ? String(column.name) : String(column)),
+    ]);
+
+    expect(indexes).toEqual(expect.arrayContaining([
+      ["jobs_status_company_idx", ["status", "company"]],
+      ["jobs_status_arrangement_idx", ["status", "arrangement"]],
+      ["jobs_status_employment_type_idx", ["status", "employment_type"]],
+      ["jobs_status_published_at_idx", ["status", "published_at"]],
+      ["jobs_location_country_state_city_idx", ["location_country", "location_state", "location_city"]],
+      ["jobs_experience_level_idx", ["experience_level"]],
+      ["jobs_salary_currency_min_max_idx", ["salary_currency", "salary_min", "salary_max"]],
+    ]));
   });
 });

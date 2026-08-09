@@ -46,6 +46,7 @@ export function sites(): Plugin {
             "0028_omniscient_puma.sql",
             "0029_nice_korvac.sql",
             "0030_job_search_fts.sql",
+            "0031_structured_job_filter_indexes.sql",
           ],
         });
       }

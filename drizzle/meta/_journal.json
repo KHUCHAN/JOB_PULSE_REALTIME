@@ -211,6 +211,13 @@
       "when": 1786276506907,
       "tag": "0029_nice_korvac",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1786316959093,
+      "tag": "0031_structured_job_filter_indexes",
+      "breakpoints": true
     }
   ]
 }
