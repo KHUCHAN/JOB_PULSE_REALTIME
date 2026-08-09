@@ -41,6 +41,8 @@ yarn-error.log*
 /dist/
 /.wrangler/
 /outputs/
+/output/playwright/
+/.codex_tmp/
 /work/
 /.worktrees/
 

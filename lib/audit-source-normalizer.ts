@@ -13,6 +13,7 @@ export interface AuditSourceRecord {
   evidenceUrl: string;
   evidenceNote: string;
   checkedAt: string;
+  adapter?: NormalizedSourceRecord["adapter"];
 }
 
 export interface NormalizedSourceRecord {
@@ -64,7 +65,7 @@ export function normalizeAuditRecord(record: AuditSourceRecord): NormalizedSourc
     postingUrl,
     talentUrl,
     channel: record.channel,
-    adapter: detectAdapter(postingUrl, talentUrl),
+    adapter: record.adapter ?? detectAdapter(postingUrl, talentUrl),
     verification: record.verification.toLowerCase(),
     confidence: record.confidence.toLowerCase(),
     resumeUpload,
