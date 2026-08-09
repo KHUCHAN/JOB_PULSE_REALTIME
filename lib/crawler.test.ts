@@ -224,4 +224,31 @@ describe("crawlSource", () => {
       jobs: [expect.objectContaining({ title: "Data Analyst" })],
     }));
   });
+
+  it("extracts public Phenom jobs embedded in a careers search page", async () => {
+    const fetcher: typeof fetch = async () => new Response(`
+      <script>var phApp = phApp || {}; phApp.ddo = {"eagerLoadRefineSearch":{"data":{"totalHits":2,"jobs":[
+        {"title":"AI Engineer","jobId":"R42","location":"Remote, United States","type":"Full time","descriptionTeaser":"Build useful AI.","applyUrl":"https://jobs.example/apply/R42","postedDate":"2026-08-08T00:00:00.000+0000"},
+        {"title":"Incomplete"}
+      ]}}};</script>
+    `, { status: 200 });
+
+    const result = await crawlSource({
+      id: "phenom-acme",
+      company: "Acme",
+      postingUrl: "https://careers.example/search-results",
+      adapter: "phenom",
+    }, fetcher, new Date("2026-08-08T12:30:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      jobs: [expect.objectContaining({
+        externalId: "R42",
+        title: "AI Engineer",
+        arrangement: "remote",
+        officialUrl: "https://jobs.example/apply/R42",
+      })],
+    }));
+  });
 });

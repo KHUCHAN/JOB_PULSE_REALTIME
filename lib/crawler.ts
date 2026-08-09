@@ -56,6 +56,18 @@ type LeverJob = {
   descriptionPlain?: string;
 };
 
+type PhenomJob = {
+  title?: string;
+  jobId?: string;
+  jobSeqNo?: string;
+  location?: string;
+  cityStateCountry?: string;
+  type?: string;
+  descriptionTeaser?: string;
+  applyUrl?: string;
+  postedDate?: string;
+};
+
 const REQUEST_TIMEOUT_MS = 15_000;
 
 const fetchWithTimeout = async (
@@ -204,6 +216,70 @@ const jsonLdScripts = (html: string): JsonLdValue[] => {
   return values;
 };
 
+const embeddedJsonObject = (html: string, marker: string): JsonLdValue | null => {
+  const start = html.indexOf(marker);
+  if (start < 0) return null;
+  const objectStart = start + marker.length;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = objectStart; index < html.length; index += 1) {
+    const character = html[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') inString = true;
+    else if (character === "{") depth += 1;
+    else if (character === "}" && --depth === 0) {
+      try {
+        const value = JSON.parse(html.slice(objectStart, index + 1)) as unknown;
+        return value && typeof value === "object" ? value as JsonLdValue : null;
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+};
+
+const phenomJobs = (html: string, source: CrawlSource): SourceCrawlResult | null => {
+  const payload = embeddedJsonObject(html, "phApp.ddo = ");
+  const eager = payload?.eagerLoadRefineSearch;
+  if (!eager || typeof eager !== "object") return null;
+  const data = (eager as JsonLdValue).data;
+  if (!data || typeof data !== "object") return null;
+  const jobs = (data as JsonLdValue).jobs;
+  if (!Array.isArray(jobs)) return null;
+  const totalHits = (data as JsonLdValue).totalHits;
+  const normalizedJobs = jobs.flatMap((value) => {
+    if (!value || typeof value !== "object") return [];
+    const job = value as PhenomJob;
+    if (!job.title || !job.applyUrl) return [];
+    return [{
+      externalId: job.jobId ?? job.jobSeqNo ?? null,
+      title: job.title,
+      company: source.company,
+      location: job.location ?? job.cityStateCountry ?? null,
+      arrangement: job.location?.toLowerCase().includes("remote") ? "remote" as const : "unknown" as const,
+      employmentType: job.type ?? null,
+      summary: plainText(job.descriptionTeaser),
+      officialUrl: job.applyUrl,
+      publishedAt: normalizedDate(job.postedDate),
+    }];
+  });
+  return {
+    status: "succeeded",
+    responseStatus: 200,
+    completeListing: typeof totalHits === "number" && totalHits <= normalizedJobs.length,
+    jobs: normalizedJobs,
+    error: null,
+  };
+};
+
 const jobPostingNodes = (value: JsonLdValue): JsonLdValue[] => {
   const nodes = [value, ...(Array.isArray(value["@graph"]) ? value["@graph"] : [])]
     .filter((node): node is JsonLdValue => Boolean(node) && typeof node === "object");
@@ -271,6 +347,8 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch): Promise<
       };
     }
     const html = await response.text();
+    const phenom = phenomJobs(html, source);
+    if (phenom) return phenom;
     const discovered = discoverAts(html, source.postingUrl);
     if (discovered) {
       const discoveredResult = discovered.kind === "workday"
