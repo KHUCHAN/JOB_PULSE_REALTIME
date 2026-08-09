@@ -25,6 +25,38 @@ describe("live D1 view mapping", () => {
     });
   });
 
+  it("preserves absent structured fields while parsing stored JSON arrays", () => {
+    const job = mapJob({
+      id: "job-2",
+      source_id: "source-1",
+      company: "Acme",
+      title: "2027 Software Engineering Intern",
+      location: "Seattle, WA",
+      arrangement: "unknown",
+      summary: "Build useful things.",
+      official_url: "https://acme.example/jobs/2",
+      first_seen_at: "2026-08-09T00:00:00.000Z",
+      last_seen_at: "2026-08-09T02:00:00.000Z",
+      review_state: "saved",
+      employment_type: null,
+      department: null,
+      salary_min: null,
+      salary_max: null,
+      skills: '["TypeScript", "SQL"]',
+      languages: null,
+    });
+
+    expect(job).toMatchObject({
+      employmentType: null,
+      department: null,
+      salaryMin: null,
+      salaryMax: null,
+      skills: ["TypeScript", "SQL"],
+      languages: [],
+      arrangement: "onsite",
+    });
+  });
+
   it("derives source health from the latest crawl outcome", () => {
     expect(sourceHealth(true, "succeeded")).toBe("healthy");
     expect(sourceHealth(true, "blocked")).toBe("blocked");
