@@ -105,6 +105,17 @@ type EightfoldPosition = {
   t_create?: number;
 };
 
+type AdpJob = {
+  clientRequisitionID?: string;
+  reqId?: string;
+  publishedJobTitle?: string;
+  jobTitle?: string;
+  jobDescription?: string;
+  postingDate?: string;
+  workLevelCode?: string;
+  requisitionLocations?: Array<{ address?: { cityName?: string; countrySubdivisionLevel1?: { longName?: string }; country?: { longName?: string } } }>;
+};
+
 type PhenomJob = {
   title?: string;
   jobId?: string;
@@ -783,6 +794,75 @@ async function crawlEightfold(source: CrawlSource, fetcher: typeof fetch): Promi
   }
 }
 
+async function crawlAdpMyJobs(source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> {
+  const page = new URL(source.postingUrl);
+  const slug = page.pathname.split("/").filter(Boolean)[0];
+  if (!slug) return { status: "failed", responseStatus: null, completeListing: false, jobs: [], error: "ADP MyJobs career-site slug is missing." };
+  let responseStatus: number | null = null;
+  try {
+    const siteResponse = await fetchWithTimeout(fetcher, `${page.origin}/public/staffing/v1/career-site/${slug}`, {
+      headers: { accept: "application/json", origin: page.origin, referer: `${page.origin}/` },
+    });
+    responseStatus = siteResponse.status;
+    if (!siteResponse.ok) throw new Error(`ADP career-site API returned HTTP ${siteResponse.status}.`);
+    const site = await siteResponse.json() as { myJobsToken?: string };
+    if (!site.myJobsToken) throw new Error("ADP career-site API did not return a public MyJobs token.");
+    const requisitions: AdpJob[] = [];
+    let total = Number.POSITIVE_INFINITY;
+    while (requisitions.length < total) {
+      const endpoint = new URL("https://my.adp.com/myadp_prefix/mycareer/public/staffing/v1/job-requisitions/apply-custom-filters");
+      endpoint.searchParams.set("$orderby", "postingDate desc");
+      endpoint.searchParams.set("$select", "reqId,jobTitle,publishedJobTitle,type,jobDescription,jobQualifications,workLocations,workLevelCode,clientRequisitionID,postingDate,requisitionLocations");
+      endpoint.searchParams.set("$top", "100");
+      endpoint.searchParams.set("$skip", String(requisitions.length));
+      endpoint.searchParams.set("tz", "America/Los_Angeles");
+      const response = await fetchWithTimeout(fetcher, endpoint, {
+        headers: {
+          accept: "application/json, text/plain, */*",
+          "accept-language": "en-US",
+          myjobstoken: site.myJobsToken,
+          origin: page.origin,
+          referer: `${page.origin}/`,
+          rolecode: "manager",
+        },
+      });
+      responseStatus = response.status;
+      if (!response.ok) throw new Error(`ADP requisitions API returned HTTP ${response.status}.`);
+      const payload = await response.json() as { count?: number; jobRequisitions?: AdpJob[] };
+      const additions = payload.jobRequisitions ?? [];
+      total = payload.count ?? requisitions.length + additions.length;
+      if (additions.length === 0) break;
+      requisitions.push(...additions);
+    }
+    const uniqueRequisitions = [...new Map(requisitions.map((job) => [job.clientRequisitionID ?? job.reqId, job])).values()];
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: requisitions.length >= total,
+      jobs: uniqueRequisitions.flatMap((job) => {
+        const id = job.clientRequisitionID ?? job.reqId;
+        const title = job.publishedJobTitle ?? job.jobTitle;
+        if (!id || !title) return [];
+        const location = job.requisitionLocations?.map(({ address }) => [address?.cityName, address?.countrySubdivisionLevel1?.longName, address?.country?.longName].filter(Boolean).join(", ")).filter(Boolean).join("; ") || null;
+        return [{
+          externalId: id,
+          title,
+          company: source.company,
+          location,
+          arrangement: /remote/i.test(location ?? "") ? "remote" as const : "unknown" as const,
+          employmentType: job.workLevelCode ?? null,
+          summary: plainText(job.jobDescription),
+          officialUrl: `${page.origin}/${slug}/cx/job-details?reqId=${encodeURIComponent(id)}`,
+          publishedAt: normalizedDate(job.postingDate),
+        }];
+      }),
+      error: null,
+    };
+  } catch (error) {
+    return { status: responseStatus && [401, 403, 429].includes(responseStatus) ? "blocked" : "failed", responseStatus, completeListing: false, jobs: [], error: error instanceof Error ? error.message : "Unknown ADP MyJobs crawler error." };
+  }
+}
+
 async function crawlTesla(source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> {
   const endpoint = "https://www.tesla.com/cua-api/apps/careers/state";
   try {
@@ -904,6 +984,7 @@ export async function crawlSource(source: CrawlSource, fetcher: typeof fetch, no
   void now;
   if (source.id === "p5-1077-tesla" || source.company === "Tesla") return crawlTesla(source, fetcher);
   if (new URL(source.postingUrl).hostname.endsWith("eightfold.ai")) return crawlEightfold(source, fetcher);
+  if (new URL(source.postingUrl).hostname === "myjobs.adp.com") return crawlAdpMyJobs(source, fetcher);
   const board = source.adapter === "greenhouse" ? greenhouseBoard(source.postingUrl) : null;
   const workday = source.adapter === "workday" ? workdayFeed(source.postingUrl) : null;
   if (workday) return crawlWorkday(source, workday, fetcher);

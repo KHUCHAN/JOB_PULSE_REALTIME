@@ -129,6 +129,31 @@ describe("crawlSource", () => {
     expect(requests).toContain("https://acme.eightfold.ai/api/apply/v2/jobs?start=1&num=10&sort_by=relevance");
   });
 
+  it("fully paginates an ADP MyJobs public careers API", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === "https://myjobs.adp.com/public/staffing/v1/career-site/acme") {
+        return new Response(JSON.stringify({ myJobsToken: "public-token" }), { status: 200 });
+      }
+      const skip = Number(new URL(url).searchParams.get("$skip") ?? 0);
+      const job = skip === 0
+        ? { clientRequisitionID: "101", publishedJobTitle: "Engineer", jobTitle: "Engineer", postingDate: "2026-08-08T12:00:00Z", workLevelCode: "Full-time", requisitionLocations: [{ address: { cityName: "Austin", countrySubdivisionLevel1: { longName: "Texas" }, country: { longName: "United States" } } }] }
+        : { clientRequisitionID: "102", publishedJobTitle: "Designer", jobTitle: "Designer", postingDate: "2026-08-07T12:00:00Z", workLevelCode: "Full-time", requisitionLocations: [] };
+      return new Response(JSON.stringify({ count: 2, jobRequisitions: [job] }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+
+    const result = await crawlSource({ id: "acme", company: "Acme", postingUrl: "https://myjobs.adp.com/acme", adapter: "custom" }, fetcher, new Date());
+
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs.map((job) => job.officialUrl)).toEqual([
+      "https://myjobs.adp.com/acme/cx/job-details?reqId=101",
+      "https://myjobs.adp.com/acme/cx/job-details?reqId=102",
+    ]);
+    expect(requests.some((url) => url.includes("%24skip=1"))).toBe(true);
+  });
+
   it("uses the public Greenhouse board API and normalizes its open roles", async () => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input) => {
