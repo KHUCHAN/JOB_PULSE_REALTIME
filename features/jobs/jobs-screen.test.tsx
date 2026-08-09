@@ -77,4 +77,31 @@ describe("JobsScreen", () => {
     await waitFor(() => expect(window.location.search).toBe("?pageSize=1"));
     expect(screen.getByText("Page 1 of 12")).toBeInTheDocument();
   });
+
+  it("writes structured city, state, and country filters to the URL", async () => {
+    const user = userEvent.setup();
+    render(<FixtureProvider><JobsScreen initialQuery="" /></FixtureProvider>);
+
+    await user.click(screen.getByRole("button", { name: /More filters/ }));
+    await user.type(screen.getByLabelText("City"), "San Francisco");
+    await user.type(screen.getByLabelText("State"), "CA");
+    await user.type(screen.getByLabelText("Country"), "US");
+
+    await waitFor(() => expect(window.location.search).toBe("?city=San+Francisco&state=CA&country=US"));
+  });
+
+  it("focuses the advanced sheet and returns focus after Escape", async () => {
+    const user = userEvent.setup();
+    render(<FixtureProvider><JobsScreen initialQuery="" /></FixtureProvider>);
+    const moreFilters = screen.getByRole("button", { name: /More filters/ });
+
+    moreFilters.focus();
+    await user.click(moreFilters);
+    const close = await screen.findByRole("button", { name: "Close more filters" });
+    expect(close).toHaveFocus();
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "More filters" })).not.toBeInTheDocument());
+    expect(moreFilters).toHaveFocus();
+  });
 });

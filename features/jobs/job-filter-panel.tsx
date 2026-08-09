@@ -1,6 +1,7 @@
 "use client";
 
 import { Search, SlidersHorizontal, X } from "lucide-react";
+import { useEffect, useRef } from "react";
 import type { ReactElement } from "react";
 import type { JobFilterOption, JobFilterOptions, JobFilters, JobSeason } from "../../lib/domain";
 import { activeFilterCount } from "../../lib/job-filter-query";
@@ -86,6 +87,34 @@ export function JobFilterPanel({
   const seasons = filters.seasons ?? [];
   const recruitingYears = [...new Set(["2027", ...optionValues(options?.recruitingYears), ...(filters.recruitingYears ?? []).map(String)])];
   const setTextArray = (key: keyof JobFilters, value: string) => onChange({ [key]: value.trim() ? [value] : [] });
+  const moreFiltersRef = useRef<HTMLButtonElement>(null);
+  const closeFiltersRef = useRef<HTMLButtonElement>(null);
+  const restoreFocusRef = useRef(false);
+
+  const closeFilters = () => {
+    restoreFocusRef.current = true;
+    onAdvancedOpenChange(false);
+  };
+
+  useEffect(() => {
+    if (!advancedOpen) {
+      if (restoreFocusRef.current) {
+        restoreFocusRef.current = false;
+        moreFiltersRef.current?.focus();
+      }
+      return;
+    }
+
+    closeFiltersRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        restoreFocusRef.current = true;
+        onAdvancedOpenChange(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [advancedOpen, onAdvancedOpenChange]);
 
   return (
     <section className="job-filter-panel" aria-label="Job filters">
@@ -116,7 +145,7 @@ export function JobFilterPanel({
             {optionValues(options?.employmentTypes).map((option) => <option key={option} value={option}>{option}</option>)}
           </select>
         </div>
-        <button className="button secondary more-filters-button" type="button" aria-expanded={advancedOpen} onClick={() => onAdvancedOpenChange(true)}>
+        <button ref={moreFiltersRef} className="button secondary more-filters-button" type="button" aria-expanded={advancedOpen} onClick={() => onAdvancedOpenChange(true)}>
           <SlidersHorizontal size={16} aria-hidden="true" /> More filters{activeFilterCount(filters) ? ` (${activeFilterCount(filters)})` : ""}
         </button>
       </div>
@@ -125,7 +154,7 @@ export function JobFilterPanel({
         <aside className="filter-sheet" role="dialog" aria-modal="false" aria-label="More filters">
           <header>
             <div><span>Structured search</span><h2>More filters</h2></div>
-            <button className="icon-button" type="button" aria-label="Close more filters" onClick={() => onAdvancedOpenChange(false)}><X aria-hidden="true" /></button>
+            <button ref={closeFiltersRef} className="icon-button" type="button" aria-label="Close more filters" onClick={closeFilters}><X aria-hidden="true" /></button>
           </header>
           <div className="filter-sheet-body">
             <div className="advanced-filter-grid">
@@ -146,6 +175,9 @@ export function JobFilterPanel({
               </div></fieldset>
               <div className="filter-control"><label htmlFor="posted-after">Posted after</label><input id="posted-after" type="date" value={filters.postedAfter ?? ""} onChange={(event) => onChange({ postedAfter: event.target.value })} /></div>
               <div className="filter-control"><label htmlFor="posted-before">Posted before</label><input id="posted-before" type="date" value={filters.postedBefore ?? ""} onChange={(event) => onChange({ postedBefore: event.target.value })} /></div>
+              <DatalistField id="city" label="City" value={filters.cities?.[0] ?? ""} options={options?.cities} onChange={(value) => setTextArray("cities", value)} />
+              <DatalistField id="state" label="State" value={filters.states?.[0] ?? ""} options={options?.states} onChange={(value) => setTextArray("states", value)} />
+              <DatalistField id="country" label="Country" value={filters.countries?.[0] ?? ""} options={options?.countries} onChange={(value) => setTextArray("countries", value)} />
               <DatalistField id="department" label="Department" value={filters.departments?.[0] ?? ""} options={options?.departments} onChange={(value) => setTextArray("departments", value)} />
               <DatalistField id="team" label="Team" value={filters.teams?.[0] ?? ""} options={options?.teams} onChange={(value) => setTextArray("teams", value)} />
               <DatalistField id="business-unit" label="Business unit" value={filters.businessUnits?.[0] ?? ""} options={options?.businessUnits} onChange={(value) => setTextArray("businessUnits", value)} />
