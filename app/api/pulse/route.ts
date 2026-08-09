@@ -16,6 +16,11 @@ import { runDueCrawls } from "../../../lib/crawl-runner";
 import { ensureCatalogSeeded, type CatalogSeed } from "../../../lib/catalog-bootstrap";
 import { crawlBatchOptions } from "../../../lib/crawl-batch-options";
 import { parseJobFilterParams } from "../../../lib/job-filter-query";
+import {
+  InvalidJobFilterError,
+  validateExplicitJobFilterValues,
+} from "../../../lib/job-filter-validation";
+import { bindJobSearchStatements } from "../../../lib/job-search-execution";
 import { buildJobSearchPlan } from "../../../lib/job-search-sql";
 import {
   mapCrawlActivity,
@@ -45,8 +50,6 @@ const parseJsonArray = (value: string | null): string[] => {
   }
 };
 
-class InvalidJobFilterError extends Error {}
-
 const filterOptionKeys = [
   "companies", "locations", "cities", "states", "countries", "arrangements",
   "employmentTypes", "recruitingYears", "programTypes", "seasons", "departments",
@@ -59,40 +62,6 @@ const filterOptionKeys = [
 const emptyFilterOptions = (): JobFilterOptions => Object.fromEntries(
   filterOptionKeys.map((key) => [key, []]),
 ) as unknown as JobFilterOptions;
-
-const validDate = (value: string): boolean => {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const parsed = new Date(`${value}T00:00:00.000Z`);
-  return !Number.isNaN(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value;
-};
-
-const validateExplicitFilterValues = (params: URLSearchParams) => {
-  const integers: Array<[string, number, number]> = [
-    ["page", 1, Number.MAX_SAFE_INTEGER],
-    ["pageSize", 1, 100],
-  ];
-  for (const [name, minimum, maximum] of integers) {
-    const value = params.get(name);
-    if (value !== null && (!/^\d+$/.test(value) || Number(value) < minimum || Number(value) > maximum)) {
-      throw new InvalidJobFilterError(`Invalid ${name}.`);
-    }
-  }
-  for (const value of params.getAll("year").flatMap((item) => item.split(","))) {
-    if (!/^\d{4}$/.test(value.trim()) || Number(value) < 2000 || Number(value) > 2100) {
-      throw new InvalidJobFilterError("Invalid year.");
-    }
-  }
-  for (const name of ["salaryMin", "salaryMax"]) {
-    const value = params.get(name);
-    if (value !== null && (!/^\d+(?:\.\d+)?$/.test(value) || !Number.isFinite(Number(value)))) {
-      throw new InvalidJobFilterError(`Invalid ${name}.`);
-    }
-  }
-  for (const name of ["postedAfter", "postedBefore"]) {
-    const value = params.get(name);
-    if (value !== null && !validDate(value)) throw new InvalidJobFilterError(`Invalid ${name}.`);
-  }
-};
 
 type FilterOptionRow = Pick<JobViewRow,
   | "company" | "location" | "arrangement" | "employment_type" | "title"
@@ -169,12 +138,14 @@ async function availableFilterOptions(): Promise<JobFilterOptions> {
 }
 
 async function jobsFor(url: URL, includeAvailableFilters = true): Promise<JobSearchResult> {
-  validateExplicitFilterValues(url.searchParams);
+  validateExplicitJobFilterValues(url.searchParams);
   const filters: JobFilters = parseJobFilterParams(url.searchParams);
   const plan = buildJobSearchPlan(filters);
+  const database = db();
+  const statements = bindJobSearchStatements(database.prepare.bind(database), plan);
   const [pageResult, countResult, availableFilters] = await Promise.all([
-    db().prepare(plan.pageSql).bind(...plan.bindings, plan.limit, plan.offset).all<JobViewRow>(),
-    db().prepare(plan.countSql).bind(...plan.bindings).first<{ total: number }>(),
+    statements.page.all<JobViewRow>(),
+    statements.count.first<{ total: number }>(),
     includeAvailableFilters ? availableFilterOptions() : Promise.resolve(emptyFilterOptions()),
   ]);
   return {

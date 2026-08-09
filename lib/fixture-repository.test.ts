@@ -35,6 +35,14 @@ describe("fixture repository", () => {
     expect(result.availableFilters.companies).toContainEqual({ value: "Stripe", count: 1 });
   });
 
+  it("treats City, ST fixture locations as United States country facets", async () => {
+    const repository = createFixtureRepository();
+    const result = await repository.searchJobs({ countries: ["US"] });
+
+    expect(result.total).toBe(12);
+    expect(result.availableFilters.countries).toEqual([{ value: "US", count: 12 }]);
+  });
+
   it("creates a demo crawl event without a network result", async () => {
     const repository = createFixtureRepository();
     const event = await repository.simulateCrawl();

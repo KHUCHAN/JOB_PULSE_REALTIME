@@ -45,7 +45,7 @@ const matchesArray = (values: string[] | undefined, candidates: string[]): boole
 const locationParts = (location: string) => {
   const [city = "", stateOrCountry = ""] = location.split(",").map((value) => value.trim());
   const state = /^[A-Z]{2}$/i.test(stateOrCountry) ? stateOrCountry : "";
-  const country = state === "US" || /united states|\bUS\b/i.test(location) ? "US" : "";
+  const country = state || /united states|\bUS\b/i.test(location) ? "US" : "";
   return { city, state, country };
 };
 
