@@ -11,7 +11,7 @@ export interface JobSearchPlan {
 
 const asValues = (values: string[] | undefined): string[] => {
   const seen = new Set<string>();
-  return (values ?? []).flatMap((value) => value.split(","))
+  return (values ?? [])
     .map((value) => value.trim().toLocaleLowerCase())
     .filter((value) => Boolean(value) && !seen.has(value) && Boolean(seen.add(value)));
 };

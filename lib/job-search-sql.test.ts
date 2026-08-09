@@ -1,6 +1,28 @@
+import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { defaultJobFilters } from "./job-filter-query";
 import { buildJobSearchPlan } from "./job-search-sql";
+
+const sqliteLiteral = (value: unknown): string => typeof value === "number"
+  ? String(value)
+  : `'${String(value).replaceAll("'", "''")}'`;
+
+const executePlan = (sql: string, bindings: unknown[], limit?: number, offset?: number): unknown[] => {
+  const parameters = [...bindings, ...(limit === undefined ? [] : [limit, offset ?? 0])]
+    .map((value, index) => `.parameter set ?${index + 1} ${sqliteLiteral(value)}`)
+    .join("\n");
+  const output = execFileSync("sqlite3", ["-json", "-batch", ":memory:"], {
+    encoding: "utf8",
+    input: [
+      "CREATE TABLE jobs (id TEXT NOT NULL, company TEXT NOT NULL, official_url TEXT NOT NULL, status TEXT NOT NULL, first_seen_at TEXT NOT NULL);",
+      "INSERT INTO jobs VALUES ('older-duplicate', 'Acme, Inc.', 'https://acme.example/jobs/1', 'open', '2026-08-01T00:00:00.000Z'), ('newer-duplicate', 'Acme, Inc.', 'https://acme.example/jobs/1', 'open', '2026-08-03T00:00:00.000Z'), ('second-page', 'Acme, Inc.', 'https://acme.example/jobs/2', 'open', '2026-08-02T00:00:00.000Z'), ('not-a-match', 'Acme', 'https://acme.example/jobs/3', 'open', '2026-08-04T00:00:00.000Z');",
+      ".parameter init",
+      parameters,
+      `${sql};`,
+    ].join("\n"),
+  });
+  return JSON.parse(output) as unknown[];
+};
 
 describe("parameterized job search SQL", () => {
   it("builds title-only 2027 internship and co-op predicates", () => {
@@ -67,5 +89,24 @@ describe("parameterized job search SQL", () => {
 
     expect(plan.pageSql).toContain("LIKE ? ESCAPE '\\'");
     expect(plan.bindings).toEqual(["%100\\%\\_remote%"]);
+  });
+
+  it("executes comma-containing company selections atomically across deduplicated pages", () => {
+    const filters = {
+      ...defaultJobFilters,
+      companies: ["Acme, Inc."],
+      pageSize: 1,
+    };
+    const firstPage = buildJobSearchPlan({ ...filters, page: 1 });
+    const secondPage = buildJobSearchPlan({
+      ...filters,
+      page: 2,
+    });
+
+    expect(executePlan(firstPage.pageSql, firstPage.bindings, firstPage.limit, firstPage.offset))
+      .toMatchObject([{ id: "newer-duplicate" }]);
+    expect(executePlan(secondPage.pageSql, secondPage.bindings, secondPage.limit, secondPage.offset))
+      .toMatchObject([{ id: "second-page" }]);
+    expect(executePlan(firstPage.countSql, firstPage.bindings)).toEqual([{ total: 2 }]);
   });
 });
