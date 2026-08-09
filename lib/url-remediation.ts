@@ -1,13 +1,28 @@
 const ATS_HOST = /(?:greenhouse\.io|lever\.co|myworkdayjobs\.com|myworkdaysite\.com|smartrecruiters\.com|ashbyhq\.com|icims\.com|jobvite\.com|phenompeople\.com)/i;
 const JOB_TEXT = /\b(?:jobs?|careers?|opportunities|open (?:positions|roles)|join (?:our )?team|search roles?)\b/i;
-const JOB_PATH = /\/(?:jobs?|careers?|opportunities|search-results|job-search|open-positions)(?:\/|$|[?#-])/i;
+const JOB_PATH = /\/(?:jobs?|careers?|opportunities|search-results|job-search|open-positions|join-us)(?:\/|$|[?#-])/i;
 const USER_ONLY = /(?:job-?alerts?|talent-?community|introduceyourself|sign[_-]?in|\/login|\/apply(?:[/?#]|$))/i;
 const JOB_DETAIL = /(?:\/(?:job|jobs)\/[^/?#]+(?:\/[^/?#]+)?(?:[?#]|$)|[?&](?:pid|jobid|jobseqno|gh_jid)=)/i;
 
 export type BrowserLink = { href: string; text: string };
 
+export const unwrapSearchResultUrl = (href: string): string => {
+  try {
+    const url = new URL(href);
+    if (!/(?:^|\.)bing\.com$/i.test(url.hostname)) return href;
+    const encoded = url.searchParams.get("u");
+    if (!encoded?.startsWith("a1")) return href;
+    const base64 = encoded.slice(2).replace(/-/g, "+").replace(/_/g, "/");
+    const decoded = Buffer.from(base64, "base64").toString("utf8");
+    return /^https?:\/\//i.test(decoded) ? decoded : href;
+  } catch {
+    return href;
+  }
+};
+
 const COMPANY_STOP_WORDS = new Set(["company", "corporation", "corp", "group", "holdings", "holding", "international", "services", "service", "technologies", "technology", "financial", "health", "healthcare", "bank", "systems", "system", "united", "america", "american"]);
 const NON_LISTING_PATH = /(?:career-areas?|early-careers?|students?|university|\/blog(?:\/|$)|jobcart|job-seeker-resources|career-progression|working-at|talent-community|jointalentcommunity|\/bca(?:\/|$)|loans?)/i;
+const THIRD_PARTY_AGGREGATOR = /(?:^|\.)(?:indeed\.com|glassdoor\.com|linkedin\.com|ziprecruiter\.com|gotocareer\.io|ev\.careers)$/i;
 
 export const detectUrlAdapter = (url: string, resourceUrls: string[] = []): "greenhouse" | "lever" | "workday" | "icims" | "phenom" | "custom" => {
   const value = [url, ...resourceUrls].join(" ").toLowerCase();
@@ -66,9 +81,16 @@ export const isSafeCareerRecommendation = (company: string, originalUrl: string,
   } catch {
     return false;
   }
+  if (THIRD_PARTY_AGGREGATOR.test(recommended.hostname)) return false;
   if (NON_LISTING_PATH.test(`${recommended.pathname}${recommended.search}`)) return false;
   if (JOB_DETAIL.test(`${recommended.pathname}${recommended.search}`) && !/\/jobs?\/search(?:[/?#]|$)/i.test(recommended.pathname)) return false;
   if (recommended.origin === original.origin) return JOB_PATH.test(`${recommended.pathname}${recommended.search}`) || /^(?:jobs?|careers?)\./i.test(recommended.hostname);
+
+  const originalRoot = original.hostname.split(".").slice(-2).join(".");
+  const recommendedRoot = recommended.hostname.split(".").slice(-2).join(".");
+  if (originalRoot === recommendedRoot) {
+    return JOB_PATH.test(`${recommended.pathname}${recommended.search}`) || /^(?:jobs?|careers?)\./i.test(recommended.hostname);
+  }
 
   const tokens = company.split(/[^A-Za-z0-9]+/)
     .filter((token) => (token.length >= 4 || (token.length >= 3 && token === token.toUpperCase())) && !COMPANY_STOP_WORDS.has(token.toLowerCase()))
@@ -78,5 +100,6 @@ export const isSafeCareerRecommendation = (company: string, originalUrl: string,
   if (!companyMatch) return false;
   return ATS_HOST.test(recommended.hostname)
     || /^(?:jobs?|careers?|talent)\./i.test(recommended.hostname)
+    || /careers?/i.test(recommended.hostname)
     || JOB_PATH.test(`${recommended.pathname}${recommended.search}`);
 };

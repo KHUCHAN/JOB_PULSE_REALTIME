@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { chromium, type Page } from "playwright";
-import { careerCandidates, detectUrlAdapter, type BrowserLink } from "../lib/url-remediation.ts";
+import { careerCandidates, detectUrlAdapter, isSafeCareerRecommendation, unwrapSearchResultUrl, type BrowserLink } from "../lib/url-remediation.ts";
 
 type SeedSource = {
   id: string;
@@ -31,7 +31,17 @@ const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const wrangler = resolve(projectRoot, "node_modules/.bin/wrangler");
 const outputPath = resolve(projectRoot, "output/playwright/url-audit/results.json");
 const progressPath = resolve(projectRoot, "output/playwright/url-audit/progress.json");
-const concurrency = 8;
+const concurrency = 4;
+const JOB_SEARCH_TEXT = /\b(?:jobs?|careers?|open (?:positions|roles)|opportunities)\b/i;
+
+const registrableDomain = (hostname: string): string => {
+  const labels = hostname.replace(/^www\./i, "").split(".");
+  if (labels.length <= 2) return labels.join(".");
+  const tld = labels.at(-1)!;
+  const secondLevel = labels.at(-2)!;
+  const take = tld.length === 2 && secondLevel.length <= 3 ? 3 : 2;
+  return labels.slice(-take).join(".");
+};
 
 const latestProblemSourceIds = async (): Promise<Set<string>> => {
   const sql = `WITH latest AS (
@@ -56,6 +66,33 @@ const looksLikeJobsPage = async (page: Page): Promise<boolean> => {
   return /\b(?:search jobs?|job results?|open positions|career opportunities|apply now|job id|posted date)\b/i.test(value);
 };
 
+const searchForOfficialCareers = async (page: Page, source: SeedSource): Promise<{ url: string | null; candidates: string[] }> => {
+  const query = encodeURIComponent(`${source.company} official careers jobs`);
+  const response = await page.goto(`https://www.bing.com/search?q=${query}`, { waitUntil: "domcontentloaded", timeout: 12_000 }).catch(() => null);
+  if (!response || response.status() >= 400) return { url: null, candidates: [] };
+  await page.waitForTimeout(500);
+  const links = await page.locator("li.b_algo h2 a[href]").evaluateAll((anchors) => anchors.map((anchor) => ({
+    href: (anchor as HTMLAnchorElement).href,
+    text: (anchor.textContent ?? "").replace(/\s+/g, " ").trim(),
+  })));
+  const candidates = links
+    .map((link) => ({ ...link, href: unwrapSearchResultUrl(link.href) }))
+    .filter((link) => JOB_SEARCH_TEXT.test(link.text) && isSafeCareerRecommendation(source.company, source.postingUrl!, link.href))
+    .slice(0, 5);
+  for (const candidate of candidates) {
+    const candidateResponse = await page.goto(candidate.href, { waitUntil: "domcontentloaded", timeout: 12_000 }).catch(() => null);
+    if (!candidateResponse || candidateResponse.status() >= 400) {
+      const originalRoot = registrableDomain(new URL(source.postingUrl!).hostname);
+      const candidateRoot = registrableDomain(new URL(candidate.href).hostname);
+      if (originalRoot === candidateRoot) return { url: candidate.href, candidates: candidates.map((value) => value.href) };
+      continue;
+    }
+    await page.waitForTimeout(700);
+    if (await looksLikeJobsPage(page)) return { url: page.url(), candidates: candidates.map((value) => value.href) };
+  }
+  return { url: null, candidates: candidates.map((value) => value.href) };
+};
+
 const inspectSource = async (page: Page, source: SeedSource): Promise<BrowserAudit> => {
   const resources = new Set<string>();
   const onResponse = (response: { url(): string }) => {
@@ -73,14 +110,18 @@ const inspectSource = async (page: Page, source: SeedSource): Promise<BrowserAud
     const originalLooksValid = browserStatus !== null && browserStatus < 400 && await looksLikeJobsPage(page);
 
     if (!originalLooksValid && candidates.length === 0) {
-      const root = new URL(source.postingUrl!).origin;
-      const rootResponse = await page.goto(root, { waitUntil: "domcontentloaded", timeout: 12_000 }).catch(() => null);
-      await page.waitForTimeout(500);
-      if (rootResponse) {
+      const original = new URL(source.postingUrl!);
+      const parentDomain = registrableDomain(original.hostname);
+      const fallbackRoots = [...new Set([original.origin, `https://${parentDomain}`, `https://www.${parentDomain}`])];
+      for (const root of fallbackRoots) {
+        const rootResponse = await page.goto(root, { waitUntil: "domcontentloaded", timeout: 12_000 }).catch(() => null);
+        await page.waitForTimeout(500);
+        if (!rootResponse || rootResponse.status() >= 400) continue;
         browserStatus = rootResponse.status();
         finalUrl = page.url();
         links = await pageLinks(page);
         candidates = careerCandidates(links, finalUrl);
+        if (candidates.length > 0) break;
       }
     }
 
@@ -91,6 +132,12 @@ const inspectSource = async (page: Page, source: SeedSource): Promise<BrowserAud
       if (!candidateResponse || candidateResponse.status() >= 400) continue;
       await page.waitForTimeout(700);
       if (await looksLikeJobsPage(page)) recommendedUrl = page.url();
+    }
+
+    if (!recommendedUrl) {
+      const searched = await searchForOfficialCareers(page, source);
+      recommendedUrl = searched.url;
+      candidates.push(...searched.candidates.map((href) => ({ href, text: "Search result" })));
     }
 
     const resourceUrls = [...resources].slice(0, 50);
@@ -107,15 +154,43 @@ const inspectSource = async (page: Page, source: SeedSource): Promise<BrowserAud
       error: null,
     };
   } catch (error) {
+    let fallbackUrl: string | null = null;
+    const fallbackCandidates: string[] = [];
+    try {
+      const original = new URL(source.postingUrl!);
+      const parentDomain = registrableDomain(original.hostname);
+      for (const root of [`https://${parentDomain}`, `https://www.${parentDomain}`]) {
+        const response = await page.goto(root, { waitUntil: "domcontentloaded", timeout: 12_000 }).catch(() => null);
+        if (!response || response.status() >= 400) continue;
+        await page.waitForTimeout(500);
+        const candidates = careerCandidates(await pageLinks(page), page.url());
+        fallbackCandidates.push(...candidates.map((candidate) => candidate.href));
+        for (const candidate of candidates.slice(0, 5)) {
+          const candidateResponse = await page.goto(candidate.href, { waitUntil: "domcontentloaded", timeout: 12_000 }).catch(() => null);
+          if (!candidateResponse || candidateResponse.status() >= 400) continue;
+          await page.waitForTimeout(700);
+          if (await looksLikeJobsPage(page)) {
+            fallbackUrl = page.url();
+            break;
+          }
+        }
+        if (fallbackUrl) break;
+      }
+    } catch {
+      // Search remains the final recovery path when the corporate root is unavailable.
+    }
+    const searched = fallbackUrl
+      ? { url: fallbackUrl, candidates: fallbackCandidates }
+      : await searchForOfficialCareers(page, source).catch(() => ({ url: null, candidates: fallbackCandidates }));
     return {
       id: source.id,
       company: source.company,
       originalUrl: source.postingUrl!,
       browserStatus: null,
-      finalUrl: null,
-      recommendedUrl: null,
-      adapter: source.adapter,
-      candidateUrls: [],
+      finalUrl: searched.url,
+      recommendedUrl: searched.url,
+      adapter: detectUrlAdapter(searched.url ?? source.postingUrl!, [...resources]),
+      candidateUrls: searched.candidates,
       resourceUrls: [...resources].slice(0, 50),
       error: error instanceof Error ? error.message : "Unknown browser audit error.",
     };
@@ -124,13 +199,46 @@ const inspectSource = async (page: Page, source: SeedSource): Promise<BrowserAud
   }
 };
 
+const inspectSourceWithDeadline = async (page: Page, source: SeedSource): Promise<BrowserAudit> => {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      inspectSource(page, source),
+      new Promise<BrowserAudit>((resolveAudit) => {
+        timeout = setTimeout(() => resolveAudit({
+          id: source.id,
+          company: source.company,
+          originalUrl: source.postingUrl!,
+          browserStatus: null,
+          finalUrl: null,
+          recommendedUrl: null,
+          adapter: source.adapter,
+          candidateUrls: [],
+          resourceUrls: [],
+          error: "Browser audit exceeded the 90 second per-source deadline.",
+        }), 90_000);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+};
+
 async function main(): Promise<void> {
   const ids = await latestProblemSourceIds();
   const seed = JSON.parse(await readFile(resolve(projectRoot, "db/seed/sources.json"), "utf8")) as { sources: SeedSource[] };
-  const sources = seed.sources.filter((source) => source.postingUrl && ids.has(source.id));
-  const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ userAgent: "JobPulseUrlAuditor/1.0 (+https://job-pulse.local)" });
-  const results: BrowserAudit[] = new Array(sources.length);
+  const allSources = seed.sources.filter((source) => source.postingUrl && ids.has(source.id));
+  const previous = await readFile(outputPath, "utf8")
+    .then((value) => JSON.parse(value) as { results: BrowserAudit[] })
+    .catch(() => ({ results: [] as BrowserAudit[] }));
+  const previousById = new Map(previous.results.map((result) => [result.id, result]));
+  const retryUnresolved = process.env.AUDIT_RETRY_UNRESOLVED === "1";
+  const sources = retryUnresolved
+    ? allSources.filter((source) => !previousById.get(source.id)?.recommendedUrl)
+    : allSources;
+  const browser = await chromium.launch({ channel: "chrome", headless: true }).catch(() => chromium.launch({ headless: true }));
+  const context = await browser.newContext();
+  const auditedResults: BrowserAudit[] = new Array(sources.length);
   let cursor = 0;
   let completed = 0;
 
@@ -141,19 +249,25 @@ async function main(): Promise<void> {
       const index = cursor++;
       const page = await context.newPage();
       try {
-        results[index] = await inspectSource(page, sources[index]);
+        const source = sources[index];
+        auditedResults[index] = await inspectSourceWithDeadline(page, source);
       } finally {
         await page.close();
       }
       completed += 1;
       if (completed % 25 === 0) {
         await writeFile(progressPath, `${JSON.stringify({ completed, total: sources.length, updatedAt: new Date().toISOString() }, null, 2)}\n`);
+        await writeFile(`${outputPath}.partial`, `${JSON.stringify({ generatedAt: new Date().toISOString(), total: completed, results: auditedResults.filter(Boolean) }, null, 2)}\n`);
         process.stdout.write(`audited ${completed}/${sources.length}\n`);
       }
     }
   }));
   await browser.close();
 
+  const auditedById = new Map(auditedResults.filter(Boolean).map((result) => [result.id, result]));
+  const results = allSources
+    .map((source) => auditedById.get(source.id) ?? previousById.get(source.id))
+    .filter((result): result is BrowserAudit => Boolean(result));
   await writeFile(outputPath, `${JSON.stringify({ generatedAt: new Date().toISOString(), total: results.length, results }, null, 2)}\n`);
   const resolved = results.filter((result) => result.recommendedUrl).length;
   process.stdout.write(`${JSON.stringify({ total: results.length, resolved, unresolved: results.length - resolved })}\n`);

@@ -1,3 +1,5 @@
+import { jobsFromBrowserAnchors, type BrowserAnchor } from "./browser-job-extractor.ts";
+
 export type CrawlSource = {
   id: string;
   company: string;
@@ -68,6 +70,44 @@ type PhenomJob = {
   postedDate?: string;
 };
 
+type EmbeddedJobItem = {
+  date?: string;
+  title?: string;
+  href?: string;
+  location?: string;
+  schedule?: string;
+  description?: string;
+};
+
+type TeslaListing = {
+  id?: string;
+  t?: string;
+  dp?: string;
+  l?: string;
+  y?: string | number;
+};
+
+type TeslaState = {
+  lookup?: {
+    locations?: Record<string, string>;
+    departments?: Record<string, string>;
+    types?: Record<string, string>;
+  };
+  geo?: Array<{ sites?: Array<{ id?: string; cities?: Record<string, string[]> }> }>;
+  listings?: TeslaListing[];
+};
+
+type OracleJob = {
+  Id?: string | number;
+  Title?: string;
+  PostedDate?: string;
+  PrimaryLocation?: string;
+  WorkplaceType?: string;
+  WorkplaceTypeCode?: string;
+  JobSchedule?: string;
+  ShortDescriptionStr?: string;
+};
+
 const REQUEST_TIMEOUT_MS = 15_000;
 
 const fetchWithTimeout = async (
@@ -95,10 +135,27 @@ const plainText = (value: string | null | undefined): string | null => {
   return text || null;
 };
 
+const decodeHtmlAttribute = (value: string): string => value
+  .replaceAll("&amp;", "&")
+  .replaceAll("&quot;", '"')
+  .replaceAll("&#39;", "'")
+  .replaceAll("&lt;", "<")
+  .replaceAll("&gt;", ">");
+
+export const anchorsFromHtml = (html: string): BrowserAnchor[] => [...html.matchAll(
+  /<a\b[^>]*?href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>([\s\S]*?)<\/a>/gi,
+)].map((match) => ({
+  href: decodeHtmlAttribute(match[1] ?? match[2] ?? match[3] ?? ""),
+  text: plainText(match[4]) ?? "",
+}));
+
 const greenhouseBoard = (postingUrl: string): string | null => {
   const url = new URL(postingUrl);
   if (!url.hostname.endsWith("greenhouse.io")) return null;
+  const queryBoard = url.searchParams.get("job_board");
+  if (queryBoard && /^[a-z0-9-]+$/i.test(queryBoard)) return queryBoard;
   const board = url.pathname.split("/").filter(Boolean).at(0);
+  if (board === "users" || board === "embed") return null;
   return board || null;
 };
 
@@ -205,6 +262,73 @@ const workdayFeed = (postingUrl: string): string | null => {
   return `${url.origin}/wday/cxs/${tenant}/${site}/jobs`;
 };
 
+export const oracleCareerSite = (html: string, postingUrl: string): { apiOrigin: string; site: string } | null => {
+  const page = new URL(postingUrl);
+  const site = page.pathname.match(/\/sites\/(CX_[A-Z0-9]+)/i)?.[1];
+  const apiOrigin = html.match(/https:\/\/([a-z0-9.-]+\.fa\.[a-z0-9.-]*oraclecloud\.com)(?::443)?/i)?.[1];
+  return site && apiOrigin ? { apiOrigin: `https://${apiOrigin}`, site } : null;
+};
+
+const oracleJobUrl = (sourceUrl: string, site: string, job: OracleJob): string => {
+  const source = new URL(sourceUrl);
+  const slug = (job.Title ?? "job").replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "");
+  return `${source.origin}/en/sites/${site}/job/${encodeURIComponent(slug)}/${job.Id}`;
+};
+
+async function crawlOracle(
+  source: CrawlSource,
+  oracle: { apiOrigin: string; site: string },
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult> {
+  try {
+    const jobs: CrawledJob[] = [];
+    let offset = 0;
+    let total = Number.POSITIVE_INFINITY;
+    let responseStatus = 200;
+    while (offset < total && offset < 500) {
+      const endpoint = new URL("/hcmRestApi/resources/latest/recruitingCEJobRequisitions", oracle.apiOrigin);
+      endpoint.searchParams.set("onlyData", "true");
+      endpoint.searchParams.set("expand", "requisitionList.workLocation");
+      endpoint.searchParams.set("finder", `findReqs;siteNumber=${oracle.site},limit=25,offset=${offset},sortBy=POSTING_DATES_DESC`);
+      const response = await fetchWithTimeout(fetcher, endpoint, {
+        headers: { accept: "application/json", referer: source.postingUrl },
+      });
+      responseStatus = response.status;
+      if (!response.ok) return {
+        status: [401, 403, 429].includes(response.status) ? "blocked" : "failed",
+        responseStatus,
+        completeListing: false,
+        jobs: [],
+        error: `Oracle Recruiting returned HTTP ${response.status}.`,
+      };
+      const payload = await response.json() as { items?: Array<{ TotalJobsCount?: number; requisitionList?: OracleJob[] }> };
+      const container = payload.items?.[0];
+      const page = container?.requisitionList ?? [];
+      if (!Number.isFinite(total)) total = container?.TotalJobsCount ?? page.length;
+      jobs.push(...page.flatMap((job) => {
+        if (!job.Id || !job.Title) return [];
+        const workplace = `${job.WorkplaceType ?? ""} ${job.WorkplaceTypeCode ?? ""}`.toLowerCase();
+        return [{
+          externalId: String(job.Id),
+          title: job.Title,
+          company: source.company,
+          location: job.PrimaryLocation ?? null,
+          arrangement: workplace.includes("remote") ? "remote" as const : workplace.includes("hybrid") ? "hybrid" as const : workplace.includes("site") ? "onsite" as const : "unknown" as const,
+          employmentType: job.JobSchedule ?? null,
+          summary: plainText(job.ShortDescriptionStr),
+          officialUrl: oracleJobUrl(source.postingUrl, oracle.site, job),
+          publishedAt: normalizedDate(job.PostedDate),
+        }];
+      }));
+      if (page.length === 0) break;
+      offset += page.length;
+    }
+    return { status: "succeeded", responseStatus, completeListing: offset >= total, jobs, error: null };
+  } catch (error) {
+    return { status: "failed", responseStatus: null, completeListing: false, jobs: [], error: error instanceof Error ? error.message : "Unknown Oracle crawler error." };
+  }
+}
+
 type JsonLdValue = Record<string, unknown>;
 
 const jsonLdScripts = (html: string): JsonLdValue[] => {
@@ -252,6 +376,57 @@ const embeddedJsonObject = (html: string, marker: string): JsonLdValue | null =>
   return null;
 };
 
+const embeddedJsonArray = (html: string, marker: string): unknown[] | null => {
+  const markerIndex = html.indexOf(marker);
+  const arrayStart = markerIndex >= 0 ? html.indexOf("[", markerIndex + marker.length) : -1;
+  if (arrayStart < 0) return null;
+  let depth = 0;
+  let quoted = false;
+  let escaped = false;
+  for (let index = arrayStart; index < html.length; index += 1) {
+    const character = html[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (quoted && character === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (character === '"') quoted = !quoted;
+    if (quoted) continue;
+    if (character === "[") depth += 1;
+    else if (character === "]" && --depth === 0) {
+      try {
+        const value = JSON.parse(html.slice(arrayStart, index + 1)) as unknown;
+        return Array.isArray(value) ? value : null;
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+};
+
+const embeddedJobItems = (html: string, source: CrawlSource): CrawledJob[] => (
+  embeddedJsonArray(html, "JOB_ITEMS =") ?? []
+).flatMap((value) => {
+  if (!value || typeof value !== "object") return [];
+  const job = value as EmbeddedJobItem;
+  if (!job.title || !job.href) return [];
+  return [{
+    externalId: new URL(job.href, source.postingUrl).pathname.split("/").filter(Boolean).at(-1) ?? null,
+    title: job.title,
+    company: source.company,
+    location: job.location ?? null,
+    arrangement: /\bremote\b/i.test(job.location ?? "") ? "remote" as const : /\bhybrid\b/i.test(job.location ?? "") ? "hybrid" as const : "unknown" as const,
+    employmentType: job.schedule ?? null,
+    summary: plainText(job.description),
+    officialUrl: new URL(job.href, source.postingUrl).href,
+    publishedAt: normalizedDate(job.date),
+  }];
+});
+
 const phenomJobs = (html: string, source: CrawlSource): SourceCrawlResult | null => {
   const payload = embeddedJsonObject(html, "phApp.ddo = ");
   const eager = payload?.eagerLoadRefineSearch;
@@ -283,6 +458,18 @@ const phenomJobs = (html: string, source: CrawlSource): SourceCrawlResult | null
     completeListing: typeof totalHits === "number" && totalHits <= normalizedJobs.length,
     jobs: normalizedJobs,
     error: null,
+  };
+};
+
+export const extractJobsFromHtml = (html: string, source: CrawlSource): { jobs: CrawledJob[]; completeListing: boolean } => {
+  const phenom = phenomJobs(html, source);
+  if (phenom) return { jobs: phenom.jobs, completeListing: phenom.completeListing };
+  const embedded = embeddedJobItems(html, source);
+  if (embedded.length > 0) return { jobs: embedded, completeListing: true };
+  const nodes = jsonLdScripts(html).flatMap(jobPostingNodes);
+  return {
+    jobs: nodes.map((node) => jsonLdJob(node, source)).filter((job): job is CrawledJob => job !== null),
+    completeListing: false,
   };
 };
 
@@ -353,6 +540,8 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch): Promise<
       };
     }
     const html = await response.text();
+    const oracle = oracleCareerSite(html, source.postingUrl);
+    if (oracle) return crawlOracle(source, oracle, fetcher);
     const phenom = phenomJobs(html, source);
     if (phenom) return phenom;
     const discovered = discoverAts(html, source.postingUrl);
@@ -362,12 +551,27 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch): Promise<
         : await crawlDiscoveredFeed(source, discovered, fetcher);
       if (discoveredResult.status === "succeeded") return discoveredResult;
     }
-    const nodes = jsonLdScripts(html).flatMap(jobPostingNodes);
+    const extracted = extractJobsFromHtml(html, source);
+    if (extracted.jobs.length > 0) return {
+      status: "succeeded",
+      responseStatus: response.status,
+      completeListing: extracted.completeListing,
+      jobs: extracted.jobs,
+      error: null,
+    };
+    const linked = jobsFromBrowserAnchors(anchorsFromHtml(html), source);
+    if (linked.length > 0) return {
+      status: "succeeded",
+      responseStatus: response.status,
+      completeListing: false,
+      jobs: linked,
+      error: null,
+    };
     return {
       status: "succeeded",
       responseStatus: response.status,
       completeListing: false,
-      jobs: nodes.map((node) => jsonLdJob(node, source)).filter((job): job is CrawledJob => job !== null),
+      jobs: [],
       error: null,
     };
   } catch (error) {
@@ -377,6 +581,51 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch): Promise<
       completeListing: false,
       jobs: [],
       error: error instanceof Error ? error.message : "Unknown crawler error.",
+    };
+  }
+}
+
+async function crawlTesla(source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> {
+  const endpoint = "https://www.tesla.com/cua-api/apps/careers/state";
+  try {
+    const response = await fetchWithTimeout(fetcher, endpoint, {
+      headers: { accept: "application/json", referer: source.postingUrl },
+    });
+    if (!response.ok) return {
+      status: [401, 403, 429].includes(response.status) ? "blocked" : "failed",
+      responseStatus: response.status,
+      completeListing: false,
+      jobs: [],
+      error: `Tesla careers API returned HTTP ${response.status}.`,
+    };
+    const payload = await response.json() as TeslaState;
+    const usLocations = new Set(payload.geo?.flatMap((region) => region.sites ?? [])
+      .filter((site) => site.id === "US")
+      .flatMap((site) => Object.values(site.cities ?? {}).flat()) ?? []);
+    const jobs = (payload.listings ?? []).flatMap((listing) => {
+      if (!listing.id || !listing.t || !listing.l || !usLocations.has(listing.l)) return [];
+      const slug = listing.t.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      const location = payload.lookup?.locations?.[listing.l] ?? null;
+      return [{
+        externalId: listing.id,
+        title: listing.t,
+        company: source.company,
+        location,
+        arrangement: /\bremote\b/i.test(location ?? "") ? "remote" as const : "unknown" as const,
+        employmentType: payload.lookup?.types?.[String(listing.y)] ?? null,
+        summary: payload.lookup?.departments?.[listing.dp ?? ""] ?? null,
+        officialUrl: `https://www.tesla.com/careers/search/job/${slug}-${listing.id}`,
+        publishedAt: null,
+      }];
+    });
+    return { status: "succeeded", responseStatus: response.status, completeListing: true, jobs, error: null };
+  } catch (error) {
+    return {
+      status: "failed",
+      responseStatus: null,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Tesla crawler error.",
     };
   }
 }
@@ -455,6 +704,7 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
 
 export async function crawlSource(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
   void now;
+  if (source.id === "p5-1077-tesla" || source.company === "Tesla") return crawlTesla(source, fetcher);
   const board = source.adapter === "greenhouse" ? greenhouseBoard(source.postingUrl) : null;
   const workday = source.adapter === "workday" ? workdayFeed(source.postingUrl) : null;
   if (workday) return crawlWorkday(source, workday, fetcher);

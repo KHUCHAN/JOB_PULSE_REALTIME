@@ -9,6 +9,37 @@ type SourceRow = {
   next_crawl_at: string | null;
 };
 
+export const chunksOf = <T>(values: T[], size: number): T[][] => {
+  if (!Number.isInteger(size) || size < 1) throw new Error("Chunk size must be a positive integer.");
+  const chunks: T[][] = [];
+  for (let index = 0; index < values.length; index += size) chunks.push(values.slice(index, index + size));
+  return chunks;
+};
+
+export const chunksByJsonBytes = <T>(values: T[], maxBytes: number): T[][] => {
+  if (!Number.isInteger(maxBytes) || maxBytes < 3) throw new Error("JSON chunk size must be at least 3 bytes.");
+  const encoder = new TextEncoder();
+  const chunks: T[][] = [];
+  let chunk: T[] = [];
+
+  for (const value of values) {
+    const candidate = [...chunk, value];
+    if (encoder.encode(JSON.stringify(candidate)).byteLength > maxBytes) {
+      if (chunk.length === 0) throw new Error("A single job exceeds the D1 JSON payload limit.");
+      chunks.push(chunk);
+      chunk = [value];
+      if (encoder.encode(JSON.stringify(chunk)).byteLength > maxBytes) {
+        throw new Error("A single job exceeds the D1 JSON payload limit.");
+      }
+    } else {
+      chunk = candidate;
+    }
+  }
+
+  if (chunk.length > 0) chunks.push(chunk);
+  return chunks;
+};
+
 const sha256 = async (value: string): Promise<string> => {
   const bytes = new TextEncoder().encode(value);
   const digest = await crypto.subtle.digest("SHA-256", bytes);
@@ -60,16 +91,37 @@ export class D1CrawlStore implements CrawlStore {
     `).bind(sourceId).all<{ official_url: string }>();
     const existingUrls = new Set(existingResult.results.map((row) => row.official_url));
     const visibleUrls = new Set(jobs.map((job) => job.officialUrl));
-    const statements: D1PreparedStatement[] = [];
+    const records: Record<string, string | null>[] = [];
 
     for (const job of jobs) {
       const descriptionHash = job.summary ? await sha256(job.summary) : null;
-      statements.push(this.db.prepare(`
+      records.push({
+        id: crypto.randomUUID(), sourceId, externalId: job.externalId, title: job.title,
+        company: job.company, location: job.location, arrangement: job.arrangement,
+        employmentType: job.employmentType, summary: job.summary, descriptionHash,
+        officialUrl: job.officialUrl, publishedAt: job.publishedAt, firstSeenAt: now, lastSeenAt: now,
+      });
+    }
+
+    // One D1 query per JSON chunk avoids the 50-query free-tier Worker limit.
+    // Keep payloads below the 100 KB SQL statement / response safety margin.
+    for (const recordsChunk of chunksByJsonBytes(records, 80_000)) {
+      await this.db.prepare(`
         INSERT INTO jobs (
           id, source_id, external_id, title, company, location, arrangement,
           employment_type, summary, description_hash, official_url, status,
           published_at, first_seen_at, last_seen_at, closed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, NULL)
+        )
+        SELECT
+          json_extract(value, '$.id'), json_extract(value, '$.sourceId'),
+          json_extract(value, '$.externalId'), json_extract(value, '$.title'),
+          json_extract(value, '$.company'), json_extract(value, '$.location'),
+          json_extract(value, '$.arrangement'), json_extract(value, '$.employmentType'),
+          json_extract(value, '$.summary'), json_extract(value, '$.descriptionHash'),
+          json_extract(value, '$.officialUrl'), 'open', json_extract(value, '$.publishedAt'),
+          json_extract(value, '$.firstSeenAt'), json_extract(value, '$.lastSeenAt'), NULL
+        FROM json_each(?)
+        WHERE true
         ON CONFLICT(source_id, official_url) DO UPDATE SET
           external_id = excluded.external_id,
           title = excluded.title,
@@ -84,24 +136,19 @@ export class D1CrawlStore implements CrawlStore {
           last_seen_at = excluded.last_seen_at,
           closed_at = NULL,
           updated_at = CURRENT_TIMESTAMP
-      `).bind(
-        crypto.randomUUID(), sourceId, job.externalId, job.title, job.company, job.location,
-        job.arrangement, job.employmentType, job.summary, descriptionHash, job.officialUrl,
-        job.publishedAt, now, now,
-      ));
+      `).bind(JSON.stringify(recordsChunk)).run();
     }
 
     const closedUrls = completeListing
       ? [...existingUrls].filter((url) => !visibleUrls.has(url))
       : [];
-    for (const officialUrl of closedUrls) {
-      statements.push(this.db.prepare(`
+    for (const urlsChunk of chunksByJsonBytes(closedUrls, 80_000)) {
+      await this.db.prepare(`
         UPDATE jobs
         SET status = 'closed', closed_at = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE source_id = ? AND official_url = ? AND status = 'open'
-      `).bind(now, sourceId, officialUrl));
+        WHERE source_id = ? AND official_url IN (SELECT value FROM json_each(?)) AND status = 'open'
+      `).bind(now, sourceId, JSON.stringify(urlsChunk)).run();
     }
-    if (statements.length > 0) await this.db.batch(statements);
 
     const created = jobs.filter((job) => !existingUrls.has(job.officialUrl)).length;
     return { created, updated: jobs.length - created, closed: closedUrls.length };

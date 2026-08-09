@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { crawlSource, discoverAts } from "./crawler";
+import { crawlSource, discoverAts, oracleCareerSite } from "./crawler";
 
 describe("crawlSource", () => {
+  it("discovers the Oracle API tenant behind a vanity careers domain", () => {
+    const html = '<script src="https://eluq.fa.us2.oraclecloud.com:443/hcmUI/CandExpStatic/app.js"></script>';
+    expect(oracleCareerSite(html, "https://www.krogerfamilycareers.com/en/sites/CX_2001/jobs")).toEqual({
+      apiOrigin: "https://eluq.fa.us2.oraclecloud.com",
+      site: "CX_2001",
+    });
+  });
+
   it("discovers a public Lever JSON feed from a careers page link", () => {
     expect(discoverAts(
       '<a href="https://jobs.lever.co/acme">Open jobs</a>',
@@ -75,6 +83,24 @@ describe("crawlSource", () => {
     });
   });
 
+  it("recovers the public Greenhouse board from a talent-alert sign-in URL", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      requests.push(String(input));
+      return new Response(JSON.stringify({ jobs: [] }), { status: 200 });
+    };
+
+    const result = await crawlSource({
+      id: "armis",
+      company: "Armis",
+      postingUrl: "https://my.greenhouse.io/users/sign_in?job_board=armissecurity&source=job_alert_board",
+      adapter: "greenhouse",
+    }, fetcher, new Date("2026-08-08T12:30:00Z"));
+
+    expect(requests).toEqual(["https://boards-api.greenhouse.io/v1/boards/armissecurity/jobs?content=true"]);
+    expect(result.status).toBe("succeeded");
+  });
+
   it("reads JobPosting JSON-LD from an official careers page without treating the page as a complete listing", async () => {
     const fetcher: typeof fetch = async () => new Response(`
       <html><head>
@@ -107,6 +133,98 @@ describe("crawlSource", () => {
       }],
       error: null,
     });
+  });
+
+  it("extracts official job detail anchors when a careers page has no structured job data", async () => {
+    const fetcher: typeof fetch = async () => new Response(`
+      <html><body>
+        <a href="/job/Wayne-Senior-Quality-Engineer/1316150900/">Senior Quality Engineer</a>
+        <a href="/search/?q=quality">Search jobs</a>
+      </body></html>
+    `, { status: 200, headers: { "content-type": "text/html" } });
+
+    const result = await crawlSource({
+      id: "teleflex",
+      company: "Teleflex",
+      postingUrl: "https://careers.teleflex.com/search/?q=&locationsearch=",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-08T12:30:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      jobs: [expect.objectContaining({
+        title: "Senior Quality Engineer",
+        officialUrl: "https://careers.teleflex.com/job/Wayne-Senior-Quality-Engineer/1316150900/",
+      })],
+    }));
+  });
+
+  it("extracts a public embedded JOB_ITEMS collection", async () => {
+    const fetcher: typeof fetch = async () => new Response(`
+      <script>const JOB_ITEMS = [{
+        "date":"06 Aug 2026",
+        "title":"Sales Enablement Coordinator",
+        "href":"https://careers.example.com/careers/sales-enablement-coordinator",
+        "location":"Elk Grove Village, IL",
+        "schedule":"Full-time",
+        "description":"Support the sales organization."
+      }];</script>
+    `, { status: 200 });
+
+    const result = await crawlSource({
+      id: "embedded",
+      company: "Example Co",
+      postingUrl: "https://careers.example.com/careers",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-08T12:30:00Z"));
+
+    expect(result.jobs).toEqual([expect.objectContaining({
+      title: "Sales Enablement Coordinator",
+      location: "Elk Grove Village, IL",
+      employmentType: "Full-time",
+      summary: "Support the sales organization.",
+      officialUrl: "https://careers.example.com/careers/sales-enablement-coordinator",
+    })]);
+  });
+
+  it("uses Tesla's official careers state endpoint and keeps US listings", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      requests.push(String(input));
+      return new Response(JSON.stringify({
+        lookup: {
+          locations: { "77": "Austin, Texas", "88": "Berlin, Germany" },
+          departments: { "8": "Engineering" },
+          types: { "1": "Full-Time" },
+        },
+        geo: [{ id: "5", sites: [{ id: "US", cities: { Austin: ["77"] } }] }],
+        listings: [
+          { id: "277001", t: "Software Engineer", dp: "8", l: "77", y: 1 },
+          { id: "277002", t: "European Engineer", dp: "8", l: "88", y: 1 },
+        ],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+
+    const result = await crawlSource({
+      id: "tesla",
+      company: "Tesla",
+      postingUrl: "https://www.tesla.com/careers/search/?site=US",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-08T12:30:00Z"));
+
+    expect(requests).toEqual(["https://www.tesla.com/cua-api/apps/careers/state"]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      jobs: [expect.objectContaining({
+        externalId: "277001",
+        title: "Software Engineer",
+        location: "Austin, Texas",
+        employmentType: "Full-Time",
+        officialUrl: "https://www.tesla.com/careers/search/job/software-engineer-277001",
+      })],
+    }));
   });
 
   it("follows a discovered Lever feed and treats its response as a complete listing", async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { careerCandidates, detectUrlAdapter, isSafeCareerRecommendation, rankCareerLink } from "./url-remediation";
+import { careerCandidates, detectUrlAdapter, isSafeCareerRecommendation, rankCareerLink, unwrapSearchResultUrl } from "./url-remediation";
 
 describe("career URL remediation", () => {
   it("prefers a public ATS job board over talent-only and social links", () => {
@@ -32,5 +32,21 @@ describe("career URL remediation", () => {
   it("rejects career-area and job-cart pages", () => {
     expect(isSafeCareerRecommendation("Caterpillar", "https://caterpillar.com/careers", "https://careers.caterpillar.com/en/career-areas/")).toBe(false);
     expect(isSafeCareerRecommendation("Ascension", "https://jobs.ascension.org", "https://jobs.ascension.org/us/en/jobcart")).toBe(false);
+  });
+
+  it("accepts same-root career subdomains and company-branded career domains", () => {
+    expect(isSafeCareerRecommendation("Illinois Tool Works", "https://jobs.itw.com/", "https://careers.itw.com/us/en")).toBe(true);
+    expect(isSafeCareerRecommendation("MetLife", "https://metlife.com/careers", "https://metlifecareers.com/en_US/ml")).toBe(true);
+  });
+
+  it("decodes Bing redirect targets before validating search results", () => {
+    const target = "https://jobs.centene.com/us/en/jobs/";
+    const encoded = Buffer.from(target).toString("base64url");
+    expect(unwrapSearchResultUrl(`https://www.bing.com/ck/a?u=a1${encoded}&ntb=1`)).toBe(target);
+  });
+
+  it("rejects third-party job aggregators even when the company appears in the path", () => {
+    expect(isSafeCareerRecommendation("Tesla", "https://tesla.com/careers", "https://ev.careers/tesla-jobs")).toBe(false);
+    expect(isSafeCareerRecommendation("Devon Energy", "https://devonenergy.com/careers", "https://gotocareer.io/companies/devon-energy")).toBe(false);
   });
 });

@@ -50,22 +50,22 @@
       "id": "p2-0033-citrus-credit-union",
       "masterRow": 204,
       "company": "Citrus Credit Union",
-      "postingUrl": "https://www.citruscu.org/careers",
+      "postingUrl": null,
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
       "adapter": "custom",
-      "verification": "career_only",
+      "verification": "no_active_careers",
       "confidence": "medium",
       "resumeUpload": "job_only",
       "jobAlerts": "unknown",
       "checkedAt": "2026-08-08",
-      "enabled": true
+      "enabled": false
     },
     {
       "id": "p2-0034-coast-central-cu",
       "masterRow": 205,
       "company": "Coast Central CU",
-      "postingUrl": "https://www.coastcentralcu.org/careers",
+      "postingUrl": "https://www.coastccu.org/community/careers/",
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
       "adapter": "custom",
@@ -185,7 +185,7 @@
       "id": "p2-0123-kinsale-capital",
       "masterRow": 213,
       "company": "Kinsale Capital",
-      "postingUrl": "https://www.kinsalegroup.com/careers",
+      "postingUrl": "https://www.kinsaleins.com/careers/",
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
       "adapter": "custom",
@@ -245,10 +245,10 @@
       "id": "p2-0168-state-employees-cu",
       "masterRow": 217,
       "company": "State Employees CU",
-      "postingUrl": "https://www.secu.org/careers",
+      "postingUrl": "https://ncsecu.wd1.myworkdayjobs.com/SECU",
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
@@ -335,7 +335,7 @@
       "id": "p4-0253-crunchyroll",
       "masterRow": 223,
       "company": "Crunchyroll (Sony)",
-      "postingUrl": "https://www.crunchyroll.com/careers",
+      "postingUrl": "https://www.crunchyroll.com/about/work",
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
       "adapter": "custom",
@@ -395,10 +395,10 @@
       "id": "p4-0317-nubank",
       "masterRow": 227,
       "company": "Nubank",
-      "postingUrl": "https://nubank.com.br/en/careers/",
+      "postingUrl": "https://job-boards.greenhouse.io/nubank",
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
-      "adapter": "custom",
+      "adapter": "greenhouse",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
@@ -500,7 +500,7 @@
       "id": "p4-0405-bumble",
       "masterRow": 234,
       "company": "Bumble",
-      "postingUrl": "https://bumble.com/careers",
+      "postingUrl": "https://team.bumble.com/en-us",
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
       "adapter": "custom",
@@ -545,25 +545,25 @@
       "id": "p4-0438-glassdoor",
       "masterRow": 237,
       "company": "Glassdoor",
-      "postingUrl": "https://www.glassdoor.com/careers",
+      "postingUrl": null,
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
       "adapter": "custom",
-      "verification": "career_only",
+      "verification": "no_active_careers",
       "confidence": "high",
       "resumeUpload": "job_only",
       "jobAlerts": "unknown",
       "checkedAt": "2026-08-08",
-      "enabled": true
+      "enabled": false
     },
     {
       "id": "p4-0457-match-group",
       "masterRow": 238,
       "company": "Match Group",
-      "postingUrl": "https://www.match.com/careers",
+      "postingUrl": "https://join.matchgroupcareers.com/careers",
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
-      "adapter": "custom",
+      "adapter": "phenom",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
@@ -590,10 +590,10 @@
       "id": "p4-0493-seatgeek",
       "masterRow": 240,
       "company": "SeatGeek",
-      "postingUrl": "https://seatgeek.com/careers",
+      "postingUrl": "https://job-boards.greenhouse.io/seatgeek",
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
-      "adapter": "custom",
+      "adapter": "greenhouse",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
@@ -650,7 +650,7 @@
       "id": "p5-0628-ies-holdings",
       "masterRow": 244,
       "company": "IES Holdings",
-      "postingUrl": "https://www.iesholdings.com/careers",
+      "postingUrl": "https://joinus.ies-co.com/ies-holdings/jobs",
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
       "adapter": "custom",
@@ -890,16 +890,16 @@
       "id": "p5-0749-tesla-energy",
       "masterRow": 262,
       "company": "Tesla Energy",
-      "postingUrl": "https://www.tesla.com/careers",
+      "postingUrl": null,
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
       "adapter": "custom",
-      "verification": "career_only",
+      "verification": "no_active_careers",
       "confidence": "medium",
       "resumeUpload": "job_only",
       "jobAlerts": "unknown",
       "checkedAt": "2026-08-08",
-      "enabled": true
+      "enabled": false
     },
     {
       "id": "p5-0750-thales-us",
@@ -1010,16 +1010,16 @@
       "id": "p5-1014-paige",
       "masterRow": 281,
       "company": "Paige (Digital Pathology)",
-      "postingUrl": "https://www.tempus.com/careers/",
+      "postingUrl": null,
       "talentUrl": null,
       "channel": "인수 후 모회사 공식 채용 포털",
       "adapter": "custom",
-      "verification": "merged_parent_careers",
+      "verification": "no_active_careers",
       "confidence": "high",
       "resumeUpload": "job_only",
       "jobAlerts": "unknown",
       "checkedAt": "2026-08-08",
-      "enabled": true
+      "enabled": false
     },
     {
       "id": "p5-1021-piedmont-healthcare",
@@ -1235,22 +1235,22 @@
       "id": "p5-1069-symphonyrm",
       "masterRow": 298,
       "company": "SymphonyRM",
-      "postingUrl": "https://symphonyrm.com/careers",
+      "postingUrl": null,
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
       "adapter": "custom",
-      "verification": "career_only",
+      "verification": "no_active_careers",
       "confidence": "medium",
       "resumeUpload": "job_only",
       "jobAlerts": "unknown",
       "checkedAt": "2026-08-08",
-      "enabled": true
+      "enabled": false
     },
     {
       "id": "p5-1070-syneos-health",
       "masterRow": 299,
       "company": "Syneos Health / Inizio",
-      "postingUrl": "https://careers.inizio.health/",
+      "postingUrl": "https://inizioengage.com/careers/",
       "talentUrl": "https://inizio.com/join-inizio/",
       "channel": "공식 Talent Community/후보자 등록",
       "adapter": "custom",
@@ -1325,10 +1325,10 @@
       "id": "audit-row-305",
       "masterRow": 305,
       "company": "Advance Auto Parts",
-      "postingUrl": "https://careers.advanceautoparts.com/",
+      "postingUrl": "https://jobs.advanceautoparts.com/us/en",
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
-      "adapter": "custom",
+      "adapter": "phenom",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
@@ -1385,10 +1385,10 @@
       "id": "audit-row-309",
       "masterRow": 309,
       "company": "American Financial Group",
-      "postingUrl": "https://gaig.wd1.myworkdayjobs.com/en-US/GAIG_External",
+      "postingUrl": "https://www.greatamericaninsurancegroup.com/careers",
       "talentUrl": "https://gaig.wd1.myworkdayjobs.com/en-US/GAIG_External/introduceYourself",
       "channel": "공식 Workday Introduce Yourself",
-      "adapter": "workday",
+      "adapter": "custom",
       "verification": "verified_talent",
       "confidence": "high",
       "resumeUpload": "available",
@@ -1460,7 +1460,7 @@
       "id": "audit-row-314",
       "masterRow": 314,
       "company": "Autoliv",
-      "postingUrl": "https://careers.autoliv.com/",
+      "postingUrl": "https://career.autoliv.com/",
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
       "adapter": "custom",
@@ -1565,7 +1565,7 @@
       "id": "audit-row-321",
       "masterRow": 321,
       "company": "BorgWarner",
-      "postingUrl": "https://careers.borgwarner.com/",
+      "postingUrl": "https://www.borgwarner.com/careers?lang=en",
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
       "adapter": "custom",
@@ -1655,7 +1655,7 @@
       "id": "audit-row-327",
       "masterRow": 327,
       "company": "Casey's General Stores",
-      "postingUrl": "https://careers.caseys.com/",
+      "postingUrl": "https://www.caseys.com/careers",
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
       "adapter": "custom",
@@ -1685,10 +1685,10 @@
       "id": "audit-row-329",
       "masterRow": 329,
       "company": "Celanese",
-      "postingUrl": "https://careers.celanese.com/",
+      "postingUrl": "https://career-celanese.icims.com/jobs/intro",
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
-      "adapter": "custom",
+      "adapter": "icims",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
@@ -1760,7 +1760,7 @@
       "id": "audit-row-334",
       "masterRow": 334,
       "company": "Constellation Brands",
-      "postingUrl": "https://cbrands.wd1.myworkdayjobs.com/CBI_External_Careers",
+      "postingUrl": "https://www.cbrands.com/pages/careers",
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
       "adapter": "workday",
@@ -1805,7 +1805,7 @@
       "id": "audit-row-337",
       "masterRow": 337,
       "company": "Coterra Energy",
-      "postingUrl": "https://careers.coterra.com/",
+      "postingUrl": "https://www.devonenergy.com/careers",
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
       "adapter": "custom",
@@ -1820,7 +1820,7 @@
       "id": "audit-row-338",
       "masterRow": 338,
       "company": "Cummins",
-      "postingUrl": "https://careers.cummins.com/",
+      "postingUrl": "https://cummins.jobs/",
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
       "adapter": "custom",
@@ -1835,7 +1835,7 @@
       "id": "audit-row-339",
       "masterRow": 339,
       "company": "D.R. Horton",
-      "postingUrl": "https://careers.drhorton.com/",
+      "postingUrl": "https://drhorton.referrals.selectminds.com/",
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
       "adapter": "custom",
@@ -1865,7 +1865,7 @@
       "id": "audit-row-341",
       "masterRow": 341,
       "company": "Delek US Holdings",
-      "postingUrl": "https://careers.delekus.com/",
+      "postingUrl": "https://jobs.delekus.com/viewalljobs/",
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
       "adapter": "custom",
@@ -1895,7 +1895,7 @@
       "id": "audit-row-343",
       "masterRow": 343,
       "company": "Devon Energy",
-      "postingUrl": "https://careers.devonenergy.com/",
+      "postingUrl": "https://www.devonenergy.com/careers",
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
       "adapter": "custom",
@@ -1910,10 +1910,10 @@
       "id": "audit-row-344",
       "masterRow": 344,
       "company": "Diamondback Energy",
-      "postingUrl": "https://careers.diamondbackenergy.com/",
+      "postingUrl": "https://diamondbackenergy.wd12.myworkdayjobs.com/DBE",
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
@@ -1985,7 +1985,7 @@
       "id": "audit-row-349",
       "masterRow": 349,
       "company": "Duke Energy",
-      "postingUrl": "https://careers.duke-energy.com/",
+      "postingUrl": "https://www.duke-energy.com/our-company/careers",
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
       "adapter": "custom",
@@ -2000,7 +2000,7 @@
       "id": "audit-row-350",
       "masterRow": 350,
       "company": "EchoStar",
-      "postingUrl": "https://careers.echostar.com/",
+      "postingUrl": "https://www.echostar.com/gfj/",
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
       "adapter": "custom",
@@ -2075,7 +2075,7 @@
       "id": "audit-row-355",
       "masterRow": 355,
       "company": "Equitable Holdings",
-      "postingUrl": "https://careers.equitable.com/",
+      "postingUrl": "https://equitable.com/careers-at-equitable",
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
       "adapter": "custom",
@@ -2090,10 +2090,10 @@
       "id": "audit-row-356",
       "masterRow": 356,
       "company": "Estée Lauder",
-      "postingUrl": "https://jobs.elcompanies.com/",
+      "postingUrl": "https://careers.elcompanies.com/careers",
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
-      "adapter": "custom",
+      "adapter": "phenom",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
@@ -2270,7 +2270,7 @@
       "id": "audit-row-368",
       "masterRow": 368,
       "company": "Henry Schein",
-      "postingUrl": "https://careers.henryschein.com/",
+      "postingUrl": "https://www.henryschein.com/us-en/Corporate/Career/JobSearch.aspx",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
       "adapter": "custom",
@@ -2315,25 +2315,25 @@
       "id": "audit-row-371",
       "masterRow": 371,
       "company": "Icahn Enterprises",
-      "postingUrl": "https://www.ielp.com/careers",
+      "postingUrl": null,
       "talentUrl": null,
       "channel": "모회사/승계 조직 공식 채용 경로",
       "adapter": "custom",
-      "verification": "merged_parent_careers",
+      "verification": "no_active_careers",
       "confidence": "medium",
       "resumeUpload": "job_only",
       "jobAlerts": "unknown",
       "checkedAt": "2026-08-08",
-      "enabled": true
+      "enabled": false
     },
     {
       "id": "audit-row-372",
       "masterRow": 372,
       "company": "Illinois Tool Works",
-      "postingUrl": "https://jobs.itw.com/",
+      "postingUrl": "https://careers.itw.com/us/en",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
-      "adapter": "custom",
+      "adapter": "phenom",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
@@ -2375,7 +2375,7 @@
       "id": "audit-row-375",
       "masterRow": 375,
       "company": "International Flavors & Fragrances",
-      "postingUrl": "https://careers.iff.com/",
+      "postingUrl": "https://www.iff.com/careers/",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
       "adapter": "custom",
@@ -2435,7 +2435,7 @@
       "id": "audit-row-379",
       "masterRow": 379,
       "company": "Kenvue",
-      "postingUrl": "https://careers.kenvue.com/",
+      "postingUrl": "https://jobs.kenvue.com/",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
       "adapter": "custom",
@@ -2495,10 +2495,10 @@
       "id": "audit-row-383",
       "masterRow": 383,
       "company": "Kraft Heinz",
-      "postingUrl": "https://careers.kraftheinzcompany.com/",
+      "postingUrl": "https://jobs.kraftheinz.com/careers",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
-      "adapter": "custom",
+      "adapter": "phenom",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
@@ -2600,7 +2600,7 @@
       "id": "audit-row-390",
       "masterRow": 390,
       "company": "LKQ",
-      "postingUrl": "https://careers.lkqcorp.com/",
+      "postingUrl": "https://www.jobs.lkqcorp.com/",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
       "adapter": "custom",
@@ -2630,7 +2630,7 @@
       "id": "audit-row-392",
       "masterRow": 392,
       "company": "Lululemon athletica",
-      "postingUrl": "https://careers.lululemon.com/",
+      "postingUrl": "https://careers.lululemon.com/en_US/careers/SearchCareer/?lulus=",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
       "adapter": "custom",
@@ -2645,7 +2645,7 @@
       "id": "audit-row-393",
       "masterRow": 393,
       "company": "ManpowerGroup",
-      "postingUrl": "https://careers.manpowergroup.com/",
+      "postingUrl": "https://www.manpowergroup.com/careers",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
       "adapter": "custom",
@@ -2675,7 +2675,7 @@
       "id": "audit-row-395",
       "masterRow": 395,
       "company": "McDonald's",
-      "postingUrl": "https://careers.mcdonalds.com/",
+      "postingUrl": "https://careers.smartrecruiters.com/mcdonaldscorporation",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
       "adapter": "custom",
@@ -2690,10 +2690,10 @@
       "id": "audit-row-396",
       "masterRow": 396,
       "company": "Medline",
-      "postingUrl": "https://careers.medline.com/",
+      "postingUrl": "https://medline.wd5.myworkdayjobs.com/Medline",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
@@ -2735,7 +2735,7 @@
       "id": "audit-row-399",
       "masterRow": 399,
       "company": "Murphy USA",
-      "postingUrl": "https://careers.murphyusa.com/",
+      "postingUrl": "https://jobs.murphyusa.com/murphyusa/job-opportunities",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
       "adapter": "custom",
@@ -2810,7 +2810,7 @@
       "id": "audit-row-404",
       "masterRow": 404,
       "company": "NOV",
-      "postingUrl": "https://careers.nov.com/",
+      "postingUrl": "https://www.nov.com/careers",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
       "adapter": "custom",
@@ -2870,10 +2870,10 @@
       "id": "audit-row-408",
       "masterRow": 408,
       "company": "Ovintiv",
-      "postingUrl": "https://careers.ovintiv.com/",
+      "postingUrl": "https://ovintiv.wd3.myworkdayjobs.com/ovintivcareers",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
@@ -2900,7 +2900,7 @@
       "id": "audit-row-410",
       "masterRow": 410,
       "company": "Pacific Life",
-      "postingUrl": "https://careers.pacificlife.com/",
+      "postingUrl": "https://www.pacificlife.com/home/Careers.html",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
       "adapter": "custom",
@@ -2990,10 +2990,10 @@
       "id": "audit-row-416",
       "masterRow": 416,
       "company": "PulteGroup",
-      "postingUrl": "https://careers.pultegroup.com/",
+      "postingUrl": "https://pultegroup.wd1.myworkdayjobs.com/PGI",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
@@ -3065,7 +3065,7 @@
       "id": "audit-row-421",
       "masterRow": 421,
       "company": "Securian Financial Group",
-      "postingUrl": "https://careers.securian.com/",
+      "postingUrl": "https://www.securian.com/about-us/careers.html",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
       "adapter": "custom",
@@ -3140,7 +3140,7 @@
       "id": "audit-row-426",
       "masterRow": 426,
       "company": "Targa Resources",
-      "postingUrl": "https://careers.targaresources.com/",
+      "postingUrl": "https://targaresources.referrals.selectminds.com/",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
       "adapter": "custom",
@@ -3215,16 +3215,16 @@
       "id": "audit-row-431",
       "masterRow": 431,
       "company": "TransDigm",
-      "postingUrl": "https://www.transdigm.com/careers",
+      "postingUrl": null,
       "talentUrl": null,
       "channel": "모회사/승계 조직 공식 채용 경로",
       "adapter": "custom",
-      "verification": "merged_parent_careers",
+      "verification": "no_active_careers",
       "confidence": "medium",
       "resumeUpload": "job_only",
       "jobAlerts": "unknown",
       "checkedAt": "2026-08-08",
-      "enabled": true
+      "enabled": false
     },
     {
       "id": "audit-row-432",
@@ -3320,7 +3320,7 @@
       "id": "audit-row-438",
       "masterRow": 438,
       "company": "WESCO International",
-      "postingUrl": "https://careers.wesco.com/",
+      "postingUrl": "https://careers.smartrecruiters.com/WESCO1",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
       "adapter": "custom",
@@ -3335,7 +3335,7 @@
       "id": "audit-row-439",
       "masterRow": 439,
       "company": "Western & Southern Financial Group",
-      "postingUrl": "https://careers.westernsouthern.com/",
+      "postingUrl": "https://www.westernsouthern.com/careers",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
       "adapter": "custom",
@@ -3365,7 +3365,7 @@
       "id": "audit-row-441",
       "masterRow": 441,
       "company": "Williams",
-      "postingUrl": "https://careers.williams.com/",
+      "postingUrl": "https://www.williams.com/careers/",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
       "adapter": "custom",
@@ -3395,7 +3395,7 @@
       "id": "p5-0612-graymatter-robotics",
       "masterRow": 443,
       "company": "GrayMatter Robotics",
-      "postingUrl": "https://www.graymatterrobotics.com/careers",
+      "postingUrl": "https://factory.graymatter-robotics.com/careers/",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
       "adapter": "custom",
@@ -3410,16 +3410,16 @@
       "id": "p5-0756-transdigm",
       "masterRow": 444,
       "company": "TransDigm (operating units hire separately)",
-      "postingUrl": "https://www.transdigm.com/careers",
+      "postingUrl": null,
       "talentUrl": null,
       "channel": "모회사/승계 조직 공식 채용 경로",
       "adapter": "custom",
-      "verification": "merged_parent_careers",
+      "verification": "no_active_careers",
       "confidence": "medium",
       "resumeUpload": "job_only",
       "jobAlerts": "unknown",
       "checkedAt": "2026-08-08",
-      "enabled": true
+      "enabled": false
     },
     {
       "id": "p5-0775-23andme",
@@ -3440,7 +3440,7 @@
       "id": "p5-0791-altera-digital-health",
       "masterRow": 446,
       "company": "Altera Digital Health",
-      "postingUrl": "https://www.alteradigitalhealth.com/careers",
+      "postingUrl": "https://www.alterahealth.com/careers/",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
       "adapter": "custom",
@@ -3455,10 +3455,10 @@
       "id": "p5-0819-bcbs-massachusetts",
       "masterRow": 447,
       "company": "BCBS Massachusetts",
-      "postingUrl": "https://www.bcbsma.org/careers",
+      "postingUrl": "https://bcbsma.wd5.myworkdayjobs.com/BCBSMA",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
@@ -3470,10 +3470,10 @@
       "id": "p5-0821-bcbs-minnesota",
       "masterRow": 448,
       "company": "BCBS Minnesota",
-      "postingUrl": "https://www.bcbsmn.org/careers",
+      "postingUrl": "https://careers.bluecrossmn.com/en/search-jobs",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
-      "adapter": "custom",
+      "adapter": "phenom",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
@@ -3515,10 +3515,10 @@
       "id": "p5-0881-dentaquest",
       "masterRow": 451,
       "company": "DentaQuest (Sun Life)",
-      "postingUrl": "https://jobs.sunlife.com/",
+      "postingUrl": "https://sunlife.wd3.myworkdayjobs.com/Experienced-Jobs",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
@@ -3530,7 +3530,7 @@
       "id": "p5-0890-emory-healthcare",
       "masterRow": 452,
       "company": "Emory Healthcare",
-      "postingUrl": "https://emoryhealthcare.wd5.myworkdayjobs.com/EmoryCareers",
+      "postingUrl": "https://www.emoryhealthcare.org/careers",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
       "adapter": "workday",
@@ -3560,7 +3560,7 @@
       "id": "p5-0910-fujifilm-diosynth-biotechnologies",
       "masterRow": 454,
       "company": "FUJIFILM Diosynth Biotechnologies",
-      "postingUrl": "https://careers.fujifilmbiotechnologies.com/",
+      "postingUrl": "https://fujifilmbiotechnologies.fujifilm.com/careers/",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
       "adapter": "custom",
@@ -3650,7 +3650,7 @@
       "id": "p2-0051-north-island-cu",
       "masterRow": 462,
       "company": "North Island CU",
-      "postingUrl": "https://www.nicu.com/careers",
+      "postingUrl": "https://www.ccu.com/about/careers/",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
       "adapter": "custom",
@@ -3665,16 +3665,16 @@
       "id": "p2-0052-open-bank",
       "masterRow": 463,
       "company": "Open Bank",
-      "postingUrl": "https://www.santanderus.com/careers/",
+      "postingUrl": null,
       "talentUrl": null,
       "channel": "모회사/승계 조직 공식 채용 경로",
       "adapter": "custom",
-      "verification": "merged_parent_careers",
+      "verification": "no_active_careers",
       "confidence": "medium",
       "resumeUpload": "job_only",
       "jobAlerts": "unknown",
       "checkedAt": "2026-08-08",
-      "enabled": true
+      "enabled": false
     },
     {
       "id": "p2-0054-pennymac",
@@ -3725,7 +3725,7 @@
       "id": "p2-0112-glacier-bancorp",
       "masterRow": 473,
       "company": "Glacier Bancorp",
-      "postingUrl": "https://careers.glacierbank.com/",
+      "postingUrl": "https://www.gbcijobs.com/jobs",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
       "adapter": "custom",
@@ -3755,10 +3755,10 @@
       "id": "p2-0139-new-york-community-bank",
       "masterRow": 477,
       "company": "New York Community Bank (NYCB)",
-      "postingUrl": "https://www.mynycb.com/careers",
+      "postingUrl": "https://careers.flagstar.com/us/en",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
-      "adapter": "custom",
+      "adapter": "phenom",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
@@ -3800,10 +3800,10 @@
       "id": "p2-0171-stewart-title",
       "masterRow": 483,
       "company": "Stewart Title",
-      "postingUrl": "https://www.stewart.com/careers",
+      "postingUrl": "https://stewart.wd1.myworkdayjobs.com/External",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
@@ -3830,7 +3830,7 @@
       "id": "p2-0190-zions-bancorporation",
       "masterRow": 486,
       "company": "Zions Bancorporation",
-      "postingUrl": "https://www.zionsbancorporation.com/careers",
+      "postingUrl": "https://careers.zionsbancorporation.com/",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
       "adapter": "custom",
@@ -3875,7 +3875,7 @@
       "id": "p4-0296-infosys-consulting",
       "masterRow": 494,
       "company": "Infosys Consulting",
-      "postingUrl": "https://www.infosys.com/careers/americas.html",
+      "postingUrl": "https://digitalcareers.infosys.com/infosys/global-careers?location=USA",
       "talentUrl": "https://smartdreamers.com/infosys/talent-community?utm_campaign=namcareersite&utm_medium=referral&utm_source=namcareersite",
       "channel": "공식 Talent Community/후보 프로필",
       "adapter": "custom",
@@ -4130,7 +4130,7 @@
       "id": "audit-row-537",
       "masterRow": 537,
       "company": "North Island Credit Union",
-      "postingUrl": "https://www.ccu.com/careers/",
+      "postingUrl": "https://www.ccu.com/about/careers/",
       "talentUrl": null,
       "channel": "모회사/승계 조직 공식 채용 경로",
       "adapter": "custom",
@@ -4160,7 +4160,7 @@
       "id": "p2-0097-dea",
       "masterRow": 1015,
       "company": "DEA (Financial Investigations)",
-      "postingUrl": "https://www.dea.gov/careers",
+      "postingUrl": "https://www.usajobs.gov/Search/Results?a=DJ03",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
       "adapter": "custom",
@@ -4445,10 +4445,10 @@
       "id": "p2-0031-charles-schwab",
       "masterRow": 1208,
       "company": "Charles Schwab",
-      "postingUrl": "https://careers.schwab.com/",
+      "postingUrl": "https://www.schwabjobs.com/search-jobs",
       "talentUrl": "https://www.schwabjobs.com/join-our-talent-community/",
       "channel": "공식 Talent Community/후보 프로필",
-      "adapter": "custom",
+      "adapter": "phenom",
       "verification": "verified_talent",
       "confidence": "high",
       "resumeUpload": "available",
@@ -4520,7 +4520,7 @@
       "id": "p2-0048-metlife",
       "masterRow": 1215,
       "company": "MetLife",
-      "postingUrl": "https://www.metlife.com/careers/",
+      "postingUrl": "https://www.metlifecareers.com/en_US/ml",
       "talentUrl": "https://jobs.metlife.com/talentcommunity/subscribe/",
       "channel": "공식 Talent Community/후보자 프로필",
       "adapter": "custom",
@@ -4550,7 +4550,7 @@
       "id": "p2-0056-premier-america-cu",
       "masterRow": 1218,
       "company": "Premier America CU",
-      "postingUrl": "https://www.premieramerica.com/careers",
+      "postingUrl": "https://www.premieramerica.com/about/explore/careers",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
       "adapter": "custom",
@@ -4700,10 +4700,10 @@
       "id": "p2-0081-better-com",
       "masterRow": 1234,
       "company": "Better.com",
-      "postingUrl": "https://better.com/careers",
+      "postingUrl": "https://better.com/about-us/careers",
       "talentUrl": "https://my.greenhouse.io/users/sign_in?job_board=better&source=job_alert_board",
       "channel": "공식 ATS Job Alert 등록",
-      "adapter": "greenhouse",
+      "adapter": "custom",
       "verification": "verified_job_alert",
       "confidence": "medium",
       "resumeUpload": "unknown",
@@ -4745,10 +4745,10 @@
       "id": "p2-0086-cadence-bank",
       "masterRow": 1237,
       "company": "Cadence Bank",
-      "postingUrl": "https://www.cadencebank.com/careers",
+      "postingUrl": "https://huntington-careers.com/",
       "talentUrl": "https://cadencebank.wd1.myworkdayjobs.com/en-US/Careers/introduceYourself",
       "channel": "공식 Talent Community/후보자 프로필",
-      "adapter": "workday",
+      "adapter": "custom",
       "verification": "verified_talent",
       "confidence": "medium",
       "resumeUpload": "available",
@@ -4790,7 +4790,7 @@
       "id": "p2-0090-citizens-financial-group",
       "masterRow": 1241,
       "company": "Citizens Financial Group",
-      "postingUrl": "https://www.citizensbank.com/careers",
+      "postingUrl": "https://jobs.citizensbank.com/search-jobs?k=Citizens+Financial+Group",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
       "adapter": "custom",
@@ -4895,10 +4895,10 @@
       "id": "p2-0131-massmutual",
       "masterRow": 1262,
       "company": "MassMutual",
-      "postingUrl": "https://www.massmutual.com/careers",
+      "postingUrl": "https://careers.massmutual.com/search-jobs",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
-      "adapter": "custom",
+      "adapter": "phenom",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
@@ -4940,10 +4940,10 @@
       "id": "p2-0141-northern-trust",
       "masterRow": 1267,
       "company": "Northern Trust",
-      "postingUrl": "https://www.northerntrust.com/careers",
+      "postingUrl": "https://ntrs.wd1.myworkdayjobs.com/northerntrust",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
@@ -5045,7 +5045,7 @@
       "id": "p2-0170-state-street",
       "masterRow": 1281,
       "company": "State Street",
-      "postingUrl": "https://statestreet.wd1.myworkdayjobs.com/",
+      "postingUrl": "https://careers.statestreet.com/global/en/jobs-in-united-states",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
       "adapter": "workday",
@@ -5090,7 +5090,7 @@
       "id": "p2-0177-united-wholesale-mortgage",
       "masterRow": 1286,
       "company": "United Wholesale Mortgage (UWM)",
-      "postingUrl": "https://www.uwm.com/careers",
+      "postingUrl": "https://uwmcareers.com/",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
       "adapter": "custom",
@@ -5135,7 +5135,7 @@
       "id": "p2-0184-wellington-management",
       "masterRow": 1291,
       "company": "Wellington Management",
-      "postingUrl": "https://www.wellington.com/careers",
+      "postingUrl": "https://www.wellington.com/en/about-us/careers",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
       "adapter": "custom",
@@ -5210,10 +5210,10 @@
       "id": "p2-0197-relationalai",
       "masterRow": 1297,
       "company": "RelationalAI",
-      "postingUrl": "https://relational.ai/careers",
+      "postingUrl": "https://job-boards.greenhouse.io/relationalai",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
-      "adapter": "custom",
+      "adapter": "greenhouse",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
@@ -5225,10 +5225,10 @@
       "id": "p2-0199-tigergraph",
       "masterRow": 1298,
       "company": "TigerGraph",
-      "postingUrl": "https://www.tigergraph.com/careers/",
+      "postingUrl": "https://www.tigergraph.com/join-us/",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
-      "adapter": "custom",
+      "adapter": "greenhouse",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
@@ -5270,7 +5270,7 @@
       "id": "p4-0214-alvarez-marsal",
       "masterRow": 1306,
       "company": "Alvarez & Marsal",
-      "postingUrl": "https://apply.talemetry.com/",
+      "postingUrl": "https://careers.alvarezandmarsal.com/",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
       "adapter": "custom",
@@ -5345,7 +5345,7 @@
       "id": "p4-0292-hsbc-usa",
       "masterRow": 1336,
       "company": "HSBC USA",
-      "postingUrl": "https://www.us.hsbc.com/careers",
+      "postingUrl": "https://portal.careers.hsbc.com/careers?hl=en",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
       "adapter": "custom",
@@ -5435,10 +5435,10 @@
       "id": "p4-0335-raymond-james",
       "masterRow": 1354,
       "company": "Raymond James",
-      "postingUrl": "https://careers.raymondjames.com/",
+      "postingUrl": "https://raymondjames.wd1.myworkdayjobs.com/RaymondJamesCareers",
       "talentUrl": "https://raymondjames.yello.co/app/collect/event/eeHdXrNnemy716xpejwwZQ/registration",
       "channel": "공식 Talent Community/후보자 프로필",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "verified_talent",
       "confidence": "medium",
       "resumeUpload": "available",
@@ -5480,10 +5480,10 @@
       "id": "p4-0365-tempus-ai",
       "masterRow": 1361,
       "company": "Tempus AI",
-      "postingUrl": "https://www.tempus.com/careers/",
+      "postingUrl": "https://tempus.wd5.myworkdayjobs.com/Tempus_Careers",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
@@ -5555,7 +5555,7 @@
       "id": "p4-0407-cars-com",
       "masterRow": 1385,
       "company": "Cars.com",
-      "postingUrl": "https://www.cars.com/careers",
+      "postingUrl": "https://cars.wd12.myworkdayjobs.com/cars",
       "talentUrl": "https://cars.wd12.myworkdayjobs.com/en-US/cars/introduceYourself",
       "channel": "공식 Talent Community/후보자 프로필",
       "adapter": "workday",
@@ -5660,10 +5660,10 @@
       "id": "p4-0452-keeper-security",
       "masterRow": 1405,
       "company": "Keeper Security",
-      "postingUrl": "https://www.keepersecurity.com/company/careers.html",
+      "postingUrl": "https://job-boards.greenhouse.io/keepersecurity",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
-      "adapter": "custom",
+      "adapter": "greenhouse",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
@@ -5780,7 +5780,7 @@
       "id": "p5-0524-abbott-laboratories",
       "masterRow": 1446,
       "company": "Abbott Laboratories",
-      "postingUrl": "https://www.abbott.com/corp/careers.html",
+      "postingUrl": "https://www.abbott.com/en-us/careers",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
       "adapter": "custom",
@@ -5810,10 +5810,10 @@
       "id": "p5-0533-agilent-technologies",
       "masterRow": 1452,
       "company": "Agilent Technologies",
-      "postingUrl": "https://www.agilent.com/careers",
+      "postingUrl": "https://careers.smartrecruiters.com/AgilentTechnologies2",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
@@ -5855,7 +5855,7 @@
       "id": "p5-0546-anritsu-us",
       "masterRow": 1457,
       "company": "Anritsu US",
-      "postingUrl": "https://www.anritsu.com/en-us/careers",
+      "postingUrl": "https://www.anritsu.com/en-us/product-inspection/about-us/careers",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
       "adapter": "custom",
@@ -5945,7 +5945,7 @@
       "id": "p5-0566-cardinal-health",
       "masterRow": 1472,
       "company": "Cardinal Health",
-      "postingUrl": "https://www.cardinalhealth.com/careers",
+      "postingUrl": "https://jobs.cardinalhealth.com/search/searchjobs",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
       "adapter": "custom",
@@ -5990,10 +5990,10 @@
       "id": "p5-0570-centene-corporation",
       "masterRow": 1476,
       "company": "Centene Corporation",
-      "postingUrl": "https://careers.centene.com/",
+      "postingUrl": "https://jobs.centene.com/us/en/jobs/",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
-      "adapter": "custom",
+      "adapter": "phenom",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
@@ -6140,10 +6140,10 @@
       "id": "p5-0609-gold-coast-health-plan",
       "masterRow": 1502,
       "company": "Gold Coast Health Plan",
-      "postingUrl": "https://www.goldcoasthealthplan.org/careers",
+      "postingUrl": "https://goldcoasthealthplan.wd108.myworkdayjobs.com/GCHPCareers",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
@@ -6185,10 +6185,10 @@
       "id": "p5-0617-health-net",
       "masterRow": 1507,
       "company": "Health Net (Centene)",
-      "postingUrl": "https://careers.centene.com/",
+      "postingUrl": "https://jobs.centene.com/us/en/jobs/",
       "talentUrl": null,
       "channel": "합병/모회사 공식 채용 포털",
-      "adapter": "custom",
+      "adapter": "phenom",
       "verification": "merged_parent_careers",
       "confidence": "high",
       "resumeUpload": "job_only",
@@ -6260,10 +6260,10 @@
       "id": "p5-0649-labelbox",
       "masterRow": 1521,
       "company": "Labelbox",
-      "postingUrl": "https://labelbox.com/careers",
+      "postingUrl": "https://labelbox.com/company/careers/",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
-      "adapter": "custom",
+      "adapter": "greenhouse",
       "verification": "career_only",
       "confidence": "high",
       "resumeUpload": "job_only",
@@ -6290,10 +6290,10 @@
       "id": "p5-0658-magellan-health",
       "masterRow": 1525,
       "company": "Magellan Health (Centene)",
-      "postingUrl": "https://careers.centene.com/",
+      "postingUrl": "https://jobs.centene.com/us/en/jobs/",
       "talentUrl": null,
       "channel": "합병/모회사 공식 채용 포털",
-      "adapter": "custom",
+      "adapter": "phenom",
       "verification": "merged_parent_careers",
       "confidence": "high",
       "resumeUpload": "job_only",
@@ -6320,7 +6320,7 @@
       "id": "p5-0660-masimo",
       "masterRow": 1527,
       "company": "Masimo",
-      "postingUrl": "https://www.masimo.com/careers/",
+      "postingUrl": "https://www.masimo.com/company/careers/",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
       "adapter": "custom",
@@ -6575,7 +6575,7 @@
       "id": "audit-row-1562",
       "masterRow": 1562,
       "company": "Experian",
-      "postingUrl": "https://www.experian.com/careers",
+      "postingUrl": "https://jobs.experian.com/jobs",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
       "adapter": "custom",
@@ -6590,7 +6590,7 @@
       "id": "audit-row-1563",
       "masterRow": 1563,
       "company": "Grubhub (part of Wonder)",
-      "postingUrl": "https://careers.wonder.com/",
+      "postingUrl": "https://www.wonder.com/careers",
       "talentUrl": null,
       "channel": "합병/모회사 공식 채용 포털",
       "adapter": "custom",
@@ -6605,16 +6605,16 @@
       "id": "audit-row-1564",
       "masterRow": 1564,
       "company": "Hadrian (cybersecurity)",
-      "postingUrl": "https://hadriansecurity.com/careers",
+      "postingUrl": null,
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
       "adapter": "custom",
-      "verification": "career_only",
+      "verification": "no_active_careers",
       "confidence": "high",
       "resumeUpload": "job_only",
       "jobAlerts": "unknown",
       "checkedAt": "2026-08-08",
-      "enabled": true
+      "enabled": false
     },
     {
       "id": "audit-row-1565",
@@ -6635,7 +6635,7 @@
       "id": "audit-row-1566",
       "masterRow": 1566,
       "company": "Premier America Credit Union",
-      "postingUrl": "https://www.premieramerica.com/careers",
+      "postingUrl": "https://www.premieramerica.com/about/explore/careers",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
       "adapter": "custom",
@@ -6665,7 +6665,7 @@
       "id": "audit-row-1568",
       "masterRow": 1568,
       "company": "United Bank (Atlantic) / Atlantic Union Bank",
-      "postingUrl": "https://careers.atlanticunionbank.com/",
+      "postingUrl": "https://www.atlanticunionbank.com/about/careers",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
       "adapter": "custom",
@@ -7085,7 +7085,7 @@
       "id": "p5-1038-renesas",
       "masterRow": 2028,
       "company": "Renesas",
-      "postingUrl": "https://jobs.renesas.com/",
+      "postingUrl": "https://jobs.renesas.com/jobs",
       "talentUrl": "https://join.smartrecruiters.com/RenesasElectronics/52cc9dd7-0f97-4350-8ce0-d571757301c5-community-sign-up",
       "channel": "SmartRecruiters Community profile",
       "adapter": "custom",
@@ -7093,7 +7093,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -7115,15 +7115,15 @@
       "id": "p5-1043-roblox",
       "masterRow": 2030,
       "company": "Roblox",
-      "postingUrl": "https://careers.roblox.com/jobs",
+      "postingUrl": "https://job-boards.greenhouse.io/roblox",
       "talentUrl": "https://www.gem.com/form?formID=932a208f-83c6-485f-b6c2-23d4c5367d25",
       "channel": "Roblox Early Careers talent community",
-      "adapter": "custom",
+      "adapter": "greenhouse",
       "verification": "valid_direct_talent_form",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -7340,7 +7340,7 @@
       "id": "p5-1076-teleflex",
       "masterRow": 2045,
       "company": "Teleflex",
-      "postingUrl": "https://careers.teleflex.com/",
+      "postingUrl": "https://careers.teleflex.com/search/?q=&locationsearch=",
       "talentUrl": "https://careers.teleflex.com/",
       "channel": "Teleflex Talent Community",
       "adapter": "custom",
@@ -7348,7 +7348,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -7460,7 +7460,7 @@
       "id": "p5-1094-vanderbilt-health",
       "masterRow": 2053,
       "company": "Vanderbilt Health",
-      "postingUrl": "https://careers.vanderbilthealth.com/",
+      "postingUrl": "https://www.vumc.org/careers/",
       "talentUrl": "https://careers.vmcweb.org/",
       "channel": "Vanderbilt Health Connect with us",
       "adapter": "custom",
@@ -7468,7 +7468,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -7655,15 +7655,15 @@
       "id": "legacy-row-66",
       "masterRow": 2066,
       "company": "Air Products & Chemicals",
-      "postingUrl": "https://careers.airproducts.com/",
+      "postingUrl": "https://airproducts.wd5.myworkdayjobs.com/AP0001",
       "talentUrl": "https://careers.airproducts.com/",
       "channel": "Air Products Talent Network / account",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "valid_candidate_profile",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -7685,31 +7685,31 @@
       "id": "legacy-row-68",
       "masterRow": 2068,
       "company": "Ameren",
-      "postingUrl": "https://jobs.ameren.com/",
+      "postingUrl": "https://ameren.wd1.myworkdayjobs.com/External",
       "talentUrl": "https://jobs.ameren.com/",
       "channel": "Ameren Workday candidate profile / alerts",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "valid_candidate_profile",
       "confidence": "high",
       "resumeUpload": "available",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
       "id": "legacy-row-69",
       "masterRow": 2069,
       "company": "American Airlines Group",
-      "postingUrl": "https://jobs.aa.com/",
+      "postingUrl": null,
       "talentUrl": "https://jobs.aa.com/",
       "channel": "American Airlines candidate account and job alerts",
       "adapter": "custom",
-      "verification": "valid_candidate_profile",
+      "verification": "no_active_careers",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05",
-      "enabled": true
+      "checkedAt": "2026-08-08",
+      "enabled": false
     },
     {
       "id": "legacy-row-70",
@@ -7760,7 +7760,7 @@
       "id": "legacy-row-73",
       "masterRow": 2073,
       "company": "Biogen",
-      "postingUrl": "https://careers.biogen.com/",
+      "postingUrl": "https://www.biogen.com/careers.html?locale=en_US",
       "talentUrl": "https://careers.biogen.com/",
       "channel": "Biogen candidate profile / Talent Community",
       "adapter": "custom",
@@ -7768,7 +7768,7 @@
       "confidence": "high",
       "resumeUpload": "available",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -7895,7 +7895,7 @@
       "id": "legacy-row-82",
       "masterRow": 2082,
       "company": "CMS Energy",
-      "postingUrl": "https://careers.cmsenergy.com/",
+      "postingUrl": "https://www.consumersenergy.com/work-with-us/careers",
       "talentUrl": "https://careers.cmsenergy.com/",
       "channel": "CMS Energy job alerts",
       "adapter": "custom",
@@ -7903,7 +7903,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -7955,7 +7955,7 @@
       "id": "legacy-row-86",
       "masterRow": 2086,
       "company": "Continental Resources",
-      "postingUrl": "https://jobs.clr.com/",
+      "postingUrl": "https://www.clr.com/careers/",
       "talentUrl": "https://jobs.clr.com/",
       "channel": "Continental Resources job alerts",
       "adapter": "custom",
@@ -7963,7 +7963,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -7985,15 +7985,15 @@
       "id": "legacy-row-88",
       "masterRow": 2088,
       "company": "Crown Holdings",
-      "postingUrl": "https://careers.crowncork.com/",
+      "postingUrl": "https://us-jobs.crowncork.com/",
       "talentUrl": "https://careers.crowncork.com/",
       "channel": "Crown job-alert signup",
-      "adapter": "custom",
+      "adapter": "phenom",
       "verification": "valid_job_alert_form",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -8180,7 +8180,7 @@
       "id": "legacy-row-101",
       "masterRow": 2101,
       "company": "J.M. Smucker",
-      "postingUrl": "https://jobs.jmsmucker.com/",
+      "postingUrl": "https://www.jmsmucker.com/careers",
       "talentUrl": "https://jobs.jmsmucker.com/",
       "channel": "Smucker Workday job notifications",
       "adapter": "custom",
@@ -8188,7 +8188,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -8270,7 +8270,7 @@
       "id": "legacy-row-107",
       "masterRow": 2107,
       "company": "Masco",
-      "postingUrl": "https://careers.masco.com/",
+      "postingUrl": "https://jobs.masco.com/us/en/search-results",
       "talentUrl": "https://jobs.masco.com/us/en/jointalentcommunity",
       "channel": "Masco Talent Community form",
       "adapter": "phenom",
@@ -8278,7 +8278,7 @@
       "confidence": "high",
       "resumeUpload": "available",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -8300,15 +8300,15 @@
       "id": "legacy-row-109",
       "masterRow": 2109,
       "company": "Nasdaq",
-      "postingUrl": "https://www.nasdaq.com/about/careers",
+      "postingUrl": "https://nasdaq.wd1.myworkdayjobs.com/Global_External_Site",
       "talentUrl": "https://www.nasdaq.com/about/careers",
       "channel": "Nasdaq Talent Community",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "valid_embedded_talent_network",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -8435,7 +8435,7 @@
       "id": "legacy-row-118",
       "masterRow": 2118,
       "company": "Solventum",
-      "postingUrl": "https://careers.solventum.com/",
+      "postingUrl": "https://www.solventum.com/en-us/home/our-company/careers/",
       "talentUrl": "https://www.solventum.com/en-us/home/our-company/careers/",
       "channel": "Solventum Talent Community / job alerts",
       "adapter": "custom",
@@ -8443,7 +8443,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -8570,7 +8570,7 @@
       "id": "legacy-row-127",
       "masterRow": 2127,
       "company": "WEC Energy Group",
-      "postingUrl": "https://jobs.wecenergygroup.com/",
+      "postingUrl": "https://careers.wecenergygroup.com/",
       "talentUrl": "https://jobs.wecenergygroup.com/",
       "channel": "WEC Energy Career Network",
       "adapter": "custom",
@@ -8578,7 +8578,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -8600,7 +8600,7 @@
       "id": "legacy-row-129",
       "masterRow": 2129,
       "company": "Williams-Sonoma",
-      "postingUrl": "https://careers.williams-sonomainc.com/",
+      "postingUrl": "https://www.williams-sonomainc.com/careers/jobs/",
       "talentUrl": "https://careers.williams-sonomainc.com/",
       "channel": "Williams-Sonoma vacancy alerts",
       "adapter": "custom",
@@ -8608,7 +8608,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -8915,7 +8915,7 @@
       "id": "p5-0671-mistral-ai",
       "masterRow": 2377,
       "company": "Mistral AI",
-      "postingUrl": "https://jobs.lever.co/mistral",
+      "postingUrl": "https://mistral.ai/careers/",
       "talentUrl": "https://mistral.ai/careers/",
       "channel": "공식 채용공고 검색·지원",
       "adapter": "lever",
@@ -8923,7 +8923,7 @@
       "confidence": "medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -9530,7 +9530,7 @@
       "id": "p5-0810-atrium-health",
       "masterRow": 2421,
       "company": "Atrium Health (Advocate)",
-      "postingUrl": "https://careers.atriumhealth.org/search-jobs/",
+      "postingUrl": "https://careers.atriumhealth.org/",
       "talentUrl": "https://careers.advocatehealth.com/",
       "channel": "공식 채용공고 검색·지원",
       "adapter": "custom",
@@ -9538,7 +9538,7 @@
       "confidence": "medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -9770,15 +9770,15 @@
       "id": "p5-0828-blue-origin",
       "masterRow": 2439,
       "company": "Blue Origin",
-      "postingUrl": "https://www.blueorigin.com/careers/search",
+      "postingUrl": "https://blueorigin.wd5.myworkdayjobs.com/BlueOrigin",
       "talentUrl": "https://www.blueorigin.com/careers",
       "channel": "공식 채용공고 검색·지원",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "not_audited",
       "confidence": "medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -10100,7 +10100,7 @@
       "id": "p5-0851-cirrus-logic",
       "masterRow": 2462,
       "company": "Cirrus Logic",
-      "postingUrl": "https://www.cirrus.com/careers/jobs",
+      "postingUrl": "https://jobs.jobvite.com/careers/cirruslogic/jobs",
       "talentUrl": "https://www.cirrus.com/careers/jobs",
       "channel": "공식 채용공고 검색·지원",
       "adapter": "custom",
@@ -10108,7 +10108,7 @@
       "confidence": "medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -11630,7 +11630,7 @@
       "id": "p5-0959-kroger",
       "masterRow": 2570,
       "company": "Kroger",
-      "postingUrl": "https://www.krogerfamilycareers.com/",
+      "postingUrl": "https://www.krogerfamilycareers.com/en/sites/CX_2001/jobs",
       "talentUrl": "https://www.kroger.com/corporate/careers",
       "channel": "공식 채용공고 검색·지원",
       "adapter": "custom",
@@ -11638,7 +11638,7 @@
       "confidence": "medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -12155,7 +12155,7 @@
       "id": "p5-0994-nokia-us",
       "masterRow": 2605,
       "company": "Nokia US",
-      "postingUrl": "https://www.nokia.com/careers/",
+      "postingUrl": "https://jobs.nokia.com/en/sites/CX_1",
       "talentUrl": "https://www.nokia.com/about-us/careers/",
       "channel": "공식 채용공고 검색·지원",
       "adapter": "custom",
@@ -12163,7 +12163,7 @@
       "confidence": "medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -12605,7 +12605,7 @@
       "id": "p4-0363-tcs",
       "masterRow": 2659,
       "company": "TCS",
-      "postingUrl": "https://www.tcs.com/careers",
+      "postingUrl": "https://tcs.hrmdirect.com/employment/job-openings.php",
       "talentUrl": "https://www.tcs.com/careers",
       "channel": "공식 글로벌 Career Portal",
       "adapter": "custom",
@@ -12613,22 +12613,22 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
       "id": "p4-0366-the-hartford",
       "masterRow": 2660,
       "company": "The Hartford",
-      "postingUrl": "https://www.thehartford.com/careers",
+      "postingUrl": "https://thehartford.wd5.myworkdayjobs.com/Careers_External",
       "talentUrl": "https://www.thehartford.com/careers",
       "channel": "공식 Career Portal",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "career_page_only",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -12995,7 +12995,7 @@
       "id": "p5-0715-replicate",
       "masterRow": 2699,
       "company": "Replicate",
-      "postingUrl": "https://replicate.com/jobs",
+      "postingUrl": "https://replicate.com/about",
       "talentUrl": "https://jobs.ashbyhq.com/replicate",
       "channel": "Official Ashby career board",
       "adapter": "custom",
@@ -13003,7 +13003,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -13025,15 +13025,15 @@
       "id": "p5-0717-resmed",
       "masterRow": 2701,
       "company": "ResMed",
-      "postingUrl": "https://careers.resmed.com/",
+      "postingUrl": "https://resmed.wd3.myworkdayjobs.com/ResMed_External_Careers",
       "talentUrl": "https://resmed.com/careers",
       "channel": "공식 Career Portal",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "career_page_only",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -13205,7 +13205,7 @@
       "id": "p5-0740-stmicroelectronics",
       "masterRow": 2713,
       "company": "STMicroelectronics",
-      "postingUrl": "https://www.st.com/content/st_com/en/about/careers.html",
+      "postingUrl": "https://stmicroelectronics.eightfold.ai/careers?hl=en",
       "talentUrl": "https://www.st.com/content/st_com/en/about/careers.html",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -13213,7 +13213,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -13415,7 +13415,7 @@
       "id": "p5-0772-general-dynamics",
       "masterRow": 2727,
       "company": "⚠️ General Dynamics",
-      "postingUrl": "https://gdmissionsystems.com/careers/job-search",
+      "postingUrl": "https://join.gdmissionsystems.com/general/jobs",
       "talentUrl": "https://gdmissionsystems.com/careers",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -13423,7 +13423,7 @@
       "confidence": "medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -13850,7 +13850,7 @@
       "id": "p5-1077-tesla",
       "masterRow": 2756,
       "company": "Tesla",
-      "postingUrl": "https://www.tesla.com/careers",
+      "postingUrl": "https://www.tesla.com/careers/search/?site=US",
       "talentUrl": "https://www.tesla.com/careers",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -13858,7 +13858,7 @@
       "confidence": "high-medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -13955,7 +13955,7 @@
       "id": "p5-1089-ultra-clean-holdings",
       "masterRow": 2763,
       "company": "Ultra Clean Holdings",
-      "postingUrl": "https://www.uct.com/careers/default.aspx",
+      "postingUrl": "https://recruiting2.ultipro.com/ULT1005UCH/JobBoard/93be8725-1d6c-4162-aba5-e796cf8ea1b5/",
       "talentUrl": "https://www.uct.com/careers/default.aspx",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -13963,7 +13963,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -14210,7 +14210,7 @@
       "id": "legacy-row-780",
       "masterRow": 2780,
       "company": "Albertsons",
-      "postingUrl": "https://www.albertsonscompanies.com/careers/en/home.html",
+      "postingUrl": "https://careers.smartrecruiters.com/AlbertsonsCompanies",
       "talentUrl": "https://www.albertsonscompanies.com/careers.html",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -14218,7 +14218,7 @@
       "confidence": "medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -14240,7 +14240,7 @@
       "id": "legacy-row-782",
       "masterRow": 2782,
       "company": "Amphenol",
-      "postingUrl": "https://www.amphenol.com/careers",
+      "postingUrl": "https://amphenol.acquiretm.com/search_clean.aspx",
       "talentUrl": "https://www.amphenol.com/careers",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -14248,7 +14248,7 @@
       "confidence": "medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -14465,7 +14465,7 @@
       "id": "legacy-row-797",
       "masterRow": 2797,
       "company": "Concentrix",
-      "postingUrl": "https://jobs.concentrix.com/",
+      "postingUrl": "https://jobs.concentrix.com/job-search/?country=United+States+Of+America&wh=1",
       "talentUrl": "https://jobs.concentrix.com/",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -14473,7 +14473,7 @@
       "confidence": "high-medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -14525,7 +14525,7 @@
       "id": "legacy-row-801",
       "masterRow": 2801,
       "company": "Darden Restaurants",
-      "postingUrl": "https://careers.darden.com/",
+      "postingUrl": "https://www.darden.com/careers",
       "talentUrl": "https://careers.darden.com/",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -14533,7 +14533,7 @@
       "confidence": "high-medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -14840,7 +14840,7 @@
       "id": "legacy-row-822",
       "masterRow": 2822,
       "company": "Hormel Foods",
-      "postingUrl": "https://careers.hormelfoods.com/",
+      "postingUrl": "https://www.hormelfoods.com/careers/",
       "talentUrl": "https://careers.hormelfoods.com/",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -14848,7 +14848,7 @@
       "confidence": "high-medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -14975,22 +14975,22 @@
       "id": "legacy-row-831",
       "masterRow": 2831,
       "company": "Las Vegas Sands",
-      "postingUrl": "https://www.sands.com/careers/",
+      "postingUrl": "https://sands.wd1.myworkdayjobs.com/sands_careers",
       "talentUrl": "https://www.sands.com/careers/",
       "channel": "공식 Career Portal",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "career_page_only",
       "confidence": "high-medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
       "id": "legacy-row-832",
       "masterRow": 2832,
       "company": "Loews",
-      "postingUrl": "https://loews.com/careers/default.aspx",
+      "postingUrl": "https://careers.loewshotels.com/",
       "talentUrl": "https://loews.com/careers/default.aspx",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -14998,7 +14998,7 @@
       "confidence": "medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -15050,7 +15050,7 @@
       "id": "legacy-row-836",
       "masterRow": 2836,
       "company": "Molson Coors Beverage",
-      "postingUrl": "https://jobs.molsoncoors.com/",
+      "postingUrl": "https://www.molsoncoors.com/careers",
       "talentUrl": "https://jobs.molsoncoors.com/",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -15058,7 +15058,7 @@
       "confidence": "high-medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -15080,7 +15080,7 @@
       "id": "legacy-row-838",
       "masterRow": 2838,
       "company": "Mosaic",
-      "postingUrl": "https://jobs.mosaicco.com/",
+      "postingUrl": "https://mosaicco.com/careers",
       "talentUrl": "https://jobs.mosaicco.com/",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -15088,7 +15088,7 @@
       "confidence": "high-medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -15230,7 +15230,7 @@
       "id": "legacy-row-848",
       "masterRow": 2848,
       "company": "Penske Automotive Group",
-      "postingUrl": "https://www.penskeautomotive.com/careers/",
+      "postingUrl": "https://www.penske.com/careers/",
       "talentUrl": "https://www.penskeautomotive.com/careers/",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -15238,7 +15238,7 @@
       "confidence": "medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -15380,16 +15380,16 @@
       "id": "legacy-row-858",
       "masterRow": 2858,
       "company": "Roper Technologies",
-      "postingUrl": "https://www.ropertech.com/businesses",
+      "postingUrl": null,
       "talentUrl": "https://www.ropertech.com/businesses",
       "channel": "공식 Career Portal",
       "adapter": "custom",
-      "verification": "career_page_only",
+      "verification": "no_active_careers",
       "confidence": "high-medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
-      "enabled": true
+      "checkedAt": "2026-08-08",
+      "enabled": false
     },
     {
       "id": "legacy-row-859",
@@ -15425,7 +15425,7 @@
       "id": "legacy-row-861",
       "masterRow": 2861,
       "company": "Seaboard",
-      "postingUrl": "https://www.seaboardcorp.com/careers/",
+      "postingUrl": "https://www.seaboardcorp.com/working-at-seaboard/domestic-careers/",
       "talentUrl": "https://www.seaboardcorp.com/careers/",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -15433,7 +15433,7 @@
       "confidence": "high-medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -15455,16 +15455,16 @@
       "id": "legacy-row-863",
       "masterRow": 2863,
       "company": "Somnigroup International",
-      "postingUrl": "https://somnigroup.com/careers/default.aspx",
+      "postingUrl": null,
       "talentUrl": "https://somnigroup.com/careers/default.aspx",
       "channel": "공식 Career Portal",
       "adapter": "custom",
-      "verification": "career_page_only",
+      "verification": "no_active_careers",
       "confidence": "high-medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
-      "enabled": true
+      "checkedAt": "2026-08-08",
+      "enabled": false
     },
     {
       "id": "legacy-row-864",
@@ -15650,30 +15650,30 @@
       "id": "legacy-row-876",
       "masterRow": 2876,
       "company": "Venture Global",
-      "postingUrl": "https://venturegloballng.com/careers/",
+      "postingUrl": "https://job-boards.greenhouse.io/ventureglobal",
       "talentUrl": "https://venturegloballng.com/careers/",
       "channel": "공식 Career Portal",
-      "adapter": "custom",
+      "adapter": "greenhouse",
       "verification": "career_page_only",
       "confidence": "medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
       "id": "legacy-row-877",
       "masterRow": 2877,
       "company": "Vertex Pharmaceuticals",
-      "postingUrl": "https://www.vrtx.com/careers/",
+      "postingUrl": "https://vrtx.wd501.myworkdayjobs.com/Vertex_Careers",
       "talentUrl": "https://www.vrtx.com/careers/",
       "channel": "공식 Career Portal",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "career_page_only",
       "confidence": "high-medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -15740,7 +15740,7 @@
       "id": "legacy-row-882",
       "masterRow": 2882,
       "company": "Welltower",
-      "postingUrl": "https://careers.welltower.com/",
+      "postingUrl": "https://welltower.com/careers/",
       "talentUrl": "https://careers.welltower.com/",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -15748,7 +15748,7 @@
       "confidence": "high-medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -15800,7 +15800,7 @@
       "id": "legacy-row-886",
       "masterRow": 2886,
       "company": "Yum Brands",
-      "postingUrl": "https://www.yum.com/wps/portal/yumbrands/Yumbrands/careers",
+      "postingUrl": "https://jobs.yum.com/?brand=yum",
       "talentUrl": "https://www.yum.com/wps/portal/yumbrands/Yumbrands/careers",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -15808,7 +15808,7 @@
       "confidence": "high-medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -16040,7 +16040,7 @@
       "id": "p2-0037-farmers-insurance",
       "masterRow": 2902,
       "company": "Farmers Insurance",
-      "postingUrl": "https://www.farmers.com/careers",
+      "postingUrl": "https://jobs.farmersinsurance.com/",
       "talentUrl": "https://www.farmers.com/careers",
       "channel": "Career portal only — no public general talent form found",
       "adapter": "custom",
@@ -16048,7 +16048,7 @@
       "confidence": "medium-high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -16205,7 +16205,7 @@
       "id": "p2-0113-golden-1-credit-union",
       "masterRow": 2914,
       "company": "Golden 1 Credit Union",
-      "postingUrl": "https://www.golden1.com/careers",
+      "postingUrl": "https://jobs.dayforcehcm.com/en-US/golden1/CANDIDATEPORTAL",
       "talentUrl": "https://www.golden1.com/careers",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -16213,7 +16213,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -17135,7 +17135,7 @@
       "id": "p4-0307-mckinsey-company-quantumblack",
       "masterRow": 2983,
       "company": "McKinsey & Company — QuantumBlack",
-      "postingUrl": "https://www.mckinsey.com/careers/search-jobs",
+      "postingUrl": "https://www.mckinsey.com/careers/search-jobs?query=QuantumBlack",
       "talentUrl": "https://www.mckinsey.com/careers/search-jobs",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -17143,7 +17143,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -17405,7 +17405,7 @@
       "id": "p4-0356-sumsub",
       "masterRow": 3003,
       "company": "SumSub",
-      "postingUrl": "https://sumsub.com/careers/",
+      "postingUrl": "https://careers.sumsub.com/jobs",
       "talentUrl": "https://sumsub.com/careers/",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -17413,7 +17413,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -17585,15 +17585,15 @@
       "id": "p4-0389-ziprecruiter",
       "masterRow": 3016,
       "company": "ZipRecruiter",
-      "postingUrl": "https://www.ziprecruiter.com/careers",
+      "postingUrl": "https://job-boards.greenhouse.io/ziprecruiter",
       "talentUrl": "https://www.ziprecruiter.com/careers",
       "channel": "공식 Career Portal",
-      "adapter": "custom",
+      "adapter": "greenhouse",
       "verification": "career_page_only",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -17840,16 +17840,16 @@
       "id": "p4-0453-latentview-analytics",
       "masterRow": 3033,
       "company": "LatentView Analytics",
-      "postingUrl": "https://www.latentview.com/career/",
+      "postingUrl": null,
       "talentUrl": "https://www.latentview.com/career/",
       "channel": "공식 Career Portal",
       "adapter": "custom",
-      "verification": "career_page_only",
+      "verification": "no_active_careers",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
-      "enabled": true
+      "checkedAt": "2026-08-08",
+      "enabled": false
     },
     {
       "id": "p4-0458-mclagan",
@@ -18530,7 +18530,7 @@
       "id": "p5-0708-qorvo",
       "masterRow": 3079,
       "company": "Qorvo",
-      "postingUrl": "https://www.qorvo.com/careers",
+      "postingUrl": "https://www.qorvo.com/about/careers",
       "talentUrl": "https://www.qorvo.com/careers",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -18538,22 +18538,22 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
       "id": "p5-0711-rand-corporation",
       "masterRow": 3080,
       "company": "RAND Corporation",
-      "postingUrl": "https://www.rand.org/jobs.html",
+      "postingUrl": "https://rand.wd5.myworkdayjobs.com/External_Career_Site",
       "talentUrl": "https://www.rand.org/jobs.html",
       "channel": "공식 Career Portal",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "career_page_only",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -18830,7 +18830,7 @@
       "id": "p2-0102-experian",
       "masterRow": 3133,
       "company": "Experian (Decision Analytics / Hunter)",
-      "postingUrl": "https://join.smartrecruiters.com/Experian/59c50259-c707-4a95-9934-cc6d622b99d1-join-our-community",
+      "postingUrl": "https://jobs.experian.com/jobs",
       "talentUrl": "https://join.smartrecruiters.com/Experian/59c50259-c707-4a95-9934-cc6d622b99d1-join-our-community",
       "channel": "SmartRecruiters Join Our Community",
       "adapter": "custom",
@@ -18838,22 +18838,22 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
       "id": "p2-0105-finastra",
       "masterRow": 3135,
       "company": "Finastra",
-      "postingUrl": "https://careers.finastra.com/",
+      "postingUrl": "https://finastra.wd3.myworkdayjobs.com/FINC",
       "talentUrl": "https://careers.finastra.com/",
       "channel": "공식 Career Portal",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "career_page_only",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -18890,7 +18890,7 @@
       "id": "p2-0118-huntington-bancshares",
       "masterRow": 3140,
       "company": "Huntington Bancshares",
-      "postingUrl": "https://www.huntington.com/careers",
+      "postingUrl": "https://huntington-careers.com/search/searchjobs",
       "talentUrl": "https://www.huntington.com/careers",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -18898,7 +18898,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -19100,15 +19100,15 @@
       "id": "p2-0158-rocket-companies",
       "masterRow": 3164,
       "company": "Rocket Companies",
-      "postingUrl": "https://www.rocketcompanies.com/our-team/careers/",
+      "postingUrl": "https://careers.rocket.com/us/en/search-results",
       "talentUrl": "https://www.rocketcompanies.com/our-team/careers/",
       "channel": "공식 Career Portal",
-      "adapter": "custom",
+      "adapter": "phenom",
       "verification": "career_page_only",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -19280,15 +19280,15 @@
       "id": "p4-0211-aig",
       "masterRow": 3192,
       "company": "AIG",
-      "postingUrl": "https://talentcommunity.aig.com/flows/Talent-Community",
+      "postingUrl": "https://aig.wd1.myworkdayjobs.com/aig",
       "talentUrl": "https://talentcommunity.aig.com/flows/Talent-Community",
       "channel": "AIG Talent Community",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "valid_direct_talent_form",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -19310,15 +19310,15 @@
       "id": "p4-0223-bae-systems",
       "masterRow": 3196,
       "company": "BAE Systems (US)",
-      "postingUrl": "https://careers.baesystems.com/",
+      "postingUrl": "https://jobs.baesystems.com/global/en/search-results",
       "talentUrl": "https://careers.baesystems.com/",
       "channel": "공식 Career Portal",
-      "adapter": "custom",
+      "adapter": "phenom",
       "verification": "career_page_only",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -20075,10 +20075,10 @@
       "id": "p4-0388-zillow",
       "masterRow": 3261,
       "company": "Zillow",
-      "postingUrl": "https://www.zillow.com/careers/",
+      "postingUrl": "https://zillow.wd5.myworkdayjobs.com/Zillow_Group_External",
       "talentUrl": "https://www.zillow.com/careers",
       "channel": "공식 Careers 내 Talent Network → Gem",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "valid_embedded_talent_network",
       "confidence": "medium",
       "resumeUpload": "unknown",
@@ -20330,16 +20330,16 @@
       "id": "p4-0442-hashicorp",
       "masterRow": 3287,
       "company": "HashiCorp",
-      "postingUrl": "https://www.hashicorp.com/careers",
+      "postingUrl": null,
       "talentUrl": "https://www.hashicorp.com/careers",
       "channel": "공식 Career Portal",
       "adapter": "custom",
-      "verification": "career_page_only",
+      "verification": "no_active_careers",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
-      "enabled": true
+      "checkedAt": "2026-08-08",
+      "enabled": false
     },
     {
       "id": "p4-0445-huntress",
@@ -20435,22 +20435,22 @@
       "id": "p4-0462-mu-sigma",
       "masterRow": 3297,
       "company": "Mu Sigma",
-      "postingUrl": "https://www.mu-sigma.com/career/",
+      "postingUrl": null,
       "talentUrl": "https://www.mu-sigma.com/career/",
       "channel": "공식 Career Portal",
       "adapter": "custom",
-      "verification": "career_page_only",
+      "verification": "no_active_careers",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
-      "enabled": true
+      "checkedAt": "2026-08-08",
+      "enabled": false
     },
     {
       "id": "p4-0464-ncino",
       "masterRow": 3298,
       "company": "nCino",
-      "postingUrl": "https://www.ncino.com/careers",
+      "postingUrl": "https://www.ncino.com/our-company/careers",
       "talentUrl": "https://www.ncino.com/careers",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -20458,7 +20458,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -20630,15 +20630,15 @@
       "id": "p4-0487-rubrik",
       "masterRow": 3313,
       "company": "Rubrik",
-      "postingUrl": "https://www.rubrik.com/careers",
+      "postingUrl": "https://job-boards.greenhouse.io/rubrik",
       "talentUrl": "https://www.rubrik.com/careers",
       "channel": "공식 Career Portal",
-      "adapter": "custom",
+      "adapter": "greenhouse",
       "verification": "career_page_only",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -20840,15 +20840,15 @@
       "id": "p4-0517-workiva",
       "masterRow": 3329,
       "company": "Workiva",
-      "postingUrl": "https://www.workiva.com/careers",
+      "postingUrl": "https://workiva.wd503.myworkdayjobs.com/careers",
       "talentUrl": "https://www.workiva.com/careers",
       "channel": "공식 Career Portal",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "career_page_only",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -21005,7 +21005,7 @@
       "id": "p5-0553-b-braun-medical",
       "masterRow": 3349,
       "company": "B. Braun Medical",
-      "postingUrl": "https://www.bbraunusa.com/en/career/your-opportunity.html?cid=DL:careers",
+      "postingUrl": "https://jobs.bbraun.com/",
       "talentUrl": "https://www.bbraunusa.com/careers",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -21200,7 +21200,7 @@
       "id": "p5-0586-eaton",
       "masterRow": 3372,
       "company": "Eaton",
-      "postingUrl": "https://www.eaton.com/us/en-us/company/careers.html",
+      "postingUrl": "https://eaton.eightfold.ai/careers",
       "talentUrl": "https://www.eaton.com/us/en-us/company/careers.html",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -21208,7 +21208,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -21575,7 +21575,7 @@
       "id": "p5-0668-microchip-technology",
       "masterRow": 3419,
       "company": "Microchip Technology",
-      "postingUrl": "https://www.microchip.com/en-us/about/careers",
+      "postingUrl": "https://careers.smartrecruiters.com/Microchip",
       "talentUrl": "https://www.microchip.com/en-us/about/careers",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -21583,7 +21583,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -22922,7 +22922,7 @@
       "officialUrl": "https://join.smartrecruiters.com/RenesasElectronics/52cc9dd7-0f97-4350-8ce0-d571757301c5-community-sign-up",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p5-1042-ro",
@@ -22938,7 +22938,7 @@
       "officialUrl": "https://www.gem.com/form?formID=932a208f-83c6-485f-b6c2-23d4c5367d25",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p5-1045-rohde-schwarz-us",
@@ -23058,7 +23058,7 @@
       "officialUrl": "https://careers.teleflex.com/",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p5-1078-texas-instruments",
@@ -23122,7 +23122,7 @@
       "officialUrl": "https://careers.vmcweb.org/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p5-1095-vanguard",
@@ -23226,7 +23226,7 @@
       "officialUrl": "https://careers.airproducts.com/",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-67",
@@ -23242,7 +23242,7 @@
       "officialUrl": "https://jobs.ameren.com/",
       "resumeUpload": "available",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-69",
@@ -23250,7 +23250,7 @@
       "officialUrl": "https://jobs.aa.com/",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-70",
@@ -23282,7 +23282,7 @@
       "officialUrl": "https://careers.biogen.com/",
       "resumeUpload": "available",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-74",
@@ -23354,7 +23354,7 @@
       "officialUrl": "https://careers.cmsenergy.com/",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-83",
@@ -23386,7 +23386,7 @@
       "officialUrl": "https://jobs.clr.com/",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-87",
@@ -23402,7 +23402,7 @@
       "officialUrl": "https://careers.crowncork.com/",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-89",
@@ -23506,7 +23506,7 @@
       "officialUrl": "https://jobs.jmsmucker.com/",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-102",
@@ -23554,7 +23554,7 @@
       "officialUrl": "https://jobs.masco.com/us/en/jointalentcommunity",
       "resumeUpload": "available",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-108",
@@ -23570,7 +23570,7 @@
       "officialUrl": "https://www.nasdaq.com/about/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-110",
@@ -23642,7 +23642,7 @@
       "officialUrl": "https://www.solventum.com/en-us/home/our-company/careers/",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-119",
@@ -23714,7 +23714,7 @@
       "officialUrl": "https://jobs.wecenergygroup.com/",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-128",
@@ -23730,7 +23730,7 @@
       "officialUrl": "https://careers.williams-sonomainc.com/",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-130",
@@ -23898,7 +23898,7 @@
       "officialUrl": "https://mistral.ai/careers/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p5-0674-modal",
@@ -24226,7 +24226,7 @@
       "officialUrl": "https://careers.advocatehealth.com/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p5-0811-aurora-health-care",
@@ -24354,7 +24354,7 @@
       "officialUrl": "https://www.blueorigin.com/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p5-0829-blue-river-technology",
@@ -24530,7 +24530,7 @@
       "officialUrl": "https://www.cirrus.com/careers/jobs",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p5-0852-cityblock-health",
@@ -25346,7 +25346,7 @@
       "officialUrl": "https://www.kroger.com/corporate/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p5-0960-lam-research",
@@ -25626,7 +25626,7 @@
       "officialUrl": "https://www.nokia.com/about-us/careers/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p5-0995-noom",
@@ -25810,7 +25810,7 @@
       "officialUrl": "https://www.tcs.com/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p4-0366-the-hartford",
@@ -25818,7 +25818,7 @@
       "officialUrl": "https://www.thehartford.com/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p4-0393-akamai",
@@ -26018,7 +26018,7 @@
       "officialUrl": "https://jobs.ashbyhq.com/replicate",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p5-0716-replit",
@@ -26034,7 +26034,7 @@
       "officialUrl": "https://resmed.com/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p5-0719-rocket-lab",
@@ -26130,7 +26130,7 @@
       "officialUrl": "https://www.st.com/content/st_com/en/about/careers.html",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p5-0743-t-mobile",
@@ -26242,7 +26242,7 @@
       "officialUrl": "https://gdmissionsystems.com/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p5-0997-novartis",
@@ -26474,7 +26474,7 @@
       "officialUrl": "https://www.tesla.com/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p5-1080-tokyo-electron",
@@ -26530,7 +26530,7 @@
       "officialUrl": "https://www.uct.com/careers/default.aspx",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p5-1096-vantor",
@@ -26666,7 +26666,7 @@
       "officialUrl": "https://www.albertsonscompanies.com/careers.html",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-781",
@@ -26682,7 +26682,7 @@
       "officialUrl": "https://www.amphenol.com/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-783",
@@ -26802,7 +26802,7 @@
       "officialUrl": "https://jobs.concentrix.com/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-798",
@@ -26834,7 +26834,7 @@
       "officialUrl": "https://careers.darden.com/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-802",
@@ -27002,7 +27002,7 @@
       "officialUrl": "https://careers.hormelfoods.com/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-823",
@@ -27074,7 +27074,7 @@
       "officialUrl": "https://www.sands.com/careers/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-832",
@@ -27082,7 +27082,7 @@
       "officialUrl": "https://loews.com/careers/default.aspx",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-833",
@@ -27114,7 +27114,7 @@
       "officialUrl": "https://jobs.molsoncoors.com/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-837",
@@ -27130,7 +27130,7 @@
       "officialUrl": "https://jobs.mosaicco.com/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-839",
@@ -27210,7 +27210,7 @@
       "officialUrl": "https://www.penskeautomotive.com/careers/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-849",
@@ -27290,7 +27290,7 @@
       "officialUrl": "https://www.ropertech.com/businesses",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-859",
@@ -27314,7 +27314,7 @@
       "officialUrl": "https://www.seaboardcorp.com/careers/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-862",
@@ -27330,7 +27330,7 @@
       "officialUrl": "https://somnigroup.com/careers/default.aspx",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-864",
@@ -27434,7 +27434,7 @@
       "officialUrl": "https://venturegloballng.com/careers/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-877",
@@ -27442,7 +27442,7 @@
       "officialUrl": "https://www.vrtx.com/careers/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-878",
@@ -27482,7 +27482,7 @@
       "officialUrl": "https://careers.welltower.com/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-883",
@@ -27514,7 +27514,7 @@
       "officialUrl": "https://www.yum.com/wps/portal/yumbrands/Yumbrands/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-887",
@@ -27642,7 +27642,7 @@
       "officialUrl": "https://www.farmers.com/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p2-0038-first-entertainment-cu",
@@ -27730,7 +27730,7 @@
       "officialUrl": "https://www.golden1.com/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p2-0115-guardian-life",
@@ -28226,7 +28226,7 @@
       "officialUrl": "https://www.mckinsey.com/careers/search-jobs",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p4-0315-nice-actimize",
@@ -28370,7 +28370,7 @@
       "officialUrl": "https://sumsub.com/careers/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p4-0357-symphonyai",
@@ -28466,7 +28466,7 @@
       "officialUrl": "https://www.ziprecruiter.com/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p4-0392-airtable",
@@ -28602,7 +28602,7 @@
       "officialUrl": "https://www.latentview.com/career/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p4-0458-mclagan",
@@ -28970,7 +28970,7 @@
       "officialUrl": "https://www.qorvo.com/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p5-0711-rand-corporation",
@@ -28978,7 +28978,7 @@
       "officialUrl": "https://www.rand.org/jobs.html",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p1-0002-deloitte",
@@ -29130,7 +29130,7 @@
       "officialUrl": "https://join.smartrecruiters.com/Experian/59c50259-c707-4a95-9934-cc6d622b99d1-join-our-community",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p2-0105-finastra",
@@ -29138,7 +29138,7 @@
       "officialUrl": "https://careers.finastra.com/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p2-0108-fnf",
@@ -29162,7 +29162,7 @@
       "officialUrl": "https://www.huntington.com/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p2-0119-invesco",
@@ -29274,7 +29274,7 @@
       "officialUrl": "https://www.rocketcompanies.com/our-team/careers/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p2-0159-sallie-mae",
@@ -29370,7 +29370,7 @@
       "officialUrl": "https://talentcommunity.aig.com/flows/Talent-Community",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p4-0220-armanino",
@@ -29386,7 +29386,7 @@
       "officialUrl": "https://careers.baesystems.com/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p4-0224-bain-company-ai-insights-solutions",
@@ -29930,7 +29930,7 @@
       "officialUrl": "https://www.hashicorp.com/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p4-0445-huntress",
@@ -29986,7 +29986,7 @@
       "officialUrl": "https://www.mu-sigma.com/career/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p4-0464-ncino",
@@ -29994,7 +29994,7 @@
       "officialUrl": "https://www.ncino.com/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p4-0465-netskope",
@@ -30090,7 +30090,7 @@
       "officialUrl": "https://www.rubrik.com/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p4-0489-sailpoint",
@@ -30202,7 +30202,7 @@
       "officialUrl": "https://www.workiva.com/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p4-0520-zoom",
@@ -30394,7 +30394,7 @@
       "officialUrl": "https://www.eaton.com/us/en-us/company/careers.html",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p5-0587-ebay",
@@ -30594,7 +30594,7 @@
       "officialUrl": "https://www.microchip.com/en-us/about/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p5-0672-mitre",
