@@ -1,6 +1,7 @@
 import { access, cp, mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Plugin } from "vite";
+import { buildSitesMigrations } from "./sites-migrations";
 
 async function exists(path: string): Promise<boolean> {
   try {
@@ -36,8 +37,17 @@ export function sites(): Plugin {
         await cp(hostingConfig, resolve(outputDirectory, "hosting.json"));
       }
       if (await exists(drizzleSource)) {
-        await cp(drizzleSource, resolve(outputDirectory, "drizzle"), {
-          recursive: true,
+        await buildSitesMigrations({
+          sourceDirectory: drizzleSource,
+          outputDirectory: resolve(outputDirectory, "drizzle"),
+          schemaFiles: [
+            "0000_cold_hellion.sql",
+            "0026_abandoned_polaris.sql",
+            "0028_omniscient_puma.sql",
+            "0029_nice_korvac.sql",
+            "0030_job_search_fts.sql",
+          ],
+          catalogFile: "0027_refresh_sources_20260809112435.sql",
         });
       }
     },
