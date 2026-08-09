@@ -3,6 +3,9 @@ import catalogSeed from "../../../db/seed/sources.json";
 import type {
   ActivityEvent,
   CreateKeywordInput,
+  JobFilterOptions,
+  JobFilters,
+  JobSearchResult,
   JobState,
   KeywordRule,
   OverviewSnapshot,
@@ -12,7 +15,8 @@ import type {
 import { runDueCrawls } from "../../../lib/crawl-runner";
 import { ensureCatalogSeeded, type CatalogSeed } from "../../../lib/catalog-bootstrap";
 import { crawlBatchOptions } from "../../../lib/crawl-batch-options";
-import { ftsQuery } from "../../../lib/job-search";
+import { parseJobFilterParams } from "../../../lib/job-filter-query";
+import { buildJobSearchPlan } from "../../../lib/job-search-sql";
 import {
   mapCrawlActivity,
   mapJob,
@@ -41,40 +45,145 @@ const parseJsonArray = (value: string | null): string[] => {
   }
 };
 
-async function jobsFor(url: URL) {
-  const clauses = ["j.status = 'open'"];
-  const values: unknown[] = [];
-  const q = url.searchParams.get("q")?.trim();
-  const location = url.searchParams.get("location")?.trim();
-  const arrangement = url.searchParams.get("arrangement");
-  const reviewState = url.searchParams.get("status");
-  const fullTextQuery = q ? ftsQuery(q) : "";
-  if (fullTextQuery) {
-    clauses.push("j.rowid IN (SELECT rowid FROM jobs_fts WHERE jobs_fts MATCH ?)");
-    values.push(fullTextQuery);
+class InvalidJobFilterError extends Error {}
+
+const filterOptionKeys = [
+  "companies", "locations", "cities", "states", "countries", "arrangements",
+  "employmentTypes", "recruitingYears", "programTypes", "seasons", "departments",
+  "teams", "businessUnits", "jobFamilies", "jobFunctions", "industries", "offices",
+  "skills", "experienceLevels", "salaryCurrencies", "salaryIntervals",
+  "educationRequirements", "shiftSchedules", "travelRequirements", "securityClearances",
+  "languages",
+] as const satisfies ReadonlyArray<keyof JobFilterOptions>;
+
+const emptyFilterOptions = (): JobFilterOptions => Object.fromEntries(
+  filterOptionKeys.map((key) => [key, []]),
+) as unknown as JobFilterOptions;
+
+const validDate = (value: string): boolean => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value;
+};
+
+const validateExplicitFilterValues = (params: URLSearchParams) => {
+  const integers: Array<[string, number, number]> = [
+    ["page", 1, Number.MAX_SAFE_INTEGER],
+    ["pageSize", 1, 100],
+  ];
+  for (const [name, minimum, maximum] of integers) {
+    const value = params.get(name);
+    if (value !== null && (!/^\d+$/.test(value) || Number(value) < minimum || Number(value) > maximum)) {
+      throw new InvalidJobFilterError(`Invalid ${name}.`);
+    }
   }
-  if (location) {
-    clauses.push("lower(coalesce(j.location, '')) LIKE ?");
-    values.push(`%${location.toLowerCase()}%`);
+  for (const value of params.getAll("year").flatMap((item) => item.split(","))) {
+    if (!/^\d{4}$/.test(value.trim()) || Number(value) < 2000 || Number(value) > 2100) {
+      throw new InvalidJobFilterError("Invalid year.");
+    }
   }
-  if (["remote", "hybrid", "onsite"].includes(arrangement ?? "")) {
-    clauses.push("j.arrangement = ?");
-    values.push(arrangement);
+  for (const name of ["salaryMin", "salaryMax"]) {
+    const value = params.get(name);
+    if (value !== null && (!/^\d+(?:\.\d+)?$/.test(value) || !Number.isFinite(Number(value)))) {
+      throw new InvalidJobFilterError(`Invalid ${name}.`);
+    }
   }
-  if (["new", "saved", "hidden", "applied"].includes(reviewState ?? "")) {
-    clauses.push("j.review_state = ?");
-    values.push(reviewState);
+  for (const name of ["postedAfter", "postedBefore"]) {
+    const value = params.get(name);
+    if (value !== null && !validDate(value)) throw new InvalidJobFilterError(`Invalid ${name}.`);
   }
+};
+
+type FilterOptionRow = Pick<JobViewRow,
+  | "company" | "location" | "arrangement" | "employment_type" | "title"
+  | "location_city" | "location_state" | "location_country" | "department" | "team"
+  | "business_unit" | "job_family" | "job_function" | "industry" | "office" | "skills"
+  | "experience_level" | "salary_currency" | "salary_interval" | "education_requirements"
+  | "shift_schedule" | "travel_requirements" | "security_clearance" | "languages"
+>;
+
+const filterOptionsFromRows = (rows: FilterOptionRow[]): JobFilterOptions => {
+  const values: Record<keyof JobFilterOptions, Array<string | number>> = {
+    companies: rows.map((row) => row.company), locations: rows.flatMap((row) => row.location ? [row.location] : []),
+    cities: rows.flatMap((row) => row.location_city ? [row.location_city] : []),
+    states: rows.flatMap((row) => row.location_state ? [row.location_state] : []),
+    countries: rows.flatMap((row) => row.location_country ? [row.location_country] : []),
+    arrangements: rows.flatMap((row) => row.arrangement ? [row.arrangement] : []),
+    employmentTypes: rows.flatMap((row) => row.employment_type ? [row.employment_type] : []),
+    recruitingYears: rows.flatMap((row) => [...row.title.matchAll(/\b(20\d{2})\b/g)].map((match) => Number(match[1]))),
+    programTypes: rows.flatMap((row) => {
+      const title = row.title.toLocaleLowerCase();
+      if (title.includes("intern")) return ["internship"];
+      if (title.includes("co-op") || title.includes("coop")) return ["coop"];
+      return title.includes("regular") ? ["regular"] : [];
+    }),
+    seasons: rows.flatMap((row) => ["spring", "summer", "fall", "winter"].filter((season) => row.title.toLocaleLowerCase().includes(season))),
+    departments: rows.flatMap((row) => row.department ? [row.department] : []),
+    teams: rows.flatMap((row) => row.team ? [row.team] : []),
+    businessUnits: rows.flatMap((row) => row.business_unit ? [row.business_unit] : []),
+    jobFamilies: rows.flatMap((row) => row.job_family ? [row.job_family] : []),
+    jobFunctions: rows.flatMap((row) => row.job_function ? [row.job_function] : []),
+    industries: rows.flatMap((row) => row.industry ? [row.industry] : []),
+    offices: rows.flatMap((row) => row.office ? [row.office] : []),
+    skills: rows.flatMap((row) => parseJsonArray(row.skills ?? null)),
+    experienceLevels: rows.flatMap((row) => row.experience_level ? [row.experience_level] : []),
+    salaryCurrencies: rows.flatMap((row) => row.salary_currency ? [row.salary_currency] : []),
+    salaryIntervals: rows.flatMap((row) => row.salary_interval ? [row.salary_interval] : []),
+    educationRequirements: rows.flatMap((row) => row.education_requirements ? [row.education_requirements] : []),
+    shiftSchedules: rows.flatMap((row) => row.shift_schedule ? [row.shift_schedule] : []),
+    travelRequirements: rows.flatMap((row) => row.travel_requirements ? [row.travel_requirements] : []),
+    securityClearances: rows.flatMap((row) => row.security_clearance ? [row.security_clearance] : []),
+    languages: rows.flatMap((row) => parseJsonArray(row.languages ?? null)),
+  };
+  const options = emptyFilterOptions();
+  for (const key of filterOptionKeys) {
+    const counts = new Map<string, { value: string | number; count: number }>();
+    for (const value of values[key]) {
+      const normalized = String(value).trim().toLocaleLowerCase();
+      if (!normalized) continue;
+      const existing = counts.get(normalized);
+      if (existing) existing.count += 1;
+      else counts.set(normalized, { value, count: 1 });
+    }
+    options[key] = [...counts.values()]
+      .sort((left, right) => right.count - left.count || String(left.value).localeCompare(String(right.value)))
+      .slice(0, 100);
+  }
+  return options;
+};
+
+let filterOptionsCache: { expiresAt: number; value: JobFilterOptions } | null = null;
+
+async function availableFilterOptions(): Promise<JobFilterOptions> {
+  if (filterOptionsCache && filterOptionsCache.expiresAt > Date.now()) return filterOptionsCache.value;
   const result = await db().prepare(`
-    SELECT j.id, j.source_id, j.company, j.title, j.location, j.arrangement,
-           substr(coalesce(j.summary, j.description), 1, 1200) AS summary,
-           j.official_url, j.first_seen_at, j.last_seen_at, j.review_state
-    FROM jobs j
-    WHERE ${clauses.join(" AND ")}
-    ORDER BY j.first_seen_at DESC, j.company ASC
-    LIMIT 300
-  `).bind(...values).all<JobViewRow>();
-  return result.results.map(mapJob);
+    WITH ranked AS (
+      SELECT j.*, row_number() OVER (PARTITION BY j.official_url ORDER BY j.first_seen_at DESC, j.company ASC, j.id ASC) AS dedupe_rank
+      FROM jobs j WHERE j.status = 'open'
+    )
+    SELECT ranked.* FROM ranked WHERE dedupe_rank = 1
+  `).all<FilterOptionRow>();
+  const value = filterOptionsFromRows(result.results);
+  filterOptionsCache = { value, expiresAt: Date.now() + 10 * 60 * 1000 };
+  return value;
+}
+
+async function jobsFor(url: URL, includeAvailableFilters = true): Promise<JobSearchResult> {
+  validateExplicitFilterValues(url.searchParams);
+  const filters: JobFilters = parseJobFilterParams(url.searchParams);
+  const plan = buildJobSearchPlan(filters);
+  const [pageResult, countResult, availableFilters] = await Promise.all([
+    db().prepare(plan.pageSql).bind(...plan.bindings, plan.limit, plan.offset).all<JobViewRow>(),
+    db().prepare(plan.countSql).bind(...plan.bindings).first<{ total: number }>(),
+    includeAvailableFilters ? availableFilterOptions() : Promise.resolve(emptyFilterOptions()),
+  ]);
+  return {
+    items: pageResult.results.map(mapJob),
+    total: countResult?.total ?? 0,
+    page: filters.page ?? 1,
+    pageSize: filters.pageSize ?? 50,
+    availableFilters,
+  };
 }
 
 async function activityFor(limit = 200): Promise<ActivityEvent[]> {
@@ -170,7 +279,10 @@ async function overview(): Promise<OverviewSnapshot> {
       (SELECT count(*) FROM sources s WHERE (SELECT status FROM crawl_runs WHERE source_id=s.id ORDER BY coalesce(finished_at,started_at) DESC LIMIT 1) IN ('blocked','failed')) AS source_errors,
       (SELECT count(*) FROM keywords WHERE enabled = 1) AS unsent_alerts
   `).first<Counts>();
-  const latest = await jobsFor(new URL("https://job-pulse.local/api/pulse?resource=jobs"));
+  const latest = await jobsFor(
+    new URL("https://job-pulse.local/api/pulse?resource=jobs&pageSize=5"),
+    false,
+  );
   const activity = await activityFor(5);
   const talentCount = await db().prepare("SELECT count(*) AS count FROM talent_targets").first<{ count: number }>();
   return {
@@ -179,7 +291,7 @@ async function overview(): Promise<OverviewSnapshot> {
     sourceErrors: countRow?.source_errors ?? 0,
     unsentAlerts: countRow?.unsent_alerts ?? 0,
     openTalentTasks: talentCount?.count ?? 0,
-    latestJobs: latest.slice(0, 5),
+    latestJobs: latest.items,
     recentActivity: activity,
   };
 }
@@ -215,6 +327,7 @@ export async function GET(request: Request): Promise<Response> {
     if (resource === "overview") return json(await overview());
     return json({ error: "Unknown resource." }, 400);
   } catch (error) {
+    if (error instanceof InvalidJobFilterError) return json({ error: error.message }, 400);
     return json({ error: error instanceof Error ? error.message : "D1 query failed." }, 500);
   }
 }

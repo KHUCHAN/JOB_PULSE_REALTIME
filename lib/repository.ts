@@ -3,6 +3,7 @@ import type {
   ActivityFilters,
   CreateKeywordInput,
   JobFilters,
+  JobSearchResult,
   JobPosting,
   JobState,
   KeywordRule,
@@ -11,10 +12,16 @@ import type {
   TalentState,
   TalentTarget,
 } from "./domain";
+import type { RichJobPosting } from "./pulse-mappers";
+
+export type RichJobSearchResult = Omit<JobSearchResult, "items"> & {
+  items: RichJobPosting[];
+};
 
 export interface JobPulseRepository {
   getOverview(): Promise<OverviewSnapshot>;
-  listJobs(filters?: Partial<JobFilters>): Promise<JobPosting[]>;
+  searchJobs(filters?: Partial<JobFilters>): Promise<RichJobSearchResult>;
+  listJobs(filters?: Partial<JobFilters>): Promise<RichJobPosting[]>;
   getJob(jobId: string): Promise<JobPosting | null>;
   updateJobState(jobId: string, state: JobState): Promise<JobPosting>;
   listSources(health?: SourceRecord["health"] | "all"): Promise<SourceRecord[]>;

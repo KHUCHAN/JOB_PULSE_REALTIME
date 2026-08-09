@@ -7,6 +7,7 @@ import type {
   SourceRecord,
   TalentState,
 } from "./domain";
+import { defaultJobFilters, serializeJobFilters } from "./job-filter-query";
 import type { JobPulseRepository } from "./repository";
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -26,6 +27,14 @@ const query = (resource: string, values: Record<string, string | undefined> = {}
   return `/api/pulse?${params.toString()}`;
 };
 
+const jobQuery = (filters: Partial<JobFilters> = {}): string => {
+  const params = new URLSearchParams({ resource: "jobs" });
+  for (const [key, value] of serializeJobFilters({ ...defaultJobFilters, ...filters })) {
+    params.append(key, value);
+  }
+  return `/api/pulse?${params.toString()}`;
+};
+
 const mutate = <T>(action: string, payload: Record<string, unknown>): Promise<T> =>
   request<T>("/api/pulse", {
     method: "POST",
@@ -36,12 +45,11 @@ const mutate = <T>(action: string, payload: Record<string, unknown>): Promise<T>
 export function createApiRepository(): JobPulseRepository {
   return {
     getOverview: () => request(query("overview")),
-    listJobs: (filters: Partial<JobFilters> = {}) => request(query("jobs", {
-      q: filters.query,
-      status: filters.status,
-      arrangement: filters.arrangement,
-      location: filters.location,
-    })),
+    searchJobs: (filters: Partial<JobFilters> = {}) => request(jobQuery(filters)),
+    listJobs: async (filters: Partial<JobFilters> = {}) => {
+      const result = await request<Awaited<ReturnType<JobPulseRepository["searchJobs"]>> | Awaited<ReturnType<JobPulseRepository["listJobs"]>>>(jobQuery(filters));
+      return Array.isArray(result) ? result : result.items;
+    },
     getJob: (jobId: string) => request(query("job", { id: jobId })),
     updateJobState: (jobId: string, state: JobState) =>
       mutate<JobPosting>("updateJobState", { jobId, state }),

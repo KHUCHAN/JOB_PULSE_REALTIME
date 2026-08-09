@@ -25,6 +25,37 @@ describe("API repository", () => {
     expect(jobs).toEqual([{ id: "job-1", title: "Fraud Analyst" }]);
   });
 
+  it("serializes repeated filters and maps a paginated result", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      void input;
+      return Response.json({
+        items: [{ id: "job-1", title: "2027 Internship" }],
+        total: 246,
+        page: 2,
+        pageSize: 50,
+        availableFilters: {},
+      });
+    });
+    vi.stubGlobal("fetch", fetcher);
+
+    const result = await createApiRepository().searchJobs({
+      recruitingYears: [2027],
+      programTypes: ["internship", "coop"],
+      companies: ["SpaceX"],
+      page: 2,
+    });
+
+    const requestUrl = String(fetcher.mock.calls[0][0]);
+    expect(requestUrl).toContain("resource=jobs");
+    expect(requestUrl).toContain("year=2027");
+    expect(requestUrl).toContain("program=internship");
+    expect(requestUrl).toContain("program=coop");
+    expect(requestUrl).toContain("company=SpaceX");
+    expect(requestUrl).toContain("page=2");
+    expect(result.total).toBe(246);
+    expect(result.items).toEqual([{ id: "job-1", title: "2027 Internship" }]);
+  });
+
   it("persists keyword rules through the live API", async () => {
     vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       expect(init?.method).toBe("POST");

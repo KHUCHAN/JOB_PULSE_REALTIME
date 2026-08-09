@@ -15,6 +15,26 @@ describe("fixture repository", () => {
     expect(jobs.every((job) => job.status === "new")).toBe(true);
   });
 
+  it("returns a deduplicated, paginated search result with bounded filter options", async () => {
+    const repository = createFixtureRepository();
+    const result = await repository.searchJobs({
+      arrangement: "remote",
+      page: 2,
+      pageSize: 2,
+    });
+
+    expect(result.total).toBe(5);
+    expect(result.page).toBe(2);
+    expect(result.pageSize).toBe(2);
+    expect(result.items.map((job) => job.id)).toEqual(["job-004", "job-011"]);
+    expect(result.availableFilters.arrangements).toEqual([
+      { value: "hybrid", count: 5 },
+      { value: "remote", count: 5 },
+      { value: "onsite", count: 2 },
+    ]);
+    expect(result.availableFilters.companies).toContainEqual({ value: "Stripe", count: 1 });
+  });
+
   it("creates a demo crawl event without a network result", async () => {
     const repository = createFixtureRepository();
     const event = await repository.simulateCrawl();
