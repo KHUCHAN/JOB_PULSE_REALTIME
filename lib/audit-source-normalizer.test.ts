@@ -52,4 +52,48 @@ describe("normalizeAuditRecord", () => {
     expect(normalized.talentUrl).toBeNull();
     expect(normalized.resumeUpload).toBe("job_only");
   });
+
+  it("classifies Ashby job boards for API crawling", () => {
+    const normalized = normalizeAuditRecord({
+      masterRow: 900,
+      Company: "Ashby Example",
+      "Ledger ID": "p5-0900-ashby-example",
+      postingUrl: "https://jobs.ashbyhq.com/ashby-example",
+      talentPoolUrl: null,
+      channel: "official careers",
+      resumeUpload: "지원 시 가능",
+      jobAlerts: "미확인",
+      verification: "CAREER_ONLY",
+      confidence: "HIGH",
+      recommendedAction: "CAREER_ONLY",
+      evidenceUrl: "https://jobs.ashbyhq.com/ashby-example",
+      evidenceNote: "verified",
+      checkedAt: "2026-08-09",
+      adapter: "custom",
+    });
+
+    expect(normalized.adapter).toBe("ashby");
+  });
+
+  it("does not classify a company careers page from an unrelated Talent form host", () => {
+    const normalized = normalizeAuditRecord({
+      masterRow: 901,
+      Company: "Talent Form Example",
+      "Ledger ID": "p5-0901-talent-form-example",
+      postingUrl: "https://example.com/careers",
+      talentPoolUrl: "https://jobs.ashbyhq.com/example/form/talent-community",
+      channel: "official Talent Community",
+      resumeUpload: "가능",
+      jobAlerts: "가능",
+      verification: "VERIFIED_TALENT",
+      confidence: "HIGH",
+      recommendedAction: "SUBMIT_NOW",
+      evidenceUrl: "https://jobs.ashbyhq.com/example/form/talent-community",
+      evidenceNote: "verified",
+      checkedAt: "2026-08-09",
+      adapter: "custom",
+    });
+
+    expect(normalized.adapter).toBe("custom");
+  });
 });

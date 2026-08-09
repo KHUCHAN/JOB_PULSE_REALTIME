@@ -23,7 +23,7 @@ export interface NormalizedSourceRecord {
   postingUrl: string | null;
   talentUrl: string | null;
   channel: string;
-  adapter: "greenhouse" | "lever" | "workday" | "icims" | "phenom" | "custom";
+  adapter: "greenhouse" | "lever" | "workday" | "ashby" | "icims" | "phenom" | "custom";
   verification: string;
   confidence: string;
   resumeUpload: "available" | "job_only" | "unknown";
@@ -44,6 +44,7 @@ function detectAdapter(...urls: Array<string | null>): NormalizedSourceRecord["a
   if (value.includes("greenhouse") || value.includes("gh_jid")) return "greenhouse";
   if (value.includes("lever.co")) return "lever";
   if (value.includes("myworkdayjobs") || value.includes("workday")) return "workday";
+  if (value.includes("ashbyhq.com")) return "ashby";
   if (value.includes("icims")) return "icims";
   if (value.includes("phenom") || value.includes("jointalentcommunity")) return "phenom";
   return "custom";
@@ -52,6 +53,7 @@ function detectAdapter(...urls: Array<string | null>): NormalizedSourceRecord["a
 export function normalizeAuditRecord(record: AuditSourceRecord): NormalizedSourceRecord {
   const postingUrl = normalizedUrl(record.postingUrl);
   const talentUrl = normalizedUrl(record.talentPoolUrl);
+  const detectedAdapter = detectAdapter(postingUrl);
   const resumeUpload = record.resumeUpload === "가능"
     ? "available"
     : record.resumeUpload === "지원 시 가능"
@@ -65,7 +67,9 @@ export function normalizeAuditRecord(record: AuditSourceRecord): NormalizedSourc
     postingUrl,
     talentUrl,
     channel: record.channel,
-    adapter: record.adapter ?? detectAdapter(postingUrl, talentUrl),
+    adapter: record.adapter === "custom" && detectedAdapter !== "custom"
+      ? detectedAdapter
+      : record.adapter ?? detectedAdapter,
     verification: record.verification.toLowerCase(),
     confidence: record.confidence.toLowerCase(),
     resumeUpload,

@@ -19,6 +19,10 @@ describe("career URL remediation", () => {
     expect(detectUrlAdapter("https://careers.acme.com/search-results", ["https://cdn.phenompeople.com/app.js"])).toBe("phenom");
   });
 
+  it("detects Ashby boards as API-backed sources", () => {
+    expect(detectUrlAdapter("https://jobs.ashbyhq.com/cerebras")).toBe("ashby");
+  });
+
   it("rejects individual job detail pages as catalog URLs", () => {
     const detail = { href: "https://careers.example/jobs/staff-engineer-123", text: "Staff Engineer" };
     expect(careerCandidates([detail], "https://careers.example/jobs/search")).toEqual([]);

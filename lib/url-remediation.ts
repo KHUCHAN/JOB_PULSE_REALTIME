@@ -24,11 +24,12 @@ const COMPANY_STOP_WORDS = new Set(["company", "corporation", "corp", "group", "
 const NON_LISTING_PATH = /(?:career-areas?|early-careers?|students?|university|\/blog(?:\/|$)|jobcart|job-seeker-resources|career-progression|working-at|talent-community|jointalentcommunity|\/bca(?:\/|$)|loans?)/i;
 const THIRD_PARTY_AGGREGATOR = /(?:^|\.)(?:indeed\.com|glassdoor\.com|linkedin\.com|ziprecruiter\.com|gotocareer\.io|ev\.careers)$/i;
 
-export const detectUrlAdapter = (url: string, resourceUrls: string[] = []): "greenhouse" | "lever" | "workday" | "icims" | "phenom" | "custom" => {
+export const detectUrlAdapter = (url: string, resourceUrls: string[] = []): "greenhouse" | "lever" | "workday" | "ashby" | "icims" | "phenom" | "custom" => {
   const value = [url, ...resourceUrls].join(" ").toLowerCase();
   if (value.includes("greenhouse.io")) return "greenhouse";
   if (value.includes("lever.co")) return "lever";
   if (value.includes("myworkdayjobs") || value.includes("myworkdaysite")) return "workday";
+  if (value.includes("ashbyhq.com")) return "ashby";
   if (value.includes("icims.com")) return "icims";
   if (value.includes("phenompeople") || value.includes("/search-results")) return "phenom";
   return "custom";

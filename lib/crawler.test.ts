@@ -20,6 +20,16 @@ describe("crawlSource", () => {
     });
   });
 
+  it("discovers a public Ashby feed from a careers page link", () => {
+    expect(discoverAts(
+      '<a href="https://jobs.ashbyhq.com/acme">Open jobs</a>',
+      "https://acme.example/careers",
+    )).toEqual({
+      kind: "ashby",
+      endpoint: "https://api.ashbyhq.com/posting-api/job-board/acme",
+    });
+  });
+
   it("discovers a Greenhouse board behind a company careers page", () => {
     expect(discoverAts(
       '<a href="https://job-boards.greenhouse.io/acme">Open jobs</a>',
@@ -38,6 +48,85 @@ describe("crawlSource", () => {
       kind: "workday",
       endpoint: "https://acme.wd5.myworkdayjobs.com/wday/cxs/acme/Careers/jobs",
     });
+  });
+
+  it("discovers a SmartRecruiters widget from its company code", () => {
+    expect(discoverAts(
+      '<script class="job_widget">widget({"company_code":"Expeditors"})</script>',
+      "https://www.expeditors.com/careers/jobs/",
+    )).toEqual({
+      kind: "smartrecruiters",
+      endpoint: "https://api.smartrecruiters.com/v1/companies/Expeditors/postings",
+    });
+  });
+
+  it("paginates a discovered SmartRecruiters feed and emits public job URLs", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === "https://acme.example/careers") {
+        return new Response('<script>widget({"company_code":"Acme"})</script>', { status: 200 });
+      }
+      const offset = new URL(url).searchParams.get("offset");
+      return new Response(JSON.stringify({
+        totalFound: 2,
+        content: offset === "1" ? [{ id: "2", name: "Designer", ref: "https://api.smartrecruiters.com/v1/companies/Acme/postings/2" }] : [{ id: "1", name: "Engineer", ref: "https://api.smartrecruiters.com/v1/companies/Acme/postings/1" }],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+
+    const result = await crawlSource({ id: "acme", company: "Acme", postingUrl: "https://acme.example/careers", adapter: "custom" }, fetcher, new Date());
+
+    expect(result.jobs.map((job) => job.officialUrl)).toEqual([
+      "https://jobs.smartrecruiters.com/Acme/1",
+      "https://jobs.smartrecruiters.com/Acme/2",
+    ]);
+    expect(requests).toContain("https://api.smartrecruiters.com/v1/companies/Acme/postings?limit=100&offset=1");
+    expect(result.completeListing).toBe(true);
+  });
+
+  it("discovers and fully paginates a Jibe careers API", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === "https://careers.acme.example/jobs") {
+        return new Response('<script src="https://app.jibecdn.com/prod/search/app.js"></script>', { status: 200 });
+      }
+      const page = Number(new URL(url).searchParams.get("page"));
+      const jobs = page === 1
+        ? [{ data: { slug: "101", req_id: "REQ-101", title: "Engineer", language: "en-us", full_location: "Remote", employment_type: "FULL_TIME", posted_date: "2026-08-08T12:00:00+0000" } }]
+        : [{ data: { slug: "102", req_id: "REQ-102", title: "Designer", language: "en-us", full_location: "New York, NY", employment_type: "FULL_TIME", posted_date: "2026-08-07T12:00:00+0000" } }];
+      return new Response(JSON.stringify({ totalCount: 2, jobs }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+
+    const result = await crawlSource({ id: "acme", company: "Acme", postingUrl: "https://careers.acme.example/jobs", adapter: "custom" }, fetcher, new Date());
+
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs.map((job) => job.officialUrl)).toEqual([
+      "https://careers.acme.example/jobs/101?lang=en-us",
+      "https://careers.acme.example/jobs/102?lang=en-us",
+    ]);
+    expect(requests).toContain("https://careers.acme.example/api/jobs?page=2&limit=100&sortBy=relevance&descending=false&internal=false");
+  });
+
+  it("fully paginates an Eightfold public jobs API", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.toString());
+      const start = Number(url.searchParams.get("start"));
+      const position = start === 0
+        ? { id: 101, name: "Engineer", location: "Remote", ats_job_id: "REQ-101", canonicalPositionUrl: "https://acme.eightfold.ai/careers/job/101", t_create: 1785888000 }
+        : { id: 102, name: "Designer", location: "New York, NY", ats_job_id: "REQ-102", canonicalPositionUrl: "https://acme.eightfold.ai/careers/job/102", t_create: 1785801600 };
+      return new Response(JSON.stringify({ count: 2, positions: [position] }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+
+    const result = await crawlSource({ id: "acme", company: "Acme", postingUrl: "https://acme.eightfold.ai/careers", adapter: "custom" }, fetcher, new Date());
+
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs.map((job) => job.externalId)).toEqual(["REQ-101", "REQ-102"]);
+    expect(requests).toContain("https://acme.eightfold.ai/api/apply/v2/jobs?start=1&num=10&sort_by=relevance");
   });
 
   it("uses the public Greenhouse board API and normalizes its open roles", async () => {
@@ -77,6 +166,52 @@ describe("crawlSource", () => {
         employmentType: null,
         summary: "Build trusted data products.",
         officialUrl: "https://job-boards.greenhouse.io/acme/jobs/42",
+        publishedAt: "2026-08-08T12:00:00.000Z",
+      }],
+      error: null,
+    });
+  });
+
+  it("uses Ashby's public job-board API and normalizes every open role", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      requests.push(String(input));
+      return new Response(JSON.stringify({
+        jobs: [{
+          id: "ashby-42",
+          title: "Machine Learning Engineer",
+          jobUrl: "https://jobs.ashbyhq.com/acme/ashby-42",
+          location: "Remote, US",
+          workplaceType: "Remote",
+          employmentType: "FullTime",
+          descriptionPlain: "Build reliable models.",
+          publishedAt: "2026-08-08T12:00:00Z",
+          isListed: true,
+        }],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+
+    const result = await crawlSource({
+      id: "acme-ashby",
+      company: "Acme",
+      postingUrl: "https://jobs.ashbyhq.com/acme",
+      adapter: "ashby",
+    }, fetcher, new Date("2026-08-08T12:30:00Z"));
+
+    expect(requests).toEqual(["https://api.ashbyhq.com/posting-api/job-board/acme"]);
+    expect(result).toEqual({
+      status: "succeeded",
+      responseStatus: 200,
+      completeListing: true,
+      jobs: [{
+        externalId: "ashby-42",
+        title: "Machine Learning Engineer",
+        company: "Acme",
+        location: "Remote, US",
+        arrangement: "remote",
+        employmentType: "FullTime",
+        summary: "Build reliable models.",
+        officialUrl: "https://jobs.ashbyhq.com/acme/ashby-42",
         publishedAt: "2026-08-08T12:00:00.000Z",
       }],
       error: null,
@@ -133,6 +268,23 @@ describe("crawlSource", () => {
       }],
       error: null,
     });
+  });
+
+  it("does not turn listing-page JSON-LD without a job URL into a fake job detail", async () => {
+    const fetcher: typeof fetch = async () => new Response(`
+      <script type="application/ld+json">
+        {"@context":"https://schema.org","@type":"JobPosting","title":"Browse current roles"}
+      </script>
+    `, { status: 200 });
+
+    const result = await crawlSource({
+      id: "listing-only",
+      company: "Listing Only",
+      postingUrl: "https://careers.example.com/jobs/search",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-08T12:30:00Z"));
+
+    expect(result.jobs).toEqual([]);
   });
 
   it("extracts official job detail anchors when a careers page has no structured job data", async () => {

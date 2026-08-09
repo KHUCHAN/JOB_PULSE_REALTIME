@@ -47,7 +47,7 @@ export interface SourceRecord {
   company: string;
   postingUrl: string | null;
   talentUrl: string | null;
-  adapter: "greenhouse" | "lever" | "workday" | "icims" | "custom";
+  adapter: "greenhouse" | "lever" | "workday" | "ashby" | "icims" | "phenom" | "custom";
   health: SourceHealth;
   httpStatus: number | null;
   currentJobs: number;

@@ -4,7 +4,7 @@ export type CrawlSource = {
   id: string;
   company: string;
   postingUrl: string;
-  adapter: "greenhouse" | "lever" | "workday" | "icims" | "phenom" | "custom";
+  adapter: "greenhouse" | "lever" | "workday" | "ashby" | "icims" | "phenom" | "custom";
 };
 
 export type CrawledJob = {
@@ -31,7 +31,9 @@ export type DiscoveredAts =
   | { kind: "greenhouse"; endpoint: string }
   | { kind: "workday"; endpoint: string }
   | { kind: "lever"; endpoint: string }
-  | { kind: "smartrecruiters"; endpoint: string };
+  | { kind: "ashby"; endpoint: string }
+  | { kind: "smartrecruiters"; endpoint: string }
+  | { kind: "jibe"; endpoint: string };
 
 type GreenhouseJob = {
   id: number | string;
@@ -56,6 +58,51 @@ type LeverJob = {
   hostedUrl: string;
   categories?: { location?: string; commitment?: string };
   descriptionPlain?: string;
+};
+
+type AshbyJob = {
+  id?: string;
+  title?: string;
+  jobUrl?: string;
+  location?: string;
+  workplaceType?: string;
+  employmentType?: string;
+  descriptionPlain?: string;
+  descriptionHtml?: string;
+  publishedAt?: string;
+  isListed?: boolean;
+};
+
+type SmartRecruitersJob = {
+  id?: string;
+  name?: string;
+  ref?: string;
+  location?: { city?: string; region?: string; country?: string };
+  typeOfEmployment?: { label?: string };
+};
+
+type JibeJob = {
+  data?: {
+    slug?: string;
+    req_id?: string;
+    title?: string;
+    language?: string;
+    full_location?: string;
+    employment_type?: string;
+    description?: string;
+    posted_date?: string;
+  };
+};
+
+type EightfoldPosition = {
+  id?: string | number;
+  name?: string;
+  location?: string;
+  ats_job_id?: string;
+  department?: string;
+  work_location_option?: string | null;
+  canonicalPositionUrl?: string;
+  t_create?: number;
 };
 
 type PhenomJob = {
@@ -160,7 +207,6 @@ const greenhouseBoard = (postingUrl: string): string | null => {
 };
 
 export function discoverAts(html: string, _pageUrl: string): DiscoveredAts | null {
-  void _pageUrl;
   const greenhouse = html.match(/https?:\/\/(?:job-boards|boards)\.greenhouse\.io\/([a-z0-9-]+)/i);
   if (greenhouse) return { kind: "greenhouse", endpoint: `https://boards-api.greenhouse.io/v1/boards/${greenhouse[1]}/jobs?content=true` };
 
@@ -171,8 +217,19 @@ export function discoverAts(html: string, _pageUrl: string): DiscoveredAts | nul
   const lever = html.match(/https?:\/\/jobs\.lever\.co\/([a-z0-9-]+)/i);
   if (lever) return { kind: "lever", endpoint: `https://api.lever.co/v0/postings/${lever[1]}?mode=json` };
 
+  const ashby = html.match(/https?:\/\/jobs\.ashbyhq\.com\/([^\s"'<>/?#]+)/i);
+  if (ashby) return { kind: "ashby", endpoint: `https://api.ashbyhq.com/posting-api/job-board/${ashby[1]}` };
+
   const smartRecruiters = html.match(/https?:\/\/jobs\.smartrecruiters\.com\/([a-z0-9-]+)/i);
   if (smartRecruiters) return { kind: "smartrecruiters", endpoint: `https://api.smartrecruiters.com/v1/companies/${smartRecruiters[1]}/postings` };
+
+  const smartRecruitersWidget = html.match(/["']company_code["']\s*:\s*["']([a-z0-9-]+)["']/i);
+  if (smartRecruitersWidget) return { kind: "smartrecruiters", endpoint: `https://api.smartrecruiters.com/v1/companies/${smartRecruitersWidget[1]}/postings` };
+
+  if (/app\.jibecdn\.com\/prod\/search\//i.test(html)) {
+    const page = new URL(_pageUrl);
+    return { kind: "jibe", endpoint: `${page.origin}/api/jobs?page=1&limit=100&sortBy=relevance&descending=false&internal=false` };
+  }
 
   return null;
 }
@@ -230,22 +287,111 @@ async function crawlDiscoveredFeed(source: CrawlSource, discovered: DiscoveredAt
       };
     }
 
-    const payload = await response.json() as { content?: Array<{ id: string; name: string; ref: string; location?: { city?: string; region?: string }; typeOfEmployment?: { label?: string } }> };
+    if (discovered.kind === "ashby") {
+      const payload = await response.json() as { jobs?: AshbyJob[] };
+      return {
+        status: "succeeded",
+        responseStatus: response.status,
+        completeListing: true,
+        jobs: (payload.jobs ?? []).flatMap((job) => {
+          if (job.isListed === false || !job.id || !job.title || !job.jobUrl) return [];
+          return [{
+            externalId: job.id,
+            title: job.title,
+            company: source.company,
+            location: job.location ?? null,
+            arrangement: /remote/i.test(`${job.workplaceType ?? ""} ${job.location ?? ""}`) ? "remote" as const : /hybrid/i.test(job.workplaceType ?? "") ? "hybrid" as const : "unknown" as const,
+            employmentType: job.employmentType ?? null,
+            summary: plainText(job.descriptionPlain ?? job.descriptionHtml),
+            officialUrl: job.jobUrl,
+            publishedAt: normalizedDate(job.publishedAt),
+          }];
+        }),
+        error: null,
+      };
+    }
+
+    if (discovered.kind === "jibe") {
+      const firstPayload = await response.json() as { totalCount?: number; jobs?: JibeJob[] };
+      const items = [...(firstPayload.jobs ?? [])];
+      const total = firstPayload.totalCount ?? items.length;
+      let page = 2;
+      while (items.length < total) {
+        const pageUrl = new URL(discovered.endpoint);
+        pageUrl.searchParams.set("page", String(page));
+        const pageResponse = await fetchWithTimeout(fetcher, pageUrl);
+        if (!pageResponse.ok) return {
+          status: [401, 403, 429].includes(pageResponse.status) ? "blocked" : "failed",
+          responseStatus: pageResponse.status,
+          completeListing: false,
+          jobs: [],
+          error: `jibe returned HTTP ${pageResponse.status}.`,
+        };
+        const payload = await pageResponse.json() as { jobs?: JibeJob[] };
+        const additions = payload.jobs ?? [];
+        if (additions.length === 0) break;
+        items.push(...additions);
+        page += 1;
+      }
+      const listing = new URL(source.postingUrl);
+      const prefix = listing.pathname.split("/jobs")[0];
+      return {
+        status: "succeeded",
+        responseStatus: response.status,
+        completeListing: items.length >= total,
+        jobs: items.flatMap(({ data }) => data?.slug && data.title ? [{
+          externalId: data.req_id ?? data.slug,
+          title: data.title,
+          company: source.company,
+          location: data.full_location ?? null,
+          arrangement: /\bremote\b/i.test(data.full_location ?? "") ? "remote" as const : "unknown" as const,
+          employmentType: data.employment_type ?? null,
+          summary: plainText(data.description),
+          officialUrl: `${listing.origin}${prefix}/jobs/${encodeURIComponent(data.slug)}${data.language ? `?lang=${encodeURIComponent(data.language)}` : ""}`,
+          publishedAt: normalizedDate(data.posted_date),
+        }] : []),
+        error: null,
+      };
+    }
+
+    const firstPayload = await response.json() as { totalFound?: number; content?: SmartRecruitersJob[] };
+    const content = [...(firstPayload.content ?? [])];
+    const totalFound = firstPayload.totalFound ?? content.length;
+    let offset = content.length;
+    while (offset < totalFound) {
+      const pageUrl = new URL(discovered.endpoint);
+      pageUrl.searchParams.set("limit", "100");
+      pageUrl.searchParams.set("offset", String(offset));
+      const pageResponse = await fetchWithTimeout(fetcher, pageUrl);
+      if (!pageResponse.ok) return {
+        status: [401, 403, 429].includes(pageResponse.status) ? "blocked" : "failed",
+        responseStatus: pageResponse.status,
+        completeListing: false,
+        jobs: [],
+        error: `smartrecruiters returned HTTP ${pageResponse.status}.`,
+      };
+      const page = await pageResponse.json() as { content?: SmartRecruitersJob[] };
+      const additions = page.content ?? [];
+      if (additions.length === 0) break;
+      content.push(...additions);
+      offset += additions.length;
+    }
+    const companyCode = new URL(discovered.endpoint).pathname.match(/\/companies\/([^/]+)\/postings/)?.[1] ?? source.company;
     return {
       status: "succeeded",
       responseStatus: response.status,
-      completeListing: true,
-      jobs: (payload.content ?? []).map((job) => ({
+      completeListing: content.length >= totalFound,
+      jobs: content.flatMap((job) => job.id && job.name ? [{
         externalId: job.id,
         title: job.name,
         company: source.company,
-        location: [job.location?.city, job.location?.region].filter(Boolean).join(", ") || null,
+        location: [job.location?.city, job.location?.region, job.location?.country].filter(Boolean).join(", ") || null,
         arrangement: "unknown",
         employmentType: job.typeOfEmployment?.label ?? null,
         summary: null,
-        officialUrl: job.ref,
+        officialUrl: `https://jobs.smartrecruiters.com/${companyCode}/${job.id}`,
         publishedAt: null,
-      })),
+      }] : []),
       error: null,
     };
   } catch (error) {
@@ -504,7 +650,7 @@ const jobLocation = (value: unknown): string | null => {
 
 const jsonLdJob = (value: JsonLdValue, source: CrawlSource): CrawledJob | null => {
   const title = asText(value.title);
-  const officialUrl = asText(value.url) ?? source.postingUrl;
+  const officialUrl = asText(value.url);
   if (!title || !officialUrl) return null;
   const identifier = value.identifier;
   const externalId = typeof identifier === "object" && identifier
@@ -582,6 +728,58 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch): Promise<
       jobs: [],
       error: error instanceof Error ? error.message : "Unknown crawler error.",
     };
+  }
+}
+
+async function crawlEightfold(source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> {
+  const origin = new URL(source.postingUrl).origin;
+  const positions: EightfoldPosition[] = [];
+  let responseStatus: number | null = null;
+  try {
+    const fetchPage = async (start: number, requirePositions = false) => {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const endpoint = new URL("/api/apply/v2/jobs", origin);
+        endpoint.searchParams.set("start", String(start));
+        endpoint.searchParams.set("num", "10");
+        endpoint.searchParams.set("sort_by", "relevance");
+        const response = await fetchWithTimeout(fetcher, endpoint);
+        responseStatus = response.status;
+        if (!response.ok) throw new Error(`Eightfold returned HTTP ${response.status}.`);
+        const payload = await response.json() as { count?: number; positions?: EightfoldPosition[] };
+        if (!requirePositions || (payload.positions?.length ?? 0) > 0 || attempt === 2) return payload;
+        await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
+      }
+      return { positions: [] };
+    };
+    const first = await fetchPage(0);
+    positions.push(...(first.positions ?? []));
+    const total = first.count ?? positions.length;
+    const pageSize = Math.max(positions.length, 1);
+    const offsets = Array.from({ length: Math.max(0, Math.ceil((total - pageSize) / pageSize)) }, (_, index) => pageSize * (index + 1));
+    for (let index = 0; index < offsets.length; index += 8) {
+      const pages = await Promise.all(offsets.slice(index, index + 8).map((offset) => fetchPage(offset, true)));
+      positions.push(...pages.flatMap((page) => page.positions ?? []));
+    }
+    const uniquePositions = [...new Map(positions.map((position) => [String(position.id), position])).values()];
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: uniquePositions.length >= total,
+      jobs: uniquePositions.flatMap((position) => position.id != null && position.name ? [{
+        externalId: position.ats_job_id ?? String(position.id),
+        title: position.name,
+        company: source.company,
+        location: position.location ?? null,
+        arrangement: /remote/i.test(`${position.location ?? ""} ${position.work_location_option ?? ""}`) ? "remote" as const : /hybrid/i.test(position.work_location_option ?? "") ? "hybrid" as const : "unknown" as const,
+        employmentType: null,
+        summary: position.department ?? null,
+        officialUrl: position.canonicalPositionUrl ?? `${origin}/careers/job/${position.id}`,
+        publishedAt: position.t_create ? new Date(position.t_create * 1000).toISOString() : null,
+      }] : []),
+      error: null,
+    };
+  } catch (error) {
+    return { status: "failed", responseStatus, completeListing: false, jobs: [], error: error instanceof Error ? error.message : "Unknown Eightfold crawler error." };
   }
 }
 
@@ -705,9 +903,17 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
 export async function crawlSource(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
   void now;
   if (source.id === "p5-1077-tesla" || source.company === "Tesla") return crawlTesla(source, fetcher);
+  if (new URL(source.postingUrl).hostname.endsWith("eightfold.ai")) return crawlEightfold(source, fetcher);
   const board = source.adapter === "greenhouse" ? greenhouseBoard(source.postingUrl) : null;
   const workday = source.adapter === "workday" ? workdayFeed(source.postingUrl) : null;
   if (workday) return crawlWorkday(source, workday, fetcher);
+  if (source.adapter === "ashby") {
+    const slug = new URL(source.postingUrl).pathname.split("/").filter(Boolean).at(0);
+    if (slug) return crawlDiscoveredFeed(source, {
+      kind: "ashby",
+      endpoint: `https://api.ashbyhq.com/posting-api/job-board/${slug}`,
+    }, fetcher);
+  }
   if (!board) {
     return crawlJsonLd(source, fetcher);
   }

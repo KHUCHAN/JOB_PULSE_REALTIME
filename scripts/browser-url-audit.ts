@@ -10,7 +10,7 @@ type SeedSource = {
   id: string;
   company: string;
   postingUrl: string | null;
-  adapter: "greenhouse" | "lever" | "workday" | "icims" | "phenom" | "custom";
+  adapter: "greenhouse" | "lever" | "workday" | "ashby" | "icims" | "phenom" | "custom";
 };
 
 type BrowserAudit = {

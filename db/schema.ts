@@ -11,7 +11,7 @@ export const sources = sqliteTable("sources", {
   postingUrl: text("posting_url"),
   talentUrl: text("talent_url"),
   channel: text("channel").notNull(),
-  adapter: text("adapter", { enum: ["greenhouse", "lever", "workday", "icims", "phenom", "custom"] }).notNull(),
+  adapter: text("adapter", { enum: ["greenhouse", "lever", "workday", "ashby", "icims", "phenom", "custom"] }).notNull(),
   verification: text("verification").notNull(),
   confidence: text("confidence", { enum: ["high", "medium", "low"] }).notNull(),
   resumeUpload: text("resume_upload", { enum: ["available", "job_only", "unknown"] }).notNull(),

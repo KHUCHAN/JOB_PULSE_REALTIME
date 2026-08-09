@@ -2,17 +2,30 @@ import type { CrawledJob, CrawlSource } from "./crawler";
 
 export type BrowserAnchor = { href: string; text: string };
 
-const JOB_DETAIL = /(?:\/(?:jobs?|positions?)\/[^/?#]{3,}|\/careers\/jobdetail\/|\/careers\/[^?#]*(?:\d{4,}|[a-z]{1,4}-\d{3,})|[?&](?:jobid|job_id|gh_jid|reqid|pid)=)/i;
-const LISTING_ONLY = /(?:search-jobs?|search-results|viewalljobs|job-opportunities|join(?:talent|[-_/]our[-_/]team)|talent-community|jobcart)(?:[/?#]|$)/i;
+const JOB_DETAIL = /(?:\/(?:jobs?|positions?)\/[^/?#]{3,}|\/careers\/jobdetail\/|\/careers\/[^?#]*(?:\d{4,}|[a-z]{1,4}-\d{3,})|[?&](?:jobid|job_id|gh_jid|reqid|pid|opportunityid)=)/i;
+const LISTING_ONLY = /(?:search-jobs?|search-results|viewalljobs|job-opportunities|join(?:talent|[-_/]our[-_/]team)|talent-community|jobcart|jobs?\/(?:search|login)|positions?\/{1,2}filter)(?:[/?#]|$)/i;
 const CAREER_CONTENT_ONLY = /\/careers?\/(?:open-positions|view-jobs(?:\.html)?|jobs|culture|benefits)\/?(?:[?#].*)?$/i;
-const GENERIC_TEXT = /^(?:apply|apply now|learn more|read more|view job|view details|details|search jobs?|careers?|open positions?|next|previous)$/i;
+const GENERIC_TEXT = /^(?:apply|apply now|form|here\.?|learn more(?: about this position)?|read more|view .+|see .+|explore .+|join .+|details|search .+ jobs?|careers?|career website|jobs?|benefits|student programs|open (?:positions?|roles)|skip to (?:main )?(?:jobs search results|content)|click here|(?:first|previous|next|last) page of results(?: first| last)?|page \d+ of \d+(?:\s*,\s*current page)?|your privacy choices|manage cookie preferences|notify me of new jobs|internal careers site|returning applicant login|stay connected|terms of use|total rewards|events|job search tool|chinese \((?:simplified|traditional)\)|french|german|italian|japanese|portuguese|spanish|next|previous)$/i;
 const EXTERNAL_BOARDS = /(?:greenhouse\.io|lever\.co|myworkdayjobs\.com|myworkdaysite\.com|smartrecruiters\.com|icims\.com|jobvite\.com|phenompeople\.com|selectminds\.com)/i;
+
+const titleFromJobUrl = (url: URL): string | null => {
+  const ignored = /^(?:job|jobs|career|careers|company|talent|opening|openings|position|positions|role|roles|search|login|userhome|all-jobs|open-roles|current-openings|explore|join|programs?|benefits|culture|teams?|early-career)$/i;
+  const segment = url.pathname.split("/").filter(Boolean).reverse().find((value) => {
+    const decoded = decodeURIComponent(value);
+    return !ignored.test(decoded) && !/\.(?:html?|php|aspx)$/i.test(decoded) && !/^\d+$/.test(decoded) && /[a-z]/i.test(decoded);
+  });
+  if (!segment) return null;
+  const title = decodeURIComponent(segment).replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
+  if (title.length < 4 || GENERIC_TEXT.test(title)) return null;
+  return title.replace(/\b\w/g, (letter) => letter.toUpperCase());
+};
 
 export const jobsFromBrowserAnchors = (anchors: BrowserAnchor[], source: CrawlSource): CrawledJob[] => {
   const unique = new Map<string, CrawledJob>();
   for (const anchor of anchors) {
-    const title = anchor.text.replace(/\s+/g, " ").trim();
-    if (title.length < 4 || title.length > 180 || GENERIC_TEXT.test(title)) continue;
+    if (/%(?:22|27)|[\\]/i.test(anchor.href)) continue;
+    const anchorTitle = anchor.text.replace(/\s+/g, " ").trim();
+    if (anchorTitle.length < 4 || anchorTitle.length > 180) continue;
     let url: URL;
     try {
       url = new URL(anchor.href, source.postingUrl);
@@ -25,11 +38,16 @@ export const jobsFromBrowserAnchors = (anchors: BrowserAnchor[], source: CrawlSo
     const targetHost = url.hostname.replace(/^www\./, "");
     const externalBoard = EXTERNAL_BOARDS.test(targetHost);
     const externalDetail = externalBoard && url.pathname.split("/").filter(Boolean).length >= 2;
-    if (LISTING_ONLY.test(path) || CAREER_CONTENT_ONLY.test(path) || (!JOB_DETAIL.test(path) && !externalDetail)) continue;
+    if (LISTING_ONLY.test(path) || CAREER_CONTENT_ONLY.test(path)) continue;
+    const derivedTitle = GENERIC_TEXT.test(anchorTitle) ? titleFromJobUrl(url) : null;
+    const title = derivedTitle ?? anchorTitle;
+    const derivedDetail = Boolean(derivedTitle) && url.pathname.split("/").filter(Boolean).length >= 3;
+    if (GENERIC_TEXT.test(anchorTitle) && !derivedDetail) continue;
+    if (GENERIC_TEXT.test(title) || (!JOB_DETAIL.test(path) && !externalDetail && !derivedDetail)) continue;
     if (!targetHost.endsWith(sourceHost) && !sourceHost.endsWith(targetHost) && !externalBoard) continue;
     url.hash = "";
     unique.set(url.href, {
-      externalId: url.searchParams.get("jobid") ?? url.searchParams.get("job_id") ?? url.searchParams.get("gh_jid"),
+      externalId: url.searchParams.get("jobid") ?? url.searchParams.get("job_id") ?? url.searchParams.get("gh_jid") ?? url.searchParams.get("opportunityId"),
       title,
       company: source.company,
       location: null,
