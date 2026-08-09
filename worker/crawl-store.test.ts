@@ -234,3 +234,29 @@ describe("D1CrawlStore enriched job persistence", () => {
     expect(new TextEncoder().encode(payload).byteLength).toBeLessThanOrEqual(1_500_000);
   });
 });
+
+describe("D1CrawlStore source leasing", () => {
+  it("claims due sources before returning them so parallel batches cannot overlap", async () => {
+    const calls: Array<{ sql: string; values: unknown[] }> = [];
+    const db = {
+      prepare(sql: string) {
+        return {
+          bind(...values: unknown[]) {
+            calls.push({ sql, values });
+            return { all: async () => ({ results: [{
+              id: "source-1", company: "Acme", posting_url: "https://example.com/jobs",
+              adapter: "custom", next_crawl_at: String(values[0]),
+            }] }) };
+          },
+        };
+      },
+    } as unknown as D1Database;
+
+    const sources = await new D1CrawlStore(db).dueSources("2026-08-09T12:00:00.000Z", 16);
+
+    expect(sources).toHaveLength(1);
+    expect(calls[0].sql).toContain("UPDATE sources");
+    expect(calls[0].sql).toContain("RETURNING id, company, posting_url, adapter, next_crawl_at");
+    expect(calls[0].values).toEqual(["2026-08-09T12:10:00.000Z", "2026-08-09T12:00:00.000Z", 16]);
+  });
+});

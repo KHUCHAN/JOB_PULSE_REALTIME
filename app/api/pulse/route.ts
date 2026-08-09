@@ -11,6 +11,7 @@ import type {
 } from "../../../lib/domain";
 import { runDueCrawls } from "../../../lib/crawl-runner";
 import { ensureCatalogSeeded, type CatalogSeed } from "../../../lib/catalog-bootstrap";
+import { crawlBatchOptions } from "../../../lib/crawl-batch-options";
 import { ftsQuery } from "../../../lib/job-search";
 import {
   mapCrawlActivity,
@@ -250,8 +251,7 @@ export async function POST(request: Request): Promise<Response> {
     }
     if (body.action === "crawlBatch") {
       const requested = typeof body.limit === "number" ? body.limit : 8;
-      const limit = Math.max(1, Math.min(16, requested));
-      return json(await runDueCrawls(new D1CrawlStore(db()), fetch, new Date(), { concurrency: 4, limit }));
+      return json(await runDueCrawls(new D1CrawlStore(db()), fetch, new Date(), crawlBatchOptions(requested)));
     }
     return json({ error: "Unknown action." }, 400);
   } catch (error) {

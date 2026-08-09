@@ -139,15 +139,20 @@ export class D1CrawlStore implements CrawlStore {
   constructor(private readonly db: D1Database) {}
 
   async dueSources(now: string, limit: number): Promise<PersistedSource[]> {
+    const leaseUntil = new Date(new Date(now).getTime() + 10 * 60 * 1000).toISOString();
     const result = await this.db.prepare(`
-      SELECT id, company, posting_url, adapter, next_crawl_at
-      FROM sources
-      WHERE enabled = 1
-        AND posting_url IS NOT NULL
-        AND (next_crawl_at IS NULL OR next_crawl_at <= ?)
-      ORDER BY COALESCE(next_crawl_at, '') ASC, company ASC
-      LIMIT ?
-    `).bind(now, limit).all<SourceRow>();
+      UPDATE sources
+      SET next_crawl_at = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id IN (
+        SELECT id FROM sources
+        WHERE enabled = 1
+          AND posting_url IS NOT NULL
+          AND (next_crawl_at IS NULL OR next_crawl_at <= ?)
+        ORDER BY COALESCE(next_crawl_at, '') ASC, company ASC
+        LIMIT ?
+      )
+      RETURNING id, company, posting_url, adapter, next_crawl_at
+    `).bind(leaseUntil, now, limit).all<SourceRow>();
 
     return result.results.map((row) => ({
       id: row.id,
