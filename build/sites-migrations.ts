@@ -5,7 +5,7 @@ export interface SitesMigrationOptions {
   sourceDirectory: string;
   outputDirectory: string;
   schemaFiles: string[];
-  catalogFile: string;
+  catalogFile?: string;
   maxBytes?: number;
 }
 
@@ -22,6 +22,8 @@ export async function buildSitesMigrations(options: SitesMigrationOptions): Prom
     if (byteLength(sql) > maxBytes) throw new Error(`Sites schema migration exceeds ${maxBytes} bytes: ${file}`);
     await cp(source, join(options.outputDirectory, file));
   }
+
+  if (!options.catalogFile) return;
 
   const catalog = await readFile(join(options.sourceDirectory, options.catalogFile), "utf8");
   const statements = catalog

@@ -60,4 +60,20 @@ describe("Sites migration packaging", () => {
       expect(Buffer.byteLength(await readFile(join(output, file), "utf8"))).toBeLessThanOrEqual(30_000);
     }
   });
+
+  it("can package schema without embedding catalog data", async () => {
+    const root = await mkdtemp(join(tmpdir(), "job-pulse-sites-schema-"));
+    const source = join(root, "source");
+    const output = join(root, "output");
+    await import("node:fs/promises").then(({ mkdir }) => mkdir(source));
+    await writeFile(join(source, "0000_schema.sql"), "CREATE TABLE sources(id TEXT PRIMARY KEY);\n");
+
+    await buildSitesMigrations({
+      sourceDirectory: source,
+      outputDirectory: output,
+      schemaFiles: ["0000_schema.sql"],
+    });
+
+    expect(await readdir(output)).toEqual(["0000_schema.sql"]);
+  });
 });

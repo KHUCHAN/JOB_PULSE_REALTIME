@@ -47,7 +47,6 @@ export function sites(): Plugin {
             "0029_nice_korvac.sql",
             "0030_job_search_fts.sql",
           ],
-          catalogFile: "0027_refresh_sources_20260809112435.sql",
         });
       }
     },

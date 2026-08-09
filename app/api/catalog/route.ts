@@ -1,6 +1,8 @@
 import { and, asc, count, isNotNull, like, sql } from "drizzle-orm";
+import catalogSeed from "../../../db/seed/sources.json";
 import { getDb } from "../../../db";
 import { sources } from "../../../db/schema";
+import { ensureCatalogSeeded, type CatalogSeed } from "../../../lib/catalog-bootstrap";
 import { parseCatalogQuery } from "../../../lib/catalog-query";
 
 export const dynamic = "force-dynamic";
@@ -13,6 +15,7 @@ export async function GET(request: Request): Promise<Response> {
   ].filter((filter) => filter !== undefined);
   const where = filters.length ? and(...filters) : undefined;
   const db = getDb();
+  await ensureCatalogSeeded((db as unknown as { $client: D1Database }).$client, catalogSeed as CatalogSeed);
 
   const pageQuery = db
     .select({

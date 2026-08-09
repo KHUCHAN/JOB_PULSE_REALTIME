@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import catalogSeed from "../../../db/seed/sources.json";
 import type {
   ActivityEvent,
   CreateKeywordInput,
@@ -9,6 +10,7 @@ import type {
   TalentTarget,
 } from "../../../lib/domain";
 import { runDueCrawls } from "../../../lib/crawl-runner";
+import { ensureCatalogSeeded, type CatalogSeed } from "../../../lib/catalog-bootstrap";
 import { ftsQuery } from "../../../lib/job-search";
 import {
   mapCrawlActivity,
@@ -183,6 +185,7 @@ async function overview(): Promise<OverviewSnapshot> {
 
 export async function GET(request: Request): Promise<Response> {
   try {
+    await ensureCatalogSeeded(db(), catalogSeed as CatalogSeed);
     const url = new URL(request.url);
     const resource = url.searchParams.get("resource");
     if (resource === "jobs") return json(await jobsFor(url));
@@ -217,6 +220,7 @@ export async function GET(request: Request): Promise<Response> {
 
 export async function POST(request: Request): Promise<Response> {
   try {
+    await ensureCatalogSeeded(db(), catalogSeed as CatalogSeed);
     const body = await request.json() as Record<string, unknown>;
     if (body.action === "updateJobState") {
       const state = body.state as JobState;
