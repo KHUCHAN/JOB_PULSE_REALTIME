@@ -1,42 +1,89 @@
 "use client";
 
-import { ArrowUpRight, Search, SlidersHorizontal } from "lucide-react";
-import { useRef, useState } from "react";
+import { ArrowUpRight } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import type { MouseEvent, ReactElement } from "react";
 import { useJobPulse } from "../../components/fixture-provider";
 import { EmptyState } from "../../components/ui/empty-state";
 import { ErrorState } from "../../components/ui/error-state";
 import { LoadingState } from "../../components/ui/loading-state";
 import { StatusBadge } from "../../components/ui/status-badge";
-import type { JobPosting, JobState, WorkArrangement } from "../../lib/domain";
+import type { JobFilters, JobState } from "../../lib/domain";
 import { formatRelativeDate } from "../../lib/format";
+import { defaultJobFilters, parseJobFilterParams, serializeJobFilters } from "../../lib/job-filter-query";
+import type { RichJobPosting } from "../../lib/pulse-mappers";
 import { useRepositoryQuery } from "../../lib/use-repository-query";
+import { ActiveFilterChips } from "./active-filter-chips";
 import { JobDetailDrawer } from "./job-detail-drawer";
+import { JobFilterPanel } from "./job-filter-panel";
+
+const filtersFromLocation = (initialQuery: string): JobFilters => {
+  if (typeof window === "undefined") return { ...defaultJobFilters, query: initialQuery };
+  const fromUrl = parseJobFilterParams(new URLSearchParams(window.location.search));
+  return { ...fromUrl, query: initialQuery || fromUrl.query };
+};
+
+const arrayFilterKeys = new Set<keyof JobFilters>([
+  "companies", "cities", "states", "countries", "employmentTypes", "recruitingYears", "programTypes", "seasons", "departments", "teams", "businessUnits", "jobFamilies", "jobFunctions", "industries", "offices", "skills", "experienceLevels", "salaryCurrencies", "salaryIntervals", "educationRequirements", "shiftSchedules", "travelRequirements", "securityClearances", "languages",
+]);
 
 export function JobsScreen({ initialQuery = "" }: { initialQuery?: string }): ReactElement {
   const { repository, revision, mutate, demoMode } = useJobPulse();
-  const [search, setSearch] = useState(initialQuery);
-  const [status, setStatus] = useState<"all" | JobState>("all");
-  const [arrangement, setArrangement] = useState<"all" | WorkArrangement>("all");
-  const [location, setLocation] = useState("");
+  const [filters, setFilters] = useState<JobFilters>(() => filtersFromLocation(initialQuery));
+  const [search, setSearch] = useState(() => filtersFromLocation(initialQuery).query);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const lastTrigger = useRef<HTMLButtonElement | null>(null);
 
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setFilters((current) => current.query === search ? current : { ...current, query: search, page: 1 });
+    }, 250);
+    return () => window.clearTimeout(timeout);
+  }, [search]);
+
+  useEffect(() => {
+    const query = serializeJobFilters(filters).toString();
+    window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
+  }, [filters]);
+
   const query = useRepositoryQuery(
-    () => repository.listJobs({ query: search, status, arrangement, location }),
-    [revision, search, status, arrangement, location],
+    () => repository.searchJobs(filters),
+    [revision, filters],
   );
-
-  const jobs = [...(query.data ?? [])].sort(
-    (a, b) =>
-      b.firstSeenAt.localeCompare(a.firstSeenAt) ||
-      b.matchScore - a.matchScore ||
-      a.company.localeCompare(b.company),
-  );
+  const result = query.data;
+  const jobs = result?.items ?? [];
   const selectedJob = jobs.find((job) => job.id === selectedId) ?? null;
+  const total = result?.total ?? 0;
+  const page = result?.page ?? filters.page ?? 1;
+  const pageSize = result?.pageSize ?? filters.pageSize ?? 50;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
-  const openDetails = (job: JobPosting, event: MouseEvent<HTMLButtonElement>) => {
+  const updateFilters = (patch: Partial<JobFilters>, resetPage = true) => {
+    setFilters((current) => ({ ...current, ...patch, page: resetPage ? 1 : patch.page ?? current.page }));
+  };
+
+  const removeFilter = (key: keyof JobFilters, value?: string | number) => {
+    if (arrayFilterKeys.has(key)) {
+      setFilters((current) => ({
+        ...current,
+        [key]: ((current[key] as Array<string | number> | undefined) ?? []).filter((item) => item !== value),
+        page: 1,
+      }));
+      return;
+    }
+    const defaults = defaultJobFilters[key];
+    setFilters((current) => ({ ...current, [key]: defaults, page: 1 }));
+    if (key === "query") setSearch("");
+  };
+
+  const clearFilters = () => {
+    setFilters({ ...defaultJobFilters });
+    setSearch("");
+  };
+
+  const openDetails = (job: RichJobPosting, event: MouseEvent<HTMLButtonElement>) => {
     lastTrigger.current = event.currentTarget;
     setSelectedId(job.id);
   };
@@ -52,6 +99,8 @@ export function JobsScreen({ initialQuery = "" }: { initialQuery?: string }): Re
     setMessage(`${demoMode ? "Demo data · " : ""}${selectedJob.title} marked ${state}.`);
   };
 
+  const goToPage = (nextPage: number) => updateFilters({ page: nextPage }, false);
+
   return (
     <div className="page-stack jobs-page">
       <header className="page-heading">
@@ -59,33 +108,11 @@ export function JobsScreen({ initialQuery = "" }: { initialQuery?: string }): Re
           <h1>Jobs</h1>
           <p>Review every match in one place, then keep the useful signal and hide the rest.</p>
         </div>
-        <span className="result-count">{jobs.length} roles in view</span>
+        <span className="result-count">{total} roles found</span>
       </header>
 
-      <section className="filter-bar" aria-label="Job filters">
-        <div className="filter-search">
-          <Search size={17} aria-hidden="true" />
-          <label className="sr-only" htmlFor="job-search">Search jobs</label>
-          <input id="job-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Role, company, or keyword" />
-        </div>
-        <div className="filter-control">
-          <label htmlFor="job-status">Job status</label>
-          <select id="job-status" value={status} onChange={(event) => setStatus(event.target.value as "all" | JobState)}>
-            <option value="all">All statuses</option><option value="new">New</option><option value="saved">Saved</option><option value="hidden">Hidden</option><option value="applied">Applied</option>
-          </select>
-        </div>
-        <div className="filter-control">
-          <label htmlFor="arrangement">Work arrangement</label>
-          <select id="arrangement" value={arrangement} onChange={(event) => setArrangement(event.target.value as "all" | WorkArrangement)}>
-            <option value="all">Any arrangement</option><option value="remote">Remote</option><option value="hybrid">Hybrid</option><option value="onsite">Onsite</option>
-          </select>
-        </div>
-        <div className="filter-control location-control">
-          <label htmlFor="job-location">Location</label>
-          <input id="job-location" value={location} onChange={(event) => setLocation(event.target.value)} placeholder="Any location" />
-        </div>
-        <SlidersHorizontal className="filter-glyph" aria-hidden="true" />
-      </section>
+      <JobFilterPanel filters={filters} options={result?.availableFilters} search={search} advancedOpen={advancedOpen} onSearchChange={setSearch} onChange={updateFilters} onAdvancedOpenChange={setAdvancedOpen} />
+      <ActiveFilterChips filters={filters} onRemove={removeFilter} onClear={clearFilters} />
 
       {message ? <div className="inline-feedback" aria-live="polite">{message}</div> : null}
 
@@ -130,6 +157,14 @@ export function JobsScreen({ initialQuery = "" }: { initialQuery?: string }): Re
               ))}
             </div>
           </>
+        ) : null}
+
+        {!query.loading && !query.error && result ? (
+          <nav className="pagination" aria-label="Job result pages">
+            <button className="button secondary" type="button" aria-label="Previous page" disabled={page <= 1} onClick={() => goToPage(page - 1)}>Previous</button>
+            <span>Page {page} of {totalPages}</span>
+            <button className="button secondary" type="button" aria-label="Next page" disabled={page >= totalPages} onClick={() => goToPage(page + 1)}>Next</button>
+          </nav>
         ) : null}
       </section>
 

@@ -4,15 +4,16 @@ import { ExternalLink, X } from "lucide-react";
 import { useEffect, useRef } from "react";
 import type { ReactElement } from "react";
 import { StatusBadge } from "../../components/ui/status-badge";
-import type { JobPosting, JobState } from "../../lib/domain";
+import type { JobState } from "../../lib/domain";
 import { formatDateTime } from "../../lib/format";
+import type { RichJobPosting } from "../../lib/pulse-mappers";
 
 export function JobDetailDrawer({
   job,
   onClose,
   onChangeState,
 }: {
-  job: JobPosting;
+  job: RichJobPosting;
   onClose(): void;
   onChangeState(state: JobState): Promise<void>;
 }): ReactElement {
@@ -66,6 +67,21 @@ export function JobDetailDrawer({
               <div><dt>Last confirmed</dt><dd>{formatDateTime(job.lastConfirmedAt)}</dd></div>
             </dl>
           </section>
+
+          {job.employmentType || job.department || job.jobFunction || job.skills.length || job.experienceLevel || job.experienceRequirements || job.salaryMin !== null || job.salaryMax !== null || job.publishedAt || job.sourcePostedText || job.languages.length ? (
+            <section className="detail-facts">
+              <h3>Role details</h3>
+              <dl>
+                {job.employmentType ? <div><dt>Employment type</dt><dd>{job.employmentType}</dd></div> : null}
+                {job.department || job.jobFunction ? <div><dt>Department / function</dt><dd>{[job.department, job.jobFunction].filter(Boolean).join(" · ")}</dd></div> : null}
+                {job.skills.length ? <div><dt>Skills</dt><dd>{job.skills.join(", ")}</dd></div> : null}
+                {job.experienceLevel || job.experienceRequirements ? <div><dt>Experience</dt><dd>{[job.experienceLevel, job.experienceRequirements].filter(Boolean).join(" · ")}</dd></div> : null}
+                {job.salaryMin !== null || job.salaryMax !== null ? <div><dt>Salary</dt><dd>{[job.salaryMin !== null ? `${job.salaryCurrency ?? ""} ${job.salaryMin.toLocaleString()}`.trim() : null, job.salaryMax !== null ? `${job.salaryCurrency ?? ""} ${job.salaryMax.toLocaleString()}`.trim() : null].filter(Boolean).join(" – ")}{job.salaryInterval ? ` / ${job.salaryInterval}` : ""}</dd></div> : null}
+                {job.publishedAt || job.sourcePostedText ? <div><dt>Posting date</dt><dd>{job.publishedAt ? formatDateTime(job.publishedAt) : job.sourcePostedText}</dd></div> : null}
+                {job.languages.length ? <div><dt>Languages</dt><dd>{job.languages.join(", ")}</dd></div> : null}
+              </dl>
+            </section>
+          ) : null}
 
           <a className="official-link" href={job.officialUrl} target="_blank" rel="noreferrer">
             Open official job page <ExternalLink size={15} aria-hidden="true" />
