@@ -77,8 +77,14 @@ const fetchWithTimeout = async (
 ): Promise<Response> => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort("15 second crawl timeout"), REQUEST_TIMEOUT_MS);
+  const headers = init?.headers instanceof Headers
+    ? new Headers(init.headers)
+    : { "user-agent": "JobPulseCrawler/1.0 (+https://job-pulse.local)", ...(init?.headers ?? {}) };
+  if (headers instanceof Headers && !headers.has("user-agent")) {
+    headers.set("user-agent", "JobPulseCrawler/1.0 (+https://job-pulse.local)");
+  }
   try {
-    return await fetcher(input, { ...init, signal: controller.signal });
+    return await fetcher(input, { ...init, headers, signal: controller.signal });
   } finally {
     clearTimeout(timeout);
   }
