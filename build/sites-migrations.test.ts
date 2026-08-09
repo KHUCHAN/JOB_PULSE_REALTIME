@@ -38,4 +38,26 @@ describe("Sites migration packaging", () => {
     expect((await Promise.all(files.map((file) => readFile(join(output, file), "utf8")))).join("\n"))
       .toContain("INSERT INTO sources VALUES ('c'");
   });
+
+  it("keeps default deployment scripts below the Sites D1 request ceiling", async () => {
+    const root = await mkdtemp(join(tmpdir(), "job-pulse-sites-limit-"));
+    const source = join(root, "source");
+    const output = join(root, "output");
+    await import("node:fs/promises").then(({ mkdir }) => mkdir(source));
+    await writeFile(join(source, "0000_schema.sql"), "CREATE TABLE sources(id TEXT PRIMARY KEY);\n");
+    const rows = Array.from({ length: 6 }, (_, index) =>
+      `INSERT INTO sources VALUES ('${index}${"x".repeat(19_000)}');`);
+    await writeFile(join(source, "0027_catalog.sql"), `BEGIN;\n${rows.join("\n")}\nCOMMIT;\n`);
+
+    await buildSitesMigrations({
+      sourceDirectory: source,
+      outputDirectory: output,
+      schemaFiles: ["0000_schema.sql"],
+      catalogFile: "0027_catalog.sql",
+    });
+
+    for (const file of await readdir(output)) {
+      expect(Buffer.byteLength(await readFile(join(output, file), "utf8"))).toBeLessThanOrEqual(30_000);
+    }
+  });
 });

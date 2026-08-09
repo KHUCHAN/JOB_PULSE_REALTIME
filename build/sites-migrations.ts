@@ -12,7 +12,7 @@ export interface SitesMigrationOptions {
 const byteLength = (value: string): number => Buffer.byteLength(value, "utf8");
 
 export async function buildSitesMigrations(options: SitesMigrationOptions): Promise<void> {
-  const maxBytes = options.maxBytes ?? 500_000;
+  const maxBytes = options.maxBytes ?? 30_000;
   await rm(options.outputDirectory, { recursive: true, force: true });
   await mkdir(options.outputDirectory, { recursive: true });
 
