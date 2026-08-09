@@ -14,7 +14,7 @@ import { useRepositoryQuery } from "../../lib/use-repository-query";
 import { JobDetailDrawer } from "./job-detail-drawer";
 
 export function JobsScreen({ initialQuery = "" }: { initialQuery?: string }): ReactElement {
-  const { repository, revision, mutate } = useJobPulse();
+  const { repository, revision, mutate, demoMode } = useJobPulse();
   const [search, setSearch] = useState(initialQuery);
   const [status, setStatus] = useState<"all" | JobState>("all");
   const [arrangement, setArrangement] = useState<"all" | WorkArrangement>("all");
@@ -49,7 +49,7 @@ export function JobsScreen({ initialQuery = "" }: { initialQuery?: string }): Re
   const changeState = async (state: JobState) => {
     if (!selectedJob) return;
     await mutate(() => repository.updateJobState(selectedJob.id, state));
-    setMessage(`Demo data · ${selectedJob.title} marked ${state}.`);
+    setMessage(`${demoMode ? "Demo data · " : ""}${selectedJob.title} marked ${state}.`);
   };
 
   return (
@@ -92,7 +92,7 @@ export function JobsScreen({ initialQuery = "" }: { initialQuery?: string }): Re
       <section className="surface jobs-surface">
         <div className="section-heading">
           <div><h2>Matching roles</h2><p>Newest first, then strongest relevance.</p></div>
-          <span className="demo-note"><strong>Demo data</strong> · official links open separately</span>
+          <span className="demo-note"><strong>{demoMode ? "Demo data" : "Live database"}</strong> · official links open separately</span>
         </div>
 
         {query.loading ? <LoadingState label="Loading jobs" /> : null}

@@ -15,7 +15,7 @@ const splitTerms = (value: string): string[] =>
   [...new Set(value.split(",").map((term) => term.trim()).filter(Boolean))];
 
 export function AlertsScreen(): ReactElement {
-  const { repository, revision, mutate } = useJobPulse();
+  const { repository, revision, mutate, demoMode } = useJobPulse();
   const [name, setName] = useState("");
   const [includeTerms, setIncludeTerms] = useState("");
   const [excludeTerms, setExcludeTerms] = useState("");
@@ -46,12 +46,12 @@ export function AlertsScreen(): ReactElement {
     setExcludeTerms("");
     setLocations("");
     setErrorMessage("");
-    setMessage("Demo data · changes are stored only for this preview and are not persisted.");
+    setMessage(demoMode ? "Demo data · changes are stored only for this preview and are not persisted." : "Keyword rule saved to the live database.");
   };
 
   const toggleRule = async (rule: KeywordRule) => {
     await mutate(() => repository.setKeywordEnabled(rule.id, !rule.enabled));
-    setMessage("Demo data · changes are stored only for this preview and are not persisted.");
+    setMessage(demoMode ? "Demo data · changes are stored only for this preview and are not persisted." : "Keyword rule updated in the live database.");
   };
 
   return (

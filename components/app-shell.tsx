@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useState, useSyncExternalStore } from "react";
 import type { ReactElement, ReactNode } from "react";
+import { useJobPulse } from "./fixture-provider";
 
 const navigation = [
   { href: "/", label: "Overview", icon: Gauge },
@@ -32,6 +33,7 @@ const currentPathname = () => window.location.pathname;
 const serverPathname = () => "/";
 
 export function AppShell({ children }: { children: ReactNode }): ReactElement {
+  const { demoMode } = useJobPulse();
   const [menuOpen, setMenuOpen] = useState(false);
   const pathname = useSyncExternalStore(subscribeToLocation, currentPathname, serverPathname);
 
@@ -99,7 +101,7 @@ export function AppShell({ children }: { children: ReactNode }): ReactElement {
             <input id="global-keyword" name="q" placeholder="Search a keyword" />
           </form>
 
-          <span className="demo-badge">Demo data</span>
+          <span className="demo-badge">{demoMode ? "Demo data" : "Live D1"}</span>
           <div className="batch-status" aria-label="Crawl schedule">
             <i aria-hidden="true" />
             <span><strong>Automatic</strong>Every 2 hours</span>

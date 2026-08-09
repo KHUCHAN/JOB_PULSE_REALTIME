@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { headers } from "next/headers";
 import { AppShell } from "../components/app-shell";
-import { FixtureProvider } from "../components/fixture-provider";
+import { LiveProvider } from "../components/fixture-provider";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -57,9 +57,9 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <FixtureProvider>
+        <LiveProvider>
           <AppShell>{children}</AppShell>
-        </FixtureProvider>
+        </LiveProvider>
       </body>
     </html>
   );

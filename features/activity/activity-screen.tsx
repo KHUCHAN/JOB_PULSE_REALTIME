@@ -18,7 +18,7 @@ const kinds: ActivityKind[] = [
 ];
 
 export function ActivityScreen(): ReactElement {
-  const { repository, revision } = useJobPulse();
+  const { repository, revision, demoMode } = useJobPulse();
   const [severity, setSeverity] = useState<"all" | ActivityEvent["severity"]>("all");
   const [kind, setKind] = useState<"all" | ActivityKind>("all");
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -50,7 +50,7 @@ export function ActivityScreen(): ReactElement {
       </section>
 
       <section className="surface activity-surface">
-        <div className="section-heading"><div><h2>Event history</h2><p>Monitoring, alert, job, and assisted-flow changes.</p></div><span className="demo-note">Demo data</span></div>
+        <div className="section-heading"><div><h2>Event history</h2><p>Monitoring, alert, job, and assisted-flow changes.</p></div><span className="demo-note">{demoMode ? "Demo data" : "Live crawl log"}</span></div>
         {query.loading ? <LoadingState label="Loading activity" /> : null}
         {query.error ? <ErrorState retry={query.retry} /> : null}
         {!query.loading && !query.error && events.length === 0 ? <EmptyState title="No activity matches these filters" /> : null}

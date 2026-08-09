@@ -1,0 +1,1 @@
+ALTER TABLE `jobs` ADD `review_state` text DEFAULT 'new' NOT NULL;

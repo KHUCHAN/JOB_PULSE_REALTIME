@@ -13,7 +13,7 @@ import { formatDateTime, titleCase } from "../../lib/format";
 import { useRepositoryQuery } from "../../lib/use-repository-query";
 
 export function SourcesScreen(): ReactElement {
-  const { repository, revision } = useJobPulse();
+  const { repository, revision, demoMode } = useJobPulse();
   const [health, setHealth] = useState<"all" | SourceHealth>("all");
   const query = useRepositoryQuery(() => repository.listSources(health), [revision, health]);
   const sources = query.data ?? [];
@@ -40,8 +40,8 @@ export function SourcesScreen(): ReactElement {
 
       <section className="surface sources-surface">
         <div className="section-heading">
-          <div><h2>Monitored career sources</h2><p>Frontend preview of the verified company dataset.</p></div>
-          <span className="demo-note"><strong>Demo data</strong> · no request is sent</span>
+          <div><h2>Monitored career sources</h2><p>Verified company endpoints and their latest extraction state.</p></div>
+          <span className="demo-note"><strong>{demoMode ? "Demo data" : "Live database"}</strong> · official endpoints</span>
         </div>
         {query.loading ? <LoadingState label="Loading sources" /> : null}
         {query.error ? <ErrorState retry={query.retry} /> : null}

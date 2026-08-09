@@ -7,13 +7,14 @@ import {
   useState,
 } from "react";
 import type { ReactElement, ReactNode } from "react";
+import { createApiRepository } from "../lib/api-repository";
 import { createFixtureRepository } from "../lib/fixture-repository";
 import type { JobPulseRepository } from "../lib/repository";
 
 export interface JobPulseContextValue {
   repository: JobPulseRepository;
   revision: number;
-  demoMode: true;
+  demoMode: boolean;
   mutate<T>(operation: () => Promise<T>): Promise<T>;
 }
 
@@ -38,6 +39,22 @@ export function FixtureProvider({ children }: { children: ReactNode }): ReactEle
         mutate,
       }}
     >
+      {children}
+    </JobPulseContext.Provider>
+  );
+}
+
+export function LiveProvider({ children }: { children: ReactNode }): ReactElement {
+  const [repository] = useState<JobPulseRepository>(() => createApiRepository());
+  const [revision, setRevision] = useState(0);
+  const mutate = useCallback(async <T,>(operation: () => Promise<T>): Promise<T> => {
+    const result = await operation();
+    setRevision((current) => current + 1);
+    return result;
+  }, []);
+
+  return (
+    <JobPulseContext.Provider value={{ repository, revision, demoMode: false, mutate }}>
       {children}
     </JobPulseContext.Provider>
   );
