@@ -1,5 +1,6 @@
 import userEvent from "@testing-library/user-event";
 import { render, screen, waitFor } from "@testing-library/react";
+import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FixtureProvider } from "../../components/fixture-provider";
 import { JobsScreen } from "./jobs-screen";
@@ -12,6 +13,20 @@ describe("JobsScreen", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     window.history.replaceState({}, "", "/jobs");
+  });
+
+  it("server-renders the same structured URL filters that hydrate on the client", () => {
+    const html = renderToString(
+      <FixtureProvider>
+        <JobsScreen initialSearchParams="year=2027&program=internship&program=coop" />
+      </FixtureProvider>,
+    );
+    const container = document.createElement("div");
+    container.innerHTML = html;
+
+    expect(container.querySelector(".more-filters-button")?.textContent).toContain("More filters (2)");
+    expect(html).toContain("Remove Recruiting year: 2027");
+    expect(html).toContain("Remove Program type: Co-op");
   });
 
   it("filters jobs and opens match details", async () => {

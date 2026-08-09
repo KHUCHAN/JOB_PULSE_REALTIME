@@ -119,22 +119,27 @@ export function buildJobSearchPlan(filters: JobFilters): JobSearchPlan {
   addJsonMembership("j.languages", filters.languages);
 
   const rankedCte = `WITH ranked AS (
-  SELECT j.*, row_number() OVER (PARTITION BY j.official_url ORDER BY j.first_seen_at DESC, j.company ASC, j.id ASC) AS dedupe_rank
+  SELECT j.id, j.official_url, j.first_seen_at, j.company,
+         row_number() OVER (PARTITION BY j.official_url ORDER BY j.first_seen_at DESC, j.company ASC, j.id ASC) AS dedupe_rank
   FROM jobs j
   WHERE ${clauses.join(" AND ")}
+) , selected AS (
+  SELECT id, first_seen_at, company FROM ranked
+  WHERE dedupe_rank = 1
+  ORDER BY first_seen_at DESC, company ASC, id ASC
+  LIMIT ? OFFSET ?
 )`;
   const limit = validPageSize(filters.pageSize);
   const offset = (validPage(filters.page) - 1) * limit;
 
   return {
     pageSql: `${rankedCte}
-SELECT ranked.* FROM ranked
-WHERE dedupe_rank = 1
-ORDER BY first_seen_at DESC, company ASC, id ASC
-LIMIT ? OFFSET ?`,
-    countSql: `${rankedCte}
-SELECT count(*) AS total FROM ranked
-WHERE dedupe_rank = 1`,
+SELECT j.* FROM selected
+JOIN jobs j ON j.id = selected.id
+ORDER BY selected.first_seen_at DESC, selected.company ASC, selected.id ASC`,
+    countSql: `SELECT count(DISTINCT j.official_url) AS total
+FROM jobs j
+WHERE ${clauses.join(" AND ")}`,
     bindings,
     limit,
     offset,

@@ -47,6 +47,7 @@ export function sites(): Plugin {
             "0029_nice_korvac.sql",
             "0030_job_search_fts.sql",
             "0031_structured_job_filter_indexes.sql",
+            "0032_job_search_performance.sql",
           ],
         });
       }

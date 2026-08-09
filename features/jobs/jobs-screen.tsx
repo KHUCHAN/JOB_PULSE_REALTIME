@@ -17,9 +17,13 @@ import { ActiveFilterChips } from "./active-filter-chips";
 import { JobDetailDrawer } from "./job-detail-drawer";
 import { JobFilterPanel } from "./job-filter-panel";
 
-const filtersFromLocation = (initialQuery: string): JobFilters => {
-  if (typeof window === "undefined") return { ...defaultJobFilters, query: initialQuery };
-  const fromUrl = parseJobFilterParams(new URLSearchParams(window.location.search));
+const filtersFromLocation = (initialQuery: string, initialSearchParams?: string): JobFilters => {
+  const searchParams = initialSearchParams !== undefined
+    ? new URLSearchParams(initialSearchParams)
+    : typeof window === "undefined"
+      ? new URLSearchParams()
+      : new URLSearchParams(window.location.search);
+  const fromUrl = parseJobFilterParams(searchParams);
   return { ...fromUrl, query: initialQuery || fromUrl.query };
 };
 
@@ -27,10 +31,16 @@ const arrayFilterKeys = new Set<keyof JobFilters>([
   "companies", "cities", "states", "countries", "employmentTypes", "recruitingYears", "programTypes", "seasons", "departments", "teams", "businessUnits", "jobFamilies", "jobFunctions", "industries", "offices", "skills", "experienceLevels", "salaryCurrencies", "salaryIntervals", "educationRequirements", "shiftSchedules", "travelRequirements", "securityClearances", "languages",
 ]);
 
-export function JobsScreen({ initialQuery = "" }: { initialQuery?: string }): ReactElement {
+export function JobsScreen({
+  initialQuery = "",
+  initialSearchParams,
+}: {
+  initialQuery?: string;
+  initialSearchParams?: string;
+}): ReactElement {
   const { repository, revision, mutate, demoMode } = useJobPulse();
-  const [filters, setFilters] = useState<JobFilters>(() => filtersFromLocation(initialQuery));
-  const [search, setSearch] = useState(() => filtersFromLocation(initialQuery).query);
+  const [filters, setFilters] = useState<JobFilters>(() => filtersFromLocation(initialQuery, initialSearchParams));
+  const [search, setSearch] = useState(() => filtersFromLocation(initialQuery, initialSearchParams).query);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [message, setMessage] = useState("");

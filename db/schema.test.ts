@@ -39,6 +39,7 @@ describe("filterable job schema", () => {
       ["jobs_location_country_state_city_idx", ["location_country", "location_state", "location_city"]],
       ["jobs_experience_level_idx", ["experience_level"]],
       ["jobs_salary_currency_min_max_idx", ["salary_currency", "salary_min", "salary_max"]],
+      ["jobs_status_url_seen_company_id_idx", ["status", "official_url", "first_seen_at", "company", "id"]],
     ]));
   });
 });

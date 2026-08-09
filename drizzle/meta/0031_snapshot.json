@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "8e5c0844-6481-4ab6-8e4a-3c94f61bac94",
-  "prevId": "9c71190c-fe8d-4db8-b059-e300597de91e",
+  "id": "ec8ed38b-ee00-422f-81e5-95f3a51ea1f4",
+  "prevId": "8e5c0844-6481-4ab6-8e4a-3c94f61bac94",
   "tables": {
     "crawl_runs": {
       "name": "crawl_runs",
@@ -727,6 +727,17 @@
             "salary_currency",
             "salary_min",
             "salary_max"
+          ],
+          "isUnique": false
+        },
+        "jobs_status_url_seen_company_id_idx": {
+          "name": "jobs_status_url_seen_company_id_idx",
+          "columns": [
+            "status",
+            "official_url",
+            "first_seen_at",
+            "company",
+            "id"
           ],
           "isUnique": false
         }

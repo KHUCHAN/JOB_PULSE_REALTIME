@@ -218,6 +218,13 @@
       "when": 1786316959093,
       "tag": "0031_structured_job_filter_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1786318717697,
+      "tag": "0032_job_search_performance",
+      "breakpoints": true
     }
   ]
 }

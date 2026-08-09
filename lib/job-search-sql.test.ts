@@ -68,17 +68,27 @@ describe("parameterized job search SQL", () => {
     expect(plan.offset).toBe(50);
   });
 
-  it("uses the same deduplicated ranked CTE for page and total queries", () => {
+  it("uses the same search predicates for page and total queries", () => {
     const plan = buildJobSearchPlan({
       ...defaultJobFilters,
       query: "fraud risk",
       status: "saved",
     });
 
-    const pageCte = plan.pageSql.slice(0, plan.pageSql.indexOf("SELECT ranked"));
-    const countCte = plan.countSql.slice(0, plan.countSql.indexOf("SELECT count"));
-    expect(pageCte).toBe(countCte);
+    for (const sql of [plan.pageSql, plan.countSql]) {
+      expect(sql).toContain("jobs_fts MATCH ?");
+      expect(sql).toContain("j.review_state = ?");
+    }
     expect(plan.bindings).toEqual(['"fraud"* AND "risk"*', "saved"]);
+  });
+
+  it("ranks only lightweight identity fields and counts unique URLs without a window", () => {
+    const plan = buildJobSearchPlan(defaultJobFilters);
+
+    expect(plan.pageSql).toContain("SELECT j.id, j.official_url, j.first_seen_at, j.company");
+    expect(plan.pageSql).toContain("JOIN jobs j ON j.id = selected.id");
+    expect(plan.countSql).toContain("count(DISTINCT j.official_url)");
+    expect(plan.countSql).not.toContain("row_number() OVER");
   });
 
   it("treats free-text location wildcard characters literally", () => {

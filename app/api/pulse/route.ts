@@ -3,7 +3,6 @@ import catalogSeed from "../../../db/seed/sources.json";
 import type {
   ActivityEvent,
   CreateKeywordInput,
-  JobFilterOptions,
   JobFilters,
   JobSearchResult,
   JobState,
@@ -21,6 +20,7 @@ import {
   validateExplicitJobFilterValues,
 } from "../../../lib/job-filter-validation";
 import { bindJobSearchStatements } from "../../../lib/job-search-execution";
+import { emptyJobFilterOptions, queryJobFilterOptions } from "../../../lib/job-filter-options";
 import { buildJobSearchPlan } from "../../../lib/job-search-sql";
 import {
   mapCrawlActivity,
@@ -50,89 +50,11 @@ const parseJsonArray = (value: string | null): string[] => {
   }
 };
 
-const filterOptionKeys = [
-  "companies", "locations", "cities", "states", "countries", "arrangements",
-  "employmentTypes", "recruitingYears", "programTypes", "seasons", "departments",
-  "teams", "businessUnits", "jobFamilies", "jobFunctions", "industries", "offices",
-  "skills", "experienceLevels", "salaryCurrencies", "salaryIntervals",
-  "educationRequirements", "shiftSchedules", "travelRequirements", "securityClearances",
-  "languages",
-] as const satisfies ReadonlyArray<keyof JobFilterOptions>;
+let filterOptionsCache: { expiresAt: number; value: Awaited<ReturnType<typeof queryJobFilterOptions>> } | null = null;
 
-const emptyFilterOptions = (): JobFilterOptions => Object.fromEntries(
-  filterOptionKeys.map((key) => [key, []]),
-) as unknown as JobFilterOptions;
-
-type FilterOptionRow = Pick<JobViewRow,
-  | "company" | "location" | "arrangement" | "employment_type" | "title"
-  | "location_city" | "location_state" | "location_country" | "department" | "team"
-  | "business_unit" | "job_family" | "job_function" | "industry" | "office" | "skills"
-  | "experience_level" | "salary_currency" | "salary_interval" | "education_requirements"
-  | "shift_schedule" | "travel_requirements" | "security_clearance" | "languages"
->;
-
-const filterOptionsFromRows = (rows: FilterOptionRow[]): JobFilterOptions => {
-  const values: Record<keyof JobFilterOptions, Array<string | number>> = {
-    companies: rows.map((row) => row.company), locations: rows.flatMap((row) => row.location ? [row.location] : []),
-    cities: rows.flatMap((row) => row.location_city ? [row.location_city] : []),
-    states: rows.flatMap((row) => row.location_state ? [row.location_state] : []),
-    countries: rows.flatMap((row) => row.location_country ? [row.location_country] : []),
-    arrangements: rows.flatMap((row) => row.arrangement ? [row.arrangement] : []),
-    employmentTypes: rows.flatMap((row) => row.employment_type ? [row.employment_type] : []),
-    recruitingYears: rows.flatMap((row) => [...row.title.matchAll(/\b(20\d{2})\b/g)].map((match) => Number(match[1]))),
-    programTypes: rows.flatMap((row) => {
-      const title = row.title.toLocaleLowerCase();
-      if (title.includes("intern")) return ["internship"];
-      if (title.includes("co-op") || title.includes("coop")) return ["coop"];
-      return title.includes("regular") ? ["regular"] : [];
-    }),
-    seasons: rows.flatMap((row) => ["spring", "summer", "fall", "winter"].filter((season) => row.title.toLocaleLowerCase().includes(season))),
-    departments: rows.flatMap((row) => row.department ? [row.department] : []),
-    teams: rows.flatMap((row) => row.team ? [row.team] : []),
-    businessUnits: rows.flatMap((row) => row.business_unit ? [row.business_unit] : []),
-    jobFamilies: rows.flatMap((row) => row.job_family ? [row.job_family] : []),
-    jobFunctions: rows.flatMap((row) => row.job_function ? [row.job_function] : []),
-    industries: rows.flatMap((row) => row.industry ? [row.industry] : []),
-    offices: rows.flatMap((row) => row.office ? [row.office] : []),
-    skills: rows.flatMap((row) => parseJsonArray(row.skills ?? null)),
-    experienceLevels: rows.flatMap((row) => row.experience_level ? [row.experience_level] : []),
-    salaryCurrencies: rows.flatMap((row) => row.salary_currency ? [row.salary_currency] : []),
-    salaryIntervals: rows.flatMap((row) => row.salary_interval ? [row.salary_interval] : []),
-    educationRequirements: rows.flatMap((row) => row.education_requirements ? [row.education_requirements] : []),
-    shiftSchedules: rows.flatMap((row) => row.shift_schedule ? [row.shift_schedule] : []),
-    travelRequirements: rows.flatMap((row) => row.travel_requirements ? [row.travel_requirements] : []),
-    securityClearances: rows.flatMap((row) => row.security_clearance ? [row.security_clearance] : []),
-    languages: rows.flatMap((row) => parseJsonArray(row.languages ?? null)),
-  };
-  const options = emptyFilterOptions();
-  for (const key of filterOptionKeys) {
-    const counts = new Map<string, { value: string | number; count: number }>();
-    for (const value of values[key]) {
-      const normalized = String(value).trim().toLocaleLowerCase();
-      if (!normalized) continue;
-      const existing = counts.get(normalized);
-      if (existing) existing.count += 1;
-      else counts.set(normalized, { value, count: 1 });
-    }
-    options[key] = [...counts.values()]
-      .sort((left, right) => right.count - left.count || String(left.value).localeCompare(String(right.value)))
-      .slice(0, 100);
-  }
-  return options;
-};
-
-let filterOptionsCache: { expiresAt: number; value: JobFilterOptions } | null = null;
-
-async function availableFilterOptions(): Promise<JobFilterOptions> {
+async function availableFilterOptions(): Promise<Awaited<ReturnType<typeof queryJobFilterOptions>>> {
   if (filterOptionsCache && filterOptionsCache.expiresAt > Date.now()) return filterOptionsCache.value;
-  const result = await db().prepare(`
-    WITH ranked AS (
-      SELECT j.*, row_number() OVER (PARTITION BY j.official_url ORDER BY j.first_seen_at DESC, j.company ASC, j.id ASC) AS dedupe_rank
-      FROM jobs j WHERE j.status = 'open'
-    )
-    SELECT ranked.* FROM ranked WHERE dedupe_rank = 1
-  `).all<FilterOptionRow>();
-  const value = filterOptionsFromRows(result.results);
+  const value = await queryJobFilterOptions(db());
   filterOptionsCache = { value, expiresAt: Date.now() + 10 * 60 * 1000 };
   return value;
 }
@@ -146,7 +68,7 @@ async function jobsFor(url: URL, includeAvailableFilters = true): Promise<JobSea
   const [pageResult, countResult, availableFilters] = await Promise.all([
     statements.page.all<JobViewRow>(),
     statements.count.first<{ total: number }>(),
-    includeAvailableFilters ? availableFilterOptions() : Promise.resolve(emptyFilterOptions()),
+    includeAvailableFilters ? availableFilterOptions() : Promise.resolve(emptyJobFilterOptions()),
   ]);
   return {
     items: pageResult.results.map(mapJob),
