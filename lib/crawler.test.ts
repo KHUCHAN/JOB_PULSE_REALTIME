@@ -316,6 +316,26 @@ describe("crawlSource", () => {
     }));
   });
 
+  it("keeps the discovered Workday host for job detail URLs behind a corporate careers page", async () => {
+    const responses = [
+      new Response('<a href="https://acme.wd5.myworkdayjobs.com/External">View opportunities</a>', { status: 200 }),
+      new Response(JSON.stringify({
+        total: 1,
+        jobPostings: [{ title: "Risk Analyst", externalPath: "/job/New-York/Risk-Analyst_R-42" }],
+      }), { status: 200, headers: { "content-type": "application/json" } }),
+    ];
+    const fetcher: typeof fetch = async () => responses.shift()!;
+
+    const result = await crawlSource({
+      id: "acme",
+      company: "Acme",
+      postingUrl: "https://www.acme.example/careers",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-08T12:30:00Z"));
+
+    expect(result.jobs[0].officialUrl).toBe("https://acme.wd5.myworkdayjobs.com/job/New-York/Risk-Analyst_R-42");
+  });
+
   it("falls back to the original page when a discovered Workday link is stale", async () => {
     const fetcher: typeof fetch = async (input) => {
       if (String(input) === "https://acme.example/careers") {

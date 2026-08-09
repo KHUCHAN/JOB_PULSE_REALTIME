@@ -6,6 +6,8 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { chromium, type Page } from "playwright";
 import { jobsFromBrowserAnchors, type BrowserAnchor } from "../lib/browser-job-extractor.ts";
+import { needsBrowserFallback, type LatestCrawlSummary } from "../lib/browser-fallback-selection.ts";
+import { numericPaginationTargets } from "../lib/browser-pagination.ts";
 import { anchorsFromHtml, crawlSource, extractJobsFromHtml, type CrawledJob, type CrawlSource } from "../lib/crawler.ts";
 import { careerCandidates } from "../lib/url-remediation.ts";
 
@@ -22,9 +24,10 @@ const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const wrangler = resolve(projectRoot, "node_modules/.bin/wrangler");
 const outputPath = resolve(projectRoot, "output/playwright/browser-fallback/results.json");
 const sqlPath = resolve(projectRoot, ".codex_tmp/browser-fallback.sql");
-const concurrency = 4;
+const concurrency = Math.max(1, Number.parseInt(process.env.BROWSER_FALLBACK_CONCURRENCY ?? "12", 10));
 const limit = Number.parseInt(process.env.BROWSER_FALLBACK_LIMIT ?? "500", 10);
 const headless = process.env.BROWSER_FALLBACK_HEADFUL !== "1";
+const forceAll = process.env.BROWSER_FALLBACK_ALL === "1";
 
 const d1 = async (args: string[]): Promise<string> => {
   const { stdout } = await execFileAsync(wrangler, [
@@ -36,20 +39,29 @@ const d1 = async (args: string[]): Promise<string> => {
 
 const problemSources = async (): Promise<CrawlSource[]> => {
   const sql = `WITH latest AS (
-    SELECT source_id, status, ROW_NUMBER() OVER (PARTITION BY source_id ORDER BY started_at DESC) row_number
+    SELECT source_id, status, jobs_seen, ROW_NUMBER() OVER (PARTITION BY source_id ORDER BY started_at DESC) row_number
     FROM crawl_runs
-  ) SELECT s.id, s.company, s.posting_url, s.adapter
-    FROM latest l JOIN sources s ON s.id = l.source_id
-    WHERE l.row_number = 1 AND l.status IN ('blocked', 'failed')
-      AND s.enabled = 1 AND s.posting_url IS NOT NULL
-    ORDER BY s.company LIMIT ${Number.isFinite(limit) ? Math.max(1, limit) : 500}`;
-  const parsed = JSON.parse(await d1(["--command", sql])) as Array<{ results: Array<{ id: string; company: string; posting_url: string; adapter: CrawlSource["adapter"] }> }>;
-  return parsed.flatMap((value) => value.results).map((row) => ({
+  ) SELECT s.id, s.company, s.posting_url, s.adapter, l.status, l.jobs_seen
+    FROM sources s LEFT JOIN latest l ON s.id = l.source_id AND l.row_number = 1
+    WHERE s.enabled = 1 AND s.posting_url IS NOT NULL
+    ORDER BY s.company`;
+  const parsed = JSON.parse(await d1(["--command", sql])) as Array<{ results: Array<{
+    id: string;
+    company: string;
+    posting_url: string;
+    adapter: CrawlSource["adapter"];
+    status: LatestCrawlSummary["status"];
+    jobs_seen: number | null;
+  }> }>;
+  return parsed.flatMap((value) => value.results)
+    .filter((row) => needsBrowserFallback({ status: row.status, jobsSeen: row.jobs_seen }, forceAll))
+    .slice(0, Number.isFinite(limit) ? Math.max(1, limit) : 500)
+    .map((row) => ({
     id: row.id,
     company: row.company,
     postingUrl: row.posting_url,
     adapter: row.adapter,
-  }));
+    }));
 };
 
 const anchorsOnPage = async (page: Page): Promise<BrowserAnchor[]> => page.locator("a[href]").evaluateAll((anchors) => anchors.map((anchor) => ({
@@ -61,6 +73,31 @@ const jobsOnPage = async (page: Page, source: CrawlSource): Promise<CrawledJob[]
   const structured = extractJobsFromHtml(await page.content(), source).jobs;
   const linked = jobsFromBrowserAnchors(await anchorsOnPage(page), source);
   const unique = new Map([...structured, ...linked].map((job) => [job.officialUrl, job]));
+  return [...unique.values()];
+};
+
+const paginationControls = async (page: Page): Promise<Array<{ index: number; label: string }>> => (
+  page.locator("a, button").evaluateAll((controls) => controls.map((control, index) => ({
+    index,
+    label: (control.getAttribute("aria-label") || control.textContent || "").replace(/\s+/g, " ").trim(),
+  })))
+);
+
+const jobsAcrossPages = async (page: Page, source: CrawlSource): Promise<CrawledJob[]> => {
+  const unique = new Map<string, CrawledJob>();
+  const collect = async (): Promise<void> => {
+    for (const job of await jobsOnPage(page, source)) unique.set(job.officialUrl, job);
+  };
+  await collect();
+  const targets = numericPaginationTargets((await paginationControls(page)).map((control) => control.label));
+  for (const target of targets) {
+    const controls = await paginationControls(page);
+    const control = controls.find((value) => numericPaginationTargets([value.label]).includes(target));
+    if (!control) continue;
+    await page.locator("a, button").nth(control.index).click({ timeout: 10_000 }).catch(() => undefined);
+    await page.waitForTimeout(1_500);
+    await collect();
+  }
   return [...unique.values()];
 };
 
@@ -92,14 +129,14 @@ const inspect = async (page: Page, source: CrawlSource): Promise<BrowserFallback
     const response = await page.goto(source.postingUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
     // Client-rendered ATS pages such as Dayforce populate job cards after hydration.
     await page.waitForTimeout(3_000);
-    let jobs = await jobsOnPage(page, source);
+    let jobs = await jobsAcrossPages(page, source);
     if (jobs.length === 0 && response && response.status() < 400) {
       const candidates = careerCandidates(await anchorsOnPage(page), page.url());
       for (const candidate of candidates.slice(0, 2)) {
         const candidateResponse = await page.goto(candidate.href, { waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => null);
         if (!candidateResponse || candidateResponse.status() >= 400) continue;
         await page.waitForTimeout(3_000);
-        jobs = await jobsOnPage(page, source);
+        jobs = await jobsAcrossPages(page, source);
         if (jobs.length > 0) break;
       }
     }

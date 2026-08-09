@@ -2,8 +2,9 @@ import type { CrawledJob, CrawlSource } from "./crawler";
 
 export type BrowserAnchor = { href: string; text: string };
 
-const JOB_DETAIL = /(?:\/(?:jobs?|positions?|careers)\/[^/?#]{3,}|[?&](?:jobid|job_id|gh_jid|reqid|pid)=)/i;
+const JOB_DETAIL = /(?:\/(?:jobs?|positions?)\/[^/?#]{3,}|\/careers\/jobdetail\/|\/careers\/[^?#]*(?:\d{4,}|[a-z]{1,4}-\d{3,})|[?&](?:jobid|job_id|gh_jid|reqid|pid)=)/i;
 const LISTING_ONLY = /(?:search-jobs?|search-results|viewalljobs|job-opportunities|join(?:talent|[-_/]our[-_/]team)|talent-community|jobcart)(?:[/?#]|$)/i;
+const CAREER_CONTENT_ONLY = /\/careers?\/(?:open-positions|view-jobs(?:\.html)?|jobs|culture|benefits)\/?(?:[?#].*)?$/i;
 const GENERIC_TEXT = /^(?:apply|apply now|learn more|read more|view job|view details|details|search jobs?|careers?|open positions?|next|previous)$/i;
 const EXTERNAL_BOARDS = /(?:greenhouse\.io|lever\.co|myworkdayjobs\.com|myworkdaysite\.com|smartrecruiters\.com|icims\.com|jobvite\.com|phenompeople\.com|selectminds\.com)/i;
 
@@ -24,7 +25,7 @@ export const jobsFromBrowserAnchors = (anchors: BrowserAnchor[], source: CrawlSo
     const targetHost = url.hostname.replace(/^www\./, "");
     const externalBoard = EXTERNAL_BOARDS.test(targetHost);
     const externalDetail = externalBoard && url.pathname.split("/").filter(Boolean).length >= 2;
-    if (LISTING_ONLY.test(path) || (!JOB_DETAIL.test(path) && !externalDetail)) continue;
+    if (LISTING_ONLY.test(path) || CAREER_CONTENT_ONLY.test(path) || (!JOB_DETAIL.test(path) && !externalDetail)) continue;
     if (!targetHost.endsWith(sourceHost) && !sourceHost.endsWith(targetHost) && !externalBoard) continue;
     url.hash = "";
     unique.set(url.href, {

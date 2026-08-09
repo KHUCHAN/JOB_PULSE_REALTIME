@@ -682,7 +682,7 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
           arrangement: "unknown" as const,
           employmentType: job.bulletFields?.at(-1) ?? null,
           summary: job.bulletFields?.join(" · ") ?? null,
-          officialUrl: new URL(job.externalPath, source.postingUrl).href,
+          officialUrl: new URL(job.externalPath, endpointUrl.origin).href,
           publishedAt: null,
         }];
       }));

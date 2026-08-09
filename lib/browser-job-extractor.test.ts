@@ -18,6 +18,23 @@ describe("jobsFromBrowserAnchors", () => {
     expect(jobsFromBrowserAnchors([
       { href: "https://acme.com/careers/search-jobs", text: "Search jobs" },
       { href: "https://acme.com/careers/jobs/123", text: "Apply now" },
+      { href: "https://acme.com/careers/open-positions", text: "Your Privacy Choices" },
+      { href: "https://acme.com/company/careers/culture", text: "Culture" },
+      { href: "https://acme.com/company/careers/benefits", text: "Benefits" },
+      { href: "https://acme.com/careers/view-jobs.html", text: "View Open Roles" },
+      { href: "https://acme.com/careers/jobs", text: "Find your future" },
+      { href: "https://acme.com/company/careers/teams-people.html", text: "Teams & People" },
+      { href: "https://acme.com/company/careers/early-career/edge-student-programs.html", text: "Student Programs" },
     ], source)).toEqual([]);
+  });
+
+  it("keeps a corporate career detail whose slug carries a requisition id", () => {
+    const jobs = jobsFromBrowserAnchors([
+      { href: "https://acme.com/company/careers/engineering/staff-engineer-8487325002", text: "Staff Engineer" },
+    ], source);
+
+    expect(jobs.map((job) => job.officialUrl)).toEqual([
+      "https://acme.com/company/careers/engineering/staff-engineer-8487325002",
+    ]);
   });
 });
