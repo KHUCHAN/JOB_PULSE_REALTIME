@@ -197,4 +197,31 @@ describe("crawlSource", () => {
       })],
     }));
   });
+
+  it("falls back to the original page when a discovered Workday link is stale", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      if (String(input) === "https://acme.example/careers") {
+        return new Response(`
+          <a href="https://acme.wd5.myworkdayjobs.com/en-US/OldBoard">Jobs</a>
+          <script type="application/ld+json">{
+            "@type":"JobPosting", "title":"Data Analyst", "url":"https://acme.example/jobs/data-analyst"
+          }</script>
+        `, { status: 200 });
+      }
+      return new Response("missing", { status: 404 });
+    };
+
+    const result = await crawlSource({
+      id: "acme",
+      company: "Acme",
+      postingUrl: "https://acme.example/careers",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-08T12:30:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      jobs: [expect.objectContaining({ title: "Data Analyst" })],
+    }));
+  });
 });

@@ -272,8 +272,12 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch): Promise<
     }
     const html = await response.text();
     const discovered = discoverAts(html, source.postingUrl);
-    if (discovered?.kind === "workday") return crawlWorkday(source, discovered.endpoint, fetcher);
-    if (discovered) return crawlDiscoveredFeed(source, discovered, fetcher);
+    if (discovered) {
+      const discoveredResult = discovered.kind === "workday"
+        ? await crawlWorkday(source, discovered.endpoint, fetcher)
+        : await crawlDiscoveredFeed(source, discovered, fetcher);
+      if (discoveredResult.status === "succeeded") return discoveredResult;
+    }
     const nodes = jsonLdScripts(html).flatMap(jobPostingNodes);
     return {
       status: "succeeded",
