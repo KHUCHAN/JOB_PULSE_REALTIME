@@ -1,5 +1,7 @@
 export type JobState = "new" | "saved" | "hidden" | "applied";
 export type WorkArrangement = "onsite" | "hybrid" | "remote";
+export type JobProgramType = "internship" | "coop" | "regular";
+export type JobSeason = "spring" | "summer" | "fall" | "winter";
 export type SourceHealth =
   | "healthy"
   | "changed"
@@ -40,6 +42,79 @@ export interface JobFilters {
   status: "all" | JobState;
   arrangement: "all" | WorkArrangement;
   location: string;
+  companies?: string[];
+  cities?: string[];
+  states?: string[];
+  countries?: string[];
+  employmentTypes?: string[];
+  recruitingYears?: number[];
+  programTypes?: JobProgramType[];
+  seasons?: JobSeason[];
+  postedAfter?: string;
+  postedBefore?: string;
+  departments?: string[];
+  teams?: string[];
+  businessUnits?: string[];
+  jobFamilies?: string[];
+  jobFunctions?: string[];
+  industries?: string[];
+  offices?: string[];
+  skills?: string[];
+  experienceLevels?: string[];
+  salaryMin?: number;
+  salaryMax?: number;
+  salaryCurrencies?: string[];
+  salaryIntervals?: string[];
+  educationRequirements?: string[];
+  shiftSchedules?: string[];
+  travelRequirements?: string[];
+  securityClearances?: string[];
+  languages?: string[];
+  page?: number;
+  pageSize?: number;
+}
+
+export interface JobFilterOption {
+  value: string | number;
+  count: number;
+}
+
+export type JobFilterOptions = Record<
+  | "companies"
+  | "locations"
+  | "cities"
+  | "states"
+  | "countries"
+  | "arrangements"
+  | "employmentTypes"
+  | "recruitingYears"
+  | "programTypes"
+  | "seasons"
+  | "departments"
+  | "teams"
+  | "businessUnits"
+  | "jobFamilies"
+  | "jobFunctions"
+  | "industries"
+  | "offices"
+  | "skills"
+  | "experienceLevels"
+  | "salaryCurrencies"
+  | "salaryIntervals"
+  | "educationRequirements"
+  | "shiftSchedules"
+  | "travelRequirements"
+  | "securityClearances"
+  | "languages",
+  JobFilterOption[]
+>;
+
+export interface JobSearchResult {
+  items: JobPosting[];
+  total: number;
+  page: number;
+  pageSize: number;
+  availableFilters: JobFilterOptions;
 }
 
 export interface SourceRecord {
