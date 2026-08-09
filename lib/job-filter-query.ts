@@ -88,6 +88,17 @@ const normalizeValues = (values: string[]): string[] => {
     });
 };
 
+const normalizeEnumValues = <T extends string>(values: string[] | undefined, allowed: Set<T>): T[] =>
+  normalizeValues(values ?? [])
+    .map((value) => value.toLocaleLowerCase())
+    .filter((value): value is T => allowed.has(value as T));
+
+const normalizeYears = (years: number[] | undefined): number[] => [
+  ...new Set((years ?? []).filter((year) =>
+    Number.isSafeInteger(year) && year >= 2000 && year <= 2100,
+  )),
+];
+
 const parseInteger = (value: string | null): number | undefined => {
   if (!value || !/^-?\d+$/.test(value)) return undefined;
   const parsed = Number(value);
@@ -99,6 +110,9 @@ const parseNonNegativeNumber = (value: string | null): number | undefined => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
 };
+
+const isNonNegativeNumber = (value: number | undefined): value is number =>
+  value !== undefined && Number.isFinite(value) && value >= 0;
 
 const parseDate = (value: string | null): string => {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return "";
@@ -134,12 +148,8 @@ export function parseJobFilterParams(input: URLSearchParams): JobFilters {
     .filter((value): value is number => value !== undefined && value >= 2000 && value <= 2100)
     .filter((value, index, values) => values.indexOf(value) === index);
 
-  filters.programTypes = normalizeValues(input.getAll("program"))
-    .map((value) => value.toLocaleLowerCase())
-    .filter((value): value is JobProgramType => programTypes.has(value as JobProgramType));
-  filters.seasons = normalizeValues(input.getAll("season"))
-    .map((value) => value.toLocaleLowerCase())
-    .filter((value): value is JobSeason => seasons.has(value as JobSeason));
+  filters.programTypes = normalizeEnumValues(input.getAll("program"), programTypes);
+  filters.seasons = normalizeEnumValues(input.getAll("season"), seasons);
   filters.postedAfter = parseDate(input.get("postedAfter"));
   filters.postedBefore = parseDate(input.get("postedBefore"));
   filters.salaryMin = parseNonNegativeNumber(input.get("salaryMin"));
@@ -162,27 +172,25 @@ export function serializeJobFilters(filters: JobFilters): URLSearchParams {
   };
 
   appendText("q", normalized.query);
-  if (normalized.status !== "all") params.append("status", normalized.status);
-  if (normalized.arrangement !== "all") params.append("arrangement", normalized.arrangement);
+  if (normalized.status !== "all" && statuses.has(normalized.status)) {
+    params.append("status", normalized.status);
+  }
+  if (normalized.arrangement !== "all" && arrangements.has(normalized.arrangement)) {
+    params.append("arrangement", normalized.arrangement);
+  }
   appendText("location", normalized.location);
   for (const [parameter, property] of arrayKeys.slice(0, 5)) {
     appendValues(params, parameter, normalized[property] as string[] | undefined);
   }
-  for (const year of normalized.recruitingYears ?? []) {
-    if (Number.isSafeInteger(year) && year >= 2000 && year <= 2100) params.append("year", String(year));
-  }
-  for (const program of normalized.programTypes ?? []) {
-    if (programTypes.has(program)) params.append("program", program);
-  }
-  for (const season of normalized.seasons ?? []) {
-    if (seasons.has(season)) params.append("season", season);
-  }
+  for (const year of normalizeYears(normalized.recruitingYears)) params.append("year", String(year));
+  for (const program of normalizeEnumValues(normalized.programTypes, programTypes)) params.append("program", program);
+  for (const season of normalizeEnumValues(normalized.seasons, seasons)) params.append("season", season);
   if (parseDate(normalized.postedAfter ?? "")) params.append("postedAfter", normalized.postedAfter!);
   if (parseDate(normalized.postedBefore ?? "")) params.append("postedBefore", normalized.postedBefore!);
-  if (normalized.salaryMin !== undefined && Number.isFinite(normalized.salaryMin) && normalized.salaryMin >= 0) {
+  if (isNonNegativeNumber(normalized.salaryMin)) {
     params.append("salaryMin", String(normalized.salaryMin));
   }
-  if (normalized.salaryMax !== undefined && Number.isFinite(normalized.salaryMax) && normalized.salaryMax >= 0) {
+  if (isNonNegativeNumber(normalized.salaryMax)) {
     params.append("salaryMax", String(normalized.salaryMax));
   }
   for (const [parameter, property] of arrayKeys.slice(5)) {
@@ -203,19 +211,21 @@ export function serializeJobFilters(filters: JobFilters): URLSearchParams {
 export function activeFilterCount(filters: JobFilters): number {
   const normalized = { ...defaultJobFilters, ...filters };
   const arrayFilterCount = arrayKeys.reduce(
-    (count, [, property]) => count + ((normalized[property] as string[] | undefined)?.length ? 1 : 0),
+    (count, [, property]) => count + Number(normalizeValues(
+      normalized[property] as string[] | undefined ?? [],
+    ).length > 0),
     0,
   );
   return arrayFilterCount
     + Number(Boolean(normalized.query.trim()))
-    + Number(normalized.status !== "all")
-    + Number(normalized.arrangement !== "all")
+    + Number(normalized.status !== "all" && statuses.has(normalized.status))
+    + Number(normalized.arrangement !== "all" && arrangements.has(normalized.arrangement))
     + Number(Boolean(normalized.location.trim()))
-    + Number(Boolean(normalized.recruitingYears?.length))
-    + Number(Boolean(normalized.programTypes?.length))
-    + Number(Boolean(normalized.seasons?.length))
-    + Number(Boolean(normalized.postedAfter))
-    + Number(Boolean(normalized.postedBefore))
-    + Number(normalized.salaryMin !== undefined)
-    + Number(normalized.salaryMax !== undefined);
+    + Number(normalizeYears(normalized.recruitingYears).length > 0)
+    + Number(normalizeEnumValues(normalized.programTypes, programTypes).length > 0)
+    + Number(normalizeEnumValues(normalized.seasons, seasons).length > 0)
+    + Number(Boolean(parseDate(normalized.postedAfter ?? "")))
+    + Number(Boolean(parseDate(normalized.postedBefore ?? "")))
+    + Number(isNonNegativeNumber(normalized.salaryMin))
+    + Number(isNonNegativeNumber(normalized.salaryMax));
 }

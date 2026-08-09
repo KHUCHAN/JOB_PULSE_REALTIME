@@ -79,4 +79,33 @@ describe("job filter query codec", () => {
 
     expect(params.toString()).toBe("");
   });
+
+  it("omits invalid direct enum values and canonicalizes structured selections", () => {
+    const params = serializeJobFilters({
+      ...defaultJobFilters,
+      status: "unknown" as never,
+      arrangement: "flexible" as never,
+      recruitingYears: [2027, 2027, 1999],
+      programTypes: ["internship", "internship"],
+      seasons: ["summer", "summer"],
+    });
+
+    expect(params.toString()).toBe("year=2027&program=internship&season=summer");
+  });
+
+  it("does not count malformed direct values as active filters", () => {
+    expect(activeFilterCount({
+      ...defaultJobFilters,
+      status: "unknown" as never,
+      arrangement: "flexible" as never,
+      companies: [" "],
+      recruitingYears: [1999],
+      programTypes: ["contract" as never],
+      seasons: ["monsoon" as never],
+      postedAfter: "tomorrow",
+      postedBefore: "2027-02-29",
+      salaryMin: -1,
+      salaryMax: Infinity,
+    })).toBe(0);
+  });
 });
