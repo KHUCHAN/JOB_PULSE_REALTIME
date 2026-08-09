@@ -21035,15 +21035,15 @@
       "id": "p5-0557-blizzard-entertainment",
       "masterRow": 3353,
       "company": "Blizzard Entertainment (Microsoft)",
-      "postingUrl": "https://activision.eightfold.ai/events/candidate/landing?plannedEventId=E75Y96M7",
+      "postingUrl": "https://careers.blizzard.com/global/en/search-results",
       "talentUrl": "https://activision.eightfold.ai/events/candidate/landing?plannedEventId=E75Y96M7",
       "channel": "Blizzard Talent Community",
-      "adapter": "custom",
+      "adapter": "phenom",
       "verification": "valid_direct_talent_form",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-09",
       "enabled": true
     },
     {
@@ -30306,7 +30306,7 @@
       "officialUrl": "https://activision.eightfold.ai/events/candidate/landing?plannedEventId=E75Y96M7",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-09"
     },
     {
       "id": "talent-p5-0558-blue-shield-of-california",

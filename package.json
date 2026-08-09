@@ -18,7 +18,7 @@
     "test:watch": "vitest",
     "test:html": "npm run build && node --test tests/rendered-html.test.mjs",
     "typecheck": "tsc --noEmit --incremental false",
-    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern .wrangler",
+    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern .wrangler --ignore-pattern .codex_tmp --ignore-pattern output",
     "db:generate": "drizzle-kit generate",
     "db:seed:build": "node scripts/build-source-seed.ts",
     "db:catalog:refresh": "node scripts/build-source-seed.ts --migration",

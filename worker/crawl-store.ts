@@ -1,5 +1,5 @@
 import type { CrawlStore, PersistedSource } from "../lib/crawl-runner";
-import type { CrawledJob } from "../lib/crawler";
+import type { CrawledFacet, CrawledJob } from "../lib/crawler";
 
 type SourceRow = {
   id: string;
@@ -16,23 +16,34 @@ export const chunksOf = <T>(values: T[], size: number): T[][] => {
   return chunks;
 };
 
-export const chunksByJsonBytes = <T>(values: T[], maxBytes: number): T[][] => {
+export const chunksByJsonBytes = <T>(values: T[], maxBytes: number, maxSingleBytes = maxBytes): T[][] => {
   if (!Number.isInteger(maxBytes) || maxBytes < 3) throw new Error("JSON chunk size must be at least 3 bytes.");
+  if (!Number.isInteger(maxSingleBytes) || maxSingleBytes < maxBytes) throw new Error("Single-record limit must be at least the chunk limit.");
   const encoder = new TextEncoder();
   const chunks: T[][] = [];
   let chunk: T[] = [];
+  let chunkBytes = 2;
 
   for (const value of values) {
-    const candidate = [...chunk, value];
-    if (encoder.encode(JSON.stringify(candidate)).byteLength > maxBytes) {
-      if (chunk.length === 0) throw new Error("A single job exceeds the D1 JSON payload limit.");
-      chunks.push(chunk);
-      chunk = [value];
-      if (encoder.encode(JSON.stringify(chunk)).byteLength > maxBytes) {
+    const valueBytes = encoder.encode(JSON.stringify(value)).byteLength;
+    const candidateBytes = chunkBytes + valueBytes + (chunk.length > 0 ? 1 : 0);
+    if (candidateBytes > maxBytes) {
+      if (chunk.length > 0) chunks.push(chunk);
+      const singletonBytes = valueBytes + 2;
+      if (singletonBytes > maxSingleBytes) {
         throw new Error("A single job exceeds the D1 JSON payload limit.");
       }
+      if (singletonBytes > maxBytes) {
+        chunks.push([value]);
+        chunk = [];
+        chunkBytes = 2;
+      } else {
+        chunk = [value];
+        chunkBytes = singletonBytes;
+      }
     } else {
-      chunk = candidate;
+      chunk.push(value);
+      chunkBytes = candidateBytes;
     }
   }
 
@@ -40,10 +51,88 @@ export const chunksByJsonBytes = <T>(values: T[], maxBytes: number): T[][] => {
   return chunks;
 };
 
+export const compactRecord = (record: Record<string, unknown>): Record<string, unknown> => Object.fromEntries(
+  Object.entries(record).filter(([, value]) => value !== null && value !== undefined),
+);
+
+const jsonBytes = (value: unknown): number => new TextEncoder().encode(JSON.stringify(value)).byteLength;
+
+export const boundedJobRecord = (record: Record<string, unknown>, maxBytes = 1_499_800): Record<string, unknown> => {
+  const bounded = compactRecord(record);
+  const fits = (): boolean => jsonBytes([bounded]) <= maxBytes;
+  if (fits()) return bounded;
+
+  delete bounded.rawPayload;
+  if (fits()) return bounded;
+
+  const textFields = [
+    "description", "responsibilities", "qualifications", "benefits", "educationRequirements",
+    "experienceRequirements", "summary", "sourcePostedText",
+  ];
+  const arrayFields = ["skills", "secondaryLocations", "languages"];
+  for (const limit of [100_000, 20_000, 2_000]) {
+    for (const key of textFields) {
+      const value = bounded[key];
+      if (typeof value === "string" && value.length > limit) bounded[key] = value.slice(0, limit);
+    }
+    for (const key of arrayFields) {
+      const value = bounded[key];
+      if (Array.isArray(value) && value.length > 100) bounded[key] = value.slice(0, 100);
+    }
+    if (fits()) return bounded;
+  }
+
+  for (const key of textFields) delete bounded[key];
+  for (const key of ["department", "team", "businessUnit", "jobFamily", "jobFunction", "industry", "office"]) delete bounded[key];
+  if (fits()) return bounded;
+  throw new Error("A single job's required fields exceed the D1 JSON payload limit.");
+};
+
 const sha256 = async (value: string): Promise<string> => {
   const bytes = new TextEncoder().encode(value);
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+};
+
+const derivedFacets = (jobs: CrawledJob[]): CrawledFacet[] => {
+  const definitions: Array<{ key: string; label: string; values: (job: CrawledJob) => string[] }> = [
+    { key: "department", label: "Department", values: (job) => job.department ? [job.department] : [] },
+    { key: "team", label: "Team", values: (job) => job.team ? [job.team] : [] },
+    { key: "businessUnit", label: "Business Unit", values: (job) => job.businessUnit ? [job.businessUnit] : [] },
+    { key: "jobFamily", label: "Job Family", values: (job) => job.jobFamily ? [job.jobFamily] : [] },
+    { key: "jobFunction", label: "Job Function", values: (job) => job.jobFunction ? [job.jobFunction] : [] },
+    { key: "industry", label: "Industry", values: (job) => job.industry ? [job.industry] : [] },
+    { key: "employmentType", label: "Employment Type", values: (job) => job.employmentType ? [job.employmentType] : [] },
+    { key: "arrangement", label: "Workplace Type", values: (job) => job.arrangement !== "unknown" ? [job.arrangement] : [] },
+    { key: "city", label: "City", values: (job) => job.locationCity ? [job.locationCity] : [] },
+    { key: "state", label: "State", values: (job) => job.locationState ? [job.locationState] : [] },
+    { key: "country", label: "Country", values: (job) => job.locationCountry ? [job.locationCountry] : [] },
+    { key: "experienceLevel", label: "Experience Level", values: (job) => job.experienceLevel ? [job.experienceLevel] : [] },
+    { key: "skills", label: "Skills", values: (job) => job.skills ?? [] },
+  ];
+  return definitions.flatMap((definition) => {
+    const counts = new Map<string, number>();
+    for (const job of jobs) for (const value of definition.values(job)) counts.set(value, (counts.get(value) ?? 0) + 1);
+    return counts.size > 0 ? [{
+      key: definition.key,
+      label: definition.label,
+      values: [...counts].map(([value, count]) => ({ key: value, label: value, count })),
+    }] : [];
+  });
+};
+
+const mergedFacets = (nativeFacets: CrawledFacet[] | undefined, jobs: CrawledJob[]): CrawledFacet[] => {
+  const merged = new Map<string, { label: string; values: Map<string, { label: string; count: number | null }> }>();
+  for (const facet of [...(nativeFacets ?? []), ...derivedFacets(jobs)]) {
+    const target = merged.get(facet.key) ?? { label: facet.label, values: new Map() };
+    for (const value of facet.values) if (!target.values.has(value.key)) target.values.set(value.key, { label: value.label, count: value.count });
+    merged.set(facet.key, target);
+  }
+  return [...merged].map(([key, facet]) => ({
+    key,
+    label: facet.label,
+    values: [...facet.values].map(([valueKey, value]) => ({ key: valueKey, ...value })),
+  }));
 };
 
 export class D1CrawlStore implements CrawlStore {
@@ -84,32 +173,58 @@ export class D1CrawlStore implements CrawlStore {
     return id;
   }
 
-  async syncJobs(sourceId: string, jobs: CrawledJob[], completeListing: boolean): Promise<{ created: number; updated: number; closed: number }> {
+  async syncJobs(sourceId: string, jobs: CrawledJob[], completeListing: boolean, facets?: CrawledFacet[]): Promise<{ created: number; updated: number; closed: number }> {
     const now = new Date().toISOString();
     const existingResult = await this.db.prepare(`
       SELECT official_url FROM jobs WHERE source_id = ? AND status = 'open'
     `).bind(sourceId).all<{ official_url: string }>();
     const existingUrls = new Set(existingResult.results.map((row) => row.official_url));
     const visibleUrls = new Set(jobs.map((job) => job.officialUrl));
-    const records: Record<string, string | null>[] = [];
-
-    for (const job of jobs) {
-      const descriptionHash = job.summary ? await sha256(job.summary) : null;
-      records.push({
+    const recordFor = async (job: CrawledJob): Promise<Record<string, unknown>> => {
+      const record = boundedJobRecord({
         id: crypto.randomUUID(), sourceId, externalId: job.externalId, title: job.title,
         company: job.company, location: job.location, arrangement: job.arrangement,
-        employmentType: job.employmentType, summary: job.summary, descriptionHash,
+        employmentType: job.employmentType, summary: job.summary, description: job.description ?? null,
+        responsibilities: job.responsibilities ?? null, qualifications: job.qualifications ?? null,
+        skills: job.skills ?? [], department: job.department ?? null, team: job.team ?? null,
+        businessUnit: job.businessUnit ?? null, jobFamily: job.jobFamily ?? null,
+        jobFunction: job.jobFunction ?? null, industry: job.industry ?? null, office: job.office ?? null,
+        secondaryLocations: job.secondaryLocations ?? [], locationCity: job.locationCity ?? null,
+        locationState: job.locationState ?? null, locationCountry: job.locationCountry ?? null,
+        locationPostalCode: job.locationPostalCode ?? null, latitude: job.latitude ?? null, longitude: job.longitude ?? null,
+        salaryMin: job.salaryMin ?? null, salaryMax: job.salaryMax ?? null,
+        salaryCurrency: job.salaryCurrency ?? null, salaryInterval: job.salaryInterval ?? null,
+        benefits: job.benefits ?? null, educationRequirements: job.educationRequirements ?? null,
+        experienceRequirements: job.experienceRequirements ?? null, experienceLevel: job.experienceLevel ?? null,
+        shiftSchedule: job.shiftSchedule ?? null, travelRequirements: job.travelRequirements ?? null,
+        securityClearance: job.securityClearance ?? null, languages: job.languages ?? [],
+        requisitionId: job.requisitionId ?? null, applyUrl: job.applyUrl ?? null,
+        sourcePostedText: job.sourcePostedText ?? null, sourceUpdatedAt: job.sourceUpdatedAt ?? null,
+        validThrough: job.validThrough ?? null, rawPayload: job.rawPayload ?? null,
         officialUrl: job.officialUrl, publishedAt: job.publishedAt, firstSeenAt: now, lastSeenAt: now,
       });
-    }
+      const descriptionValue = typeof record.description === "string"
+        ? record.description
+        : typeof record.summary === "string" ? record.summary : null;
+      if (descriptionValue) record.descriptionHash = await sha256(descriptionValue);
+      return record;
+    };
 
-    // One D1 query per JSON chunk avoids the 50-query free-tier Worker limit.
-    // Keep payloads below the 100 KB SQL statement / response safety margin.
-    for (const recordsChunk of chunksByJsonBytes(records, 80_000)) {
-      await this.db.prepare(`
+    // Bound JSON parameters below D1's 2 MB row/string limit while packing enough
+    // jobs per query to stay inside the free-tier 50-query invocation budget.
+    for (const jobsChunk of chunksOf(jobs, 2_500)) {
+      const records = await Promise.all(jobsChunk.map(recordFor));
+      for (const recordsChunk of chunksByJsonBytes(records, 1_500_000)) {
+        await this.db.prepare(`
         INSERT INTO jobs (
           id, source_id, external_id, title, company, location, arrangement,
           employment_type, summary, description_hash, official_url, status,
+          description, responsibilities, qualifications, skills, department, team, business_unit,
+          job_family, job_function, industry, office, secondary_locations, location_city, location_state,
+          location_country, location_postal_code, latitude, longitude, salary_min, salary_max,
+          salary_currency, salary_interval, benefits, education_requirements, experience_requirements,
+          experience_level, shift_schedule, travel_requirements, security_clearance, languages,
+          requisition_id, apply_url, source_posted_text, source_updated_at, valid_through, raw_payload,
           published_at, first_seen_at, last_seen_at, closed_at
         )
         SELECT
@@ -118,31 +233,114 @@ export class D1CrawlStore implements CrawlStore {
           json_extract(value, '$.company'), json_extract(value, '$.location'),
           json_extract(value, '$.arrangement'), json_extract(value, '$.employmentType'),
           json_extract(value, '$.summary'), json_extract(value, '$.descriptionHash'),
-          json_extract(value, '$.officialUrl'), 'open', json_extract(value, '$.publishedAt'),
+          json_extract(value, '$.officialUrl'), 'open', json_extract(value, '$.description'),
+          json_extract(value, '$.responsibilities'), json_extract(value, '$.qualifications'), json_extract(value, '$.skills'),
+          json_extract(value, '$.department'), json_extract(value, '$.team'), json_extract(value, '$.businessUnit'),
+          json_extract(value, '$.jobFamily'), json_extract(value, '$.jobFunction'), json_extract(value, '$.industry'),
+          json_extract(value, '$.office'), json_extract(value, '$.secondaryLocations'), json_extract(value, '$.locationCity'),
+          json_extract(value, '$.locationState'), json_extract(value, '$.locationCountry'), json_extract(value, '$.locationPostalCode'),
+          json_extract(value, '$.latitude'), json_extract(value, '$.longitude'), json_extract(value, '$.salaryMin'),
+          json_extract(value, '$.salaryMax'), json_extract(value, '$.salaryCurrency'), json_extract(value, '$.salaryInterval'),
+          json_extract(value, '$.benefits'), json_extract(value, '$.educationRequirements'), json_extract(value, '$.experienceRequirements'),
+          json_extract(value, '$.experienceLevel'), json_extract(value, '$.shiftSchedule'), json_extract(value, '$.travelRequirements'),
+          json_extract(value, '$.securityClearance'), json_extract(value, '$.languages'), json_extract(value, '$.requisitionId'),
+          json_extract(value, '$.applyUrl'), json_extract(value, '$.sourcePostedText'), json_extract(value, '$.sourceUpdatedAt'),
+          json_extract(value, '$.validThrough'), json_extract(value, '$.rawPayload'), json_extract(value, '$.publishedAt'),
           json_extract(value, '$.firstSeenAt'), json_extract(value, '$.lastSeenAt'), NULL
         FROM json_each(?)
         WHERE true
         ON CONFLICT(source_id, official_url) DO UPDATE SET
-          external_id = excluded.external_id,
+          external_id = COALESCE(excluded.external_id, jobs.external_id),
           title = excluded.title,
           company = excluded.company,
-          location = excluded.location,
-          arrangement = excluded.arrangement,
-          employment_type = excluded.employment_type,
-          summary = excluded.summary,
-          description_hash = excluded.description_hash,
+          location = COALESCE(excluded.location, jobs.location),
+          arrangement = CASE WHEN excluded.arrangement = 'unknown' THEN jobs.arrangement ELSE excluded.arrangement END,
+          employment_type = COALESCE(excluded.employment_type, jobs.employment_type),
+          summary = COALESCE(excluded.summary, jobs.summary),
+          description = COALESCE(excluded.description, jobs.description),
+          responsibilities = COALESCE(excluded.responsibilities, jobs.responsibilities),
+          qualifications = COALESCE(excluded.qualifications, jobs.qualifications),
+          skills = CASE WHEN excluded.skills <> '[]' THEN excluded.skills ELSE jobs.skills END,
+          department = COALESCE(excluded.department, jobs.department),
+          team = COALESCE(excluded.team, jobs.team),
+          business_unit = COALESCE(excluded.business_unit, jobs.business_unit),
+          job_family = COALESCE(excluded.job_family, jobs.job_family),
+          job_function = COALESCE(excluded.job_function, jobs.job_function),
+          industry = COALESCE(excluded.industry, jobs.industry),
+          office = COALESCE(excluded.office, jobs.office),
+          secondary_locations = CASE WHEN excluded.secondary_locations <> '[]' THEN excluded.secondary_locations ELSE jobs.secondary_locations END,
+          location_city = COALESCE(excluded.location_city, jobs.location_city),
+          location_state = COALESCE(excluded.location_state, jobs.location_state),
+          location_country = COALESCE(excluded.location_country, jobs.location_country),
+          location_postal_code = COALESCE(excluded.location_postal_code, jobs.location_postal_code),
+          latitude = COALESCE(excluded.latitude, jobs.latitude),
+          longitude = COALESCE(excluded.longitude, jobs.longitude),
+          salary_min = COALESCE(excluded.salary_min, jobs.salary_min),
+          salary_max = COALESCE(excluded.salary_max, jobs.salary_max),
+          salary_currency = COALESCE(excluded.salary_currency, jobs.salary_currency),
+          salary_interval = COALESCE(excluded.salary_interval, jobs.salary_interval),
+          benefits = COALESCE(excluded.benefits, jobs.benefits),
+          education_requirements = COALESCE(excluded.education_requirements, jobs.education_requirements),
+          experience_requirements = COALESCE(excluded.experience_requirements, jobs.experience_requirements),
+          experience_level = COALESCE(excluded.experience_level, jobs.experience_level),
+          shift_schedule = COALESCE(excluded.shift_schedule, jobs.shift_schedule),
+          travel_requirements = COALESCE(excluded.travel_requirements, jobs.travel_requirements),
+          security_clearance = COALESCE(excluded.security_clearance, jobs.security_clearance),
+          languages = CASE WHEN excluded.languages <> '[]' THEN excluded.languages ELSE jobs.languages END,
+          requisition_id = COALESCE(excluded.requisition_id, jobs.requisition_id),
+          apply_url = COALESCE(excluded.apply_url, jobs.apply_url),
+          source_posted_text = COALESCE(excluded.source_posted_text, jobs.source_posted_text),
+          source_updated_at = COALESCE(excluded.source_updated_at, jobs.source_updated_at),
+          valid_through = COALESCE(excluded.valid_through, jobs.valid_through),
+          raw_payload = COALESCE(excluded.raw_payload, jobs.raw_payload),
+          description_hash = COALESCE(excluded.description_hash, jobs.description_hash),
           status = 'open',
-          published_at = excluded.published_at,
+          published_at = COALESCE(excluded.published_at, jobs.published_at),
           last_seen_at = excluded.last_seen_at,
           closed_at = NULL,
           updated_at = CURRENT_TIMESTAMP
-      `).bind(JSON.stringify(recordsChunk)).run();
+        `).bind(JSON.stringify(recordsChunk)).run();
+      }
+    }
+
+    const shouldReplaceFacets = completeListing || facets !== undefined;
+    const effectiveFacets = completeListing ? mergedFacets(facets, jobs) : facets ?? [];
+    if (shouldReplaceFacets) {
+      const facetGeneration = crypto.randomUUID();
+      await this.db.prepare(`
+        UPDATE sources SET facet_sync_generation = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+      `).bind(facetGeneration, sourceId).run();
+      const facetRecords = effectiveFacets.flatMap((facet) => facet.values.map((value) => ({
+        id: crypto.randomUUID(), sourceId, facetKey: facet.key, facetLabel: facet.label,
+        valueKey: value.key, valueLabel: value.label, jobCount: value.count, observedAt: now,
+      })));
+      for (const facetChunk of chunksByJsonBytes(facetRecords, 1_500_000)) {
+        await this.db.prepare(`
+          INSERT INTO source_facets (id, source_id, facet_key, facet_label, value_key, value_label, job_count, observed_at)
+          SELECT json_extract(value, '$.id'), json_extract(value, '$.sourceId'), json_extract(value, '$.facetKey'),
+                 json_extract(value, '$.facetLabel'), json_extract(value, '$.valueKey'), json_extract(value, '$.valueLabel'),
+                 json_extract(value, '$.jobCount'), json_extract(value, '$.observedAt')
+          FROM json_each(?)
+          WHERE (SELECT facet_sync_generation FROM sources WHERE id = ?) = ?
+          ON CONFLICT(source_id, facet_key, value_key) DO UPDATE SET
+            facet_label = excluded.facet_label,
+            value_label = excluded.value_label,
+            job_count = excluded.job_count,
+            observed_at = excluded.observed_at,
+            updated_at = CURRENT_TIMESTAMP
+        `).bind(JSON.stringify(facetChunk), sourceId, facetGeneration).run();
+      }
+      await this.db.prepare(`
+        DELETE FROM source_facets
+        WHERE source_id = ? AND observed_at <> ?
+          AND (SELECT facet_sync_generation FROM sources WHERE id = ?) = ?
+      `).bind(sourceId, now, sourceId, facetGeneration).run();
     }
 
     const closedUrls = completeListing
       ? [...existingUrls].filter((url) => !visibleUrls.has(url))
       : [];
-    for (const urlsChunk of chunksByJsonBytes(closedUrls, 80_000)) {
+    for (const urlsChunk of chunksByJsonBytes(closedUrls, 1_500_000)) {
       await this.db.prepare(`
         UPDATE jobs
         SET status = 'closed', closed_at = ?, updated_at = CURRENT_TIMESTAMP

@@ -42,6 +42,7 @@ yarn-error.log*
 /.wrangler/
 /outputs/
 /output/playwright/
+/output/data-quality/
 /.audit/
 /.codex_tmp/
 /work/

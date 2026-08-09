@@ -3,19 +3,20 @@ import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium, type Page } from "playwright";
 import { jobsFromBrowserAnchors, type BrowserAnchor } from "../lib/browser-job-extractor.ts";
 import { needsBrowserFallback, type LatestCrawlSummary } from "../lib/browser-fallback-selection.ts";
 import { numericPaginationTargets } from "../lib/browser-pagination.ts";
-import { anchorsFromHtml, crawlSource, extractJobsFromHtml, type CrawledJob, type CrawlSource } from "../lib/crawler.ts";
+import { anchorsFromHtml, crawlSource, extractJobsFromHtml, type CrawledFacet, type CrawledJob, type CrawlSource } from "../lib/crawler.ts";
 import { careerCandidates } from "../lib/url-remediation.ts";
 
-type BrowserFallbackResult = {
+export type BrowserFallbackResult = {
   source: CrawlSource;
   status: number | null;
   finalUrl: string | null;
   jobs: CrawledJob[];
+  facets?: CrawledFacet[];
   error: string | null;
 };
 
@@ -28,6 +29,7 @@ const concurrency = Math.max(1, Number.parseInt(process.env.BROWSER_FALLBACK_CON
 const limit = Number.parseInt(process.env.BROWSER_FALLBACK_LIMIT ?? "500", 10);
 const headless = process.env.BROWSER_FALLBACK_HEADFUL !== "1";
 const forceAll = process.env.BROWSER_FALLBACK_ALL === "1";
+const targetSourceId = process.env.BROWSER_FALLBACK_SOURCE_ID?.trim() || null;
 
 const d1 = async (args: string[]): Promise<string> => {
   const { stdout } = await execFileAsync(wrangler, [
@@ -54,6 +56,7 @@ const problemSources = async (): Promise<CrawlSource[]> => {
     jobs_seen: number | null;
   }> }>;
   return parsed.flatMap((value) => value.results)
+    .filter((row) => !targetSourceId || row.id === targetSourceId)
     .filter((row) => needsBrowserFallback({ status: row.status, jobsSeen: row.jobs_seen }, forceAll))
     .slice(0, Number.isFinite(limit) ? Math.max(1, limit) : 500)
     .map((row) => ({
@@ -120,7 +123,7 @@ const inspect = async (page: Page, source: CrawlSource): Promise<BrowserFallback
   try {
     const direct = await crawlSource(source, fetch, new Date());
     if (direct.status === "succeeded" && direct.jobs.length > 0) {
-      return { source, status: direct.responseStatus, finalUrl: source.postingUrl, jobs: direct.jobs, error: null };
+      return { source, status: direct.responseStatus, finalUrl: source.postingUrl, jobs: direct.jobs, ...(direct.facets?.length ? { facets: direct.facets } : {}), error: null };
     }
     const http1Jobs = await jobsViaHttp1(source);
     if (http1Jobs.length > 0) {
@@ -166,14 +169,32 @@ const quote = (value: string | number | null): string => {
   return `'${value.replaceAll("'", "''")}'`;
 };
 
-const persistenceSql = (results: BrowserFallbackResult[]): string => {
+export const persistenceSql = (results: BrowserFallbackResult[]): string => {
   const now = new Date().toISOString();
   const next = new Date(Date.now() + 2 * 60 * 60 * 1_000).toISOString();
   const statements = ["PRAGMA foreign_keys = ON;", "BEGIN TRANSACTION;"];
   for (const result of results.filter((value) => value.jobs.length > 0)) {
     for (const job of result.jobs) {
-      const values = [randomUUID(), result.source.id, job.externalId, job.title, job.company, job.location, job.arrangement, job.employmentType, job.summary, job.officialUrl];
-      statements.push(`INSERT INTO jobs (id, source_id, external_id, title, company, location, arrangement, employment_type, summary, official_url, status, published_at, first_seen_at, last_seen_at) VALUES (${values.map(quote).join(", ")}, 'open', ${quote(job.publishedAt)}, ${quote(now)}, ${quote(now)}) ON CONFLICT(source_id, official_url) DO UPDATE SET external_id=excluded.external_id,title=excluded.title,company=excluded.company,location=excluded.location,arrangement=excluded.arrangement,employment_type=excluded.employment_type,summary=excluded.summary,status='open',published_at=excluded.published_at,last_seen_at=excluded.last_seen_at,closed_at=NULL,updated_at=CURRENT_TIMESTAMP;`);
+      const values = [
+        randomUUID(), result.source.id, job.externalId, job.title, job.company, job.location, job.arrangement,
+        job.employmentType, job.summary, job.description ?? null, job.responsibilities ?? null, job.qualifications ?? null,
+        JSON.stringify(job.skills ?? []), job.department ?? null, job.team ?? null, job.businessUnit ?? null,
+        job.jobFamily ?? null, job.jobFunction ?? null, job.industry ?? null, job.office ?? null,
+        JSON.stringify(job.secondaryLocations ?? []), job.locationCity ?? null, job.locationState ?? null,
+        job.locationCountry ?? null, job.locationPostalCode ?? null, job.latitude ?? null, job.longitude ?? null,
+        job.salaryMin ?? null, job.salaryMax ?? null, job.salaryCurrency ?? null, job.salaryInterval ?? null,
+        job.benefits ?? null, job.educationRequirements ?? null, job.experienceRequirements ?? null,
+        job.experienceLevel ?? null, job.shiftSchedule ?? null, job.travelRequirements ?? null,
+        job.securityClearance ?? null, JSON.stringify(job.languages ?? []), job.requisitionId ?? null,
+        job.applyUrl ?? null, job.sourcePostedText ?? null, job.sourceUpdatedAt ?? null, job.validThrough ?? null,
+        job.rawPayload ? JSON.stringify(job.rawPayload) : null, job.officialUrl,
+      ];
+      statements.push(`INSERT INTO jobs (id, source_id, external_id, title, company, location, arrangement, employment_type, summary, description, responsibilities, qualifications, skills, department, team, business_unit, job_family, job_function, industry, office, secondary_locations, location_city, location_state, location_country, location_postal_code, latitude, longitude, salary_min, salary_max, salary_currency, salary_interval, benefits, education_requirements, experience_requirements, experience_level, shift_schedule, travel_requirements, security_clearance, languages, requisition_id, apply_url, source_posted_text, source_updated_at, valid_through, raw_payload, official_url, status, published_at, first_seen_at, last_seen_at) VALUES (${values.map(quote).join(", ")}, 'open', ${quote(job.publishedAt)}, ${quote(now)}, ${quote(now)}) ON CONFLICT(source_id, official_url) DO UPDATE SET external_id=COALESCE(excluded.external_id,jobs.external_id),title=excluded.title,company=excluded.company,location=COALESCE(excluded.location,jobs.location),arrangement=CASE WHEN excluded.arrangement='unknown' THEN jobs.arrangement ELSE excluded.arrangement END,employment_type=COALESCE(excluded.employment_type,jobs.employment_type),summary=COALESCE(excluded.summary,jobs.summary),description=COALESCE(excluded.description,jobs.description),responsibilities=COALESCE(excluded.responsibilities,jobs.responsibilities),qualifications=COALESCE(excluded.qualifications,jobs.qualifications),skills=CASE WHEN excluded.skills <> '[]' THEN excluded.skills ELSE jobs.skills END,department=COALESCE(excluded.department,jobs.department),team=COALESCE(excluded.team,jobs.team),business_unit=COALESCE(excluded.business_unit,jobs.business_unit),job_family=COALESCE(excluded.job_family,jobs.job_family),job_function=COALESCE(excluded.job_function,jobs.job_function),industry=COALESCE(excluded.industry,jobs.industry),office=COALESCE(excluded.office,jobs.office),secondary_locations=CASE WHEN excluded.secondary_locations <> '[]' THEN excluded.secondary_locations ELSE jobs.secondary_locations END,location_city=COALESCE(excluded.location_city,jobs.location_city),location_state=COALESCE(excluded.location_state,jobs.location_state),location_country=COALESCE(excluded.location_country,jobs.location_country),location_postal_code=COALESCE(excluded.location_postal_code,jobs.location_postal_code),latitude=COALESCE(excluded.latitude,jobs.latitude),longitude=COALESCE(excluded.longitude,jobs.longitude),salary_min=COALESCE(excluded.salary_min,jobs.salary_min),salary_max=COALESCE(excluded.salary_max,jobs.salary_max),salary_currency=COALESCE(excluded.salary_currency,jobs.salary_currency),salary_interval=COALESCE(excluded.salary_interval,jobs.salary_interval),benefits=COALESCE(excluded.benefits,jobs.benefits),education_requirements=COALESCE(excluded.education_requirements,jobs.education_requirements),experience_requirements=COALESCE(excluded.experience_requirements,jobs.experience_requirements),experience_level=COALESCE(excluded.experience_level,jobs.experience_level),shift_schedule=COALESCE(excluded.shift_schedule,jobs.shift_schedule),travel_requirements=COALESCE(excluded.travel_requirements,jobs.travel_requirements),security_clearance=COALESCE(excluded.security_clearance,jobs.security_clearance),languages=CASE WHEN excluded.languages <> '[]' THEN excluded.languages ELSE jobs.languages END,requisition_id=COALESCE(excluded.requisition_id,jobs.requisition_id),apply_url=COALESCE(excluded.apply_url,jobs.apply_url),source_posted_text=COALESCE(excluded.source_posted_text,jobs.source_posted_text),source_updated_at=COALESCE(excluded.source_updated_at,jobs.source_updated_at),valid_through=COALESCE(excluded.valid_through,jobs.valid_through),raw_payload=COALESCE(excluded.raw_payload,jobs.raw_payload),status='open',published_at=COALESCE(excluded.published_at,jobs.published_at),last_seen_at=excluded.last_seen_at,closed_at=NULL,updated_at=CURRENT_TIMESTAMP;`);
+    }
+    for (const facet of result.facets ?? []) {
+      for (const value of facet.values) {
+        statements.push(`INSERT INTO source_facets (id, source_id, facet_key, facet_label, value_key, value_label, job_count, observed_at) VALUES (${[randomUUID(), result.source.id, facet.key, facet.label, value.key, value.label, value.count, now].map(quote).join(", ")}) ON CONFLICT(source_id, facet_key, value_key) DO UPDATE SET facet_label=excluded.facet_label,value_label=excluded.value_label,job_count=excluded.job_count,observed_at=excluded.observed_at,updated_at=CURRENT_TIMESTAMP;`);
+      }
     }
     statements.push(`INSERT INTO crawl_runs (id, source_id, scheduled_for, started_at, finished_at, status, response_status, jobs_seen, jobs_created, jobs_updated, jobs_closed, error) VALUES (${[randomUUID(), result.source.id, now, now, now, "succeeded", result.status, result.jobs.length, result.jobs.length, 0, 0, "Recovered by HTTP/1.1 or browser fallback."].map(quote).join(", ")});`);
     statements.push(`UPDATE sources SET last_crawled_at=${quote(now)},next_crawl_at=${quote(next)},updated_at=CURRENT_TIMESTAMP WHERE id=${quote(result.source.id)};`);
@@ -214,4 +235,4 @@ async function main(): Promise<void> {
   process.stdout.write(`${JSON.stringify({ attempted: results.length, recovered: successful.length, jobs: successful.reduce((sum, result) => sum + result.jobs.length, 0) })}\n`);
 }
 
-await main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();

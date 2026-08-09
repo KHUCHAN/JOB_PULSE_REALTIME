@@ -8,6 +8,7 @@ Job Pulse uses one Cloudflare D1 binding named `DB`. The schema keeps source dis
 
 1. `sources` stores one verified company endpoint and the two-hour crawl schedule.
 2. Each batch writes a `crawl_runs` record and upserts the current roles into `jobs`.
+   A complete listing marks roles missing from the latest source response as `closed`; incomplete or browser-recovered listings never close unseen roles.
 3. Matching writes one `job_matches` record per job and keyword rule.
 4. Email or webhook delivery is recorded in `notifications`.
 5. Verified Talent links are mirrored into `talent_targets`; `registration_runs` only records that the official site was opened or completed externally.
@@ -15,6 +16,20 @@ Job Pulse uses one Cloudflare D1 binding named `DB`. The schema keeps source dis
 The seed contains public company names, verification metadata, career-posting URLs, and Talent URLs only. It excludes the source workbook and personal application data.
 
 `GET /api/catalog` reads the D1 catalog with `q`, `talent=true`, `limit`, and `offset` query parameters. The response includes the current page plus URL-coverage counts.
+
+## Filterable job data
+
+`jobs` keeps the original title, URL, location, arrangement, employment type, summary, and timestamps plus structured detail fields when the source exposes them: description, responsibilities, qualifications, skills, department/team/business unit, job family/function, industry, office and secondary locations, normalized geography, salary range/currency/interval, benefits, education/experience, shift/travel/clearance/languages, requisition/apply URLs, source dates, and a bounded raw payload.
+
+`source_facets` stores the source's own search controls and value counts (for example Workday job family/location, Phenom category/team/remote mode, Jibe category, and Eightfold business unit). When an ATS does not return native aggregations, the crawler derives useful facet values from structured jobs. Repeated crawls upsert facet keys idempotently. A per-source generation lease prevents an older overlapping crawl from deleting a newer facet snapshot.
+
+The request crawler paginates supported ATS feeds. Phenom search pages use their embedded `totalHits`, `hits`, job payload, and aggregations, but only claim a complete listing when the unique normalized job count reaches the advertised total. Large Jibe catalogs are fetched in bounded concurrent pages and compacted before D1 persistence. Null fields are omitted and optional oversized content is reduced before strict 1.5 MB JSON batching so a single source stays within D1 memory, payload, and query budgets.
+
+Chrome fallback is reserved for request-blocked or client-rendered sites. It preserves existing rich fields when a browser listing only returns basic anchors. A single source can be retried locally with:
+
+```bash
+BROWSER_FALLBACK_SOURCE_ID=source-id BROWSER_FALLBACK_ALL=1 npm run crawler:fallback:browser
+```
 
 ## Local setup
 

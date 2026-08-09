@@ -1,0 +1,1 @@
+ALTER TABLE `sources` ADD `facet_sync_generation` text;

@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
+import * as crawlerModule from "./crawler";
 import { crawlSource, discoverAts, oracleCareerSite } from "./crawler";
+
+describe("large catalog content", () => {
+  it("keeps a bounded search summary without retaining every full description in memory", () => {
+    const compactJibeContent = (crawlerModule as Record<string, unknown>).compactJibeContent;
+    expect(compactJibeContent).toBeTypeOf("function");
+    expect((compactJibeContent as (value: string, compact: boolean) => unknown)("x".repeat(5_000), true)).toEqual({ summary: "x".repeat(100) });
+    expect((compactJibeContent as (value: string, compact: boolean) => unknown)("Full description", false)).toEqual({ summary: "Full description", description: "Full description" });
+  });
+});
 
 describe("crawlSource", () => {
   it("discovers the Oracle API tenant behind a vanity careers domain", () => {
@@ -71,7 +81,13 @@ describe("crawlSource", () => {
       const offset = new URL(url).searchParams.get("offset");
       return new Response(JSON.stringify({
         totalFound: 2,
-        content: offset === "1" ? [{ id: "2", name: "Designer", ref: "https://api.smartrecruiters.com/v1/companies/Acme/postings/2" }] : [{ id: "1", name: "Engineer", ref: "https://api.smartrecruiters.com/v1/companies/Acme/postings/1" }],
+        content: offset === "1" ? [{ id: "2", name: "Designer", ref: "https://api.smartrecruiters.com/v1/companies/Acme/postings/2" }] : [{
+          id: "1", name: "Engineer", ref: "https://api.smartrecruiters.com/v1/companies/Acme/postings/1", refNumber: "REQ-1",
+          department: { label: "Platform" }, function: { label: "Engineering" }, industry: { label: "Software" },
+          experienceLevel: { label: "Mid-Senior" }, releasedDate: "2026-08-01T00:00:00Z",
+          location: { city: "Austin", region: "Texas", country: "us", remote: true, hybrid: false, latitude: 30.27, longitude: -97.74 },
+          typeOfEmployment: { label: "Full-time" }, language: { code: "en", label: "English" },
+        }],
       }), { status: 200, headers: { "content-type": "application/json" } });
     };
 
@@ -83,6 +99,12 @@ describe("crawlSource", () => {
     ]);
     expect(requests).toContain("https://api.smartrecruiters.com/v1/companies/Acme/postings?limit=100&offset=1");
     expect(result.completeListing).toBe(true);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      requisitionId: "REQ-1", department: "Platform", jobFunction: "Engineering", industry: "Software",
+      experienceLevel: "Mid-Senior", arrangement: "remote", locationCity: "Austin", locationState: "Texas",
+      locationCountry: "us", latitude: 30.27, longitude: -97.74, languages: ["English"],
+      publishedAt: "2026-08-01T00:00:00.000Z",
+    }));
   });
 
   it("discovers and fully paginates a Jibe careers API", async () => {
@@ -97,17 +119,52 @@ describe("crawlSource", () => {
       const jobs = page === 1
         ? [{ data: { slug: "101", req_id: "REQ-101", title: "Engineer", language: "en-us", full_location: "Remote", employment_type: "FULL_TIME", posted_date: "2026-08-08T12:00:00+0000" } }]
         : [{ data: { slug: "102", req_id: "REQ-102", title: "Designer", language: "en-us", full_location: "New York, NY", employment_type: "FULL_TIME", posted_date: "2026-08-07T12:00:00+0000" } }];
-      return new Response(JSON.stringify({ totalCount: 2, jobs }), { status: 200, headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify({
+        totalCount: 2,
+        filter: { categories: { all: [{ category: "Engineering", numJobs: 2 }] }, facetList: { state: [{ term: "New York", count: 1 }] } },
+        jobs: jobs.map((job) => ({ ...job, data: { ...job.data, category: "Engineering", responsibilities: "Build systems.", qualifications: "SQL required.", city: "New York", state: "NY", country: "United States", country_code: "US" } })),
+      }), { status: 200, headers: { "content-type": "application/json" } });
     };
 
     const result = await crawlSource({ id: "acme", company: "Acme", postingUrl: "https://careers.acme.example/jobs", adapter: "custom" }, fetcher, new Date());
 
     expect(result.completeListing).toBe(true);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      jobFamily: "Engineering", responsibilities: "Build systems.", qualifications: "SQL required.",
+      locationCity: "New York", locationState: "NY", locationCountry: "United States",
+    }));
+    expect(result.facets).toEqual(expect.arrayContaining([
+      { key: "category", label: "Category", values: [{ key: "Engineering", label: "Engineering", count: 2 }] },
+      { key: "state", label: "State", values: [{ key: "New York", label: "New York", count: 1 }] },
+    ]));
     expect(result.jobs.map((job) => job.officialUrl)).toEqual([
       "https://careers.acme.example/jobs/101?lang=en-us",
       "https://careers.acme.example/jobs/102?lang=en-us",
     ]);
     expect(requests).toContain("https://careers.acme.example/api/jobs?page=2&limit=100&sortBy=relevance&descending=false&internal=false");
+  });
+
+  it("fetches large Jibe page ranges concurrently instead of serializing every request", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url === "https://careers.acme.example/jobs") return new Response('<script src="https://app.jibecdn.com/prod/search/app.js"></script>', { status: 200 });
+      const page = Number(new URL(url).searchParams.get("page"));
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+      const start = (page - 1) * 100;
+      const length = page < 4 ? 100 : 1;
+      const jobs = Array.from({ length }, (_, index) => ({ data: { slug: String(start + index), req_id: String(start + index), title: `Role ${start + index}` } }));
+      return new Response(JSON.stringify({ totalCount: 301, jobs }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+
+    const result = await crawlSource({ id: "acme", company: "Acme", postingUrl: "https://careers.acme.example/jobs", adapter: "custom" }, fetcher, new Date());
+
+    expect(result.jobs).toHaveLength(301);
+    expect(maxActive).toBeGreaterThan(1);
   });
 
   it("fully paginates an Eightfold public jobs API", async () => {
@@ -119,12 +176,21 @@ describe("crawlSource", () => {
       const position = start === 0
         ? { id: 101, name: "Engineer", location: "Remote", ats_job_id: "REQ-101", canonicalPositionUrl: "https://acme.eightfold.ai/careers/job/101", t_create: 1785888000 }
         : { id: 102, name: "Designer", location: "New York, NY", ats_job_id: "REQ-102", canonicalPositionUrl: "https://acme.eightfold.ai/careers/job/102", t_create: 1785801600 };
-      return new Response(JSON.stringify({ count: 2, positions: [position] }), { status: 200, headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify({
+        count: 2,
+        facets: { department: { Engineering: 2 }, skills: { Python: 1 }, seniority: { Senior: 1 } },
+        positions: [{ ...position, department: "Engineering", business_unit: "Technology", type: "Full-time", job_description: "Build reliable systems." }],
+      }), { status: 200, headers: { "content-type": "application/json" } });
     };
 
     const result = await crawlSource({ id: "acme", company: "Acme", postingUrl: "https://acme.eightfold.ai/careers", adapter: "custom" }, fetcher, new Date());
 
     expect(result.completeListing).toBe(true);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({ department: "Engineering", businessUnit: "Technology", employmentType: "Full-time", description: "Build reliable systems." }));
+    expect(result.facets).toEqual(expect.arrayContaining([
+      { key: "department", label: "Department", values: [{ key: "Engineering", label: "Engineering", count: 2 }] },
+      { key: "skills", label: "Skills", values: [{ key: "Python", label: "Python", count: 1 }] },
+    ]));
     expect(result.jobs.map((job) => job.externalId)).toEqual(["REQ-101", "REQ-102"]);
     expect(requests).toContain("https://acme.eightfold.ai/api/apply/v2/jobs?start=1&num=10&sort_by=relevance");
   });
@@ -139,7 +205,7 @@ describe("crawlSource", () => {
       }
       const skip = Number(new URL(url).searchParams.get("$skip") ?? 0);
       const job = skip === 0
-        ? { clientRequisitionID: "101", publishedJobTitle: "Engineer", jobTitle: "Engineer", postingDate: "2026-08-08T12:00:00Z", workLevelCode: "Full-time", requisitionLocations: [{ address: { cityName: "Austin", countrySubdivisionLevel1: { longName: "Texas" }, country: { longName: "United States" } } }] }
+        ? { clientRequisitionID: "101", publishedJobTitle: "Engineer", jobTitle: "Engineer", jobDescription: "Build products.", jobQualifications: "SQL and Python.", postingDate: "2026-08-08T12:00:00Z", workLevelCode: "Full-time", requisitionLocations: [{ address: { cityName: "Austin", countrySubdivisionLevel1: { longName: "Texas" }, country: { longName: "United States" } } }] }
         : { clientRequisitionID: "102", publishedJobTitle: "Designer", jobTitle: "Designer", postingDate: "2026-08-07T12:00:00Z", workLevelCode: "Full-time", requisitionLocations: [] };
       return new Response(JSON.stringify({ count: 2, jobRequisitions: [job] }), { status: 200, headers: { "content-type": "application/json" } });
     };
@@ -147,6 +213,7 @@ describe("crawlSource", () => {
     const result = await crawlSource({ id: "acme", company: "Acme", postingUrl: "https://myjobs.adp.com/acme", adapter: "custom" }, fetcher, new Date());
 
     expect(result.completeListing).toBe(true);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({ description: "Build products.", qualifications: "SQL and Python.", requisitionId: "101", locationCity: "Austin", locationState: "Texas", locationCountry: "United States" }));
     expect(result.jobs.map((job) => job.officialUrl)).toEqual([
       "https://myjobs.adp.com/acme/cx/job-details?reqId=101",
       "https://myjobs.adp.com/acme/cx/job-details?reqId=102",
@@ -190,6 +257,7 @@ describe("crawlSource", () => {
         arrangement: "unknown",
         employmentType: null,
         summary: "Build trusted data products.",
+        description: "Build trusted data products.",
         officialUrl: "https://job-boards.greenhouse.io/acme/jobs/42",
         publishedAt: "2026-08-08T12:00:00.000Z",
       }],
@@ -236,6 +304,7 @@ describe("crawlSource", () => {
         arrangement: "remote",
         employmentType: "FullTime",
         summary: "Build reliable models.",
+        description: "Build reliable models.",
         officialUrl: "https://jobs.ashbyhq.com/acme/ashby-42",
         publishedAt: "2026-08-08T12:00:00.000Z",
       }],
@@ -265,7 +334,7 @@ describe("crawlSource", () => {
     const fetcher: typeof fetch = async () => new Response(`
       <html><head>
         <script type="application/ld+json">
-          {"@context":"https://schema.org","@type":"JobPosting","title":"Senior Fraud Analyst","url":"https://careers.example.com/jobs/fraud-7","datePosted":"2026-08-07","employmentType":"FULL_TIME","jobLocation":{"address":{"addressLocality":"New York","addressRegion":"NY"}},"description":"<p>Investigate <strong>fraud</strong> signals.</p>","identifier":{"value":"fraud-7"}}
+          {"@context":"https://schema.org","@type":"JobPosting","title":"Senior Fraud Analyst","url":"https://careers.example.com/jobs/fraud-7","datePosted":"2026-08-07","validThrough":"2026-09-01","employmentType":"FULL_TIME","jobLocation":{"address":{"addressLocality":"New York","addressRegion":"NY","addressCountry":"US"}},"description":"<p>Investigate <strong>fraud</strong> signals.</p>","qualifications":"SQL required","responsibilities":"Investigate alerts","skills":"SQL, Python","experienceRequirements":"3 years","educationRequirements":"Bachelor degree","baseSalary":{"currency":"USD","value":{"minValue":100000,"maxValue":140000,"unitText":"YEAR"}},"identifier":{"value":"fraud-7"}}
         </script>
       </head></html>`, { status: 200, headers: { "content-type": "text/html" } });
 
@@ -284,10 +353,24 @@ describe("crawlSource", () => {
         externalId: "fraud-7",
         title: "Senior Fraud Analyst",
         company: "Example Co",
-        location: "New York, NY",
+        location: "New York, NY, US",
         arrangement: "unknown",
         employmentType: "FULL_TIME",
         summary: "Investigate fraud signals.",
+        description: "Investigate fraud signals.",
+        responsibilities: "Investigate alerts",
+        qualifications: "SQL required",
+        skills: ["SQL", "Python"],
+        educationRequirements: "Bachelor degree",
+        experienceRequirements: "3 years",
+        locationCity: "New York",
+        locationState: "NY",
+        locationCountry: "US",
+        salaryMin: 100000,
+        salaryMax: 140000,
+        salaryCurrency: "USD",
+        salaryInterval: "YEAR",
+        validThrough: "2026-09-01T00:00:00.000Z",
         officialUrl: "https://careers.example.com/jobs/fraud-7",
         publishedAt: "2026-08-07T00:00:00.000Z",
       }],
@@ -398,9 +481,30 @@ describe("crawlSource", () => {
         externalId: "277001",
         title: "Software Engineer",
         location: "Austin, Texas",
+        department: "Engineering",
         employmentType: "Full-Time",
         officialUrl: "https://www.tesla.com/careers/search/job/software-engineer-277001",
       })],
+    }));
+  });
+
+  it("preserves Oracle Recruiting workplace, description, and schedule fields", async () => {
+    const responses = [
+      new Response('<script src="https://acme.fa.us2.oraclecloud.com/hcmUI/app.js"></script>', { status: 200 }),
+      new Response(JSON.stringify({ items: [{ TotalJobsCount: 1, requisitionList: [{
+        Id: 42, Title: "Risk Analyst", PostedDate: "2026-08-01", PrimaryLocation: "New York, NY",
+        WorkplaceType: "Hybrid", JobSchedule: "Full time", ShortDescriptionStr: "Investigate risk signals.",
+      }] }] }), { status: 200, headers: { "content-type": "application/json" } }),
+    ];
+    const fetcher: typeof fetch = async () => responses.shift()!;
+
+    const result = await crawlSource({
+      id: "oracle-acme", company: "Acme", postingUrl: "https://careers.acme.example/en/sites/CX_1001/jobs", adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      arrangement: "hybrid", employmentType: "Full time", description: "Investigate risk signals.",
+      publishedAt: "2026-08-01T00:00:00.000Z",
     }));
   });
 
@@ -451,11 +555,13 @@ describe("crawlSource", () => {
       requests.push({ url: String(input), init });
       return new Response(JSON.stringify({
         total: 2,
+        facets: [{ descriptor: "Job Category", facetParameter: "jobFamilyGroup", values: [{ descriptor: "Engineering", id: "eng", count: 1 }] }],
         jobPostings: [{
           title: "Security Engineer",
           externalPath: "/job/Austin-TX/Security-Engineer_JR-100",
-          locations: ["Austin, TX"],
+          locationsText: "Austin, TX",
           bulletFields: ["Engineering", "Full time"],
+          postedOn: "Posted 2 Days Ago",
         }, { title: "Non-job card" }],
       }), { status: 200, headers: { "content-type": "application/json" } });
     };
@@ -488,8 +594,72 @@ describe("crawlSource", () => {
         externalId: "JR-100",
         title: "Security Engineer",
         location: "Austin, TX",
+        department: "Engineering",
+        sourcePostedText: "Posted 2 Days Ago",
+        publishedAt: "2026-08-06T12:30:00.000Z",
         officialUrl: "https://acme.wd5.myworkdayjobs.com/job/Austin-TX/Security-Engineer_JR-100",
       })],
+      facets: [{ key: "jobFamilyGroup", label: "Job Category", values: [{ key: "eng", label: "Engineering", count: 1 }] }],
+    }));
+  });
+
+  it("preserves Greenhouse department, office, requisition, and first-published fields", async () => {
+    const fetcher: typeof fetch = async () => new Response(JSON.stringify({ jobs: [{
+      id: 42,
+      title: "Data Engineer",
+      absolute_url: "https://job-boards.greenhouse.io/acme/jobs/42",
+      updated_at: "2026-08-08T12:00:00Z",
+      first_published: "2026-08-01T09:00:00Z",
+      requisition_id: "REQ-42",
+      departments: [{ id: 7, name: "Data Platform" }],
+      offices: [{ id: 3, name: "San Francisco", location: "California, United States" }],
+      location: { name: "San Francisco, CA" },
+      content: "<p>Build trusted data products.</p>",
+    }] }), { status: 200, headers: { "content-type": "application/json" } });
+
+    const result = await crawlSource({ id: "acme", company: "Acme", postingUrl: "https://job-boards.greenhouse.io/acme", adapter: "greenhouse" }, fetcher, new Date());
+
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      description: "Build trusted data products.",
+      department: "Data Platform",
+      office: "San Francisco",
+      requisitionId: "REQ-42",
+      publishedAt: "2026-08-01T09:00:00.000Z",
+      sourceUpdatedAt: "2026-08-08T12:00:00.000Z",
+    }));
+  });
+
+  it("preserves Lever team, workplace, salary, and content sections", async () => {
+    const responses = [
+      new Response('<a href="https://jobs.lever.co/acme">Open roles</a>', { status: 200 }),
+      new Response(JSON.stringify([{
+        id: "lever-7",
+        text: "Risk Analyst",
+        hostedUrl: "https://jobs.lever.co/acme/lever-7",
+        createdAt: 1785542400000,
+        categories: { location: "Remote, US", commitment: "Full-time", department: "Risk", team: "Trust", allLocations: ["Remote, US", "New York, NY"] },
+        workplaceType: "remote",
+        descriptionPlain: "Find material risk signals.",
+        lists: [{ text: "Requirements", content: "<li>SQL</li><li>Python</li>" }],
+        salaryRange: { min: 120000, max: 160000, currency: "USD", interval: "year" },
+      }]), { status: 200, headers: { "content-type": "application/json" } }),
+    ];
+    const fetcher: typeof fetch = async () => responses.shift()!;
+
+    const result = await crawlSource({ id: "acme", company: "Acme", postingUrl: "https://acme.example/careers", adapter: "custom" }, fetcher, new Date());
+
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      department: "Risk",
+      team: "Trust",
+      secondaryLocations: ["New York, NY"],
+      arrangement: "remote",
+      description: "Find material risk signals.",
+      qualifications: "Requirements SQL Python",
+      salaryMin: 120000,
+      salaryMax: 160000,
+      salaryCurrency: "USD",
+      salaryInterval: "year",
+      publishedAt: "2026-08-01T00:00:00.000Z",
     }));
   });
 
@@ -565,5 +735,84 @@ describe("crawlSource", () => {
         officialUrl: "https://jobs.example/apply/R42",
       })],
     }));
+  });
+
+  it("paginates Phenom search results and keeps native facets and filter fields", async () => {
+    const calls: string[] = [];
+    const phenomPage = (from: number) => {
+      const jobs = from === 0 ? [
+        { title: "Engine Engineer", jobId: "R1", reqId: "R1", location: "Irvine, California, United States", city: "Irvine", state: "California", country: "United States", checkRemote: "Hybrid", type: "Regular", category: "Engineering", externalTeamName: "Diablo", ml_skills: ["C++", "Python"], latitude: "33.6", longitude: "-117.8", multi_location: ["Irvine, California, United States"], applyUrl: "https://jobs.example/R1", postedDate: "2026-08-01" },
+        { title: "Producer", jobId: "R2", location: "Remote", checkRemote: "Remote", type: "Regular", category: "Production", externalTeamName: "Overwatch", applyUrl: "https://jobs.example/R2", postedDate: "2026-08-02" },
+      ] : [
+        { title: "Analyst", jobId: "R3", location: "Chicago, Illinois, United States", type: "Contractor", category: "Analytics", applyUrl: "https://jobs.example/R3", postedDate: "2026-08-03" },
+      ];
+      const aggregations = [{ field: "category", value: { Engineering: 1, Production: 1, Analytics: 1 } }];
+      return `<script>phApp.ddo = ${JSON.stringify({ eagerLoadRefineSearch: { status: 200, hits: jobs.length, totalHits: 3, data: { jobs, aggregations } } })};</script>`;
+    };
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      calls.push(url);
+      return new Response(phenomPage(Number(new URL(url).searchParams.get("from") ?? 0)), { status: 200 });
+    };
+
+    const result = await crawlSource({
+      id: "phenom-paged",
+      company: "Acme",
+      postingUrl: "https://careers.example/search-results",
+      adapter: "phenom",
+    }, fetcher, new Date("2026-08-08T12:30:00Z"));
+
+    expect(calls).toEqual([
+      "https://careers.example/search-results",
+      "https://careers.example/search-results?from=2&s=1",
+    ]);
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs).toHaveLength(3);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      requisitionId: "R1", department: "Engineering", team: "Diablo", skills: ["C++", "Python"],
+      arrangement: "hybrid", locationCity: "Irvine", locationState: "California", locationCountry: "United States",
+      latitude: 33.6, longitude: -117.8,
+    }));
+    expect(result.facets).toEqual([expect.objectContaining({
+      key: "category",
+      values: expect.arrayContaining([expect.objectContaining({ key: "Engineering", count: 1 })]),
+    })]);
+  });
+
+  it("bounds concurrent Phenom page requests for large catalogs", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const fetcher: typeof fetch = async (input) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      const from = Number(new URL(String(input)).searchParams.get("from") ?? 0);
+      const jobs = Array.from({ length: Math.min(2, 25 - from) }, (_, index) => ({
+        title: `Role ${from + index}`, jobId: `R${from + index}`, applyUrl: `https://jobs.example/R${from + index}`,
+      }));
+      active -= 1;
+      return new Response(`<script>phApp.ddo = ${JSON.stringify({ eagerLoadRefineSearch: { hits: jobs.length, totalHits: 25, data: { jobs } } })};</script>`);
+    };
+
+    const result = await crawlSource({ id: "large-phenom", company: "Acme", postingUrl: "https://careers.example/search-results", adapter: "phenom" }, fetcher, new Date());
+
+    expect(result.jobs).toHaveLength(25);
+    expect(maxActive).toBeGreaterThan(1);
+    expect(maxActive).toBeLessThanOrEqual(10);
+  });
+
+  it("keeps Phenom listings incomplete when pagination repeats the same jobs", async () => {
+    const jobs = [
+      { title: "Role 1", jobId: "R1", applyUrl: "https://jobs.example/R1" },
+      { title: "Role 2", jobId: "R2", applyUrl: "https://jobs.example/R2" },
+    ];
+    const fetcher: typeof fetch = async () => new Response(
+      `<script>phApp.ddo = ${JSON.stringify({ eagerLoadRefineSearch: { hits: 2, totalHits: 6, data: { jobs } } })};</script>`,
+    );
+
+    const result = await crawlSource({ id: "repeating-phenom", company: "Acme", postingUrl: "https://careers.example/search-results", adapter: "phenom" }, fetcher, new Date());
+
+    expect(result.jobs).toHaveLength(2);
+    expect(result.completeListing).toBe(false);
   });
 });

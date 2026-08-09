@@ -1,4 +1,4 @@
-import { crawlSource, type CrawledJob, type CrawlSource } from "./crawler";
+import { crawlSource, type CrawledFacet, type CrawledJob, type CrawlSource } from "./crawler";
 
 export type PersistedSource = CrawlSource & {
   nextCrawlAt: string | null;
@@ -7,7 +7,7 @@ export type PersistedSource = CrawlSource & {
 export interface CrawlStore {
   dueSources(now: string, limit: number): Promise<PersistedSource[]>;
   startRun(source: PersistedSource, scheduledFor: string): Promise<string>;
-  syncJobs(sourceId: string, jobs: CrawledJob[], completeListing: boolean): Promise<{ created: number; updated: number; closed: number }>;
+  syncJobs(sourceId: string, jobs: CrawledJob[], completeListing: boolean, facets?: CrawledFacet[]): Promise<{ created: number; updated: number; closed: number }>;
   finishRun(runId: string, values: Record<string, unknown>): Promise<void>;
   scheduleNext(sourceId: string, nextCrawlAt: string): Promise<void>;
 }
@@ -43,7 +43,7 @@ const runSource = async (
   let changes = { created: 0, updated: 0, closed: 0 };
   if (crawl.status === "succeeded") {
     try {
-      changes = await store.syncJobs(source.id, crawl.jobs, crawl.completeListing);
+      changes = await store.syncJobs(source.id, crawl.jobs, crawl.completeListing, crawl.facets);
     } catch (syncError) {
       status = "failed";
       error = syncError instanceof Error ? syncError.message : "Could not persist crawl results.";

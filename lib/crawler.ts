@@ -15,8 +15,50 @@ export type CrawledJob = {
   arrangement: "onsite" | "hybrid" | "remote" | "unknown";
   employmentType: string | null;
   summary: string | null;
+  description?: string | null;
+  responsibilities?: string | null;
+  qualifications?: string | null;
+  skills?: string[];
+  department?: string | null;
+  team?: string | null;
+  businessUnit?: string | null;
+  jobFamily?: string | null;
+  jobFunction?: string | null;
+  industry?: string | null;
+  office?: string | null;
+  secondaryLocations?: string[];
+  locationCity?: string | null;
+  locationState?: string | null;
+  locationCountry?: string | null;
+  locationPostalCode?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  salaryMin?: number | null;
+  salaryMax?: number | null;
+  salaryCurrency?: string | null;
+  salaryInterval?: string | null;
+  benefits?: string | null;
+  educationRequirements?: string | null;
+  experienceRequirements?: string | null;
+  experienceLevel?: string | null;
+  shiftSchedule?: string | null;
+  travelRequirements?: string | null;
+  securityClearance?: string | null;
+  languages?: string[];
+  requisitionId?: string | null;
+  applyUrl?: string | null;
+  sourcePostedText?: string | null;
+  sourceUpdatedAt?: string | null;
+  validThrough?: string | null;
+  rawPayload?: Record<string, unknown> | null;
   officialUrl: string;
   publishedAt: string | null;
+};
+
+export type CrawledFacet = {
+  key: string;
+  label: string;
+  values: Array<{ key: string; label: string; count: number | null }>;
 };
 
 export type SourceCrawlResult = {
@@ -24,6 +66,7 @@ export type SourceCrawlResult = {
   responseStatus: number | null;
   completeListing: boolean;
   jobs: CrawledJob[];
+  facets?: CrawledFacet[];
   error: string | null;
 };
 
@@ -42,22 +85,38 @@ type GreenhouseJob = {
   updated_at?: string;
   location?: { name?: string | null };
   content?: string | null;
+  first_published?: string | null;
+  requisition_id?: string | null;
+  departments?: Array<{ id?: number | string; name?: string | null }>;
+  offices?: Array<{ id?: number | string; name?: string | null; location?: string | null }>;
+  metadata?: Array<{ id?: number | string; name?: string | null; value?: unknown }>;
 };
 
 type WorkdayJob = {
   title?: string;
   externalPath?: string;
   locations?: string[];
+  locationsText?: string;
   bulletFields?: string[];
   postedOn?: string;
+};
+
+type WorkdayFacet = {
+  descriptor?: string;
+  facetParameter?: string;
+  values?: Array<{ descriptor?: string; id?: string; count?: number }>;
 };
 
 type LeverJob = {
   id: string;
   text: string;
   hostedUrl: string;
-  categories?: { location?: string; commitment?: string };
+  categories?: { location?: string; commitment?: string; department?: string; team?: string; allLocations?: string[] };
   descriptionPlain?: string;
+  createdAt?: number;
+  workplaceType?: string;
+  lists?: Array<{ text?: string; content?: string }>;
+  salaryRange?: { min?: number; max?: number; currency?: string; interval?: string };
 };
 
 type AshbyJob = {
@@ -71,14 +130,26 @@ type AshbyJob = {
   descriptionHtml?: string;
   publishedAt?: string;
   isListed?: boolean;
+  department?: string;
+  team?: string;
+  secondaryLocations?: Array<{ location?: string } | string>;
+  applyUrl?: string;
+  address?: { postalAddress?: { addressCountry?: string; addressRegion?: string; postalCode?: string; addressLocality?: string } };
 };
 
 type SmartRecruitersJob = {
   id?: string;
   name?: string;
   ref?: string;
-  location?: { city?: string; region?: string; country?: string };
+  refNumber?: string;
+  location?: { city?: string; region?: string; country?: string; postalCode?: string; latitude?: number; longitude?: number; remote?: boolean; hybrid?: boolean };
   typeOfEmployment?: { label?: string };
+  department?: { label?: string };
+  function?: { label?: string };
+  industry?: { label?: string };
+  experienceLevel?: { label?: string };
+  language?: { code?: string; label?: string };
+  releasedDate?: string;
 };
 
 type JibeJob = {
@@ -91,7 +162,23 @@ type JibeJob = {
     employment_type?: string;
     description?: string;
     posted_date?: string;
+    category?: string;
+    responsibilities?: string;
+    qualifications?: string;
+    city?: string;
+    state?: string;
+    country?: string;
+    country_code?: string;
+    latitude?: number;
+    longitude?: number;
+    location_type?: string;
+    languages?: string[];
   };
+};
+
+type JibeFilter = {
+  categories?: { all?: Array<{ category?: string; numJobs?: number }> };
+  facetList?: Record<string, Array<{ term?: string; count?: number }>>;
 };
 
 type EightfoldPosition = {
@@ -103,6 +190,9 @@ type EightfoldPosition = {
   work_location_option?: string | null;
   canonicalPositionUrl?: string;
   t_create?: number;
+  business_unit?: string;
+  type?: string;
+  job_description?: string;
 };
 
 type AdpJob = {
@@ -111,6 +201,7 @@ type AdpJob = {
   publishedJobTitle?: string;
   jobTitle?: string;
   jobDescription?: string;
+  jobQualifications?: string;
   postingDate?: string;
   workLevelCode?: string;
   requisitionLocations?: Array<{ address?: { cityName?: string; countrySubdivisionLevel1?: { longName?: string }; country?: { longName?: string } } }>;
@@ -126,6 +217,19 @@ type PhenomJob = {
   descriptionTeaser?: string;
   applyUrl?: string;
   postedDate?: string;
+  reqId?: string;
+  category?: string;
+  multi_category?: string[];
+  externalTeamName?: string;
+  ml_skills?: string[];
+  checkRemote?: string;
+  city?: string;
+  state?: string;
+  country?: string;
+  latitude?: string | number;
+  longitude?: string | number;
+  industry?: string;
+  multi_location?: string[];
 };
 
 type EmbeddedJobItem = {
@@ -191,6 +295,11 @@ const fetchWithTimeout = async (
 const plainText = (value: string | null | undefined): string | null => {
   const text = value?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
   return text || null;
+};
+
+export const compactJibeContent = (value: string, compact: boolean): { summary: string; description?: string } => {
+  if (compact) return { summary: value.slice(0, 100) };
+  return { summary: value, description: value };
 };
 
 const decodeHtmlAttribute = (value: string): string => value
@@ -267,11 +376,20 @@ async function crawlDiscoveredFeed(source: CrawlSource, discovered: DiscoveredAt
           title: job.text,
           company: source.company,
           location: job.categories?.location ?? null,
-          arrangement: job.categories?.location?.toLowerCase().includes("remote") ? "remote" : "unknown",
+          arrangement: /remote/i.test(`${job.workplaceType ?? ""} ${job.categories?.location ?? ""}`) ? "remote" : /hybrid/i.test(job.workplaceType ?? "") ? "hybrid" : /on.?site/i.test(job.workplaceType ?? "") ? "onsite" : "unknown",
           employmentType: job.categories?.commitment ?? null,
           summary: plainText(job.descriptionPlain),
+          description: plainText(job.descriptionPlain),
+          department: job.categories?.department ?? null,
+          team: job.categories?.team ?? null,
+          secondaryLocations: (job.categories?.allLocations ?? []).filter((location) => location !== job.categories?.location),
+          qualifications: plainText(job.lists?.map((section) => `${section.text ?? ""} ${section.content ?? ""}`).join(" ")),
+          salaryMin: job.salaryRange?.min ?? null,
+          salaryMax: job.salaryRange?.max ?? null,
+          salaryCurrency: job.salaryRange?.currency ?? null,
+          salaryInterval: job.salaryRange?.interval ?? null,
           officialUrl: job.hostedUrl,
-          publishedAt: null,
+          publishedAt: job.createdAt ? new Date(job.createdAt).toISOString() : null,
         })),
         error: null,
       };
@@ -291,8 +409,14 @@ async function crawlDiscoveredFeed(source: CrawlSource, discovered: DiscoveredAt
           arrangement: "unknown",
           employmentType: null,
           summary: plainText(job.content),
+          description: plainText(job.content),
+          ...(job.departments?.length ? { department: job.departments.map(({ name }) => name).filter(Boolean).join("; ") || null } : {}),
+          ...(job.offices?.length ? { office: job.offices.map(({ name }) => name).filter(Boolean).join("; ") || null } : {}),
+          ...(job.requisition_id ? { requisitionId: job.requisition_id } : {}),
+          ...(job.first_published ? { sourceUpdatedAt: normalizedDate(job.updated_at) } : {}),
+          ...((job.metadata?.length || job.departments?.length || job.offices?.length) ? { rawPayload: { metadata: job.metadata ?? [], departments: job.departments ?? [], offices: job.offices ?? [] } } : {}),
           officialUrl: job.absolute_url,
-          publishedAt: job.updated_at ? new Date(job.updated_at).toISOString() : null,
+          publishedAt: normalizedDate(job.first_published ?? job.updated_at),
         })),
         error: null,
       };
@@ -314,6 +438,14 @@ async function crawlDiscoveredFeed(source: CrawlSource, discovered: DiscoveredAt
             arrangement: /remote/i.test(`${job.workplaceType ?? ""} ${job.location ?? ""}`) ? "remote" as const : /hybrid/i.test(job.workplaceType ?? "") ? "hybrid" as const : "unknown" as const,
             employmentType: job.employmentType ?? null,
             summary: plainText(job.descriptionPlain ?? job.descriptionHtml),
+            description: plainText(job.descriptionPlain ?? job.descriptionHtml),
+            ...(job.department ? { department: job.department } : {}),
+            ...(job.team ? { team: job.team } : {}),
+            ...(job.secondaryLocations?.length ? { secondaryLocations: job.secondaryLocations.map((location) => typeof location === "string" ? location : location.location).filter((location): location is string => Boolean(location)) } : {}),
+            ...(job.address?.postalAddress?.addressRegion ? { locationState: job.address.postalAddress.addressRegion } : {}),
+            ...(job.address?.postalAddress?.addressCountry ? { locationCountry: job.address.postalAddress.addressCountry } : {}),
+            ...(job.address?.postalAddress?.postalCode ? { locationPostalCode: job.address.postalAddress.postalCode } : {}),
+            ...(job.applyUrl ? { applyUrl: job.applyUrl } : {}),
             officialUrl: job.jobUrl,
             publishedAt: normalizedDate(job.publishedAt),
           }];
@@ -323,44 +455,86 @@ async function crawlDiscoveredFeed(source: CrawlSource, discovered: DiscoveredAt
     }
 
     if (discovered.kind === "jibe") {
-      const firstPayload = await response.json() as { totalCount?: number; jobs?: JibeJob[] };
-      const items = [...(firstPayload.jobs ?? [])];
-      const total = firstPayload.totalCount ?? items.length;
-      let page = 2;
-      while (items.length < total) {
-        const pageUrl = new URL(discovered.endpoint);
-        pageUrl.searchParams.set("page", String(page));
-        const pageResponse = await fetchWithTimeout(fetcher, pageUrl);
-        if (!pageResponse.ok) return {
-          status: [401, 403, 429].includes(pageResponse.status) ? "blocked" : "failed",
-          responseStatus: pageResponse.status,
-          completeListing: false,
-          jobs: [],
-          error: `jibe returned HTTP ${pageResponse.status}.`,
-        };
-        const payload = await pageResponse.json() as { jobs?: JibeJob[] };
-        const additions = payload.jobs ?? [];
-        if (additions.length === 0) break;
-        items.push(...additions);
-        page += 1;
-      }
+      const firstPayload = await response.json() as { totalCount?: number; jobs?: JibeJob[]; filter?: JibeFilter };
       const listing = new URL(source.postingUrl);
       const prefix = listing.pathname.split("/jobs")[0];
-      return {
-        status: "succeeded",
-        responseStatus: response.status,
-        completeListing: items.length >= total,
-        jobs: items.flatMap(({ data }) => data?.slug && data.title ? [{
+      const firstItems = firstPayload.jobs ?? [];
+      const total = firstPayload.totalCount ?? firstItems.length;
+      const compactContent = total > 10_000;
+      const stringPool = new Map<string, string>();
+      const intern = (value: string | null): string | null => {
+        if (!value) return null;
+        const existing = stringPool.get(value);
+        if (existing) return existing;
+        stringPool.set(value, value);
+        return value;
+      };
+      const normalize = (items: JibeJob[]): CrawledJob[] => items.flatMap(({ data }) => {
+        if (!data?.slug || !data.title) return [];
+        const description = intern(plainText(data.description));
+        const content = description ? compactJibeContent(description, compactContent) : { summary: null };
+        return [{
           externalId: data.req_id ?? data.slug,
           title: data.title,
           company: source.company,
           location: data.full_location ?? null,
           arrangement: /\bremote\b/i.test(data.full_location ?? "") ? "remote" as const : "unknown" as const,
           employmentType: data.employment_type ?? null,
-          summary: plainText(data.description),
+          ...content,
+          ...(data.category ? { jobFamily: data.category } : {}),
+          ...(!compactContent && data.responsibilities ? { responsibilities: intern(plainText(data.responsibilities)) ?? null } : {}),
+          ...(!compactContent && data.qualifications ? { qualifications: intern(plainText(data.qualifications)) ?? null } : {}),
+          ...(data.city ? { locationCity: data.city } : {}),
+          ...(data.state ? { locationState: data.state } : {}),
+          ...(data.country ? { locationCountry: data.country } : {}),
+          ...(data.latitude != null ? { latitude: data.latitude } : {}),
+          ...(data.longitude != null ? { longitude: data.longitude } : {}),
+          ...(data.languages?.length ? { languages: data.languages } : {}),
+          ...(data.req_id ? { requisitionId: data.req_id } : {}),
           officialUrl: `${listing.origin}${prefix}/jobs/${encodeURIComponent(data.slug)}${data.language ? `?lang=${encodeURIComponent(data.language)}` : ""}`,
           publishedAt: normalizedDate(data.posted_date),
+        }];
+      });
+      const jobs = normalize(firstItems);
+      const pageSize = Math.max(firstItems.length, 1);
+      const pageNumbers = Array.from({ length: Math.max(0, Math.ceil(total / pageSize) - 1) }, (_, index) => index + 2);
+      for (let index = 0; index < pageNumbers.length; index += 8) {
+        const pages = await Promise.all(pageNumbers.slice(index, index + 8).map(async (page) => {
+          const pageUrl = new URL(discovered.endpoint);
+          pageUrl.searchParams.set("page", String(page));
+          const pageResponse = await fetchWithTimeout(fetcher, pageUrl);
+          if (!pageResponse.ok) return { response: pageResponse, jobs: [] as JibeJob[] };
+          const payload = await pageResponse.json() as { jobs?: JibeJob[] };
+          return { response: pageResponse, jobs: payload.jobs ?? [] };
+        }));
+        const failure = pages.find((page) => !page.response.ok);
+        if (failure) return {
+          status: [401, 403, 429].includes(failure.response.status) ? "blocked" : "failed",
+          responseStatus: failure.response.status,
+          completeListing: false,
+          jobs: [],
+          error: `jibe returned HTTP ${failure.response.status}.`,
+        };
+        for (const page of pages) jobs.push(...normalize(page.jobs));
+      }
+      const facets: CrawledFacet[] = [
+        ...(firstPayload.filter?.categories?.all?.length ? [{
+          key: "category",
+          label: "Category",
+          values: firstPayload.filter.categories.all.flatMap((value) => value.category ? [{ key: value.category, label: value.category, count: value.numJobs ?? null }] : []),
         }] : []),
+        ...Object.entries(firstPayload.filter?.facetList ?? {}).flatMap(([key, values]) => values.length ? [{
+          key,
+          label: key.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (letter) => letter.toUpperCase()),
+          values: values.flatMap((value) => value.term ? [{ key: value.term, label: value.term, count: value.count ?? null }] : []),
+        }] : []),
+      ];
+      return {
+        status: "succeeded",
+        responseStatus: response.status,
+        completeListing: jobs.length >= total,
+        jobs,
+        ...(facets.length > 0 ? { facets } : {}),
         error: null,
       };
     }
@@ -397,11 +571,23 @@ async function crawlDiscoveredFeed(source: CrawlSource, discovered: DiscoveredAt
         title: job.name,
         company: source.company,
         location: [job.location?.city, job.location?.region, job.location?.country].filter(Boolean).join(", ") || null,
-        arrangement: "unknown",
+        arrangement: job.location?.remote ? "remote" as const : job.location?.hybrid ? "hybrid" as const : "unknown" as const,
         employmentType: job.typeOfEmployment?.label ?? null,
         summary: null,
+        ...(job.refNumber ? { requisitionId: job.refNumber } : {}),
+        ...(job.department?.label ? { department: job.department.label } : {}),
+        ...(job.function?.label ? { jobFunction: job.function.label } : {}),
+        ...(job.industry?.label ? { industry: job.industry.label } : {}),
+        ...(job.experienceLevel?.label ? { experienceLevel: job.experienceLevel.label } : {}),
+        ...(job.location?.city ? { locationCity: job.location.city } : {}),
+        ...(job.location?.region ? { locationState: job.location.region } : {}),
+        ...(job.location?.country ? { locationCountry: job.location.country } : {}),
+        ...(job.location?.postalCode ? { locationPostalCode: job.location.postalCode } : {}),
+        ...(job.location?.latitude != null ? { latitude: job.location.latitude } : {}),
+        ...(job.location?.longitude != null ? { longitude: job.location.longitude } : {}),
+        ...(job.language?.label ? { languages: [job.language.label] } : {}),
         officialUrl: `https://jobs.smartrecruiters.com/${companyCode}/${job.id}`,
-        publishedAt: null,
+        publishedAt: normalizedDate(job.releasedDate),
       }] : []),
       error: null,
     };
@@ -473,6 +659,7 @@ async function crawlOracle(
           arrangement: workplace.includes("remote") ? "remote" as const : workplace.includes("hybrid") ? "hybrid" as const : workplace.includes("site") ? "onsite" as const : "unknown" as const,
           employmentType: job.JobSchedule ?? null,
           summary: plainText(job.ShortDescriptionStr),
+          description: plainText(job.ShortDescriptionStr),
           officialUrl: oracleJobUrl(source.postingUrl, oracle.site, job),
           publishedAt: normalizedDate(job.PostedDate),
         }];
@@ -584,7 +771,9 @@ const embeddedJobItems = (html: string, source: CrawlSource): CrawledJob[] => (
   }];
 });
 
-const phenomJobs = (html: string, source: CrawlSource): SourceCrawlResult | null => {
+type PhenomPage = SourceCrawlResult & { totalHits: number | null; pageHits: number | null };
+
+const phenomJobs = (html: string, source: CrawlSource): PhenomPage | null => {
   const payload = embeddedJsonObject(html, "phApp.ddo = ");
   const eager = payload?.eagerLoadRefineSearch;
   if (!eager || typeof eager !== "object") return null;
@@ -592,19 +781,50 @@ const phenomJobs = (html: string, source: CrawlSource): SourceCrawlResult | null
   if (!data || typeof data !== "object") return null;
   const jobs = (data as JsonLdValue).jobs;
   if (!Array.isArray(jobs)) return null;
-  const totalHits = (data as JsonLdValue).totalHits;
+  const totalHits = typeof (eager as JsonLdValue).totalHits === "number"
+    ? (eager as JsonLdValue).totalHits as number
+    : typeof (data as JsonLdValue).totalHits === "number" ? (data as JsonLdValue).totalHits as number : null;
+  const pageHits = typeof (eager as JsonLdValue).hits === "number" ? (eager as JsonLdValue).hits as number : null;
+  const aggregations = Array.isArray((data as JsonLdValue).aggregations) ? (data as JsonLdValue).aggregations as unknown[] : [];
+  const facets: CrawledFacet[] = aggregations.flatMap((aggregation) => {
+    if (!aggregation || typeof aggregation !== "object") return [];
+    const record = aggregation as { field?: unknown; value?: unknown };
+    if (typeof record.field !== "string" || !record.value || typeof record.value !== "object" || Array.isArray(record.value)) return [];
+    return [{
+      key: record.field,
+      label: record.field.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (letter) => letter.toUpperCase()),
+      values: Object.entries(record.value as Record<string, unknown>).flatMap(([label, count]) => (
+        typeof count === "number" ? [{ key: label, label, count }] : []
+      )),
+    }];
+  });
   const normalizedJobs = jobs.flatMap((value) => {
     if (!value || typeof value !== "object") return [];
     const job = value as PhenomJob;
     if (!job.title || !job.applyUrl) return [];
+    const workplace = `${job.checkRemote ?? ""} ${job.location ?? ""}`.toLowerCase();
+    const latitude = typeof job.latitude === "number" ? job.latitude : Number.parseFloat(job.latitude ?? "");
+    const longitude = typeof job.longitude === "number" ? job.longitude : Number.parseFloat(job.longitude ?? "");
     return [{
       externalId: job.jobId ?? job.jobSeqNo ?? null,
       title: job.title,
       company: source.company,
       location: job.location ?? job.cityStateCountry ?? null,
-      arrangement: job.location?.toLowerCase().includes("remote") ? "remote" as const : "unknown" as const,
+      arrangement: workplace.includes("remote") ? "remote" as const : workplace.includes("hybrid") ? "hybrid" as const : workplace.includes("on-site") || workplace.includes("onsite") ? "onsite" as const : "unknown" as const,
       employmentType: job.type ?? null,
       summary: plainText(job.descriptionTeaser),
+      description: plainText(job.descriptionTeaser),
+      ...(job.ml_skills?.length ? { skills: job.ml_skills } : {}),
+      ...(job.category || job.multi_category?.length ? { department: job.category ?? job.multi_category?.join("; ") ?? null } : {}),
+      ...(job.externalTeamName ? { team: job.externalTeamName } : {}),
+      ...(job.industry ? { industry: job.industry } : {}),
+      ...(job.multi_location?.length ? { secondaryLocations: job.multi_location } : {}),
+      ...(job.city ? { locationCity: job.city } : {}),
+      ...(job.state ? { locationState: job.state } : {}),
+      ...(job.country ? { locationCountry: job.country } : {}),
+      ...(Number.isFinite(latitude) ? { latitude } : {}),
+      ...(Number.isFinite(longitude) ? { longitude } : {}),
+      ...(job.reqId || job.jobId ? { requisitionId: job.reqId ?? job.jobId } : {}),
       officialUrl: job.applyUrl,
       publishedAt: normalizedDate(job.postedDate),
     }];
@@ -612,8 +832,46 @@ const phenomJobs = (html: string, source: CrawlSource): SourceCrawlResult | null
   return {
     status: "succeeded",
     responseStatus: 200,
-    completeListing: typeof totalHits === "number" && totalHits <= normalizedJobs.length,
+    completeListing: totalHits !== null && totalHits <= normalizedJobs.length,
     jobs: normalizedJobs,
+    ...(facets.length > 0 ? { facets } : {}),
+    error: null,
+    totalHits,
+    pageHits,
+  };
+};
+
+const crawlPhenomPages = async (source: CrawlSource, first: PhenomPage, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  if (first.pageHits === null) return first;
+  const pageSize = first.pageHits;
+  if (!first.totalHits || pageSize <= 0 || first.totalHits <= pageSize) return first;
+  const offsets = Array.from({ length: Math.ceil(Math.min(first.totalHits, 10_000) / pageSize) - 1 }, (_, index) => (index + 1) * pageSize);
+  const fetchPage = async (from: number): Promise<PhenomPage | null> => {
+    try {
+      const url = new URL(source.postingUrl);
+      url.searchParams.set("from", String(from));
+      url.searchParams.set("s", "1");
+      const response = await fetchWithTimeout(fetcher, url);
+      if (!response.ok) return null;
+      return phenomJobs(await response.text(), source);
+    } catch {
+      return null;
+    }
+  };
+  const pages: Array<PhenomPage | null> = [];
+  for (let index = 0; index < offsets.length; index += 10) {
+    pages.push(...await Promise.all(offsets.slice(index, index + 10).map(fetchPage)));
+  }
+  const successfulPages = pages.filter((page): page is PhenomPage => page !== null);
+  const jobs = [...new Map([first, ...successfulPages]
+    .flatMap((page) => page.jobs).map((job) => [job.officialUrl, job])).values()];
+  return {
+    status: "succeeded",
+    responseStatus: first.responseStatus,
+    completeListing: successfulPages.length === pages.length
+      && jobs.length >= first.totalHits,
+    jobs,
+    ...(first.facets?.length ? { facets: first.facets } : {}),
     error: null,
   };
 };
@@ -659,6 +917,32 @@ const jobLocation = (value: unknown): string | null => {
     .join(", ") || null;
 };
 
+const jobLocationAddress = (value: unknown): JsonLdValue | null => {
+  if (!value || typeof value !== "object") return null;
+  const address = (value as JsonLdValue).address;
+  return address && typeof address === "object" ? address as JsonLdValue : null;
+};
+
+const textList = (value: unknown): string[] => {
+  if (Array.isArray(value)) return value.map(asText).filter((item): item is string => Boolean(item));
+  const text = asText(value);
+  return text ? text.split(/[,;\n]/).map((item) => item.trim()).filter(Boolean) : [];
+};
+
+const salaryFields = (value: unknown): Pick<CrawledJob, "salaryMin" | "salaryMax" | "salaryCurrency" | "salaryInterval"> => {
+  if (!value || typeof value !== "object") return {};
+  const salary = value as JsonLdValue;
+  const amount = salary.value && typeof salary.value === "object" ? salary.value as JsonLdValue : salary;
+  const min = typeof amount.minValue === "number" ? amount.minValue : typeof amount.value === "number" ? amount.value : null;
+  const max = typeof amount.maxValue === "number" ? amount.maxValue : typeof amount.value === "number" ? amount.value : null;
+  return {
+    ...(min != null ? { salaryMin: min } : {}),
+    ...(max != null ? { salaryMax: max } : {}),
+    ...(asText(salary.currency) ? { salaryCurrency: asText(salary.currency) } : {}),
+    ...(asText(amount.unitText) ? { salaryInterval: asText(amount.unitText) } : {}),
+  };
+};
+
 const jsonLdJob = (value: JsonLdValue, source: CrawlSource): CrawledJob | null => {
   const title = asText(value.title);
   const officialUrl = asText(value.url);
@@ -668,6 +952,8 @@ const jsonLdJob = (value: JsonLdValue, source: CrawlSource): CrawledJob | null =
     ? asText((identifier as JsonLdValue).value) ?? asText((identifier as JsonLdValue)["@id"])
     : asText(identifier);
   const description = asText(value.description);
+  const address = jobLocationAddress(value.jobLocation);
+  const skills = textList(value.skills);
 
   return {
     externalId,
@@ -679,12 +965,24 @@ const jsonLdJob = (value: JsonLdValue, source: CrawlSource): CrawledJob | null =
       ? value.employmentType.map(asText).filter(Boolean).join(", ") || null
       : asText(value.employmentType),
     summary: plainText(description),
+    description: plainText(description),
+    ...(asText(value.responsibilities) ? { responsibilities: plainText(asText(value.responsibilities)) } : {}),
+    ...(asText(value.qualifications) ? { qualifications: plainText(asText(value.qualifications)) } : {}),
+    ...(skills.length > 0 ? { skills } : {}),
+    ...(asText(value.educationRequirements) ? { educationRequirements: plainText(asText(value.educationRequirements)) } : {}),
+    ...(asText(value.experienceRequirements) ? { experienceRequirements: plainText(asText(value.experienceRequirements)) } : {}),
+    ...(address && asText(address.addressLocality) ? { locationCity: asText(address.addressLocality) } : {}),
+    ...(address && asText(address.addressRegion) ? { locationState: asText(address.addressRegion) } : {}),
+    ...(address && asText(address.addressCountry) ? { locationCountry: asText(address.addressCountry) } : {}),
+    ...(address && asText(address.postalCode) ? { locationPostalCode: asText(address.postalCode) } : {}),
+    ...salaryFields(value.baseSalary),
+    ...(normalizedDate(value.validThrough) ? { validThrough: normalizedDate(value.validThrough) } : {}),
     officialUrl,
     publishedAt: normalizedDate(value.datePosted),
   };
 };
 
-async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> {
+async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
   try {
     const response = await fetchWithTimeout(fetcher, source.postingUrl);
     if (!response.ok) {
@@ -700,11 +998,11 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch): Promise<
     const oracle = oracleCareerSite(html, source.postingUrl);
     if (oracle) return crawlOracle(source, oracle, fetcher);
     const phenom = phenomJobs(html, source);
-    if (phenom) return phenom;
+    if (phenom) return crawlPhenomPages(source, phenom, fetcher);
     const discovered = discoverAts(html, source.postingUrl);
     if (discovered) {
       const discoveredResult = discovered.kind === "workday"
-        ? await crawlWorkday(source, discovered.endpoint, fetcher)
+        ? await crawlWorkday(source, discovered.endpoint, fetcher, now)
         : await crawlDiscoveredFeed(source, discovered, fetcher);
       if (discoveredResult.status === "succeeded") return discoveredResult;
     }
@@ -745,6 +1043,7 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch): Promise<
 async function crawlEightfold(source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> {
   const origin = new URL(source.postingUrl).origin;
   const positions: EightfoldPosition[] = [];
+  let facets: CrawledFacet[] = [];
   let responseStatus: number | null = null;
   try {
     const fetchPage = async (start: number, requirePositions = false) => {
@@ -756,7 +1055,14 @@ async function crawlEightfold(source: CrawlSource, fetcher: typeof fetch): Promi
         const response = await fetchWithTimeout(fetcher, endpoint);
         responseStatus = response.status;
         if (!response.ok) throw new Error(`Eightfold returned HTTP ${response.status}.`);
-        const payload = await response.json() as { count?: number; positions?: EightfoldPosition[] };
+        const payload = await response.json() as { count?: number; positions?: EightfoldPosition[]; facets?: Record<string, Record<string, number>> };
+        if (start === 0 && payload.facets) {
+          facets = Object.entries(payload.facets).map(([key, values]) => ({
+            key,
+            label: key.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (letter) => letter.toUpperCase()),
+            values: Object.entries(values).map(([label, count]) => ({ key: label, label, count })),
+          }));
+        }
         if (!requirePositions || (payload.positions?.length ?? 0) > 0 || attempt === 2) return payload;
         await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
       }
@@ -782,11 +1088,16 @@ async function crawlEightfold(source: CrawlSource, fetcher: typeof fetch): Promi
         company: source.company,
         location: position.location ?? null,
         arrangement: /remote/i.test(`${position.location ?? ""} ${position.work_location_option ?? ""}`) ? "remote" as const : /hybrid/i.test(position.work_location_option ?? "") ? "hybrid" as const : "unknown" as const,
-        employmentType: null,
+        employmentType: position.type ?? null,
         summary: position.department ?? null,
+        ...(position.department ? { department: position.department } : {}),
+        ...(position.business_unit ? { businessUnit: position.business_unit } : {}),
+        ...(position.job_description ? { description: plainText(position.job_description) } : {}),
+        requisitionId: position.ats_job_id ?? String(position.id),
         officialUrl: position.canonicalPositionUrl ?? `${origin}/careers/job/${position.id}`,
         publishedAt: position.t_create ? new Date(position.t_create * 1000).toISOString() : null,
       }] : []),
+      ...(facets.length > 0 ? { facets } : {}),
       error: null,
     };
   } catch (error) {
@@ -844,6 +1155,7 @@ async function crawlAdpMyJobs(source: CrawlSource, fetcher: typeof fetch): Promi
         const title = job.publishedJobTitle ?? job.jobTitle;
         if (!id || !title) return [];
         const location = job.requisitionLocations?.map(({ address }) => [address?.cityName, address?.countrySubdivisionLevel1?.longName, address?.country?.longName].filter(Boolean).join(", ")).filter(Boolean).join("; ") || null;
+        const primaryAddress = job.requisitionLocations?.[0]?.address;
         return [{
           externalId: id,
           title,
@@ -852,6 +1164,12 @@ async function crawlAdpMyJobs(source: CrawlSource, fetcher: typeof fetch): Promi
           arrangement: /remote/i.test(location ?? "") ? "remote" as const : "unknown" as const,
           employmentType: job.workLevelCode ?? null,
           summary: plainText(job.jobDescription),
+          description: plainText(job.jobDescription),
+          qualifications: plainText(job.jobQualifications),
+          requisitionId: id,
+          ...(primaryAddress?.cityName ? { locationCity: primaryAddress.cityName } : {}),
+          ...(primaryAddress?.countrySubdivisionLevel1?.longName ? { locationState: primaryAddress.countrySubdivisionLevel1.longName } : {}),
+          ...(primaryAddress?.country?.longName ? { locationCountry: primaryAddress.country.longName } : {}),
           officialUrl: `${page.origin}/${slug}/cx/job-details?reqId=${encodeURIComponent(id)}`,
           publishedAt: normalizedDate(job.postingDate),
         }];
@@ -892,6 +1210,7 @@ async function crawlTesla(source: CrawlSource, fetcher: typeof fetch): Promise<S
         arrangement: /\bremote\b/i.test(location ?? "") ? "remote" as const : "unknown" as const,
         employmentType: payload.lookup?.types?.[String(listing.y)] ?? null,
         summary: payload.lookup?.departments?.[listing.dp ?? ""] ?? null,
+        department: payload.lookup?.departments?.[listing.dp ?? ""] ?? null,
         officialUrl: `https://www.tesla.com/careers/search/job/${slug}-${listing.id}`,
         publishedAt: null,
       }];
@@ -908,7 +1227,16 @@ async function crawlTesla(source: CrawlSource, fetcher: typeof fetch): Promise<S
   }
 }
 
-async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: typeof fetch): Promise<SourceCrawlResult> {
+const workdayPublishedAt = (value: string | undefined, now: Date): string | null => {
+  if (!value) return null;
+  if (/posted\s+today/i.test(value)) return now.toISOString();
+  if (/posted\s+yesterday/i.test(value)) return new Date(now.getTime() - 86_400_000).toISOString();
+  const days = value.match(/posted\s+(\d+)\s+days?\s+ago/i)?.[1];
+  if (days) return new Date(now.getTime() - Number(days) * 86_400_000).toISOString();
+  return normalizedDate(value);
+};
+
+async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
   try {
     const endpointUrl = new URL(endpoint);
     const site = endpointUrl.pathname.split("/").at(-2);
@@ -917,6 +1245,7 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
     let offset = 0;
     let total = Number.POSITIVE_INFINITY;
     let responseStatus = 200;
+    let facets: CrawledFacet[] = [];
 
     while (offset < total && offset < 2_000) {
       const response = await fetchWithTimeout(fetcher, endpoint, {
@@ -942,8 +1271,15 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
         };
       }
 
-      const payload = await response.json() as { total?: number; jobPostings?: WorkdayJob[] };
+      const payload = await response.json() as { total?: number; jobPostings?: WorkdayJob[]; facets?: WorkdayFacet[] };
       const page = payload.jobPostings ?? [];
+      if (offset === 0) {
+        facets = (payload.facets ?? []).flatMap((facet) => facet.facetParameter && facet.descriptor ? [{
+          key: facet.facetParameter,
+          label: facet.descriptor,
+          values: (facet.values ?? []).flatMap((value) => value.id && value.descriptor ? [{ key: value.id, label: value.descriptor, count: value.count ?? null }] : []),
+        }] : []);
+      }
       // Some Workday tenants report a window-relative `total` on subsequent
       // pages. The first page is the only reliable total for pagination.
       if (!Number.isFinite(total)) total = payload.total ?? page.length;
@@ -956,19 +1292,21 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
           externalId,
           title: job.title,
           company: source.company,
-          location: job.locations?.join(", ") ?? null,
+          location: job.locationsText ?? job.locations?.join(", ") ?? null,
           arrangement: "unknown" as const,
           employmentType: job.bulletFields?.at(-1) ?? null,
           summary: job.bulletFields?.join(" · ") ?? null,
+          department: job.bulletFields?.at(0) ?? null,
+          sourcePostedText: job.postedOn ?? null,
           officialUrl: new URL(job.externalPath, endpointUrl.origin).href,
-          publishedAt: null,
+          publishedAt: workdayPublishedAt(job.postedOn, now),
         }];
       }));
       if (page.length === 0) break;
       offset += page.length;
     }
 
-    return { status: "succeeded", responseStatus, completeListing: offset >= total, jobs, error: null };
+    return { status: "succeeded", responseStatus, completeListing: offset >= total, jobs, ...(facets.length > 0 ? { facets } : {}), error: null };
   } catch (error) {
     return {
       status: "failed",
@@ -981,13 +1319,12 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
 }
 
 export async function crawlSource(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
-  void now;
   if (source.id === "p5-1077-tesla" || source.company === "Tesla") return crawlTesla(source, fetcher);
   if (new URL(source.postingUrl).hostname.endsWith("eightfold.ai")) return crawlEightfold(source, fetcher);
   if (new URL(source.postingUrl).hostname === "myjobs.adp.com") return crawlAdpMyJobs(source, fetcher);
   const board = source.adapter === "greenhouse" ? greenhouseBoard(source.postingUrl) : null;
   const workday = source.adapter === "workday" ? workdayFeed(source.postingUrl) : null;
-  if (workday) return crawlWorkday(source, workday, fetcher);
+  if (workday) return crawlWorkday(source, workday, fetcher, now);
   if (source.adapter === "ashby") {
     const slug = new URL(source.postingUrl).pathname.split("/").filter(Boolean).at(0);
     if (slug) return crawlDiscoveredFeed(source, {
@@ -996,7 +1333,7 @@ export async function crawlSource(source: CrawlSource, fetcher: typeof fetch, no
     }, fetcher);
   }
   if (!board) {
-    return crawlJsonLd(source, fetcher);
+    return crawlJsonLd(source, fetcher, now);
   }
 
   try {
@@ -1024,8 +1361,14 @@ export async function crawlSource(source: CrawlSource, fetcher: typeof fetch, no
         arrangement: "unknown",
         employmentType: null,
         summary: plainText(job.content),
+        description: plainText(job.content),
+        ...(job.departments?.length ? { department: job.departments.map(({ name }) => name).filter(Boolean).join("; ") || null } : {}),
+        ...(job.offices?.length ? { office: job.offices.map(({ name }) => name).filter(Boolean).join("; ") || null } : {}),
+        ...(job.requisition_id ? { requisitionId: job.requisition_id } : {}),
+        ...(job.first_published ? { sourceUpdatedAt: normalizedDate(job.updated_at) } : {}),
+        ...((job.metadata?.length || job.departments?.length || job.offices?.length) ? { rawPayload: { metadata: job.metadata ?? [], departments: job.departments ?? [], offices: job.offices ?? [] } } : {}),
         officialUrl: job.absolute_url,
-        publishedAt: job.updated_at ? new Date(job.updated_at).toISOString() : null,
+        publishedAt: normalizedDate(job.first_published ?? job.updated_at),
       })),
       error: null,
     };

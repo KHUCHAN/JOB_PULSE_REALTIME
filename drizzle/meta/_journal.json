@@ -183,6 +183,27 @@
       "when": 1786262217599,
       "tag": "0025_refresh_sources_20260809075657",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1786269079636,
+      "tag": "0026_abandoned_polaris",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "6",
+      "when": 1786274675170,
+      "tag": "0027_refresh_sources_20260809112435",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "6",
+      "when": 1786275991834,
+      "tag": "0028_omniscient_puma",
+      "breakpoints": true
     }
   ]
 }

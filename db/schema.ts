@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 const createdAt = () => text("created_at").notNull().default(sql`(CURRENT_TIMESTAMP)`);
 const updatedAt = () => text("updated_at").notNull().default(sql`(CURRENT_TIMESTAMP)`);
@@ -20,6 +20,7 @@ export const sources = sqliteTable("sources", {
   checkedAt: text("checked_at").notNull(),
   lastCrawledAt: text("last_crawled_at"),
   nextCrawlAt: text("next_crawl_at"),
+  facetSyncGeneration: text("facet_sync_generation"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, (table) => [
@@ -38,6 +39,42 @@ export const jobs = sqliteTable("jobs", {
   arrangement: text("arrangement", { enum: ["onsite", "hybrid", "remote", "unknown"] }).notNull().default("unknown"),
   employmentType: text("employment_type"),
   summary: text("summary"),
+  description: text("description"),
+  responsibilities: text("responsibilities"),
+  qualifications: text("qualifications"),
+  skills: text("skills", { mode: "json" }).$type<string[]>().notNull().default(sql`'[]'`),
+  department: text("department"),
+  team: text("team"),
+  businessUnit: text("business_unit"),
+  jobFamily: text("job_family"),
+  jobFunction: text("job_function"),
+  industry: text("industry"),
+  office: text("office"),
+  secondaryLocations: text("secondary_locations", { mode: "json" }).$type<string[]>().notNull().default(sql`'[]'`),
+  locationCity: text("location_city"),
+  locationState: text("location_state"),
+  locationCountry: text("location_country"),
+  locationPostalCode: text("location_postal_code"),
+  latitude: real("latitude"),
+  longitude: real("longitude"),
+  salaryMin: real("salary_min"),
+  salaryMax: real("salary_max"),
+  salaryCurrency: text("salary_currency"),
+  salaryInterval: text("salary_interval"),
+  benefits: text("benefits"),
+  educationRequirements: text("education_requirements"),
+  experienceRequirements: text("experience_requirements"),
+  experienceLevel: text("experience_level"),
+  shiftSchedule: text("shift_schedule"),
+  travelRequirements: text("travel_requirements"),
+  securityClearance: text("security_clearance"),
+  languages: text("languages", { mode: "json" }).$type<string[]>().notNull().default(sql`'[]'`),
+  requisitionId: text("requisition_id"),
+  applyUrl: text("apply_url"),
+  sourcePostedText: text("source_posted_text"),
+  sourceUpdatedAt: text("source_updated_at"),
+  validThrough: text("valid_through"),
+  rawPayload: text("raw_payload", { mode: "json" }).$type<Record<string, unknown>>(),
   descriptionHash: text("description_hash"),
   officialUrl: text("official_url").notNull(),
   status: text("status", { enum: ["open", "closed"] }).notNull().default("open"),
@@ -51,6 +88,22 @@ export const jobs = sqliteTable("jobs", {
   uniqueIndex("jobs_source_url_unique").on(table.sourceId, table.officialUrl),
   index("jobs_status_first_seen_idx").on(table.status, table.firstSeenAt),
   index("jobs_company_idx").on(table.company),
+]);
+
+export const sourceFacets = sqliteTable("source_facets", {
+  id: text("id").primaryKey(),
+  sourceId: text("source_id").notNull().references(() => sources.id, { onDelete: "cascade" }),
+  facetKey: text("facet_key").notNull(),
+  facetLabel: text("facet_label").notNull(),
+  valueKey: text("value_key").notNull(),
+  valueLabel: text("value_label").notNull(),
+  jobCount: integer("job_count"),
+  observedAt: text("observed_at").notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (table) => [
+  uniqueIndex("source_facets_source_key_value_unique").on(table.sourceId, table.facetKey, table.valueKey),
+  index("source_facets_source_key_idx").on(table.sourceId, table.facetKey),
 ]);
 
 export const keywords = sqliteTable("keywords", {
