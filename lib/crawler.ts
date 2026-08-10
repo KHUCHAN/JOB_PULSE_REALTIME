@@ -270,7 +270,35 @@ type OracleJob = {
   ShortDescriptionStr?: string;
 };
 
+type McKinseyJob = {
+  jobID?: string;
+  title?: string;
+  cities?: string[];
+  countries?: string[];
+  continents?: string[];
+  interest?: string;
+  interestCategory?: string;
+  functions?: string[];
+  whoYouWillWorkWith?: string;
+  whatYouWillDo?: string;
+  yourBackground?: string;
+  jobSkillCode?: string[];
+  linkedInIndustry?: string[];
+  linkedInSeniorityLevel?: string[];
+  postedToLinkedInDate?: string;
+  jobApplyURL?: string;
+  friendlyURL?: string;
+};
+
 const REQUEST_TIMEOUT_MS = 15_000;
+const BLOCKED_HTTP_STATUSES = new Set([401, 403, 429, 520, 521, 522, 523, 524]);
+const BROWSER_REQUEST_HEADERS = {
+  accept: "text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7",
+  "accept-language": "en-US,en;q=0.9",
+  "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+};
+
+const isBlockedHttpStatus = (status: number | null): boolean => status != null && BLOCKED_HTTP_STATUSES.has(status);
 
 const fetchWithTimeout = async (
   fetcher: typeof fetch,
@@ -281,9 +309,11 @@ const fetchWithTimeout = async (
   const timeout = setTimeout(() => controller.abort("15 second crawl timeout"), REQUEST_TIMEOUT_MS);
   const headers = init?.headers instanceof Headers
     ? new Headers(init.headers)
-    : { "user-agent": "JobPulseCrawler/1.0 (+https://job-pulse.local)", ...(init?.headers ?? {}) };
-  if (headers instanceof Headers && !headers.has("user-agent")) {
-    headers.set("user-agent", "JobPulseCrawler/1.0 (+https://job-pulse.local)");
+    : { ...BROWSER_REQUEST_HEADERS, ...(init?.headers ?? {}) };
+  if (headers instanceof Headers) {
+    for (const [name, value] of Object.entries(BROWSER_REQUEST_HEADERS)) {
+      if (!headers.has(name)) headers.set(name, value);
+    }
   }
   try {
     return await fetcher(input, { ...init, headers, signal: controller.signal });
@@ -358,7 +388,7 @@ async function crawlDiscoveredFeed(source: CrawlSource, discovered: DiscoveredAt
   try {
     const response = await fetchWithTimeout(fetcher, discovered.endpoint);
     if (!response.ok) return {
-      status: [401, 403, 429].includes(response.status) ? "blocked" : "failed",
+      status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
       responseStatus: response.status,
       completeListing: false,
       jobs: [],
@@ -510,7 +540,7 @@ async function crawlDiscoveredFeed(source: CrawlSource, discovered: DiscoveredAt
         }));
         const failure = pages.find((page) => !page.response.ok);
         if (failure) return {
-          status: [401, 403, 429].includes(failure.response.status) ? "blocked" : "failed",
+          status: isBlockedHttpStatus(failure.response.status) ? "blocked" : "failed",
           responseStatus: failure.response.status,
           completeListing: false,
           jobs: [],
@@ -550,7 +580,7 @@ async function crawlDiscoveredFeed(source: CrawlSource, discovered: DiscoveredAt
       pageUrl.searchParams.set("offset", String(offset));
       const pageResponse = await fetchWithTimeout(fetcher, pageUrl);
       if (!pageResponse.ok) return {
-        status: [401, 403, 429].includes(pageResponse.status) ? "blocked" : "failed",
+        status: isBlockedHttpStatus(pageResponse.status) ? "blocked" : "failed",
         responseStatus: pageResponse.status,
         completeListing: false,
         jobs: [],
@@ -1076,6 +1106,75 @@ const crawlTalentHubPages = async (
   };
 };
 
+const crawlAvaturePages = async (
+  source: CrawlSource,
+  html: string,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult | null> => {
+  if (!/avature\.portal\.page["']?\s+content=["']SearchCareer/i.test(html)) return null;
+  const text = plainText(html) ?? "";
+  const range = text.match(/\b[\d,]+\s*-\s*([\d,]+)\s+of\s+([\d,]+)(\+)?\s+results\b/i);
+  if (!range) return null;
+  const pageSize = Number(range[1].replaceAll(",", ""));
+  const total = Number(range[2].replaceAll(",", ""));
+  const openEndedTotal = range[3] === "+";
+  if (!Number.isFinite(pageSize) || pageSize < 1 || !Number.isFinite(total)) return null;
+
+  const jobsOnPage = (pageHtml: string) => jobsFromBrowserAnchors(
+    anchorsFromHtml(pageHtml).filter(({ href }) => /\/careers\/JobDetail\//i.test(href)),
+    source,
+  );
+  const jobs = jobsOnPage(html);
+  const paginationHref = anchorsFromHtml(html).find(({ href }) => /[?&]jobOffset=\d+/i.test(href))?.href;
+  if (total <= pageSize) return {
+    status: "succeeded",
+    responseStatus: 200,
+    completeListing: jobs.length >= total,
+    jobs: uniqueJobs(jobs),
+    error: null,
+  };
+  if (!paginationHref) return null;
+
+  const boundedTotal = openEndedTotal ? 10_000 : Math.min(total, 10_000);
+  const offsets = Array.from({ length: Math.max(0, Math.ceil(boundedTotal / pageSize) - 1) }, (_, index) => (index + 1) * pageSize);
+  let successfulPages = 0;
+  let reachedEnd = false;
+  let pageFailure = false;
+  for (let index = 0; index < offsets.length; index += 10) {
+    const pages = await Promise.all(offsets.slice(index, index + 10).map(async (offset) => {
+      try {
+        const url = new URL(paginationHref, source.postingUrl);
+        url.searchParams.set("jobRecordsPerPage", String(pageSize));
+        url.searchParams.set("jobOffset", String(offset));
+        const response = await fetchWithTimeout(fetcher, url);
+        if (!response.ok) return null;
+        return jobsOnPage(await response.text());
+      } catch {
+        return null;
+      }
+    }));
+    const firstShortPage = openEndedTotal ? pages.findIndex((page) => page !== null && page.length < pageSize) : -1;
+    const acceptedPages = firstShortPage >= 0 ? pages.slice(0, firstShortPage + 1) : pages;
+    if (acceptedPages.some((page) => page === null)) pageFailure = true;
+    successfulPages += acceptedPages.filter((page): page is CrawledJob[] => page !== null).length;
+    jobs.push(...acceptedPages.flatMap((page) => page ?? []));
+    if (firstShortPage >= 0) {
+      reachedEnd = true;
+      break;
+    }
+  }
+  const normalized = uniqueJobs(jobs);
+  return {
+    status: "succeeded",
+    responseStatus: 200,
+    completeListing: openEndedTotal
+      ? reachedEnd && !pageFailure
+      : total <= 10_000 && successfulPages === offsets.length && normalized.length >= total,
+    jobs: normalized,
+    error: null,
+  };
+};
+
 const asText = (value: unknown): string | null => typeof value === "string" && value.trim() ? value.trim() : null;
 
 const normalizedDate = (value: unknown): string | null => {
@@ -1083,6 +1182,105 @@ const normalizedDate = (value: unknown): string | null => {
   if (!text) return null;
   const date = new Date(text);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
+};
+
+const crawlMcKinsey = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const sourceUrl = new URL(source.postingUrl);
+  const query = sourceUrl.searchParams.get("query")?.trim() || source.company.replace(/^.*?—\s*/, "").trim();
+  const jobs: McKinseyJob[] = [];
+  const seen = new Set<string>();
+  let responseStatus: number | null = null;
+  let total = Number.POSITIVE_INFINITY;
+  let start = 0;
+  const pageSize = 100;
+
+  try {
+    while (jobs.length < Math.min(total, 10_000)) {
+      const endpoint = new URL("https://gateway.mckinsey.com/apigw-x0cceuow60/v1/api/jobs/search");
+      endpoint.searchParams.set("pageSize", String(pageSize));
+      endpoint.searchParams.set("start", String(start));
+      endpoint.searchParams.set("lang", "en");
+      endpoint.searchParams.set("q", query);
+      const response = await fetchWithTimeout(fetcher, endpoint, { headers: { accept: "application/json" } });
+      responseStatus = response.status;
+      if (!response.ok) return {
+        status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
+        responseStatus,
+        completeListing: false,
+        jobs: [],
+        error: `McKinsey jobs API returned HTTP ${response.status}.`,
+      };
+      const payload = await response.json() as { numFound?: number; docs?: McKinseyJob[] };
+      const additions = payload.docs ?? [];
+      total = Number.isFinite(payload.numFound) ? Number(payload.numFound) : jobs.length + additions.length;
+      if (additions.length === 0) break;
+      start += additions.length;
+      let progressed = false;
+      for (const job of additions) {
+        const identity = job.jobID ?? job.friendlyURL;
+        if (!identity || seen.has(identity)) continue;
+        seen.add(identity);
+        jobs.push(job);
+        progressed = true;
+      }
+      if (!progressed) break;
+    }
+
+    const normalized = jobs.flatMap((job): CrawledJob[] => {
+      if (!job.jobID || !job.title) return [];
+      const cities = job.cities?.filter(Boolean) ?? [];
+      const countries = job.countries?.filter(Boolean) ?? [];
+      const location = [cities.join("; "), countries.join("; ")].filter(Boolean).join(", ") || null;
+      const responsibilities = plainText(job.whatYouWillDo);
+      const qualifications = plainText(job.yourBackground);
+      const description = [plainText(job.whoYouWillWorkWith), responsibilities].filter(Boolean).join(" ") || null;
+      const friendlyUrl = job.friendlyURL
+        ? new URL(`/careers/search-jobs/jobs/${job.friendlyURL.replace(/^\/+/, "")}`, "https://www.mckinsey.com").href
+        : job.jobApplyURL;
+      if (!friendlyUrl) return [];
+      return [{
+        externalId: job.jobID,
+        title: job.title,
+        company: source.company,
+        location,
+        arrangement: /\bremote\b/i.test(`${job.title} ${location ?? ""}`) ? "remote" : "unknown",
+        employmentType: null,
+        summary: responsibilities ?? description,
+        description,
+        responsibilities,
+        qualifications,
+        ...(job.jobSkillCode?.length ? { skills: job.jobSkillCode } : {}),
+        department: job.interest ?? null,
+        jobFamily: job.interestCategory ?? null,
+        jobFunction: job.functions?.join("; ") || null,
+        industry: job.linkedInIndustry?.join("; ") || null,
+        secondaryLocations: cities.slice(1),
+        locationCity: cities[0] ?? null,
+        locationCountry: countries.join("; ") || null,
+        experienceLevel: job.linkedInSeniorityLevel?.join("; ") || null,
+        requisitionId: job.jobID,
+        applyUrl: job.jobApplyURL ?? null,
+        officialUrl: friendlyUrl,
+        publishedAt: normalizedDate(job.postedToLinkedInDate),
+      }];
+    });
+
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: total <= 10_000 && normalized.length >= total,
+      jobs: normalized,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown McKinsey crawler error.",
+    };
+  }
 };
 
 const jobLocation = (value: unknown): string | null => {
@@ -1166,7 +1364,7 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
     const response = await fetchWithTimeout(fetcher, source.postingUrl);
     if (!response.ok) {
       return {
-        status: [401, 403, 429].includes(response.status) ? "blocked" : "failed",
+        status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
         responseStatus: response.status,
         completeListing: false,
         jobs: [],
@@ -1182,6 +1380,8 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
     if (successFactors) return successFactors;
     const talentHub = await crawlTalentHubPages(source, html, fetcher);
     if (talentHub) return talentHub;
+    const avature = await crawlAvaturePages(source, html, fetcher);
+    if (avature) return avature;
     const phenom = phenomJobs(html, source);
     if (phenom) return crawlPhenomPages(source, phenom, fetcher);
     const discovered = discoverAts(html, source.postingUrl);
@@ -1287,7 +1487,7 @@ async function crawlEightfold(source: CrawlSource, fetcher: typeof fetch): Promi
     };
   } catch (error) {
     return {
-      status: responseStatus && [401, 403, 429].includes(responseStatus) ? "blocked" : "failed",
+      status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
       responseStatus,
       completeListing: false,
       jobs: [],
@@ -1368,7 +1568,7 @@ async function crawlAdpMyJobs(source: CrawlSource, fetcher: typeof fetch): Promi
       error: null,
     };
   } catch (error) {
-    return { status: responseStatus && [401, 403, 429].includes(responseStatus) ? "blocked" : "failed", responseStatus, completeListing: false, jobs: [], error: error instanceof Error ? error.message : "Unknown ADP MyJobs crawler error." };
+    return { status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed", responseStatus, completeListing: false, jobs: [], error: error instanceof Error ? error.message : "Unknown ADP MyJobs crawler error." };
   }
 }
 
@@ -1379,7 +1579,7 @@ async function crawlTesla(source: CrawlSource, fetcher: typeof fetch): Promise<S
       headers: { accept: "application/json", referer: source.postingUrl },
     });
     if (!response.ok) return {
-      status: [401, 403, 429].includes(response.status) ? "blocked" : "failed",
+      status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
       responseStatus: response.status,
       completeListing: false,
       jobs: [],
@@ -1454,7 +1654,7 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
       responseStatus = response.status;
       if (!response.ok) {
         return {
-          status: [401, 403, 429].includes(response.status) ? "blocked" : "failed",
+          status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
           responseStatus: response.status,
           completeListing: false,
           jobs: [],
@@ -1511,6 +1711,7 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
 
 export async function crawlSource(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
   if (source.id === "p5-1077-tesla" || source.company === "Tesla") return crawlTesla(source, fetcher);
+  if (new URL(source.postingUrl).hostname.endsWith("mckinsey.com") && new URL(source.postingUrl).pathname.includes("/careers/search-jobs")) return crawlMcKinsey(source, fetcher);
   if (new URL(source.postingUrl).hostname.endsWith("eightfold.ai")) return crawlEightfold(source, fetcher);
   if (new URL(source.postingUrl).hostname === "myjobs.adp.com") return crawlAdpMyJobs(source, fetcher);
   const board = source.adapter === "greenhouse" ? greenhouseBoard(source.postingUrl) : null;
@@ -1531,7 +1732,7 @@ export async function crawlSource(source: CrawlSource, fetcher: typeof fetch, no
     const response = await fetchWithTimeout(fetcher, `https://boards-api.greenhouse.io/v1/boards/${board}/jobs?content=true`);
     if (!response.ok) {
       return {
-        status: [401, 403, 429].includes(response.status) ? "blocked" : "failed",
+        status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
         responseStatus: response.status,
         completeListing: false,
         jobs: [],

@@ -235,6 +235,62 @@ describe("crawlSource", () => {
     expect(result.jobs.map((job) => job.title)).toEqual(["Role 1", "Role 2"]);
   });
 
+  it("fully paginates an Avature HTML job search", async () => {
+    const requests: string[] = [];
+    const page = (offset: number) => [
+      '<meta name="avature.portal.page" content="SearchCareer"/>',
+      `<div>${offset + 1}-${offset + 1} of 2 results</div>`,
+      `<a href="/en_US/careers/JobDetail/Role-${offset + 1}/${100 + offset}">Role ${offset + 1}</a>`,
+      offset === 0 ? '<a href="/en_US/careers/SearchCareer/?jobRecordsPerPage=1&amp;jobOffset=1">2</a>' : "",
+    ].join("");
+    const fetcher: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.toString());
+      return new Response(page(Number(url.searchParams.get("jobOffset") ?? 0)), { status: 200 });
+    };
+
+    const result = await crawlSource({
+      id: "avature",
+      company: "Acme",
+      postingUrl: "https://careers.acme.example/en_US/careers/SearchCareer/",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests).toEqual([
+      "https://careers.acme.example/en_US/careers/SearchCareer/",
+      "https://careers.acme.example/en_US/careers/SearchCareer/?jobRecordsPerPage=1&jobOffset=1",
+    ]);
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs.map((job) => job.title)).toEqual(["Role 1", "Role 2"]);
+  });
+
+  it("paginates Avature's open-ended 999+ result count until the first empty page", async () => {
+    const requestedOffsets: number[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      const offset = Number(url.searchParams.get("jobOffset") ?? 0);
+      requestedOffsets.push(offset);
+      return new Response([
+        '<meta name="avature.portal.page" content="SearchCareer"/>',
+        '<div>1-1 of 999+ results</div>',
+        offset < 2 ? `<a href="/en_US/careers/JobDetail/Role-${offset + 1}/${100 + offset}">Role ${offset + 1}</a>` : "",
+        offset === 0 ? '<a href="?jobRecordsPerPage=1&amp;jobOffset=1">2</a>' : "",
+        '<a href="/en_US/careers/ApplicationMethods?jobId=100">Apply</a>',
+      ].join(""), { status: 200 });
+    };
+
+    const result = await crawlSource({
+      id: "large-avature",
+      company: "Acme",
+      postingUrl: "https://careers.acme.example/en_US/careers/SearchCareer/",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requestedOffsets).toContain(2);
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs.map((job) => job.title)).toEqual(["Role 1", "Role 2"]);
+  });
+
   it("fetches large Jibe page ranges concurrently instead of serializing every request", async () => {
     let active = 0;
     let maxActive = 0;
@@ -322,6 +378,87 @@ describe("crawlSource", () => {
       responseStatus: 403,
       completeListing: false,
       jobs: [],
+    }));
+  });
+
+  it("classifies upstream edge failures as blocked instead of an internal crawl failure", async () => {
+    const fetcher: typeof fetch = async () => new Response("upstream connection error", { status: 520 });
+
+    const result = await crawlSource({ id: "edge-blocked", company: "Acme", postingUrl: "https://careers.acme.example/jobs", adapter: "custom" }, fetcher, new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "blocked",
+      responseStatus: 520,
+      completeListing: false,
+      jobs: [],
+    }));
+  });
+
+  it("uses browser-compatible headers for WAF-sensitive public careers pages", async () => {
+    const fetcher: typeof fetch = async (_input, init) => {
+      const headers = new Headers(init?.headers);
+      return /^Mozilla\/5\.0/.test(headers.get("user-agent") ?? "")
+        && headers.get("accept-language")?.startsWith("en-US")
+        ? new Response('<a href="/jobs/101">Engineer</a>', { status: 200 })
+        : new Response("blocked", { status: 520 });
+    };
+
+    const result = await crawlSource({ id: "waf-sensitive", company: "Acme", postingUrl: "https://careers.acme.example/jobs", adapter: "custom" }, fetcher, new Date());
+
+    expect(result.status).toBe("succeeded");
+    expect(result.jobs.map((job) => job.title)).toEqual(["Engineer"]);
+  });
+
+  it("uses McKinsey's public job API instead of the edge-blocked careers HTML", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.toString());
+      const start = Number(url.searchParams.get("start"));
+      const jobID = start === 0 ? "101" : "102";
+      return new Response(JSON.stringify({
+        numFound: 2,
+        start,
+        docs: [{
+          jobID,
+          title: start === 0 ? "Data Engineer - QuantumBlack" : "Data Scientist - QuantumBlack",
+          cities: start === 0 ? ["New York", "Boston"] : ["London"],
+          countries: start === 0 ? ["United States"] : ["United Kingdom"],
+          interest: "Tech & AI",
+          functions: ["Technology"],
+          whatYouWillDo: "<p>Build reliable AI systems.</p>",
+          yourBackground: "<ul><li>Python</li><li>SQL</li></ul>",
+          linkedInSeniorityLevel: ["Associate"],
+          linkedInIndustry: ["Information Technology"],
+          jobApplyURL: `https://mckinsey.avature.net/careers/ApplicationMethods?folderId=${jobID}`,
+          friendlyURL: `quantumblack-role-${jobID}`,
+          postedToLinkedInDate: "2026-08-01",
+        }],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+
+    const result = await crawlSource({
+      id: "quantumblack",
+      company: "McKinsey & Company — QuantumBlack",
+      postingUrl: "https://www.mckinsey.com/careers/search-jobs?query=QuantumBlack",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests[0]).toBe("https://gateway.mckinsey.com/apigw-x0cceuow60/v1/api/jobs/search?pageSize=100&start=0&lang=en&q=QuantumBlack");
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "101",
+      location: "New York; Boston, United States",
+      department: "Tech & AI",
+      jobFunction: "Technology",
+      experienceLevel: "Associate",
+      industry: "Information Technology",
+      responsibilities: "Build reliable AI systems.",
+      qualifications: "Python SQL",
+      applyUrl: "https://mckinsey.avature.net/careers/ApplicationMethods?folderId=101",
+      officialUrl: "https://www.mckinsey.com/careers/search-jobs/jobs/quantumblack-role-101",
+      publishedAt: "2026-08-01T00:00:00.000Z",
     }));
   });
 

@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:4eb40db248aa4a6a5cd07244a4361c41c963a2eb28dd735c7da3369774d9861a",
+  "version": "v2:sha256:e2a72825fae76b5e06b2582e466a23519b1d6df8b9de7d27147253e528162e0c",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -2631,7 +2631,7 @@
       "id": "audit-row-392",
       "masterRow": 392,
       "company": "Lululemon athletica",
-      "postingUrl": "https://careers.lululemon.com/en_US/careers/SearchCareer/?lulus=",
+      "postingUrl": "https://careers.lululemon.com/en_US/careers/SearchCareer/",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
       "adapter": "custom",
@@ -4806,16 +4806,16 @@
       "id": "p2-0092-comerica",
       "masterRow": 1243,
       "company": "Comerica",
-      "postingUrl": "https://www.comerica.com/careers",
+      "postingUrl": null,
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
       "adapter": "custom",
-      "verification": "career_only",
+      "verification": "no_active_careers",
       "confidence": "high",
       "resumeUpload": "job_only",
       "jobAlerts": "unknown",
       "checkedAt": "2026-08-08",
-      "enabled": true
+      "enabled": false
     },
     {
       "id": "p2-0100-enova-international",
@@ -5331,10 +5331,10 @@
       "id": "p4-0273-fifth-third-bank",
       "masterRow": 1329,
       "company": "Fifth Third Bank",
-      "postingUrl": "https://www.53.com/content/fifththird/en/careers.html",
+      "postingUrl": "https://fifththird.wd5.myworkdayjobs.com/53careers",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",

@@ -1,6 +1,8 @@
 {
   "overrides": {
     "p5-0523-abb-us": { "url": "https://abb.wd3.myworkdayjobs.com/External_Career_Page", "adapter": "workday" },
+    "p2-0092-comerica": { "url": null, "adapter": "custom", "verification": "NO_ACTIVE_CAREERS" },
+    "p4-0273-fifth-third-bank": { "url": "https://fifththird.wd5.myworkdayjobs.com/53careers", "adapter": "workday" },
     "p5-0529-adept-ai": { "url": "https://www.adept.ai/about-careers/", "adapter": "custom" },
     "legacy-row-607": { "url": "https://www.adept.ai/about-careers/", "adapter": "custom" },
     "legacy-row-784": { "url": "https://apigroup.talenthub.jobs/en/jobs", "adapter": "custom" },
@@ -108,7 +110,7 @@
     "audit-row-393": { "url": "https://www.manpowergroup.com/careers", "adapter": "custom" },
     "p5-0660-masimo": { "url": "https://www.masimo.com/company/careers/", "adapter": "custom" },
     "legacy-row-831": { "url": "https://sands.wd1.myworkdayjobs.com/sands_careers", "adapter": "workday" },
-    "audit-row-392": { "url": "https://careers.lululemon.com/en_US/careers/SearchCareer/?lulus=", "adapter": "custom" },
+    "audit-row-392": { "url": "https://careers.lululemon.com/en_US/careers/SearchCareer/", "adapter": "custom" },
     "p2-0131-massmutual": { "url": "https://careers.massmutual.com/search-jobs", "adapter": "phenom" },
     "p4-0457-match-group": { "url": "https://join.matchgroupcareers.com/careers", "adapter": "phenom" },
     "audit-row-396": { "url": "https://medline.wd5.myworkdayjobs.com/Medline", "adapter": "workday" },
