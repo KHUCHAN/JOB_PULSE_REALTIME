@@ -23,6 +23,16 @@ The seed contains public company names, verification metadata, career-posting UR
 
 `source_facets` stores the source's own search controls and value counts (for example Workday job family/location, Phenom category/team/remote mode, Jibe category, and Eightfold business unit). When an ATS does not return native aggregations, the crawler derives useful facet values from structured jobs. Repeated crawls upsert facet keys idempotently. A per-source generation lease prevents an older overlapping crawl from deleting a newer facet snapshot.
 
+`job_topics` stores deterministic topic membership separately from the large job body. The `ai-data` topic is classified from title, organizational fields, skills, and substantive body signals during every crawl. `jobs.topic_classified_at` makes the existing catalog backfill bounded and resumable, while `job_topics_topic_job_idx(topic_key, job_id)` keeps the public filter path indexed. The private `backfillJobTopics` API action accepts at most 500 pending open jobs per call.
+
+To audit a local SQLite copy without writing to it, pass its absolute path:
+
+```bash
+npm run jobs:topic:audit -- /absolute/path/to/job-pulse.sqlite
+```
+
+The report includes matched/open coverage, evidence counts, and a deterministic sample of at most 100 official posting URLs. Set `JOB_PULSE_KNOWN_AI_DATA_TITLES` to a JSON string array when the audit must fail on missing known roles.
+
 The request crawler paginates supported ATS feeds. Phenom search pages use their embedded `totalHits`, `hits`, job payload, and aggregations, but only claim a complete listing when the unique normalized job count reaches the advertised total. Large Jibe catalogs are fetched in bounded concurrent pages and compacted before D1 persistence. Null fields are omitted and optional oversized content is reduced before strict 1.5 MB JSON batching so a single source stays within D1 memory, payload, and query budgets.
 
 Chrome fallback is reserved for request-blocked or client-rendered sites. It preserves existing rich fields when a browser listing only returns basic anchors. A single source can be retried locally with:
