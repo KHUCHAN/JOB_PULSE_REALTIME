@@ -56,11 +56,14 @@ describe("parameterized job search SQL", () => {
         );`,
         "CREATE TABLE job_topics (job_id TEXT, topic_key TEXT, PRIMARY KEY(job_id, topic_key));",
         "CREATE INDEX job_topics_topic_job_idx ON job_topics(topic_key, job_id);",
+        "CREATE TABLE job_programs (job_id TEXT, program_key TEXT, evidence TEXT, classified_at TEXT, PRIMARY KEY(job_id, program_key));",
+        "CREATE INDEX job_programs_program_job_idx ON job_programs(program_key, job_id);",
         `INSERT INTO jobs VALUES
           ('ai-intern','Acme','2027 Machine Learning Intern','https://e/1','open','2026-01-03'),
           ('finance-intern','Acme','2027 Finance Intern','https://e/2','open','2026-01-02'),
           ('ai-regular','Acme','2026 Data Scientist','https://e/3','open','2026-01-01');`,
         "INSERT INTO job_topics VALUES ('ai-intern','ai-data'),('ai-regular','ai-data');",
+        "INSERT INTO job_programs VALUES ('ai-intern','internship','title:intern','2026-08-10');",
         ".parameter init",
         parameters,
         `${plan.countSql};`,
@@ -71,22 +74,22 @@ describe("parameterized job search SQL", () => {
     expect(plan.pageSql).toContain("job_topics");
     expect(plan.pageSql).toContain("FROM job_topics selected_topic INDEXED BY job_topics_topic_job_idx");
     expect(plan.pageSql).not.toContain("j.id IN (SELECT job_id FROM job_topics");
-    expect(plan.bindings).toEqual(["ai-data"]);
+    expect(plan.bindings).toEqual(["ai-data", "internship"]);
     expect(output).toContain('"total":1');
     expect(output).toContain("job_topics_topic_job_idx");
   });
 
-  it("builds title-only 2027 internship and co-op predicates", () => {
+  it("uses indexed program memberships for 2027 internship and co-op predicates", () => {
     const plan = buildJobSearchPlan({
       ...defaultJobFilters,
       recruitingYears: [2027],
       programTypes: ["internship", "coop"],
     });
 
-    expect(plan.pageSql).toContain("lower(");
     expect(plan.pageSql).toContain("% 2027 %");
-    expect(plan.pageSql).toContain("% co op %");
-    expect(plan.bindings).not.toEqual(expect.arrayContaining(["%2027%", "%intern%"]));
+    expect(plan.pageSql).toContain("job_programs");
+    expect(plan.pageSql).toContain("job_programs_program_job_idx");
+    expect(plan.bindings).toEqual(["internship", "coop"]);
   });
 
   it("uses json_each for skill and language membership", () => {
@@ -142,6 +145,7 @@ describe("parameterized job search SQL", () => {
     expect(plan.pageSql).not.toContain("raw_payload");
     expect(plan.pageSql).not.toContain("AS description");
     expect(plan.pageSql).toContain("AS summary");
+    expect(plan.pageSql).toContain("j.employment_type AS employment_type");
     expect(plan.countSql).toContain("count(*)");
     expect(plan.countSql).not.toContain("row_number() OVER");
   });
@@ -197,6 +201,8 @@ describe("parameterized job search SQL", () => {
         encoding: "utf8",
         input: [
           "CREATE TABLE jobs (id TEXT, company TEXT, title TEXT, official_url TEXT, status TEXT, first_seen_at TEXT);",
+          "CREATE TABLE job_programs (job_id TEXT, program_key TEXT, evidence TEXT, classified_at TEXT, PRIMARY KEY(job_id, program_key));",
+          "CREATE INDEX job_programs_program_job_idx ON job_programs(program_key, job_id);",
           `INSERT INTO jobs VALUES
             ('intern','A','2027 Software Intern','https://e/1','open','2026-01-01'),
             ('internship','A','2027 Product Internship','https://e/2','open','2026-01-01'),
@@ -206,6 +212,15 @@ describe("parameterized job search SQL", () => {
             ('space','A','2027 Product Co Op','https://e/6','open','2026-01-01'),
             ('joined','A','2027 Engineering Coop','https://e/7','open','2026-01-01'),
             ('year-boundary','A','12027 Software Intern','https://e/8','open','2026-01-01');`,
+          `INSERT INTO job_programs VALUES
+            ('intern','internship','title:intern','2026-08-10'),
+            ('internship','internship','title:internship','2026-08-10'),
+            ('hyphen','coop','title:co-op','2026-08-10'),
+            ('space','coop','title:co op','2026-08-10'),
+            ('joined','coop','title:coop','2026-08-10'),
+            ('year-boundary','internship','title:intern','2026-08-10');`,
+          ".parameter init",
+          ...plan.bindings.map((value, index) => `.parameter set ?${index + 1} ${sqliteLiteral(value)}`),
           `${plan.countSql};`,
         ].join("\n"),
       });

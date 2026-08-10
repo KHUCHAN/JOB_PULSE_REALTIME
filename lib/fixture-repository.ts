@@ -12,6 +12,7 @@ import type {
 } from "./domain";
 import { defaultJobFilters } from "./job-filter-query";
 import { classifyAiDataJob } from "./job-topic-classifier";
+import { classifyJobPrograms } from "./job-program-classifier";
 import {
   fixtureActivity,
   fixtureJobs,
@@ -100,9 +101,10 @@ const matchesTitleTerm = (job: RichJobPosting, values: string[] | undefined): bo
 const matchesProgram = (job: RichJobPosting, values: JobFilters["programTypes"]): boolean => {
   if (!values?.length) return true;
   const title = normalized(job.title);
+  const programs = classifyJobPrograms(job.title).keys;
   return values.some((program) =>
-    (program === "internship" && title.includes("intern"))
-    || (program === "coop" && (title.includes("co-op") || title.includes("coop")))
+    (program === "internship" && programs.includes("internship"))
+    || (program === "coop" && programs.includes("coop"))
     || (program === "regular" && title.includes("regular")),
   );
 };
@@ -128,9 +130,7 @@ const countOptions = (jobs: RichJobPosting[]): JobFilterOptions => {
     recruitingYears: jobs.flatMap((job) => [...job.title.matchAll(/\b(20\d{2})\b/g)].map((match) => Number(match[1]))),
     programTypes: jobs.flatMap((job) => {
       const title = normalized(job.title);
-      if (title.includes("intern")) return ["internship"];
-      if (title.includes("co-op") || title.includes("coop")) return ["coop"];
-      return title.includes("regular") ? ["regular"] : [];
+      return [...classifyJobPrograms(job.title).keys, ...(title.includes("regular") ? ["regular" as const] : [])];
     }),
     seasons: jobs.flatMap((job) => ["spring", "summer", "fall", "winter"].filter((season) => normalized(job.title).includes(season))),
     departments: jobs.flatMap((job) => job.department ? [job.department] : []),

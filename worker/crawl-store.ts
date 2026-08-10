@@ -1,6 +1,8 @@
 import type { CrawlStore, PersistedSource } from "../lib/crawl-runner";
 import type { CrawledFacet, CrawledJob } from "../lib/crawler";
 import { classifyAiDataJob } from "../lib/job-topic-classifier";
+import { classifyJobPrograms } from "../lib/job-program-classifier";
+import { normalizeEmploymentType } from "../lib/employment-type";
 
 type SourceRow = {
   id: string;
@@ -103,7 +105,10 @@ const derivedFacets = (jobs: CrawledJob[]): CrawledFacet[] => {
     { key: "jobFamily", label: "Job Family", values: (job) => job.jobFamily ? [job.jobFamily] : [] },
     { key: "jobFunction", label: "Job Function", values: (job) => job.jobFunction ? [job.jobFunction] : [] },
     { key: "industry", label: "Industry", values: (job) => job.industry ? [job.industry] : [] },
-    { key: "employmentType", label: "Employment Type", values: (job) => job.employmentType ? [job.employmentType] : [] },
+    { key: "employmentType", label: "Employment Type", values: (job) => {
+      const employmentType = normalizeEmploymentType(job.employmentType);
+      return employmentType ? [employmentType] : [];
+    } },
     { key: "arrangement", label: "Workplace Type", values: (job) => job.arrangement !== "unknown" ? [job.arrangement] : [] },
     { key: "city", label: "City", values: (job) => job.locationCity ? [job.locationCity] : [] },
     { key: "state", label: "State", values: (job) => job.locationState ? [job.locationState] : [] },
@@ -188,10 +193,11 @@ export class D1CrawlStore implements CrawlStore {
     const visibleUrls = new Set(jobs.map((job) => job.officialUrl));
     const recordFor = async (job: CrawledJob): Promise<Record<string, unknown>> => {
       const aiData = classifyAiDataJob(job);
+      const programs = classifyJobPrograms(job.title);
       const record = boundedJobRecord({
         id: crypto.randomUUID(), sourceId, externalId: job.externalId, title: job.title,
         company: job.company, location: job.location, arrangement: job.arrangement,
-        employmentType: job.employmentType, summary: job.summary, description: job.description ?? null,
+        employmentType: normalizeEmploymentType(job.employmentType), summary: job.summary, description: job.description ?? null,
         responsibilities: job.responsibilities ?? null, qualifications: job.qualifications ?? null,
         skills: job.skills ?? [], department: job.department ?? null, team: job.team ?? null,
         businessUnit: job.businessUnit ?? null, jobFamily: job.jobFamily ?? null,
@@ -210,7 +216,8 @@ export class D1CrawlStore implements CrawlStore {
         validThrough: job.validThrough ?? null, rawPayload: job.rawPayload ?? null,
         officialUrl: job.officialUrl, publishedAt: job.publishedAt, firstSeenAt: now, lastSeenAt: now,
         topicClassifiedAt: now, aiDataMatched: aiData.matched, aiDataScore: aiData.score,
-        aiDataEvidence: aiData.evidence,
+        aiDataEvidence: aiData.evidence, programClassifiedAt: now,
+        programKeys: programs.keys, programEvidence: programs.evidence,
       });
       const descriptionValue = typeof record.description === "string"
         ? record.description
@@ -234,7 +241,7 @@ export class D1CrawlStore implements CrawlStore {
           salary_currency, salary_interval, benefits, education_requirements, experience_requirements,
           experience_level, shift_schedule, travel_requirements, security_clearance, languages,
           requisition_id, apply_url, source_posted_text, source_updated_at, valid_through, raw_payload,
-          published_at, first_seen_at, last_seen_at, closed_at, topic_classified_at
+          published_at, first_seen_at, last_seen_at, closed_at, topic_classified_at, program_classified_at
         )
         SELECT
           json_extract(value, '$.id'), json_extract(value, '$.sourceId'),
@@ -256,7 +263,7 @@ export class D1CrawlStore implements CrawlStore {
           json_extract(value, '$.applyUrl'), json_extract(value, '$.sourcePostedText'), json_extract(value, '$.sourceUpdatedAt'),
           json_extract(value, '$.validThrough'), json_extract(value, '$.rawPayload'), json_extract(value, '$.publishedAt'),
           json_extract(value, '$.firstSeenAt'), json_extract(value, '$.lastSeenAt'), NULL,
-          json_extract(value, '$.topicClassifiedAt')
+          json_extract(value, '$.topicClassifiedAt'), json_extract(value, '$.programClassifiedAt')
         FROM json_each(?)
         WHERE true
         ON CONFLICT(source_id, official_url) DO UPDATE SET
@@ -308,6 +315,7 @@ export class D1CrawlStore implements CrawlStore {
           published_at = COALESCE(excluded.published_at, jobs.published_at),
           last_seen_at = excluded.last_seen_at,
           topic_classified_at = excluded.topic_classified_at,
+          program_classified_at = excluded.program_classified_at,
           closed_at = NULL,
           updated_at = CURRENT_TIMESTAMP
         `).bind(JSON.stringify(recordsChunk)).run();
@@ -352,6 +360,45 @@ export class D1CrawlStore implements CrawlStore {
               )
           `).bind(JSON.stringify(topicNonmatches)).run();
         }
+      }
+
+      const processedPrograms = records.map((record) => ({
+        sourceId: record.sourceId,
+        officialUrl: record.officialUrl,
+      }));
+      for (const chunk of chunksByJsonBytes(processedPrograms, 1_500_000)) {
+        await this.db.prepare(`
+          DELETE FROM job_programs
+          WHERE job_id IN (
+            SELECT jobs.id
+            FROM json_each(?)
+            JOIN jobs ON jobs.source_id = json_extract(value, '$.sourceId')
+                     AND jobs.official_url = json_extract(value, '$.officialUrl')
+          )
+        `).bind(JSON.stringify(chunk)).run();
+      }
+      const programMemberships = records.flatMap((record) =>
+        (record.programKeys as string[]).map((programKey) => ({
+          sourceId: record.sourceId,
+          officialUrl: record.officialUrl,
+          programKey,
+          evidence: (record.programEvidence as Record<string, string>)[programKey],
+          classifiedAt: record.programClassifiedAt,
+        }))
+      );
+      for (const chunk of chunksByJsonBytes(programMemberships, 1_500_000)) {
+        await this.db.prepare(`
+          INSERT INTO job_programs (job_id, program_key, evidence, classified_at)
+          SELECT jobs.id, json_extract(value, '$.programKey'), json_extract(value, '$.evidence'),
+                 json_extract(value, '$.classifiedAt')
+          FROM json_each(?)
+          JOIN jobs ON jobs.source_id = json_extract(value, '$.sourceId')
+                   AND jobs.official_url = json_extract(value, '$.officialUrl')
+          WHERE true
+          ON CONFLICT(job_id, program_key) DO UPDATE SET
+            evidence = excluded.evidence,
+            classified_at = excluded.classified_at
+        `).bind(JSON.stringify(chunk)).run();
       }
     }
 

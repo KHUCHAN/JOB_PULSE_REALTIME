@@ -63,6 +63,20 @@ describe("JobsScreen", () => {
     expect(preset).toHaveAttribute("aria-pressed", "false");
   });
 
+  it("applies the one-click 2027 AI/Data internship preset", async () => {
+    const user = userEvent.setup();
+    render(<FixtureProvider><JobsScreen initialQuery="" /></FixtureProvider>);
+    const preset = screen.getByRole("button", { name: "2027 AI/Data Internships" });
+
+    expect(preset).toHaveAttribute("aria-pressed", "false");
+    await user.click(preset);
+    await waitFor(() => expect(window.location.search)
+      .toBe("?topic=ai-data&year=2027&program=internship&program=coop"));
+    expect(preset).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Remove Recruiting year: 2027" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove Program type: Internship" })).toBeInTheDocument();
+  });
+
   it("presents Company and Role as separate desktop columns and mobile fields", async () => {
     render(<FixtureProvider><JobsScreen initialQuery="" /></FixtureProvider>);
     const table = await screen.findByRole("table", { name: "Matching jobs" });

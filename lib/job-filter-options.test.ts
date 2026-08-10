@@ -38,6 +38,14 @@ const schema = `
     first_seen_at TEXT NOT NULL,
     description TEXT
   );
+  CREATE TABLE job_programs (
+    job_id TEXT NOT NULL,
+    program_key TEXT NOT NULL,
+    evidence TEXT NOT NULL,
+    classified_at TEXT NOT NULL,
+    PRIMARY KEY (job_id, program_key)
+  );
+  CREATE INDEX job_programs_job_program_idx ON job_programs(job_id, program_key);
 `;
 
 const createD1 = (sqlite: DatabaseSync, rejectLargeCompound = false): D1Database => {
@@ -116,6 +124,14 @@ describe("queryJobFilterOptions", () => {
       "hybrid", "internship", "Finance", "not-json", "not-json",
       "https://example.com/jobs/closed", "closed", "2026-02-01", "x".repeat(1_000_000),
     );
+    sqlite.exec(`
+      INSERT INTO job_programs VALUES
+        ('old', 'internship', 'title:intern', '2026-08-10'),
+        ('co-op-spaces', 'coop', 'title:co-op', '2026-08-10'),
+        ('new', 'internship', 'title:intern', '2026-08-10'),
+        ('new', 'coop', 'title:co-op', '2026-08-10'),
+        ('closed', 'internship', 'title:intern', '2026-08-10');
+    `);
 
     for (let index = 1; index <= 101; index += 1) {
       const suffix = String(index).padStart(3, "0");

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { crawlBatchOptions, jobTopicBackfillLimit, recrawlSourceIds } from "./crawl-batch-options";
+import { crawlBatchOptions, jobProgramBackfillLimit, jobTopicBackfillLimit, recrawlSourceIds } from "./crawl-batch-options";
 
 describe("remote crawl batch options", () => {
   it("keeps request-driven crawls below the production write-contention ceiling", () => {
@@ -7,6 +7,14 @@ describe("remote crawl batch options", () => {
     expect(crawlBatchOptions(64)).toEqual({ limit: 4, concurrency: 2 });
     expect(crawlBatchOptions(500)).toEqual({ limit: 4, concurrency: 2 });
     expect(crawlBatchOptions(0)).toEqual({ limit: 1, concurrency: 1 });
+  });
+});
+
+describe("job program backfill limits", () => {
+  it("uses large bounded batches because classification only reads titles", () => {
+    expect(jobProgramBackfillLimit(undefined)).toBe(5_000);
+    expect(jobProgramBackfillLimit(0)).toBe(1);
+    expect(jobProgramBackfillLimit(50_000)).toBe(5_000);
   });
 });
 

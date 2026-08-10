@@ -1,4 +1,5 @@
 import { jobsFromBrowserAnchors, type BrowserAnchor } from "./browser-job-extractor.ts";
+import { normalizeEmploymentType, workdayBulletFields } from "./employment-type.ts";
 
 export type CrawlSource = {
   id: string;
@@ -1338,9 +1339,7 @@ const jsonLdJob = (value: JsonLdValue, source: CrawlSource): CrawledJob | null =
     company: source.company,
     location: jobLocation(value.jobLocation),
     arrangement: value.jobLocationType === "TELECOMMUTE" ? "remote" : "unknown",
-    employmentType: Array.isArray(value.employmentType)
-      ? value.employmentType.map(asText).filter(Boolean).join(", ") || null
-      : asText(value.employmentType),
+    employmentType: normalizeEmploymentType(value.employmentType),
     summary: plainText(description),
     description: plainText(description),
     ...(asText(value.responsibilities) ? { responsibilities: plainText(asText(value.responsibilities)) } : {}),
@@ -1678,15 +1677,16 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
         // Skip those records instead of failing an otherwise valid source crawl.
         if (!job.title || !job.externalPath) return [];
         const externalId = job.externalPath.split("_").at(-1) ?? null;
+        const bulletFields = workdayBulletFields(job.bulletFields);
         return [{
           externalId,
           title: job.title,
           company: source.company,
           location: job.locationsText ?? job.locations?.join(", ") ?? null,
           arrangement: "unknown" as const,
-          employmentType: job.bulletFields?.at(-1) ?? null,
+          employmentType: bulletFields.employmentType,
           summary: job.bulletFields?.join(" · ") ?? null,
-          department: job.bulletFields?.at(0) ?? null,
+          department: bulletFields.department,
           sourcePostedText: job.postedOn ?? null,
           officialUrl: new URL(job.externalPath, endpointUrl.origin).href,
           publishedAt: workdayPublishedAt(job.postedOn, now),

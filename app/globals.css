@@ -452,7 +452,7 @@ a { color: inherit; }
 .danger-text { color: var(--danger) !important; }
 
 .job-filter-panel { position: relative; z-index: 31; }
-.job-filter-common { grid-template-columns: minmax(220px, 1.35fr) auto repeat(5, minmax(130px, .72fr)) auto; }
+.job-filter-common { grid-template-columns: minmax(220px, 1.35fr) repeat(2, auto) repeat(5, minmax(130px, .72fr)) auto; }
 .topic-preset { min-width: max-content; white-space: nowrap; }
 .topic-preset[aria-pressed="true"] { color: #fff; background: var(--info); border-color: var(--info); }
 .more-filters-button { min-width: max-content; white-space: nowrap; }

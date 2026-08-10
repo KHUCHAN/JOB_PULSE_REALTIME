@@ -66,6 +66,7 @@ const jobListProjection = [
   "substr(coalesce(j.summary, j.description), 1, 1200) AS summary",
   "j.official_url AS official_url", "j.first_seen_at AS first_seen_at",
   "j.last_seen_at AS last_seen_at", "j.review_state AS review_state",
+  "j.employment_type AS employment_type",
 ].join(",\n       ");
 
 export function buildJobSearchPlan(filters: JobFilters): JobSearchPlan {
@@ -121,17 +122,18 @@ export function buildJobSearchPlan(filters: JobFilters): JobSearchPlan {
     add(`(${recruitingYears.map((year) => `${titleTokens} LIKE '% ${year} %'`).join(" OR ")})`);
   }
 
+  const selectedPrograms = asNormalizedValues(filters.programTypes);
+  const indexedPrograms = selectedPrograms.filter((program) => program === "internship" || program === "coop");
   const programClauses: string[] = [];
-  for (const program of asNormalizedValues(filters.programTypes)) {
-    if (program === "internship") {
-      programClauses.push(`(${titleTokens} LIKE '% intern %' OR ${titleTokens} LIKE '% internship %')`);
-    } else if (program === "coop") {
-      programClauses.push(`(${titleTokens} LIKE '% co op %' OR ${titleTokens} LIKE '% coop %')`);
-    } else if (program === "regular") {
-      programClauses.push(`${titleTokens} LIKE '% regular %'`);
-    }
+  if (indexedPrograms.length > 0) {
+    programClauses.push(`j.id IN (
+      SELECT selected_program.job_id
+      FROM job_programs selected_program INDEXED BY job_programs_program_job_idx
+      WHERE selected_program.program_key IN (${indexedPrograms.map(() => "?").join(", ")})
+    )`);
   }
-  if (programClauses.length) add(`(${programClauses.join(" OR ")})`);
+  if (selectedPrograms.includes("regular")) programClauses.push(`${titleTokens} LIKE '% regular %'`);
+  if (programClauses.length) add(`(${programClauses.join(" OR ")})`, indexedPrograms);
 
   const seasons = asNormalizedValues(filters.seasons);
   if (seasons.length) {

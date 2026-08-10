@@ -622,7 +622,7 @@ describe("crawlSource", () => {
         company: "Example Co",
         location: "New York, NY, US",
         arrangement: "unknown",
-        employmentType: "FULL_TIME",
+        employmentType: "Full-time",
         summary: "Investigate fraud signals.",
         description: "Investigate fraud signals.",
         responsibilities: "Investigate alerts",
@@ -897,6 +897,33 @@ describe("crawlSource", () => {
       })],
       facets: [{ key: "jobFamilyGroup", label: "Job Category", values: [{ key: "eng", label: "Engineering", count: 1 }] }],
     }));
+  });
+
+  it("does not mistake Workday requisition IDs for employment types", async () => {
+    const fetcher: typeof fetch = async () => new Response(JSON.stringify({
+      total: 2,
+      jobPostings: [{
+        title: "Data Science Intern",
+        externalPath: "/job/Data-Science-Intern_R244285",
+        bulletFields: ["Data & AI", "R244285"],
+      }, {
+        title: "Machine Learning Co-op",
+        externalPath: "/job/Machine-Learning-Co-op_R2615860",
+        bulletFields: ["R2615860", "Data & AI", "Intern"],
+      }],
+    }), { status: 200, headers: { "content-type": "application/json" } });
+
+    const result = await crawlSource({
+      id: "workday-employment",
+      company: "Acme",
+      postingUrl: "https://acme.wd5.myworkdayjobs.com/Careers",
+      adapter: "workday",
+    }, fetcher, new Date("2026-08-10T00:00:00Z"));
+
+    expect(result.jobs).toEqual([
+      expect.objectContaining({ employmentType: null, department: "Data & AI" }),
+      expect.objectContaining({ employmentType: "Internship", department: "Data & AI" }),
+    ]);
   });
 
   it("preserves Greenhouse department, office, requisition, and first-published fields", async () => {

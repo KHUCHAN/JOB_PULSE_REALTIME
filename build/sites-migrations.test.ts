@@ -10,6 +10,7 @@ describe("Sites migration packaging", () => {
     expect(sitesSchemaMigrationFiles).toContain("0037_ai_data_job_topics.sql");
     expect(sitesSchemaMigrationFiles).toContain("0038_job_topic_backfill_index.sql");
     expect(sitesSchemaMigrationFiles).toContain("0039_job_filter_options_cache.sql");
+    expect(sitesSchemaMigrationFiles).toContain("0040_indexed_job_programs.sql");
     expect(sitesSchemaMigrationFiles.some((file) => file.includes("refresh_sources"))).toBe(false);
   });
 

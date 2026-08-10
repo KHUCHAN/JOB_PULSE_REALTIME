@@ -83,6 +83,10 @@ export function JobFilterPanel({
 }): ReactElement {
   const companies = filters.companies ?? [];
   const aiDataSelected = filters.topics?.includes("ai-data") ?? false;
+  const internshipPresetSelected = aiDataSelected
+    && filters.recruitingYears?.includes(2027) === true
+    && filters.programTypes?.includes("internship") === true
+    && filters.programTypes?.includes("coop") === true;
   const employmentTypes = filters.employmentTypes ?? [];
   const programTypes = filters.programTypes ?? [];
   const seasons = filters.seasons ?? [];
@@ -132,6 +136,16 @@ export function JobFilterPanel({
           onClick={() => onChange({ topics: aiDataSelected ? [] : ["ai-data"] })}
         >
           <Sparkles size={16} aria-hidden="true" /> AI &amp; Data Science
+        </button>
+        <button
+          className="button secondary topic-preset internship-preset"
+          type="button"
+          aria-pressed={internshipPresetSelected}
+          onClick={() => onChange(internshipPresetSelected
+            ? { recruitingYears: [], programTypes: [] }
+            : { topics: ["ai-data"], recruitingYears: [2027], programTypes: ["internship", "coop"] })}
+        >
+          2027 AI/Data Internships
         </button>
         <DatalistField id="job-company" label="Company" value={companies[0] ?? ""} options={options?.companies} placeholder="Any company" onChange={(value) => setTextArray("companies", value)} />
         <DatalistField id="job-location" label="Location" value={filters.location} options={options?.locations} placeholder="Any location" onChange={(location) => onChange({ location })} />

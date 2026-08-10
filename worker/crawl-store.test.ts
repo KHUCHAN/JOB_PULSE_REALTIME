@@ -150,6 +150,37 @@ describe("D1CrawlStore enriched job persistence", () => {
     ]);
   });
 
+  it("indexes every recognized internship title during crawl persistence", async () => {
+    const { db, calls } = fakeDb();
+    const store = new D1CrawlStore(db);
+    const jobs = [{
+      externalId: "intern-1", title: "2027 Machine Learning Intern / Co-op", company: "Acme", location: "Remote",
+      arrangement: "remote" as const, employmentType: "INTERN", summary: "Build models.",
+      officialUrl: "https://jobs.example/intern-1", publishedAt: null,
+    }, {
+      externalId: "audit-1", title: "2027 Internal Audit Analyst", company: "Acme", location: null,
+      arrangement: "unknown" as const, employmentType: "R244285", summary: null,
+      officialUrl: "https://jobs.example/audit-1", publishedAt: null,
+    }] as CrawledJob[];
+
+    await store.syncJobs("source-1", jobs, false);
+
+    const jobsInsert = calls.find((call) => call.sql.includes("INSERT INTO jobs"));
+    const jobRecords = JSON.parse(String(jobsInsert?.values[0]));
+    expect(jobRecords[0]).toEqual(expect.objectContaining({
+      employmentType: "Internship",
+      programKeys: ["internship", "coop"],
+      programClassifiedAt: expect.any(String),
+    }));
+    expect(jobRecords[1].employmentType).toBeUndefined();
+    expect(calls.some((call) => call.sql.includes("DELETE FROM job_programs"))).toBe(true);
+    const insert = calls.find((call) => call.sql.includes("INSERT INTO job_programs"));
+    expect(JSON.parse(String(insert?.values[0]))).toEqual([
+      expect.objectContaining({ programKey: "internship", evidence: "title:intern" }),
+      expect.objectContaining({ programKey: "coop", evidence: "title:co-op" }),
+    ]);
+  });
+
   it("upserts source-native facet values observed during the crawl", async () => {
     const { db, calls } = fakeDb();
     const store = new D1CrawlStore(db);

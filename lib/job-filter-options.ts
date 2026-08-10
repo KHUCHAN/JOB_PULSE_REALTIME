@@ -35,10 +35,6 @@ export const filterOptionsSql = `
     UNION ALL SELECT year + 1 FROM years WHERE year < 2100
   ),
   seasons(season) AS (VALUES ('spring'), ('summer'), ('fall'), ('winter')),
-  programs(program, needle) AS (
-    VALUES ('internship', 'intern'), ('internship', 'internship'),
-           ('coop', 'co op'), ('coop', 'coop'), ('regular', 'regular')
-  ),
   ranked AS (
     SELECT
       j.id, j.official_url, j.company, j.title, j.location, j.location_city,
@@ -57,6 +53,15 @@ export const filterOptionsSql = `
   ),
   deduped AS (
     SELECT * FROM ranked WHERE dedupe_rank = 1
+  ),
+  program_arrays AS (
+    SELECT d.official_url, d.title_tokens,
+      coalesce((
+        SELECT json_group_array(jp.program_key)
+        FROM job_programs jp INDEXED BY job_programs_job_program_idx
+        WHERE jp.job_id = d.id
+      ), '[]') AS program_keys
+    FROM deduped d
   ),
   facet_values(official_url, filter_key, value) AS (
     SELECT d.official_url, scalar.key, scalar.value
@@ -85,9 +90,11 @@ export const filterOptionsSql = `
     )) scalar
     UNION ALL SELECT d.official_url, 'recruitingYears', CAST(y.year AS TEXT)
       FROM deduped d JOIN years y ON d.title_tokens LIKE '% ' || CAST(y.year AS TEXT) || ' %'
-    UNION ALL SELECT d.official_url, 'programTypes', p.program
-      FROM deduped d JOIN programs p
-        ON d.title_tokens LIKE '% ' || p.needle || ' %'
+    UNION ALL SELECT p.official_url, 'programTypes', program.value
+      FROM program_arrays p,
+        json_each(CASE WHEN p.title_tokens LIKE '% regular %'
+          THEN json_insert(p.program_keys, '$[#]', 'regular')
+          ELSE p.program_keys END) program
     UNION ALL SELECT d.official_url, 'seasons', s.season
       FROM deduped d JOIN seasons s ON d.title_tokens LIKE '% ' || s.season || ' %'
     UNION ALL SELECT d.official_url, arrays.key, CAST(item.value AS TEXT)
