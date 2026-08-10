@@ -32,7 +32,21 @@ type DrizzleSnapshot = {
   [key: string]: unknown;
 };
 
-const comparableSql = (sql: string) => sql.trimEnd();
+const catalogVersion = (sql: string): string | null =>
+  /^-- catalog-version: (\S+)$/m.exec(sql)?.[1] ?? null;
+
+const comparableSql = (sql: string): string => catalogVersion(sql) ?? sql.trimEnd();
+
+export function versionedCatalogSql(sql: string, version: string): string {
+  return `-- catalog-version: ${version}\n${sql}`;
+}
+
+export function catalogDeltaSql(previousSql: string, nextSql: string, version: string): string {
+  const previousStatements = new Set(previousSql.split("\n").filter((line) => line.startsWith("INSERT INTO ")));
+  const changedStatements = nextSql.split("\n")
+    .filter((line) => line.startsWith("INSERT INTO ") && !previousStatements.has(line));
+  return `${versionedCatalogSql(changedStatements.join("\n"), version).trimEnd()}\n`;
+}
 
 export function planSeedMigration({
   journal,

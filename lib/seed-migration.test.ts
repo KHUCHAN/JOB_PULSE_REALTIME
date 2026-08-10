@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { advanceSeedSnapshot, planSeedMigration } from "./seed-migration";
+import { advanceSeedSnapshot, catalogDeltaSql, planSeedMigration, versionedCatalogSql } from "./seed-migration";
 
 const journal = {
   version: "7",
@@ -16,6 +16,15 @@ describe("planSeedMigration", () => {
       journal,
       catalogSqlHistory: ["INSERT INTO sources VALUES ('same');\n"],
       nextSql: "INSERT INTO sources VALUES ('same');\n",
+      now: new Date("2026-08-08T12:34:56Z"),
+    })).toBeNull();
+  });
+
+  it("compares catalog versions when a migration contains only changed rows", () => {
+    expect(planSeedMigration({
+      journal,
+      catalogSqlHistory: ["-- catalog-version: sha256:same\nINSERT INTO sources VALUES ('changed');\n"],
+      nextSql: versionedCatalogSql("INSERT INTO sources VALUES ('full');\n", "sha256:same"),
       now: new Date("2026-08-08T12:34:56Z"),
     })).toBeNull();
   });
@@ -80,6 +89,16 @@ describe("planSeedMigration", () => {
       nextSql: "INSERT INTO sources VALUES ('original');\n",
       now: new Date("2026-08-08T12:34:56Z"),
     })?.fileName).toBe("0002_refresh_sources_20260808123456.sql");
+  });
+});
+
+describe("catalogDeltaSql", () => {
+  it("emits only new or changed upserts and carries the full-catalog version", () => {
+    expect(catalogDeltaSql(
+      "INSERT INTO sources VALUES ('same');\nINSERT INTO sources VALUES ('old');\n",
+      "INSERT INTO sources VALUES ('same');\nINSERT INTO sources VALUES ('new');\n",
+      "sha256:next",
+    )).toBe("-- catalog-version: sha256:next\nINSERT INTO sources VALUES ('new');\n");
   });
 });
 

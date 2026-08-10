@@ -108,6 +108,12 @@ type WorkdayFacet = {
   values?: Array<{ descriptor?: string; id?: string; count?: number }>;
 };
 
+type WorkdayPayload = {
+  total?: number;
+  jobPostings?: WorkdayJob[];
+  facets?: WorkdayFacet[];
+};
+
 type LeverJob = {
   id: string;
   text: string;
@@ -2545,76 +2551,140 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
     const endpointUrl = new URL(endpoint);
     const site = endpointUrl.pathname.split("/").at(-2);
     const referer = site ? `${endpointUrl.origin}/${site}` : endpointUrl.origin;
-    const jobs: CrawledJob[] = [];
-    let offset = 0;
-    let total = Number.POSITIVE_INFINITY;
-    let responseStatus = 200;
-    let facets: CrawledFacet[] = [];
-
-    while (offset < total && offset < 2_000) {
+    const headers = {
+      accept: "application/json",
+      "content-type": "application/json",
+      origin: endpointUrl.origin,
+      referer,
+    };
+    const fetchPage = async (offset: number, appliedFacets: Record<string, string[]> = {}): Promise<{ status: number; payload: WorkdayPayload }> => {
       const response = await fetchWithTimeout(fetcher, endpoint, {
         method: "POST",
-        headers: {
-          accept: "application/json",
-          "content-type": "application/json",
-          origin: endpointUrl.origin,
-          referer,
-        },
+        headers,
         // Workday's public CXS endpoint rejects page sizes above 20.
-        body: JSON.stringify({ appliedFacets: {}, limit: 20, offset, searchText: "" }),
+        body: JSON.stringify({ appliedFacets, limit: 20, offset, searchText: "" }),
       });
-      responseStatus = response.status;
       if (!response.ok) {
-        return {
-          status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
-          responseStatus: response.status,
-          completeListing: false,
-          jobs: [],
-          error: `Workday returned HTTP ${response.status}.`,
-        };
+        throw Object.assign(new Error(`Workday returned HTTP ${response.status}.`), { responseStatus: response.status });
       }
+      return { status: response.status, payload: await response.json() as WorkdayPayload };
+    };
 
-      const payload = await response.json() as { total?: number; jobPostings?: WorkdayJob[]; facets?: WorkdayFacet[] };
-      const page = payload.jobPostings ?? [];
-      if (offset === 0) {
-        facets = (payload.facets ?? []).flatMap((facet) => facet.facetParameter && facet.descriptor ? [{
-          key: facet.facetParameter,
-          label: facet.descriptor,
-          values: (facet.values ?? []).flatMap((value) => value.id && value.descriptor ? [{ key: value.id, label: value.descriptor, count: value.count ?? null }] : []),
-        }] : []);
-      }
-      // Some Workday tenants report a window-relative `total` on subsequent
-      // pages. The first page is the only reliable total for pagination.
-      if (!Number.isFinite(total)) total = payload.total ?? page.length;
-      jobs.push(...page.flatMap((job) => {
-        // Workday tenants occasionally include non-job cards alongside postings.
-        // Skip those records instead of failing an otherwise valid source crawl.
-        if (!job.title || !job.externalPath) return [];
-        const externalId = job.externalPath.split("_").at(-1) ?? null;
-        const bulletFields = workdayBulletFields(job.bulletFields);
-        return [{
-          externalId,
-          title: job.title,
-          company: source.company,
-          location: job.locationsText ?? job.locations?.join(", ") ?? null,
-          arrangement: "unknown" as const,
-          employmentType: bulletFields.employmentType,
-          summary: job.bulletFields?.join(" · ") ?? null,
-          department: bulletFields.department,
-          sourcePostedText: job.postedOn ?? null,
-          officialUrl: new URL(job.externalPath, endpointUrl.origin).href,
-          publishedAt: workdayPublishedAt(job.postedOn, now),
-        }];
-      }));
-      if (page.length === 0) break;
-      offset += page.length;
+    const first = await fetchPage(0);
+    const total = first.payload.total ?? first.payload.jobPostings?.length ?? 0;
+    const pagePayloads = [first.payload];
+    const offsets = Array.from(
+      { length: Math.max(0, Math.ceil(Math.min(total, 2_000) / 20) - 1) },
+      (_, index) => (index + 1) * 20,
+    );
+    for (let index = 0; index < offsets.length; index += 8) {
+      const pages = await Promise.all(offsets.slice(index, index + 8).map((offset) => fetchPage(offset)));
+      pagePayloads.push(...pages.map(({ payload }) => payload));
     }
 
-    return { status: "succeeded", responseStatus, completeListing: offset >= total, jobs, ...(facets.length > 0 ? { facets } : {}), error: null };
-  } catch (error) {
+    const rawJobs = pagePayloads.flatMap((payload) => payload.jobPostings ?? []);
+    const facets: CrawledFacet[] = (first.payload.facets ?? []).flatMap((facet) => facet.facetParameter && facet.descriptor ? [{
+      key: facet.facetParameter,
+      label: facet.descriptor,
+      values: (facet.values ?? []).flatMap((value) => value.id && value.descriptor ? [{ key: value.id, label: value.descriptor, count: value.count ?? null }] : []),
+    }] : []);
+
+    let jobs = uniqueJobs(rawJobs.flatMap((job) => {
+      // Workday tenants occasionally include non-job cards alongside postings.
+      // Skip those records and keep the listing incomplete so stale jobs cannot close.
+      if (!job.title || !job.externalPath) return [];
+      const externalId = job.externalPath.split("_").at(-1) ?? null;
+      const bulletFields = workdayBulletFields(job.bulletFields);
+      return [{
+        externalId,
+        title: job.title,
+        company: source.company,
+        location: job.locationsText ?? job.locations?.join(", ") ?? null,
+        arrangement: "unknown" as const,
+        employmentType: bulletFields.employmentType,
+        summary: job.bulletFields?.join(" · ") ?? null,
+        department: bulletFields.department,
+        sourcePostedText: job.postedOn ?? null,
+        officialUrl: new URL(job.externalPath, endpointUrl.origin).href,
+        publishedAt: workdayPublishedAt(job.postedOn, now),
+      }];
+    }));
+
+    if (source.id === "p5-0947-intel" || source.company === "Intel") {
+      const facetByParameter = new Map((first.payload.facets ?? [])
+        .flatMap((facet) => facet.facetParameter ? [[facet.facetParameter, facet] as const] : []));
+      const membership = new Map<string, string[]>();
+      const addMembership = (path: string, value: string): void => {
+        const values = membership.get(path) ?? [];
+        if (!values.includes(value)) values.push(value);
+        membership.set(path, values);
+      };
+      const fetchMembership = async (parameter: string, valueId: string, count: number): Promise<Set<string>> => {
+        const paths = new Set<string>();
+        const facetOffsets = Array.from({ length: Math.ceil(count / 20) }, (_, index) => index * 20);
+        for (let index = 0; index < facetOffsets.length; index += 8) {
+          const pages = await Promise.all(facetOffsets.slice(index, index + 8)
+            .map((offset) => fetchPage(offset, { [parameter]: [valueId] })));
+          for (const page of pages) {
+            for (const job of page.payload.jobPostings ?? []) if (job.externalPath) paths.add(job.externalPath);
+          }
+        }
+        return paths;
+      };
+
+      const workerFacet = facetByParameter.get("workerSubType");
+      for (const value of workerFacet?.values ?? []) {
+        if (!value.id || !value.count || !value.descriptor) continue;
+        const canonical = /student|intern/i.test(value.descriptor)
+          ? "Internship"
+          : /contract|fixed[ -]?term/i.test(value.descriptor) ? "Fixed-term" : null;
+        if (!canonical) continue;
+        for (const path of await fetchMembership("workerSubType", value.id, value.count)) addMembership(path, canonical);
+      }
+
+      const timeFacet = facetByParameter.get("timeType");
+      const timeValues = (timeFacet?.values ?? []).filter((value) => value.id && value.descriptor && (value.count ?? 0) > 0);
+      const recognizedTimeValues = timeValues.filter((value) => /^(?:full|part)[ -]?time$/i.test(value.descriptor ?? ""));
+      if (recognizedTimeValues.length === timeValues.length
+        && recognizedTimeValues.reduce((sum, value) => sum + (value.count ?? 0), 0) === total) {
+        const smallest = [...recognizedTimeValues].sort((a, b) =>
+          (a.count ?? 0) - (b.count ?? 0)
+          || (/^part/i.test(a.descriptor ?? "") ? -1 : 1))[0];
+        if (smallest?.id && smallest.descriptor && smallest.count) {
+          const selected = await fetchMembership("timeType", smallest.id, smallest.count);
+          const selectedType = /^part/i.test(smallest.descriptor) ? "Part-time" : "Full-time";
+          const complementType = selectedType === "Part-time" ? "Full-time" : "Part-time";
+          for (const job of jobs) {
+            const path = new URL(job.officialUrl).pathname;
+            addMembership(path, selected.has(path) ? selectedType : complementType);
+          }
+        }
+      }
+
+      jobs = jobs.map((job) => {
+        const values = membership.get(new URL(job.officialUrl).pathname) ?? [];
+        return {
+          ...job,
+          ...(values.length > 0 ? { employmentType: values.join("; ") } : {}),
+          ...(/^spotlight job$/i.test(job.department ?? "") ? { department: null } : {}),
+        };
+      });
+    }
     return {
-      status: "failed",
-      responseStatus: null,
+      status: "succeeded",
+      responseStatus: first.status,
+      completeListing: total <= 2_000 && jobs.length === total,
+      jobs,
+      ...(facets.length > 0 ? { facets } : {}),
+      error: null,
+    };
+  } catch (error) {
+    const responseStatus = typeof error === "object" && error && "responseStatus" in error
+      ? Number((error as { responseStatus: unknown }).responseStatus)
+      : null;
+    return {
+      status: responseStatus != null && isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+      responseStatus,
       completeListing: false,
       jobs: [],
       error: error instanceof Error ? error.message : "Unknown crawler error.",

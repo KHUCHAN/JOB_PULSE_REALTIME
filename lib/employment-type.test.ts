@@ -23,4 +23,9 @@ describe("employment type normalization", () => {
     expect(workdayBulletFields(["R2615860", "Data & AI", "Intern"]))
       .toEqual({ employmentType: "Internship", department: "Data & AI" });
   });
+
+  it("does not treat Workday promotion labels as a department", () => {
+    expect(workdayBulletFields(["Spotlight Job", "JR0281513"]))
+      .toEqual({ employmentType: null, department: null });
+  });
 });

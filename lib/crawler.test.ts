@@ -956,6 +956,77 @@ describe("crawlSource", () => {
     });
   });
 
+  it("attaches Intel's authoritative Workday internship and time-type facets to each job", async () => {
+    const requests: Array<Record<string, string[]>> = [];
+    const fetcher: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as { appliedFacets: Record<string, string[]> };
+      requests.push(body.appliedFacets);
+      const facetKey = Object.keys(body.appliedFacets)[0];
+      const facetValue = facetKey ? body.appliedFacets[facetKey][0] : null;
+      const jobs = facetValue === "student"
+        ? [{ title: "AI Product Analyst student", externalPath: "/job/AI-Product-Analyst-student_JR0001" }]
+        : facetValue === "contract"
+          ? []
+          : facetValue === "part"
+            ? [{ title: "AI Product Analyst student", externalPath: "/job/AI-Product-Analyst-student_JR0001" }]
+            : [{
+              title: "AI Product Analyst student",
+              externalPath: "/job/AI-Product-Analyst-student_JR0001",
+              bulletFields: ["JR0001"],
+            }, {
+              title: "Silicon Engineer",
+              externalPath: "/job/Silicon-Engineer_JR0002",
+              bulletFields: ["Spotlight Job", "JR0002"],
+            }];
+      return new Response(JSON.stringify({
+        total: jobs.length,
+        jobPostings: jobs,
+        ...(!facetKey ? { facets: [{
+          descriptor: "Job Type",
+          facetParameter: "workerSubType",
+          values: [
+            { descriptor: "Regular", id: "regular", count: 1 },
+            { descriptor: "Intel Contract Employee (Fixed Term)", id: "contract", count: 0 },
+            { descriptor: "Student / Intern (Fixed Term)", id: "student", count: 1 },
+          ],
+        }, {
+          descriptor: "Time Type",
+          facetParameter: "timeType",
+          values: [
+            { descriptor: "Full time", id: "full", count: 1 },
+            { descriptor: "Part time", id: "part", count: 1 },
+          ],
+        }] } : {}),
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+
+    const result = await crawlSource({
+      id: "p5-0947-intel",
+      company: "Intel",
+      postingUrl: "https://intel.wd1.myworkdayjobs.com/External",
+      adapter: "workday",
+    }, fetcher, new Date("2026-08-10T00:00:00Z"));
+
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        title: "AI Product Analyst student",
+        employmentType: "Internship; Part-time",
+        department: null,
+      }),
+      expect.objectContaining({
+        title: "Silicon Engineer",
+        employmentType: "Full-time",
+        department: null,
+      }),
+    ]);
+    expect(requests).toEqual(expect.arrayContaining([
+      {},
+      { workerSubType: ["student"] },
+      { timeType: ["part"] },
+    ]));
+  });
+
   it("uses Ashby's public job-board API and normalizes every open role", async () => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input) => {
@@ -1315,7 +1386,7 @@ describe("crawlSource", () => {
     expect(result).toEqual(expect.objectContaining({
       status: "succeeded",
       responseStatus: 200,
-      completeListing: true,
+      completeListing: false,
       jobs: [expect.objectContaining({
         externalId: "JR-100",
         title: "Security Engineer",

@@ -52,6 +52,8 @@ export const looksLikeRequisitionId = (value: string): boolean =>
 export function workdayBulletFields(fields: string[] | undefined): { employmentType: string | null; department: string | null } {
   const values = (fields ?? []).map((value) => value.trim()).filter(Boolean);
   const employmentType = values.map(normalizeEmploymentType).find((value): value is string => value !== null) ?? null;
-  const department = values.find((value) => !looksLikeRequisitionId(value) && normalizeEmploymentType(value) === null) ?? null;
+  const department = values.find((value) => !looksLikeRequisitionId(value)
+    && normalizeEmploymentType(value) === null
+    && !/^(?:spotlight|featured) job$/i.test(value)) ?? null;
   return { employmentType, department };
 }

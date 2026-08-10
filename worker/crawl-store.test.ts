@@ -180,6 +180,28 @@ describe("D1CrawlStore enriched job persistence", () => {
     ]);
   });
 
+  it("indexes authoritative ATS internship types even when the title only says student", async () => {
+    const { db, calls } = fakeDb();
+    const store = new D1CrawlStore(db);
+    const job = {
+      externalId: "student-1", title: "AI Product Analyst student", company: "Intel", location: "Israel, Haifa",
+      arrangement: "onsite" as const, employmentType: "Internship; Full-time", summary: null,
+      officialUrl: "https://jobs.example/student-1", publishedAt: null,
+    } as CrawledJob;
+
+    await store.syncJobs("source-1", [job], false);
+
+    const jobsInsert = calls.find((call) => call.sql.includes("INSERT INTO jobs"));
+    expect(JSON.parse(String(jobsInsert?.values[0]))[0]).toEqual(expect.objectContaining({
+      employmentType: "Internship / Full-time",
+      programKeys: ["internship"],
+    }));
+    const insert = calls.find((call) => call.sql.includes("'program:' ||"));
+    expect(JSON.parse(String(insert?.values[0]))).toEqual([
+      expect.objectContaining({ programKey: "internship", evidence: "employment_type:internship" }),
+    ]);
+  });
+
   it("upserts source-native facet values observed during the crawl", async () => {
     const { db, calls } = fakeDb();
     const store = new D1CrawlStore(db);

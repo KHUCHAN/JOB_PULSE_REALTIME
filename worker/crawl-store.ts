@@ -194,9 +194,15 @@ export class D1CrawlStore implements CrawlStore {
     const visibleUrls = new Set(jobs.map((job) => job.officialUrl));
     const recordFor = async (job: CrawledJob): Promise<Record<string, unknown>> => {
       const aiData = classifyAiDataJob(job);
-      const programs = classifyJobPrograms(job.title);
+      const titlePrograms = classifyJobPrograms(job.title);
       const employmentType = normalizeEmploymentType(job.employmentType)
-        ?? (programs.keys.length > 0 ? "Internship" : null);
+        ?? (titlePrograms.keys.length > 0 ? "Internship" : null);
+      const programKeys = [...titlePrograms.keys];
+      const programEvidence = { ...titlePrograms.evidence };
+      if (employmentType?.split(" / ").includes("Internship") && !programKeys.includes("internship")) {
+        programKeys.push("internship");
+        programEvidence.internship = "employment_type:internship";
+      }
       const record = boundedJobRecord({
         id: crypto.randomUUID(), sourceId, externalId: job.externalId, title: job.title,
         company: job.company, location: job.location, arrangement: job.arrangement,
@@ -220,7 +226,7 @@ export class D1CrawlStore implements CrawlStore {
         officialUrl: job.officialUrl, publishedAt: job.publishedAt, firstSeenAt: now, lastSeenAt: now,
         topicClassifiedAt: now, aiDataMatched: aiData.matched, aiDataScore: aiData.score,
         aiDataEvidence: aiData.evidence,
-        programKeys: programs.keys, programEvidence: programs.evidence,
+        programKeys, programEvidence,
       });
       const descriptionValue = typeof record.description === "string"
         ? record.description

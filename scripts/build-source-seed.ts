@@ -6,7 +6,9 @@ import { normalizeAuditRecord, type AuditSourceRecord } from "../lib/audit-sourc
 import { publishCatalogArtifacts } from "../lib/catalog-artifact-writer.ts";
 import {
   advanceSeedSnapshot,
+  catalogDeltaSql,
   planSeedMigration,
+  versionedCatalogSql,
   type DrizzleJournal,
 } from "../lib/seed-migration.ts";
 
@@ -68,6 +70,7 @@ const sql = [
   "COMMIT;",
   "",
 ].join("\n");
+const catalogVersion = `sha256:${createHash("sha256").update(sql).digest("hex")}`;
 
 const seedDir = resolve(projectRoot, "db/seed");
 await mkdir(seedDir, { recursive: true });
@@ -86,6 +89,7 @@ const journalGuard: Parameters<typeof publishCatalogArtifacts>[0]["journalGuard"
   expectedContent: journalContent,
 };
 if (createMigration) {
+  const previousSeedSql = await readFile(resolve(seedDir, "sources.sql"), "utf8").catch(() => "");
   const journal = JSON.parse(journalContent) as DrizzleJournal;
   const journalMigrationNames = new Set(journal.entries.map((entry) => `${entry.tag}.sql`));
   const catalogMigrationFiles = (await readdir(migrationDir))
@@ -101,7 +105,12 @@ if (createMigration) {
     }),
   ) + 1;
   reconciliation = { migrationDirectory: migrationDir, metaDirectory: metaDir, nextIndex: nextArtifactIndex };
-  const plan = planSeedMigration({ journal, catalogSqlHistory, nextSql: sql, now: new Date() });
+  const plan = planSeedMigration({
+    journal,
+    catalogSqlHistory,
+    nextSql: versionedCatalogSql(sql, catalogVersion),
+    now: new Date(),
+  });
 
   if (plan) {
     if (plan.previousSnapshotIndex < 0) throw new Error("Cannot create a catalog migration without a Drizzle snapshot.");
@@ -116,7 +125,7 @@ if (createMigration) {
         content: `${JSON.stringify(plan.journal, null, 2)}\n`,
       },
       snapshot: { path: nextSnapshotPath, content: `${JSON.stringify(advanceSeedSnapshot(previousSnapshot, randomUUID()), null, 2)}\n` },
-      sql: { path: resolve(migrationDir, plan.fileName), content: sql },
+      sql: { path: resolve(migrationDir, plan.fileName), content: catalogDeltaSql(previousSeedSql, sql, catalogVersion) },
     };
     migrationMessage = ` Created immutable migration ${plan.fileName}.`;
   } else {

@@ -62,7 +62,7 @@ For a catalog change, refresh the committed seed and create a new immutable data
 npm run db:catalog:refresh -- path/to/batch_1.json path/to/batch_2.json path/to/batch_3.json
 ```
 
-This command refreshes `db/seed/*` and creates the next numbered `drizzle/*_refresh_sources_*.sql` migration only when the generated catalog SQL differs from a committed migration. Commit the migration, its journal update, and its advanced schema snapshot together. Never edit or replace a numbered migration that may already have run in production.
+This command refreshes `db/seed/*` and creates the next numbered `drizzle/*_refresh_sources_*.sql` migration only when the generated catalog differs from the latest committed catalog version. Catalog migrations contain only new or changed idempotent upserts, keeping them below the hosted SQLite statement-size limit. Commit the migration, its journal update, and its advanced schema snapshot together. Never edit or replace a numbered migration that may already have run in production.
 
 Refresh writers are serialized with an ownership lock and a journal compare-and-swap guard. A retry recovers locks owned by a dead process and removes only unjournaled artifacts at the next migration index before publishing a consistent replacement.
 
