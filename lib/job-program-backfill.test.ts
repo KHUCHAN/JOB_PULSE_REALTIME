@@ -35,6 +35,7 @@ describe("backfillJobPrograms", () => {
       INSERT INTO jobs VALUES
         ('a', '2027 Data Science Intern / Co-op', 'open', 'INTERN', CURRENT_TIMESTAMP),
         ('b', '2027 Werkstudent Data Science', 'open', '["Part time","Part time"]', CURRENT_TIMESTAMP),
+        ('bb', '2027 Stagiaire Data Science', 'open', NULL, CURRENT_TIMESTAMP),
         ('c', '2027 Internal Audit Analyst', 'open', 'R244285', CURRENT_TIMESTAMP),
         ('d', '2027 Finance Intern', 'closed', 'INTERN', CURRENT_TIMESTAMP),
         ('e', '2027 Product Internship', 'closed', 'Full-Time', CURRENT_TIMESTAMP);
@@ -43,19 +44,21 @@ describe("backfillJobPrograms", () => {
 
     const db = createD1(sqlite);
     expect(await backfillJobPrograms(db, 2)).toEqual({ processed: 2, matchedJobs: 2, memberships: 3, remaining: 1 });
-    expect(await backfillJobPrograms(db, 2)).toEqual({ processed: 1, matchedJobs: 0, memberships: 0, remaining: 0 });
+    expect(await backfillJobPrograms(db, 2)).toEqual({ processed: 2, matchedJobs: 1, memberships: 1, remaining: 0 });
     expect(sqlite.prepare("SELECT job_id, topic_key FROM job_topics ORDER BY job_id, topic_key").all()).toEqual([
       { job_id: "a", topic_key: "program:coop" },
       { job_id: "a", topic_key: "program:internship" },
       { job_id: "b", topic_key: "program:internship" },
+      { job_id: "bb", topic_key: "program:internship" },
     ]);
-    expect(sqlite.prepare("SELECT id, employment_type FROM jobs WHERE id IN ('a','b','c') ORDER BY id").all()).toEqual([
+    expect(sqlite.prepare("SELECT id, employment_type FROM jobs WHERE id IN ('a','b','bb','c') ORDER BY id").all()).toEqual([
       { id: "a", employment_type: "Internship" },
       { id: "b", employment_type: "Part-time" },
+      { id: "bb", employment_type: "Internship" },
       { id: "c", employment_type: null },
     ]);
     expect(await backfillJobPrograms(db, 2)).toEqual({ processed: 0, matchedJobs: 0, memberships: 0, remaining: 0 });
-    expect(sqlite.prepare("SELECT value FROM catalog_state WHERE key = 'job_program_backfill_cursor'").get())
+    expect(sqlite.prepare("SELECT value FROM catalog_state WHERE key = 'job_program_backfill_cursor_v2'").get())
       .toEqual({ value: "c" });
   });
 });

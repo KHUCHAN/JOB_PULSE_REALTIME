@@ -155,7 +155,7 @@ describe("D1CrawlStore enriched job persistence", () => {
     const store = new D1CrawlStore(db);
     const jobs = [{
       externalId: "intern-1", title: "2027 Machine Learning Intern / Co-op", company: "Acme", location: "Remote",
-      arrangement: "remote" as const, employmentType: "INTERN", summary: "Build models.",
+      arrangement: "remote" as const, employmentType: null, summary: "Build models.",
       officialUrl: "https://jobs.example/intern-1", publishedAt: null,
     }, {
       externalId: "audit-1", title: "2027 Internal Audit Analyst", company: "Acme", location: null,

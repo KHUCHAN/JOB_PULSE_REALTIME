@@ -106,7 +106,8 @@ const derivedFacets = (jobs: CrawledJob[]): CrawledFacet[] => {
     { key: "jobFunction", label: "Job Function", values: (job) => job.jobFunction ? [job.jobFunction] : [] },
     { key: "industry", label: "Industry", values: (job) => job.industry ? [job.industry] : [] },
     { key: "employmentType", label: "Employment Type", values: (job) => {
-      const employmentType = normalizeEmploymentType(job.employmentType);
+      const employmentType = normalizeEmploymentType(job.employmentType)
+        ?? (classifyJobPrograms(job.title).keys.length > 0 ? "Internship" : null);
       return employmentType ? [employmentType] : [];
     } },
     { key: "arrangement", label: "Workplace Type", values: (job) => job.arrangement !== "unknown" ? [job.arrangement] : [] },
@@ -194,10 +195,12 @@ export class D1CrawlStore implements CrawlStore {
     const recordFor = async (job: CrawledJob): Promise<Record<string, unknown>> => {
       const aiData = classifyAiDataJob(job);
       const programs = classifyJobPrograms(job.title);
+      const employmentType = normalizeEmploymentType(job.employmentType)
+        ?? (programs.keys.length > 0 ? "Internship" : null);
       const record = boundedJobRecord({
         id: crypto.randomUUID(), sourceId, externalId: job.externalId, title: job.title,
         company: job.company, location: job.location, arrangement: job.arrangement,
-        employmentType: normalizeEmploymentType(job.employmentType), summary: job.summary, description: job.description ?? null,
+        employmentType, summary: job.summary, description: job.description ?? null,
         responsibilities: job.responsibilities ?? null, qualifications: job.qualifications ?? null,
         skills: job.skills ?? [], department: job.department ?? null, team: job.team ?? null,
         businessUnit: job.businessUnit ?? null, jobFamily: job.jobFamily ?? null,

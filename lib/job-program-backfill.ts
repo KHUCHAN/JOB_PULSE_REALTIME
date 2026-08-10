@@ -3,6 +3,8 @@ import { normalizeEmploymentType } from "./employment-type.ts";
 
 type PendingJobRow = { id: string; title: string; employment_type: string | null };
 
+const BACKFILL_CURSOR_KEY = "job_program_backfill_cursor_v2";
+
 export type JobProgramBackfillResult = {
   processed: number;
   matchedJobs: number;
@@ -22,7 +24,7 @@ export async function backfillJobPrograms(db: D1Database, requestedLimit: number
     SELECT id, title, employment_type
     FROM jobs
     WHERE status = 'open'
-      AND id > coalesce((SELECT value FROM catalog_state WHERE key = 'job_program_backfill_cursor'), '')
+      AND id > coalesce((SELECT value FROM catalog_state WHERE key = '${BACKFILL_CURSOR_KEY}'), '')
     ORDER BY id
     LIMIT ?
   `).bind(limit).all<PendingJobRow>();
@@ -57,9 +59,10 @@ export async function backfillJobPrograms(db: D1Database, requestedLimit: number
     `).bind(JSON.stringify(chunk)).run();
   }
 
-  const normalizedJobs = selected.results.map((job) => ({
+  const normalizedJobs = classified.map(({ job, result }) => ({
     id: job.id,
-    employmentType: normalizeEmploymentType(job.employment_type),
+    employmentType: normalizeEmploymentType(job.employment_type)
+      ?? (result.keys.length > 0 ? "Internship" : null),
   }));
   for (const chunk of chunksOf(normalizedJobs, 1_000)) {
     await db.prepare(`
@@ -75,7 +78,7 @@ export async function backfillJobPrograms(db: D1Database, requestedLimit: number
   if (lastId) {
     await db.prepare(`
       INSERT INTO catalog_state (key, value, updated_at)
-      VALUES ('job_program_backfill_cursor', ?, CURRENT_TIMESTAMP)
+      VALUES ('${BACKFILL_CURSOR_KEY}', ?, CURRENT_TIMESTAMP)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
     `).bind(lastId).run();
   }
