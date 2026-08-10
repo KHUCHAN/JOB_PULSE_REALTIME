@@ -13,7 +13,7 @@ import type {
 } from "../../../lib/domain";
 import { runDueCrawls } from "../../../lib/crawl-runner";
 import { ensureCatalogSeeded, type CatalogSeed } from "../../../lib/catalog-bootstrap";
-import { crawlBatchOptions, recrawlSourceIds } from "../../../lib/crawl-batch-options";
+import { crawlBatchOptions, jobTopicBackfillLimit, recrawlSourceIds } from "../../../lib/crawl-batch-options";
 import { parseJobFilterParams } from "../../../lib/job-filter-query";
 import {
   InvalidJobFilterError,
@@ -23,6 +23,7 @@ import { bindJobSearchStatements } from "../../../lib/job-search-execution";
 import { emptyJobFilterOptions, queryJobFilterOptions } from "../../../lib/job-filter-options";
 import { buildJobSearchPlan, jobDetailProjection } from "../../../lib/job-search-sql";
 import { overviewCountsSql } from "../../../lib/overview-sql";
+import { backfillJobTopics } from "../../../lib/job-topic-backfill";
 import {
   mapCrawlActivity,
   mapJob,
@@ -251,6 +252,10 @@ export async function POST(request: Request): Promise<Response> {
     if (body.action === "crawlBatch") {
       const requested = typeof body.limit === "number" ? body.limit : 4;
       return json(await runDueCrawls(new D1CrawlStore(db()), fetch, new Date(), crawlBatchOptions(requested)));
+    }
+    if (body.action === "backfillJobTopics") {
+      const requested = typeof body.limit === "number" ? body.limit : undefined;
+      return json(await backfillJobTopics(db(), jobTopicBackfillLimit(requested)));
     }
     if (body.action === "recrawlSources") {
       const sourceIds = recrawlSourceIds(body.sourceIds);

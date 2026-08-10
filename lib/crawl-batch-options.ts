@@ -4,6 +4,10 @@ export function crawlBatchOptions(requested: number | undefined): { limit: numbe
   return { limit, concurrency };
 }
 
+export function jobTopicBackfillLimit(requested: number | undefined): number {
+  return Math.max(1, Math.min(500, requested ?? 250));
+}
+
 export function recrawlSourceIds(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return [...new Set(value

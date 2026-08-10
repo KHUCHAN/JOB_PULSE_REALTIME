@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { crawlBatchOptions, recrawlSourceIds } from "./crawl-batch-options";
+import { crawlBatchOptions, jobTopicBackfillLimit, recrawlSourceIds } from "./crawl-batch-options";
 
 describe("remote crawl batch options", () => {
   it("keeps request-driven crawls below the production write-contention ceiling", () => {
@@ -15,5 +15,14 @@ describe("targeted recrawl source IDs", () => {
     expect(recrawlSourceIds([" source-a ", "source-a", "", 42, ...Array.from({ length: 12 }, (_, index) => `source-${index}`)]))
       .toEqual(["source-a", "source-0", "source-1", "source-2"]);
     expect(recrawlSourceIds("source-a")).toEqual([]);
+  });
+});
+
+describe("job topic backfill limits", () => {
+  it("defaults to 250 and caps private backfill requests at 500 jobs", () => {
+    expect(jobTopicBackfillLimit(undefined)).toBe(250);
+    expect(jobTopicBackfillLimit(0)).toBe(1);
+    expect(jobTopicBackfillLimit(250)).toBe(250);
+    expect(jobTopicBackfillLimit(5_000)).toBe(500);
   });
 });
