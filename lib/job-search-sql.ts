@@ -119,7 +119,13 @@ export function buildJobSearchPlan(filters: JobFilters): JobSearchPlan {
     Number.isSafeInteger(year) && year >= 2000 && year <= 2100,
   ))];
   if (recruitingYears.length) {
-    add(`(${recruitingYears.map((year) => `${titleTokens} LIKE '% ${year} %'`).join(" OR ")})`);
+    const yearTopicKeys = recruitingYears.map((year) => `'year:${year}'`);
+    add(`(${recruitingYears.map((year) => `${titleTokens} LIKE '% ${year} %'`).join(" OR ")}
+      OR j.id IN (
+        SELECT selected_year.job_id
+        FROM job_topics selected_year INDEXED BY job_topics_topic_job_idx
+        WHERE selected_year.topic_key IN (${yearTopicKeys.join(", ")})
+      ))`);
   }
 
   const selectedPrograms = asNormalizedValues(filters.programTypes);

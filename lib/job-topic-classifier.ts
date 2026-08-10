@@ -38,6 +38,7 @@ const domainSignals: Signal[] = [
   { key: "data engineering", pattern: /\bdata engineer(?:ing|s)?\b/i },
   { key: "analytics engineering", pattern: /\banalytics? engineer(?:ing|s)?\b/i },
   { key: "data analysis", pattern: /\bdata (?:analysis|analyst|analysts|analytics)\b/i },
+  { key: "data analytics", pattern: /\bdata\s*(?:&(?:amp;)?|and)\s*analytics\b/i },
   { key: "business intelligence", pattern: /\bbusiness intelligence\b/i },
   { key: "ml engineering", pattern: /\bml engineer(?:ing|s)?\b/i },
   { key: "mlops", pattern: /\bmlops\b/i },

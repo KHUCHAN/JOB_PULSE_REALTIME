@@ -2,6 +2,7 @@ import type { CrawlStore, PersistedSource } from "../lib/crawl-runner";
 import type { CrawledFacet, CrawledJob } from "../lib/crawler";
 import { classifyAiDataJob } from "../lib/job-topic-classifier";
 import { classifyJobPrograms } from "../lib/job-program-classifier";
+import { classifyRecruitingYears } from "../lib/job-recruiting-year-classifier";
 import { normalizeEmploymentType } from "../lib/employment-type";
 
 type SourceRow = {
@@ -203,6 +204,15 @@ export class D1CrawlStore implements CrawlStore {
         programKeys.push("internship");
         programEvidence.internship = "employment_type:internship";
       }
+      const recruitingYears = classifyRecruitingYears({
+        title: job.title,
+        summary: job.summary,
+        description: job.description,
+        location: job.location,
+        locationCountry: job.locationCountry,
+        publishedAt: job.publishedAt,
+        programKeys,
+      });
       const record = boundedJobRecord({
         id: crypto.randomUUID(), sourceId, externalId: job.externalId, title: job.title,
         company: job.company, location: job.location, arrangement: job.arrangement,
@@ -227,6 +237,8 @@ export class D1CrawlStore implements CrawlStore {
         topicClassifiedAt: now, aiDataMatched: aiData.matched, aiDataScore: aiData.score,
         aiDataEvidence: aiData.evidence,
         programKeys, programEvidence,
+        recruitingYears: recruitingYears.years,
+        recruitingYearEvidence: recruitingYears.evidence,
       });
       const descriptionValue = typeof record.description === "string"
         ? record.description
@@ -398,6 +410,46 @@ export class D1CrawlStore implements CrawlStore {
         await this.db.prepare(`
           INSERT INTO job_topics (job_id, topic_key, score, evidence, classified_at)
           SELECT jobs.id, 'program:' || json_extract(value, '$.programKey'), 1,
+                 json_array(json_extract(value, '$.evidence')), json_extract(value, '$.classifiedAt')
+          FROM json_each(?)
+          JOIN jobs ON jobs.source_id = json_extract(value, '$.sourceId')
+                   AND jobs.official_url = json_extract(value, '$.officialUrl')
+          WHERE true
+          ON CONFLICT(job_id, topic_key) DO UPDATE SET
+            score = excluded.score,
+            evidence = excluded.evidence,
+            classified_at = excluded.classified_at
+        `).bind(JSON.stringify(chunk)).run();
+      }
+
+      const processedYears = records.map((record) => ({
+        sourceId: record.sourceId,
+        officialUrl: record.officialUrl,
+      }));
+      for (const chunk of chunksByJsonBytes(processedYears, 1_500_000)) {
+        await this.db.prepare(`
+          DELETE FROM job_topics
+          WHERE topic_key LIKE 'year:%' AND job_id IN (
+            SELECT jobs.id
+            FROM json_each(?)
+            JOIN jobs ON jobs.source_id = json_extract(value, '$.sourceId')
+                     AND jobs.official_url = json_extract(value, '$.officialUrl')
+          )
+        `).bind(JSON.stringify(chunk)).run();
+      }
+      const yearMemberships = records.flatMap((record) =>
+        (record.recruitingYears as number[]).map((year) => ({
+          sourceId: record.sourceId,
+          officialUrl: record.officialUrl,
+          year,
+          evidence: (record.recruitingYearEvidence as Record<string, string>)[year],
+          classifiedAt: record.lastSeenAt,
+        }))
+      );
+      for (const chunk of chunksByJsonBytes(yearMemberships, 1_500_000)) {
+        await this.db.prepare(`
+          INSERT INTO job_topics (job_id, topic_key, score, evidence, classified_at)
+          SELECT jobs.id, 'year:' || json_extract(value, '$.year'), 1,
                  json_array(json_extract(value, '$.evidence')), json_extract(value, '$.classifiedAt')
           FROM json_each(?)
           JOIN jobs ON jobs.source_id = json_extract(value, '$.sourceId')

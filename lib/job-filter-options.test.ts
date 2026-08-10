@@ -127,7 +127,8 @@ describe("queryJobFilterOptions", () => {
         ('co-op-spaces', 'program:coop'),
         ('new', 'program:internship'),
         ('new', 'program:coop'),
-        ('closed', 'program:internship');
+        ('closed', 'program:internship'),
+        ('company-001', 'year:2027');
     `);
 
     for (let index = 1; index <= 101; index += 1) {
@@ -146,7 +147,7 @@ describe("queryJobFilterOptions", () => {
     expect(options.companies).toHaveLength(100);
     expect(options.companies).toContainEqual({ value: "Acme", count: 1 });
     expect(options.companies).not.toContainEqual(expect.objectContaining({ value: "Closed Co" }));
-    expect(options.recruitingYears).toEqual([{ value: 2027, count: 3 }]);
+    expect(options.recruitingYears).toEqual([{ value: 2027, count: 4 }]);
     expect(options.programTypes).toEqual(expect.arrayContaining([
       { value: "internship", count: 1 },
       { value: "coop", count: 2 },

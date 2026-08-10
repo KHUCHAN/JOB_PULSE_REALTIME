@@ -1561,6 +1561,47 @@ describe("crawlSource", () => {
     }));
   });
 
+  it("enriches program-like Phenom listings from their official Workday detail endpoint", async () => {
+    const calls: string[] = [];
+    const officialUrl = "https://motorolasolutions.wd5.myworkdayjobs.com/Careers/job/Chicago-IL/Supply-Chain-Applied-AI-Engineering-Intern_R67461";
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.includes("/wday/cxs/")) {
+        return new Response(JSON.stringify({
+          jobPostingInfo: {
+            title: "Supply Chain Applied AI Engineering Intern",
+            jobReqId: "R67461",
+            startDate: "2026-08-07",
+            timeType: "Full time",
+            location: "Chicago, IL",
+            jobDescription: "Build conversational AI and autonomous AI agents using Python, SQL, AI/ML, and NLP.",
+          },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(`
+        <script>phApp.ddo = ${JSON.stringify({ eagerLoadRefineSearch: { data: { totalHits: 1, jobs: [{
+          title: "Supply Chain Applied AI Engineering Intern", jobId: "R67461",
+          location: "Chicago, IL", type: "Internship", applyUrl: officialUrl,
+        }] } } })};</script>
+      `, { status: 200 });
+    };
+
+    const result = await crawlSource({
+      id: "legacy-row-839", company: "Motorola Solutions",
+      postingUrl: "https://www.motorolasolutions.com/en_us/about/careers.html", adapter: "phenom",
+    }, fetcher, new Date("2026-08-10T00:00:00Z"));
+
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "R67461",
+      employmentType: "Internship; Full time",
+      description: expect.stringContaining("autonomous AI agents"),
+      requisitionId: "R67461",
+      publishedAt: "2026-08-07T00:00:00.000Z",
+    })]);
+    expect(calls.some((url) => url.includes("/wday/cxs/motorolasolutions/Careers/job/"))).toBe(true);
+  });
+
   it("paginates Phenom search results and keeps native facets and filter fields", async () => {
     const calls: string[] = [];
     const phenomPage = (from: number) => {

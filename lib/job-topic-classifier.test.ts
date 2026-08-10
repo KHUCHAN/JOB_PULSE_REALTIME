@@ -57,6 +57,26 @@ describe("classifyAiDataJob", () => {
     })).toMatchObject({ matched: true });
   });
 
+  it("classifies an IT internship whose official description lists AI and Data & Analytics tracks", () => {
+    expect(classifyAiDataJob({
+      title: "Intern, Information Technology 2027",
+      description: "Assignments may include Artificial Intelligence, Cloud Engineering, and Data & Analytics.",
+    })).toMatchObject({
+      matched: true,
+      evidence: expect.arrayContaining([
+        "body:artificial intelligence",
+        "body:data analytics",
+      ]),
+    });
+  });
+
+  it("recognizes Workday-encoded Data &amp; Analytics text", () => {
+    expect(classifyAiDataJob({
+      title: "Intern, Information Technology 2027",
+      description: "Assignments include Artificial Intelligence, Cloud Engineering, and Data &amp; Analytics.",
+    })).toMatchObject({ matched: true });
+  });
+
   it.each([
     "Paid Media Manager",
     "Retail Training Manager",

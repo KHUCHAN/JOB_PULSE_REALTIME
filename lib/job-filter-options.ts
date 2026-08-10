@@ -90,6 +90,10 @@ export const filterOptionsSql = `
     )) scalar
     UNION ALL SELECT d.official_url, 'recruitingYears', CAST(y.year AS TEXT)
       FROM deduped d JOIN years y ON d.title_tokens LIKE '% ' || CAST(y.year AS TEXT) || ' %'
+        OR EXISTS (
+          SELECT 1 FROM job_topics jy
+          WHERE jy.job_id = d.id AND jy.topic_key = 'year:' || CAST(y.year AS TEXT)
+        )
     UNION ALL SELECT p.official_url, 'programTypes', program.value
       FROM program_arrays p,
         json_each(CASE WHEN p.title_tokens LIKE '% regular %'

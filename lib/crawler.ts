@@ -1,5 +1,6 @@
 import { jobsFromBrowserAnchors, type BrowserAnchor } from "./browser-job-extractor.ts";
 import { normalizeEmploymentType, workdayBulletFields } from "./employment-type.ts";
+import { classifyJobPrograms } from "./job-program-classifier.ts";
 
 export type CrawlSource = {
   id: string;
@@ -2693,7 +2694,7 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
   }
 }
 
-export async function crawlSource(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
+async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
   if (source.id === "p5-1077-tesla" || source.company === "Tesla") return crawlTesla(source, fetcher);
   if (new URL(source.postingUrl).hostname === "www.metacareers.com") return crawlMetaCareers(source, fetcher);
   if (new URL(source.postingUrl).hostname === "careers.epam.com") return crawlEpam(source, fetcher);
@@ -2761,4 +2762,103 @@ export async function crawlSource(source: CrawlSource, fetcher: typeof fetch, no
       error: error instanceof Error ? error.message : "Unknown crawler error.",
     };
   }
+}
+
+type WorkdayDetailPayload = {
+  jobPostingInfo?: {
+    title?: unknown;
+    jobReqId?: unknown;
+    startDate?: unknown;
+    timeType?: unknown;
+    location?: unknown;
+    additionalLocations?: unknown;
+    jobDescription?: unknown;
+  };
+};
+
+const workdayDetailCandidates = (jobUrl: string): string[] => {
+  let url: URL;
+  try {
+    url = new URL(jobUrl);
+  } catch {
+    return [];
+  }
+  const tenantMatch = url.hostname.match(/^([^.]+)\.wd\d+\.myworkdayjobs\.com$/i);
+  if (!tenantMatch) return [];
+  const segments = url.pathname.split("/").filter(Boolean);
+  const jobIndex = segments.findIndex((segment) => segment.toLocaleLowerCase() === "job");
+  if (jobIndex < 0 || jobIndex === segments.length - 1) return [];
+  const explicitSite = jobIndex > 0 && !/^[a-z]{2}-[A-Z]{2}$/.test(segments[jobIndex - 1])
+    ? segments[jobIndex - 1]
+    : null;
+  const sites = [...new Set([explicitSite, "External", "Careers"].filter((site): site is string => Boolean(site)))];
+  const suffix = segments.slice(jobIndex + 1).map(encodeURIComponent).join("/");
+  return sites.map((site) => new URL(
+    `/wday/cxs/${encodeURIComponent(tenantMatch[1])}/${encodeURIComponent(site)}/job/${suffix}`,
+    url.origin,
+  ).href);
+};
+
+const combinedEmploymentType = (job: CrawledJob, timeType: unknown): string | null => {
+  const values: string[] = [];
+  const add = (value: string | null | undefined) => {
+    const trimmed = value?.trim();
+    if (trimmed && !values.some((existing) => existing.toLocaleLowerCase() === trimmed.toLocaleLowerCase())) values.push(trimmed);
+  };
+  const programs = classifyJobPrograms(job.title);
+  if (programs.keys.length > 0 || normalizeEmploymentType(job.employmentType)?.split(" / ").includes("Internship")) add("Internship");
+  add(asText(timeType));
+  if (values.length === 0) add(job.employmentType);
+  return values.join("; ") || null;
+};
+
+const enrichWorkdayProgramJobs = async (
+  result: SourceCrawlResult,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult> => {
+  if (result.status !== "succeeded" || result.jobs.length === 0) return result;
+  const enriched = [...result.jobs];
+  const targets = result.jobs.flatMap((job, index) => {
+    const indexedAsProgram = classifyJobPrograms(job.title).keys.length > 0
+      || normalizeEmploymentType(job.employmentType)?.split(" / ").includes("Internship");
+    const candidates = indexedAsProgram ? workdayDetailCandidates(job.officialUrl) : [];
+    return candidates.length > 0 ? [{ index, candidates }] : [];
+  }).slice(0, 200);
+
+  const enrichOne = async ({ index, candidates }: { index: number; candidates: string[] }): Promise<void> => {
+    for (const endpoint of candidates) {
+      try {
+        const response = await fetchWithTimeout(fetcher, endpoint, undefined, true, { attempts: 1, timeoutMs: 8_000 });
+        if (!response.ok) continue;
+        const payload = await response.json() as WorkdayDetailPayload;
+        const info = payload.jobPostingInfo;
+        if (!info || typeof info !== "object") continue;
+        const job = enriched[index];
+        const description = plainText(asText(info.jobDescription));
+        const additionalLocations = Array.isArray(info.additionalLocations)
+          ? info.additionalLocations.flatMap((value) => asText(value) ?? [])
+          : [];
+        enriched[index] = {
+          ...job,
+          employmentType: combinedEmploymentType(job, info.timeType),
+          description: description ?? job.description ?? null,
+          requisitionId: asText(info.jobReqId) ?? job.requisitionId ?? job.externalId,
+          location: asText(info.location) ?? job.location,
+          ...(additionalLocations.length > 0 ? { secondaryLocations: additionalLocations } : {}),
+          publishedAt: normalizedDate(info.startDate) ?? job.publishedAt,
+        };
+        return;
+      } catch {
+        // Detail enrichment is optional; the verified listing remains usable.
+      }
+    }
+  };
+  for (let index = 0; index < targets.length; index += 8) {
+    await Promise.all(targets.slice(index, index + 8).map(enrichOne));
+  }
+  return { ...result, jobs: enriched };
+};
+
+export async function crawlSource(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
+  return enrichWorkdayProgramJobs(await crawlSourceBase(source, fetcher, now), fetcher);
 }

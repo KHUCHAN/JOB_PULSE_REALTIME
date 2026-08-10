@@ -202,6 +202,31 @@ describe("D1CrawlStore enriched job persistence", () => {
     ]);
   });
 
+  it("indexes an inferred recruiting year for a US internship posted in the prior fall", async () => {
+    const { db, calls } = fakeDb();
+    const store = new D1CrawlStore(db);
+    const job = {
+      externalId: "R67461", title: "Supply Chain Applied AI Engineering Intern", company: "Motorola Solutions",
+      location: "Chicago, IL", locationCountry: "United States", arrangement: "onsite" as const,
+      employmentType: "Internship; Full time", summary: null,
+      officialUrl: "https://motorolasolutions.wd5.myworkdayjobs.com/Careers/job/Chicago-IL/Supply-Chain-Applied-AI-Engineering-Intern_R67461",
+      publishedAt: "2026-08-07T00:00:00.000Z",
+    } as CrawledJob;
+
+    await store.syncJobs("legacy-row-839", [job], false);
+
+    const jobsInsert = calls.find((call) => call.sql.includes("INSERT INTO jobs"));
+    expect(JSON.parse(String(jobsInsert?.values[0]))[0]).toEqual(expect.objectContaining({
+      recruitingYears: [2027],
+      recruitingYearEvidence: expect.objectContaining({ 2027: "inferred:us-program-posted-h2" }),
+    }));
+    expect(calls.some((call) => call.sql.includes("topic_key LIKE 'year:%'"))).toBe(true);
+    const insert = calls.find((call) => call.sql.includes("'year:' ||"));
+    expect(JSON.parse(String(insert?.values[0]))).toEqual([
+      expect.objectContaining({ year: 2027, evidence: "inferred:us-program-posted-h2" }),
+    ]);
+  });
+
   it("upserts source-native facet values observed during the crawl", async () => {
     const { db, calls } = fakeDb();
     const store = new D1CrawlStore(db);

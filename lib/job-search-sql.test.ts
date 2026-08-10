@@ -89,6 +89,30 @@ describe("parameterized job search SQL", () => {
     expect(plan.bindings).toEqual(["program:internship", "program:coop"]);
   });
 
+  it("matches recruiting-year memberships when the title omits the year", () => {
+    const plan = buildJobSearchPlan({
+      ...defaultJobFilters,
+      recruitingYears: [2027],
+      programTypes: ["internship"],
+    });
+    const output = execFileSync("sqlite3", ["-json", "-batch", ":memory:"], {
+      encoding: "utf8",
+      input: [
+        "CREATE TABLE jobs (id TEXT, company TEXT, title TEXT, official_url TEXT, status TEXT, first_seen_at TEXT);",
+        "CREATE TABLE job_topics (job_id TEXT, topic_key TEXT, PRIMARY KEY(job_id, topic_key));",
+        "CREATE INDEX job_topics_topic_job_idx ON job_topics(topic_key, job_id);",
+        "INSERT INTO jobs VALUES ('motorola','Motorola Solutions','Supply Chain Applied AI Engineering Intern','https://e/R67461','open','2026-08-07');",
+        "INSERT INTO job_topics VALUES ('motorola','program:internship'),('motorola','year:2027');",
+        ".parameter init",
+        ...plan.bindings.map((value, index) => `.parameter set ?${index + 1} ${sqliteLiteral(value)}`),
+        `${plan.countSql};`,
+      ].join("\n"),
+    });
+
+    expect(plan.pageSql).toContain("year:2027");
+    expect(JSON.parse(output)).toEqual([{ total: 1 }]);
+  });
+
   it("uses json_each for skill and language membership", () => {
     const plan = buildJobSearchPlan({
       ...defaultJobFilters,
