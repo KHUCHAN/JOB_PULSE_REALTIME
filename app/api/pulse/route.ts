@@ -13,7 +13,7 @@ import type {
 } from "../../../lib/domain";
 import { runDueCrawls } from "../../../lib/crawl-runner";
 import { ensureCatalogSeeded, type CatalogSeed } from "../../../lib/catalog-bootstrap";
-import { crawlBatchOptions } from "../../../lib/crawl-batch-options";
+import { crawlBatchOptions, recrawlSourceIds } from "../../../lib/crawl-batch-options";
 import { parseJobFilterParams } from "../../../lib/job-filter-query";
 import {
   InvalidJobFilterError,
@@ -256,6 +256,16 @@ export async function POST(request: Request): Promise<Response> {
     if (body.action === "crawlBatch") {
       const requested = typeof body.limit === "number" ? body.limit : 8;
       return json(await runDueCrawls(new D1CrawlStore(db()), fetch, new Date(), crawlBatchOptions(requested)));
+    }
+    if (body.action === "recrawlSources") {
+      const sourceIds = recrawlSourceIds(body.sourceIds);
+      if (sourceIds.length === 0) return json({ error: "At least one source ID is required." }, 400);
+      await db().prepare(`
+        UPDATE sources
+        SET next_crawl_at = '1970-01-01 00:00:00', updated_at = CURRENT_TIMESTAMP
+        WHERE id IN (SELECT value FROM json_each(?))
+      `).bind(JSON.stringify(sourceIds)).run();
+      return json(await runDueCrawls(new D1CrawlStore(db()), fetch, new Date(), crawlBatchOptions(sourceIds.length)));
     }
     return json({ error: "Unknown action." }, 400);
   } catch (error) {
