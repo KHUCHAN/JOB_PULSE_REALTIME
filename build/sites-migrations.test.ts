@@ -9,6 +9,7 @@ describe("Sites migration packaging", () => {
   it("ships the AI/data topic schema without catalog refresh data migrations", () => {
     expect(sitesSchemaMigrationFiles).toContain("0037_ai_data_job_topics.sql");
     expect(sitesSchemaMigrationFiles).toContain("0038_job_topic_backfill_index.sql");
+    expect(sitesSchemaMigrationFiles).toContain("0039_job_filter_options_cache.sql");
     expect(sitesSchemaMigrationFiles.some((file) => file.includes("refresh_sources"))).toBe(false);
   });
 

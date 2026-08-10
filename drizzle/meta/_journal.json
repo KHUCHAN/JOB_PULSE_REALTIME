@@ -274,6 +274,13 @@
       "when": 1786348133746,
       "tag": "0038_job_topic_backfill_index",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "6",
+      "when": 1786349904938,
+      "tag": "0039_job_filter_options_cache",
+      "breakpoints": true
     }
   ]
 }

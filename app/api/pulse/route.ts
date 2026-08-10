@@ -20,7 +20,11 @@ import {
   validateExplicitJobFilterValues,
 } from "../../../lib/job-filter-validation";
 import { bindJobSearchStatements } from "../../../lib/job-search-execution";
-import { queryJobFilterOptions } from "../../../lib/job-filter-options";
+import {
+  queryCachedJobFilterOptions,
+  queryJobFilterOptions,
+  refreshJobFilterOptions,
+} from "../../../lib/job-filter-options";
 import { buildJobSearchPlan, jobDetailProjection } from "../../../lib/job-search-sql";
 import { overviewCountsSql } from "../../../lib/overview-sql";
 import { backfillJobTopics } from "../../../lib/job-topic-backfill";
@@ -56,7 +60,8 @@ let filterOptionsCache: { expiresAt: number; value: Awaited<ReturnType<typeof qu
 
 async function availableFilterOptions(): Promise<Awaited<ReturnType<typeof queryJobFilterOptions>>> {
   if (filterOptionsCache && filterOptionsCache.expiresAt > Date.now()) return filterOptionsCache.value;
-  const value = await queryJobFilterOptions(db());
+  const database = db();
+  const value = await queryCachedJobFilterOptions(database) ?? await queryJobFilterOptions(database);
   filterOptionsCache = { value, expiresAt: Date.now() + 10 * 60 * 1000 };
   return value;
 }
@@ -247,11 +252,22 @@ export async function POST(request: Request): Promise<Response> {
     }
     if (body.action === "crawlBatch") {
       const requested = typeof body.limit === "number" ? body.limit : 4;
-      return json(await runDueCrawls(new D1CrawlStore(db()), fetch, new Date(), crawlBatchOptions(requested)));
+      const database = db();
+      const result = await runDueCrawls(new D1CrawlStore(database), fetch, new Date(), crawlBatchOptions(requested));
+      if (result.attempted === 0) {
+        const refreshed = await refreshJobFilterOptions(database);
+        if (refreshed.refreshed) filterOptionsCache = null;
+      }
+      return json(result);
     }
     if (body.action === "backfillJobTopics") {
       const requested = typeof body.limit === "number" ? body.limit : undefined;
       return json(await backfillJobTopics(db(), jobTopicBackfillLimit(requested)));
+    }
+    if (body.action === "refreshJobFilterOptions") {
+      const result = await refreshJobFilterOptions(db(), { force: true });
+      filterOptionsCache = null;
+      return json(result);
     }
     if (body.action === "recrawlSources") {
       const sourceIds = recrawlSourceIds(body.sourceIds);

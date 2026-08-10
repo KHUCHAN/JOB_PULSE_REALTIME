@@ -1,6 +1,10 @@
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { queryJobFilterOptions } from "./job-filter-options";
+import {
+  queryCachedJobFilterOptions,
+  queryJobFilterOptions,
+  refreshJobFilterOptions,
+} from "./job-filter-options";
 
 const schema = `
   CREATE TABLE jobs (
@@ -35,6 +39,40 @@ const schema = `
     description TEXT
   );
 `;
+
+const createD1 = (sqlite: DatabaseSync, rejectLargeCompound = false): D1Database => {
+  const statement = (sql: string, bindings: SQLInputValue[] = []) => ({
+    bind: (...values: unknown[]) => statement(sql, values as SQLInputValue[]),
+    async all<T>() {
+      if (rejectLargeCompound && (sql.match(/UNION ALL/g) ?? []).length > 5) {
+        throw new Error("D1_ERROR: too many terms in compound SELECT: SQLITE_ERROR");
+      }
+      return { results: sqlite.prepare(sql).all(...bindings) as T[] };
+    },
+    async first<T>() {
+      return (sqlite.prepare(sql).get(...bindings) as T | undefined) ?? null;
+    },
+    async run() {
+      sqlite.prepare(sql).run(...bindings);
+      return { success: true };
+    },
+  });
+  return {
+    prepare: (sql: string) => statement(sql),
+    async batch(statements: D1PreparedStatement[]) {
+      sqlite.exec("BEGIN");
+      try {
+        const results = [];
+        for (const prepared of statements) results.push(await prepared.run());
+        sqlite.exec("COMMIT");
+        return results;
+      } catch (error) {
+        sqlite.exec("ROLLBACK");
+        throw error;
+      }
+    },
+  } as unknown as D1Database;
+};
 
 describe("queryJobFilterOptions", () => {
   it("aggregates deduplicated open jobs in SQLite and returns at most 100 values per filter", async () => {
@@ -88,18 +126,7 @@ describe("queryJobFilterOptions", () => {
       );
     }
 
-    const d1 = {
-      prepare(sql: string) {
-        return {
-          async all<T>() {
-            if ((sql.match(/UNION ALL/g) ?? []).length > 5) {
-              throw new Error("D1_ERROR: too many terms in compound SELECT: SQLITE_ERROR");
-            }
-            return { results: sqlite.prepare(sql).all() as T[] };
-          },
-        };
-      },
-    } as unknown as D1Database;
+    const d1 = createD1(sqlite, true);
 
     const options = await queryJobFilterOptions(d1);
 
@@ -119,6 +146,43 @@ describe("queryJobFilterOptions", () => {
     expect(options.employmentTypes).toContainEqual({ value: "Full-Time", count: 1 });
     expect(options.employmentTypes).toContainEqual({ value: "internship", count: 2 });
     expect(options.employmentTypes).not.toContainEqual(expect.objectContaining({ value: "Phoenix" }));
+    sqlite.close();
+  });
+
+  it("serves a durable snapshot without recomputing every facet on a cold request", async () => {
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec(schema);
+    sqlite.exec(`
+      CREATE TABLE job_filter_options_cache (
+        filter_key TEXT NOT NULL,
+        normalized_value TEXT NOT NULL,
+        value_label TEXT NOT NULL,
+        job_count INTEGER NOT NULL,
+        refreshed_at TEXT NOT NULL,
+        PRIMARY KEY (filter_key, normalized_value)
+      );
+    `);
+    const insert = sqlite.prepare(`
+      INSERT INTO jobs (
+        id, company, title, skills, languages, official_url, status, first_seen_at
+      ) VALUES (?, ?, ?, '[]', '[]', ?, 'open', ?)
+    `);
+    insert.run("acme", "Acme", "Data Engineer", "https://example.com/acme", "2026-08-10");
+    const d1 = createD1(sqlite);
+
+    const first = await refreshJobFilterOptions(d1, { force: true });
+    expect(first).toEqual(expect.objectContaining({ refreshed: true }));
+    expect((await queryCachedJobFilterOptions(d1))?.companies).toContainEqual({ value: "Acme", count: 1 });
+
+    insert.run("beta", "Beta", "ML Engineer", "https://example.com/beta", "2026-08-10");
+    await expect(refreshJobFilterOptions(d1, {
+      now: new Date("2099-01-01T00:00:00.000Z"),
+      maxAgeMs: Number.MAX_SAFE_INTEGER,
+    })).resolves.toEqual(expect.objectContaining({ refreshed: false }));
+    expect((await queryCachedJobFilterOptions(d1))?.companies).not.toContainEqual(expect.objectContaining({ value: "Beta" }));
+
+    await refreshJobFilterOptions(d1, { force: true });
+    expect((await queryCachedJobFilterOptions(d1))?.companies).toContainEqual({ value: "Beta", count: 1 });
     sqlite.close();
   });
 });

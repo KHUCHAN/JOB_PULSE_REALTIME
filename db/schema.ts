@@ -153,6 +153,16 @@ export const sourceFacets = sqliteTable("source_facets", {
   index("source_facets_source_key_idx").on(table.sourceId, table.facetKey),
 ]);
 
+export const jobFilterOptionsCache = sqliteTable("job_filter_options_cache", {
+  filterKey: text("filter_key").notNull(),
+  normalizedValue: text("normalized_value").notNull(),
+  valueLabel: text("value_label").notNull(),
+  jobCount: integer("job_count").notNull(),
+  refreshedAt: text("refreshed_at").notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.filterKey, table.normalizedValue] }),
+]);
+
 export const keywords = sqliteTable("keywords", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),

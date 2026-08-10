@@ -20,6 +20,12 @@ type FilterOptionCountRow = {
   job_count: number;
 };
 
+export type JobFilterOptionsRefreshResult = {
+  refreshed: boolean;
+  optionCount: number;
+  refreshedAt: string | null;
+};
+
 const titleTokens = titleTokensSql("j.title");
 
 export const filterOptionsSql = `
@@ -124,15 +130,72 @@ export const filterOptionsSql = `
   ORDER BY filter_key ASC, facet_rank ASC
 `;
 
-export async function queryJobFilterOptions(database: D1Database): Promise<JobFilterOptions> {
-  const result = await database.prepare(filterOptionsSql).all<FilterOptionCountRow>();
+const cachedFilterOptionsSql = `
+  SELECT filter_key, value_label, job_count
+  FROM job_filter_options_cache
+  ORDER BY filter_key ASC, job_count DESC, value_label COLLATE NOCASE ASC
+`;
+
+const refreshFilterOptionsSql = `
+  INSERT INTO job_filter_options_cache (
+    filter_key, normalized_value, value_label, job_count, refreshed_at
+  )
+  SELECT filter_key, lower(trim(value_label)), value_label, job_count, CURRENT_TIMESTAMP
+  FROM (${filterOptionsSql})
+`;
+
+const rowsToOptions = (rows: FilterOptionCountRow[]): JobFilterOptions => {
   const options = emptyJobFilterOptions();
   const validKeys = new Set<keyof JobFilterOptions>(jobFilterOptionKeys);
-  for (const row of result.results) {
+  for (const row of rows) {
     if (!validKeys.has(row.filter_key)) continue;
     const value = row.filter_key === "recruitingYears" ? Number(row.value_label) : row.value_label;
     if (typeof value === "number" && !Number.isSafeInteger(value)) continue;
     options[row.filter_key].push({ value, count: Number(row.job_count) } as never);
   }
   return options;
+};
+
+export async function queryJobFilterOptions(database: D1Database): Promise<JobFilterOptions> {
+  const result = await database.prepare(filterOptionsSql).all<FilterOptionCountRow>();
+  return rowsToOptions(result.results);
+}
+
+export async function queryCachedJobFilterOptions(database: D1Database): Promise<JobFilterOptions | null> {
+  const result = await database.prepare(cachedFilterOptionsSql).all<FilterOptionCountRow>();
+  return result.results.length > 0 ? rowsToOptions(result.results) : null;
+}
+
+export async function refreshJobFilterOptions(
+  database: D1Database,
+  options: { force?: boolean; maxAgeMs?: number; now?: Date } = {},
+): Promise<JobFilterOptionsRefreshResult> {
+  const latest = await database.prepare(`
+    SELECT max(refreshed_at) AS refreshed_at, count(*) AS option_count
+    FROM job_filter_options_cache
+  `).first<{ refreshed_at: string | null; option_count: number }>();
+  const now = options.now ?? new Date();
+  const maxAgeMs = options.maxAgeMs ?? 60 * 60 * 1000;
+  const refreshedAtMs = latest?.refreshed_at ? Date.parse(`${latest.refreshed_at.replace(" ", "T")}Z`) : Number.NaN;
+  if (!options.force && Number.isFinite(refreshedAtMs) && now.getTime() - refreshedAtMs < maxAgeMs) {
+    return {
+      refreshed: false,
+      optionCount: Number(latest?.option_count ?? 0),
+      refreshedAt: latest?.refreshed_at ?? null,
+    };
+  }
+
+  await database.batch([
+    database.prepare("DELETE FROM job_filter_options_cache"),
+    database.prepare(refreshFilterOptionsSql),
+  ]);
+  const refreshed = await database.prepare(`
+    SELECT max(refreshed_at) AS refreshed_at, count(*) AS option_count
+    FROM job_filter_options_cache
+  `).first<{ refreshed_at: string | null; option_count: number }>();
+  return {
+    refreshed: true,
+    optionCount: Number(refreshed?.option_count ?? 0),
+    refreshedAt: refreshed?.refreshed_at ?? null,
+  };
 }

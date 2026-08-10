@@ -23,6 +23,12 @@ describe("filterable job schema", () => {
     ]));
   });
 
+  it("models a durable filter-option cache for fast first loads", () => {
+    expect(Object.keys(getTableColumns(schema.jobFilterOptionsCache))).toEqual(expect.arrayContaining([
+      "filterKey", "normalizedValue", "valueLabel", "jobCount", "refreshedAt",
+    ]));
+  });
+
   it("stores a per-source facet generation lease for overlap-safe cleanup", () => {
     expect(Object.keys(getTableColumns(schema.sources))).toContain("facetSyncGeneration");
   });
