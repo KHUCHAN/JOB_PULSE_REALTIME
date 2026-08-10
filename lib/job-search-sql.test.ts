@@ -14,8 +14,21 @@ const executePlan = (sql: string, bindings: unknown[], limit?: number, offset?: 
   const output = execFileSync("sqlite3", ["-json", "-batch", ":memory:"], {
     encoding: "utf8",
     input: [
-      "CREATE TABLE jobs (id TEXT NOT NULL, company TEXT NOT NULL, official_url TEXT NOT NULL, status TEXT NOT NULL, first_seen_at TEXT NOT NULL);",
-      "INSERT INTO jobs VALUES ('older-duplicate', 'Acme, Inc.', 'https://acme.example/jobs/1', 'open', '2026-08-01T00:00:00.000Z'), ('newer-duplicate', 'Acme, Inc.', 'https://acme.example/jobs/1', 'open', '2026-08-03T00:00:00.000Z'), ('second-page', 'Acme, Inc.', 'https://acme.example/jobs/2', 'open', '2026-08-02T00:00:00.000Z'), ('not-a-match', 'Acme', 'https://acme.example/jobs/3', 'open', '2026-08-04T00:00:00.000Z');",
+      `CREATE TABLE jobs (
+        id TEXT NOT NULL, source_id TEXT NOT NULL DEFAULT 'source', company TEXT NOT NULL,
+        title TEXT NOT NULL DEFAULT 'Role', location TEXT, arrangement TEXT NOT NULL DEFAULT 'onsite',
+        summary TEXT, official_url TEXT NOT NULL, status TEXT NOT NULL, first_seen_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL DEFAULT '2026-08-09T00:00:00.000Z', review_state TEXT,
+        employment_type TEXT, description TEXT, responsibilities TEXT, qualifications TEXT, skills TEXT,
+        department TEXT, team TEXT, business_unit TEXT, job_family TEXT, job_function TEXT, industry TEXT,
+        office TEXT, secondary_locations TEXT, location_city TEXT, location_state TEXT, location_country TEXT,
+        location_postal_code TEXT, latitude REAL, longitude REAL, salary_min REAL, salary_max REAL,
+        salary_currency TEXT, salary_interval TEXT, benefits TEXT, education_requirements TEXT,
+        experience_requirements TEXT, experience_level TEXT, shift_schedule TEXT, travel_requirements TEXT,
+        security_clearance TEXT, languages TEXT, requisition_id TEXT, apply_url TEXT, source_posted_text TEXT,
+        source_updated_at TEXT, valid_through TEXT, published_at TEXT, raw_payload TEXT
+      );`,
+      "INSERT INTO jobs (id, company, official_url, status, first_seen_at) VALUES ('older-duplicate', 'Acme, Inc.', 'https://acme.example/jobs/1', 'open', '2026-08-01T00:00:00.000Z'), ('newer-duplicate', 'Acme, Inc.', 'https://acme.example/jobs/1', 'open', '2026-08-03T00:00:00.000Z'), ('second-page', 'Acme, Inc.', 'https://acme.example/jobs/2', 'open', '2026-08-02T00:00:00.000Z'), ('not-a-match', 'Acme', 'https://acme.example/jobs/3', 'open', '2026-08-04T00:00:00.000Z');",
       ".parameter init",
       parameters,
       `${sql};`,
@@ -32,9 +45,10 @@ describe("parameterized job search SQL", () => {
       programTypes: ["internship", "coop"],
     });
 
-    expect(plan.pageSql).toContain("lower(j.title)");
-    expect(plan.pageSql).toContain("row_number() OVER (PARTITION BY j.official_url");
-    expect(plan.bindings).toEqual(expect.arrayContaining(["%2027%", "%intern%", "%co-op%"]));
+    expect(plan.pageSql).toContain("lower(");
+    expect(plan.pageSql).toContain("% 2027 %");
+    expect(plan.pageSql).toContain("% co op %");
+    expect(plan.bindings).not.toEqual(expect.arrayContaining(["%2027%", "%intern%"]));
   });
 
   it("uses json_each for skill and language membership", () => {
@@ -59,11 +73,11 @@ describe("parameterized job search SQL", () => {
       pageSize: 25,
     });
 
-    expect(plan.pageSql).toMatch(/\(lower\(j\.company\) = \? OR lower\(j\.company\) = \?\)/);
-    expect(plan.pageSql).toContain("lower(j.location_city) = ?");
+    expect(plan.pageSql).toMatch(/\(j\.company = \? OR j\.company = \?\)/);
+    expect(plan.pageSql).toContain("j.location_city = ?");
     expect(plan.pageSql).toContain("j.salary_max >= ?");
     expect(plan.pageSql).toContain("j.salary_min <= ?");
-    expect(plan.bindings).toEqual(["acme", "globex", "seattle", 100_000, 160_000]);
+    expect(plan.bindings).toEqual(["Acme", "Globex", "Seattle", 100_000, 160_000]);
     expect(plan.limit).toBe(25);
     expect(plan.offset).toBe(50);
   });
@@ -82,13 +96,86 @@ describe("parameterized job search SQL", () => {
     expect(plan.bindings).toEqual(['"fraud"* AND "risk"*', "saved"]);
   });
 
-  it("ranks only lightweight identity fields and counts unique URLs without a window", () => {
+  it("deduplicates before filtering and uses an explicit projection", () => {
     const plan = buildJobSearchPlan(defaultJobFilters);
 
-    expect(plan.pageSql).toContain("SELECT j.id, j.official_url, j.first_seen_at, j.company");
-    expect(plan.pageSql).toContain("JOIN jobs j ON j.id = selected.id");
-    expect(plan.countSql).toContain("count(DISTINCT j.official_url)");
+    expect(plan.pageSql).toContain("NOT EXISTS");
+    expect(plan.pageSql).not.toContain("SELECT j.*");
+    expect(plan.pageSql).not.toContain("raw_payload");
+    expect(plan.pageSql).not.toContain("AS description");
+    expect(plan.pageSql).toContain("AS summary");
+    expect(plan.countSql).toContain("count(*)");
     expect(plan.countSql).not.toContain("row_number() OVER");
+  });
+
+  it("applies filters only to the canonical latest open row", () => {
+    const setup = buildJobSearchPlan({ ...defaultJobFilters, companies: ["Older Co"] });
+    const sql = setup.countSql.replace("FROM jobs j", `FROM jobs j`);
+    const parameters = setup.bindings.map((value, index) =>
+      `.parameter set ?${index + 1} ${sqliteLiteral(value)}`,
+    ).join("\n");
+    const output = execFileSync("sqlite3", ["-json", "-batch", ":memory:"], {
+      encoding: "utf8",
+      input: [
+        "CREATE TABLE jobs (id TEXT, company TEXT, official_url TEXT, status TEXT, first_seen_at TEXT);",
+        "INSERT INTO jobs VALUES ('old','Older Co','https://example.com/1','open','2026-01-01'),('new','Newer Co','https://example.com/1','open','2026-02-01');",
+        ".parameter init",
+        parameters,
+        `${sql};`,
+      ].join("\n"),
+    });
+
+    expect(JSON.parse(output)).toEqual([{ total: 0 }]);
+  });
+
+  it("uses boundary-aware title tokens and direct ISO date/index predicates", () => {
+    const plan = buildJobSearchPlan({
+      ...defaultJobFilters,
+      companies: ["Acme, Inc."],
+      recruitingYears: [2027],
+      programTypes: ["internship", "coop"],
+      postedAfter: "2026-08-01",
+      postedBefore: "2026-08-09",
+    });
+
+    expect(plan.pageSql).toContain("j.company = ?");
+    expect(plan.pageSql).not.toContain("lower(j.company)");
+    expect(plan.pageSql).toContain("j.published_at >= ?");
+    expect(plan.pageSql).toContain("j.published_at < ?");
+    expect(plan.pageSql).not.toContain("date(j.published_at)");
+    expect(plan.bindings).toEqual(expect.arrayContaining([
+      "Acme, Inc.", "2026-08-01", "2026-08-10",
+    ]));
+  });
+
+  it("matches exact 2027 intern and all co-op spellings without internal/international false positives", () => {
+    const count = (program: "internship" | "coop") => {
+      const plan = buildJobSearchPlan({
+        ...defaultJobFilters,
+        recruitingYears: [2027],
+        programTypes: [program],
+      });
+      const output = execFileSync("sqlite3", ["-json", "-batch", ":memory:"], {
+        encoding: "utf8",
+        input: [
+          "CREATE TABLE jobs (id TEXT, company TEXT, title TEXT, official_url TEXT, status TEXT, first_seen_at TEXT);",
+          `INSERT INTO jobs VALUES
+            ('intern','A','2027 Software Intern','https://e/1','open','2026-01-01'),
+            ('internship','A','2027 Product Internship','https://e/2','open','2026-01-01'),
+            ('internal','A','2027 Internal Audit','https://e/3','open','2026-01-01'),
+            ('international','A','2027 International Analyst','https://e/4','open','2026-01-01'),
+            ('hyphen','A','2027 Finance Co-op','https://e/5','open','2026-01-01'),
+            ('space','A','2027 Product Co Op','https://e/6','open','2026-01-01'),
+            ('joined','A','2027 Engineering Coop','https://e/7','open','2026-01-01'),
+            ('year-boundary','A','12027 Software Intern','https://e/8','open','2026-01-01');`,
+          `${plan.countSql};`,
+        ].join("\n"),
+      });
+      return JSON.parse(output) as Array<{ total: number }>;
+    };
+
+    expect(count("internship")).toEqual([{ total: 2 }]);
+    expect(count("coop")).toEqual([{ total: 3 }]);
   });
 
   it("treats free-text location wildcard characters literally", () => {

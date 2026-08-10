@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { getTableColumns } from "drizzle-orm";
 import { getTableConfig } from "drizzle-orm/sqlite-core";
 import { describe, expect, it } from "vitest";
@@ -41,5 +43,14 @@ describe("filterable job schema", () => {
       ["jobs_salary_currency_min_max_idx", ["salary_currency", "salary_min", "salary_max"]],
       ["jobs_status_url_seen_company_id_idx", ["status", "official_url", "first_seen_at", "company", "id"]],
     ]));
+  });
+
+  it("keeps immutable, correctly chained snapshots for the search performance migration", () => {
+    const before = JSON.parse(readFileSync(join(process.cwd(), "drizzle/meta/0031_snapshot.json"), "utf8"));
+    const after = JSON.parse(readFileSync(join(process.cwd(), "drizzle/meta/0032_snapshot.json"), "utf8"));
+
+    expect(before.tables.jobs.indexes).not.toHaveProperty("jobs_status_url_seen_company_id_idx");
+    expect(after.prevId).toBe(before.id);
+    expect(after.tables.jobs.indexes).toHaveProperty("jobs_status_url_seen_company_id_idx");
   });
 });

@@ -76,10 +76,9 @@ const cloneDefaults = (): JobFilters => ({
   ),
 });
 
-const normalizeValues = (values: string[]): string[] => {
+const normalizeAtomicValues = (values: string[]): string[] => {
   const seen = new Set<string>();
-  return values.flatMap((value) => value.split(","))
-    .map((value) => value.trim())
+  return values.map((value) => value.trim())
     .filter((value) => {
       const normalized = value.toLocaleLowerCase();
       if (!normalized || seen.has(normalized)) return false;
@@ -88,8 +87,11 @@ const normalizeValues = (values: string[]): string[] => {
     });
 };
 
+const normalizeDelimitedValues = (values: string[]): string[] =>
+  normalizeAtomicValues(values.flatMap((value) => value.split(",")));
+
 const normalizeEnumValues = <T extends string>(values: string[] | undefined, allowed: Set<T>): T[] =>
-  normalizeValues(values ?? [])
+  normalizeDelimitedValues(values ?? [])
     .map((value) => value.toLocaleLowerCase())
     .filter((value): value is T => allowed.has(value as T));
 
@@ -121,7 +123,7 @@ const parseDate = (value: string | null): string => {
 };
 
 const appendValues = (params: URLSearchParams, key: string, values: string[] | undefined) => {
-  for (const value of normalizeValues(values ?? [])) params.append(key, value);
+  for (const value of normalizeAtomicValues(values ?? [])) params.append(key, value);
 };
 
 export function parseJobFilterParams(input: URLSearchParams): JobFilters {
@@ -140,10 +142,10 @@ export function parseJobFilterParams(input: URLSearchParams): JobFilters {
   }
 
   for (const [parameter, property] of arrayKeys) {
-    (filters[property] as string[]) = normalizeValues(input.getAll(parameter));
+    (filters[property] as string[]) = normalizeAtomicValues(input.getAll(parameter));
   }
 
-  filters.recruitingYears = normalizeValues(input.getAll("year"))
+  filters.recruitingYears = normalizeDelimitedValues(input.getAll("year"))
     .map((value) => parseInteger(value))
     .filter((value): value is number => value !== undefined && value >= 2000 && value <= 2100)
     .filter((value, index, values) => values.indexOf(value) === index);
@@ -211,7 +213,7 @@ export function serializeJobFilters(filters: JobFilters): URLSearchParams {
 export function activeFilterCount(filters: JobFilters): number {
   const normalized = { ...defaultJobFilters, ...filters };
   const arrayFilterCount = arrayKeys.reduce(
-    (count, [, property]) => count + Number(normalizeValues(
+    (count, [, property]) => count + Number(normalizeAtomicValues(
       normalized[property] as string[] | undefined ?? [],
     ).length > 0),
     0,

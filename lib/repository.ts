@@ -22,7 +22,7 @@ export interface JobPulseRepository {
   getOverview(): Promise<OverviewSnapshot>;
   searchJobs(filters?: Partial<JobFilters>): Promise<RichJobSearchResult>;
   listJobs(filters?: Partial<JobFilters>): Promise<RichJobPosting[]>;
-  getJob(jobId: string): Promise<JobPosting | null>;
+  getJob(jobId: string): Promise<RichJobPosting | null>;
   updateJobState(jobId: string, state: JobState): Promise<JobPosting>;
   listSources(health?: SourceRecord["health"] | "all"): Promise<SourceRecord[]>;
   listKeywords(): Promise<KeywordRule[]>;

@@ -1,5 +1,6 @@
 import type { JobFilters } from "./domain";
 import { ftsQuery } from "./job-search";
+import { titleTokensSql } from "./job-title-tokens";
 
 export interface JobSearchPlan {
   pageSql: string;
@@ -12,9 +13,17 @@ export interface JobSearchPlan {
 const asValues = (values: string[] | undefined): string[] => {
   const seen = new Set<string>();
   return (values ?? [])
-    .map((value) => value.trim().toLocaleLowerCase())
-    .filter((value) => Boolean(value) && !seen.has(value) && Boolean(seen.add(value)));
+    .map((value) => value.trim())
+    .filter((value) => {
+      const normalized = value.toLocaleLowerCase();
+      if (!normalized || seen.has(normalized)) return false;
+      seen.add(normalized);
+      return true;
+    });
 };
+
+const asNormalizedValues = (values: string[] | undefined): string[] =>
+  asValues(values).map((value) => value.toLocaleLowerCase());
 
 const validPageSize = (value: number | undefined): number =>
   Number.isSafeInteger(value) && value! >= 1 && value! <= 100 ? value! : 50;
@@ -30,6 +39,35 @@ const escapeLike = (value: string): string => value
   .replaceAll("%", "\\%")
   .replaceAll("_", "\\_");
 
+const dayAfter = (value: string): string => {
+  const date = new Date(`${value}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().slice(0, 10);
+};
+
+const jobDetailColumns = [
+  "id", "source_id", "company", "title", "location", "arrangement", "summary",
+  "official_url", "first_seen_at", "last_seen_at", "review_state", "employment_type",
+  "description", "responsibilities", "qualifications", "skills", "department", "team",
+  "business_unit", "job_family", "job_function", "industry", "office", "secondary_locations",
+  "location_city", "location_state", "location_country", "location_postal_code", "latitude",
+  "longitude", "salary_min", "salary_max", "salary_currency", "salary_interval", "benefits",
+  "education_requirements", "experience_requirements", "experience_level", "shift_schedule",
+  "travel_requirements", "security_clearance", "languages", "requisition_id", "apply_url",
+  "source_posted_text", "source_updated_at", "valid_through", "published_at",
+] as const;
+
+export const jobDetailProjection = (alias = "j"): string =>
+  jobDetailColumns.map((column) => `${alias}.${column} AS ${column}`).join(",\n       ");
+
+const jobListProjection = [
+  "j.id AS id", "j.source_id AS source_id", "j.company AS company", "j.title AS title",
+  "j.location AS location", "j.arrangement AS arrangement",
+  "substr(coalesce(j.summary, j.description), 1, 1200) AS summary",
+  "j.official_url AS official_url", "j.first_seen_at AS first_seen_at",
+  "j.last_seen_at AS last_seen_at", "j.review_state AS review_state",
+].join(",\n       ");
+
 export function buildJobSearchPlan(filters: JobFilters): JobSearchPlan {
   const clauses = ["j.status = 'open'"];
   const bindings: unknown[] = [];
@@ -39,10 +77,10 @@ export function buildJobSearchPlan(filters: JobFilters): JobSearchPlan {
   };
   const addAnyEquals = (column: string, values: string[] | undefined) => {
     const normalized = asValues(values);
-    if (normalized.length) add(`(${normalized.map(() => `lower(${column}) = ?`).join(" OR ")})`, normalized);
+    if (normalized.length) add(`(${normalized.map(() => `${column} = ?`).join(" OR ")})`, normalized);
   };
   const addJsonMembership = (column: string, values: string[] | undefined) => {
-    const normalized = asValues(values);
+    const normalized = asNormalizedValues(values);
     if (normalized.length) {
       add(`(${normalized.map(() =>
         `EXISTS (SELECT 1 FROM json_each(${column}) AS value WHERE lower(value.value) = ?)`
@@ -65,36 +103,33 @@ export function buildJobSearchPlan(filters: JobFilters): JobSearchPlan {
   if (filters.arrangement && filters.arrangement !== "all") add("j.arrangement = ?", [filters.arrangement]);
   addAnyEquals("j.employment_type", filters.employmentTypes);
 
+  const titleTokens = titleTokensSql("j.title");
   const recruitingYears = [...new Set((filters.recruitingYears ?? []).filter((year) =>
     Number.isSafeInteger(year) && year >= 2000 && year <= 2100,
   ))];
   if (recruitingYears.length) {
-    add(`(${recruitingYears.map(() => "lower(j.title) LIKE ?").join(" OR ")})`, recruitingYears.map((year) => `%${year}%`));
+    add(`(${recruitingYears.map((year) => `${titleTokens} LIKE '% ${year} %'`).join(" OR ")})`);
   }
 
   const programClauses: string[] = [];
-  const programBindings: string[] = [];
-  for (const program of asValues(filters.programTypes)) {
+  for (const program of asNormalizedValues(filters.programTypes)) {
     if (program === "internship") {
-      programClauses.push("lower(j.title) LIKE ?");
-      programBindings.push("%intern%");
+      programClauses.push(`(${titleTokens} LIKE '% intern %' OR ${titleTokens} LIKE '% internship %')`);
     } else if (program === "coop") {
-      programClauses.push("(lower(j.title) LIKE ? OR lower(j.title) LIKE ?)");
-      programBindings.push("%co-op%", "%coop%");
+      programClauses.push(`(${titleTokens} LIKE '% co op %' OR ${titleTokens} LIKE '% coop %')`);
     } else if (program === "regular") {
-      programClauses.push("lower(j.title) LIKE ?");
-      programBindings.push("%regular%");
+      programClauses.push(`${titleTokens} LIKE '% regular %'`);
     }
   }
-  if (programClauses.length) add(`(${programClauses.join(" OR ")})`, programBindings);
+  if (programClauses.length) add(`(${programClauses.join(" OR ")})`);
 
-  const seasons = asValues(filters.seasons);
+  const seasons = asNormalizedValues(filters.seasons);
   if (seasons.length) {
-    add(`(${seasons.map(() => "lower(j.title) LIKE ?").join(" OR ")})`, seasons.map((season) => `%${season}%`));
+    add(`(${seasons.map((season) => `${titleTokens} LIKE '% ${escapeLike(season)} %'`).join(" OR ")})`);
   }
 
-  if (filters.postedAfter) add("date(j.published_at) >= date(?)", [filters.postedAfter]);
-  if (filters.postedBefore) add("date(j.published_at) <= date(?)", [filters.postedBefore]);
+  if (filters.postedAfter) add("j.published_at >= ?", [filters.postedAfter]);
+  if (filters.postedBefore) add("j.published_at < ?", [dayAfter(filters.postedBefore)]);
 
   addAnyEquals("j.department", filters.departments);
   addAnyEquals("j.team", filters.teams);
@@ -118,26 +153,26 @@ export function buildJobSearchPlan(filters: JobFilters): JobSearchPlan {
   addAnyEquals("j.security_clearance", filters.securityClearances);
   addJsonMembership("j.languages", filters.languages);
 
-  const rankedCte = `WITH ranked AS (
-  SELECT j.id, j.official_url, j.first_seen_at, j.company,
-         row_number() OVER (PARTITION BY j.official_url ORDER BY j.first_seen_at DESC, j.company ASC, j.id ASC) AS dedupe_rank
-  FROM jobs j
-  WHERE ${clauses.join(" AND ")}
-) , selected AS (
-  SELECT id, first_seen_at, company FROM ranked
-  WHERE dedupe_rank = 1
-  ORDER BY first_seen_at DESC, company ASC, id ASC
-  LIMIT ? OFFSET ?
-)`;
+  clauses.splice(1, 0, `NOT EXISTS (
+    SELECT 1 FROM jobs newer
+    WHERE newer.status = 'open'
+      AND newer.official_url = j.official_url
+      AND (
+        newer.first_seen_at > j.first_seen_at
+        OR (newer.first_seen_at = j.first_seen_at AND newer.company < j.company)
+        OR (newer.first_seen_at = j.first_seen_at AND newer.company = j.company AND newer.id < j.id)
+      )
+  )`);
   const limit = validPageSize(filters.pageSize);
   const offset = (validPage(filters.page) - 1) * limit;
 
   return {
-    pageSql: `${rankedCte}
-SELECT j.* FROM selected
-JOIN jobs j ON j.id = selected.id
-ORDER BY selected.first_seen_at DESC, selected.company ASC, selected.id ASC`,
-    countSql: `SELECT count(DISTINCT j.official_url) AS total
+    pageSql: `SELECT ${jobListProjection}
+FROM jobs j
+WHERE ${clauses.join(" AND ")}
+ORDER BY j.first_seen_at DESC, j.company ASC, j.id ASC
+LIMIT ? OFFSET ?`,
+    countSql: `SELECT count(*) AS total
 FROM jobs j
 WHERE ${clauses.join(" AND ")}`,
     bindings,

@@ -21,7 +21,7 @@ import {
 } from "../../../lib/job-filter-validation";
 import { bindJobSearchStatements } from "../../../lib/job-search-execution";
 import { emptyJobFilterOptions, queryJobFilterOptions } from "../../../lib/job-filter-options";
-import { buildJobSearchPlan } from "../../../lib/job-search-sql";
+import { buildJobSearchPlan, jobDetailProjection } from "../../../lib/job-search-sql";
 import {
   mapCrawlActivity,
   mapJob,
@@ -197,10 +197,8 @@ export async function GET(request: Request): Promise<Response> {
     if (resource === "jobs") return json(await jobsFor(url));
     if (resource === "job") {
       const row = await db().prepare(`
-        SELECT id, source_id, company, title, location, arrangement,
-               substr(coalesce(summary, description), 1, 1200) AS summary,
-               official_url, first_seen_at, last_seen_at, review_state
-        FROM jobs WHERE id = ?
+        SELECT ${jobDetailProjection("j")}
+        FROM jobs j WHERE j.id = ?
       `).bind(url.searchParams.get("id")).first<JobViewRow>();
       return json(row ? mapJob(row) : null, row ? 200 : 404);
     }

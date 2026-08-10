@@ -42,7 +42,7 @@ export function JobsScreen({
   const [filters, setFilters] = useState<JobFilters>(() => filtersFromLocation(initialQuery, initialSearchParams));
   const [search, setSearch] = useState(() => filtersFromLocation(initialQuery, initialSearchParams).query);
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedJob, setSelectedJob] = useState<RichJobPosting | null>(null);
   const [message, setMessage] = useState("");
   const lastTrigger = useRef<HTMLButtonElement | null>(null);
 
@@ -64,7 +64,6 @@ export function JobsScreen({
   );
   const result = query.data;
   const jobs = result?.items ?? [];
-  const selectedJob = jobs.find((job) => job.id === selectedId) ?? null;
   const total = result?.total ?? 0;
   const page = result?.page ?? filters.page ?? 1;
   const pageSize = result?.pageSize ?? filters.pageSize ?? 50;
@@ -93,19 +92,26 @@ export function JobsScreen({
     setSearch("");
   };
 
-  const openDetails = (job: RichJobPosting, event: MouseEvent<HTMLButtonElement>) => {
+  const openDetails = async (job: RichJobPosting, event: MouseEvent<HTMLButtonElement>) => {
     lastTrigger.current = event.currentTarget;
-    setSelectedId(job.id);
+    setSelectedJob(job);
+    try {
+      const detail = await repository.getJob(job.id);
+      if (detail) setSelectedJob((current) => current?.id === job.id ? detail : current);
+    } catch {
+      setMessage("Full role details could not be loaded. The official posting is still available.");
+    }
   };
 
   const closeDetails = () => {
-    setSelectedId(null);
+    setSelectedJob(null);
     window.setTimeout(() => lastTrigger.current?.focus(), 0);
   };
 
   const changeState = async (state: JobState) => {
     if (!selectedJob) return;
     await mutate(() => repository.updateJobState(selectedJob.id, state));
+    setSelectedJob((current) => current ? { ...current, status: state } : null);
     setMessage(`${demoMode ? "Demo data · " : ""}${selectedJob.title} marked ${state}.`);
   };
 
@@ -150,7 +156,7 @@ export function JobsScreen({
                       <td><b className="match-score">{job.matchScore}%</b><span>{job.matchedTerms.join(" · ")}</span></td>
                       <td>{formatRelativeDate(job.firstSeenAt)}</td>
                       <td><StatusBadge status={job.status} /></td>
-                      <td><button className="row-action" type="button" aria-label={`View ${job.title} details`} onClick={(event) => openDetails(job, event)}><ArrowUpRight size={16} aria-hidden="true" /></button></td>
+                      <td><button className="row-action" type="button" aria-label={`View ${job.title} details`} onClick={(event) => void openDetails(job, event)}><ArrowUpRight size={16} aria-hidden="true" /></button></td>
                     </tr>
                   ))}
                 </tbody>
@@ -162,7 +168,7 @@ export function JobsScreen({
                 <article className="mobile-job-card" key={job.id}>
                   <div className="mobile-job-top"><span className="company-avatar">{job.company.slice(0, 1)}</span><div><strong>{job.title}</strong><span>{job.company}</span></div><StatusBadge status={job.status} /></div>
                   <p>{job.location} · {job.arrangement}</p>
-                  <div className="mobile-job-bottom"><span><b>{job.matchScore}%</b> match</span><button className="button secondary" type="button" aria-label={`View ${job.title} details`} onClick={(event) => openDetails(job, event)}>Details <ArrowUpRight size={15} /></button></div>
+                  <div className="mobile-job-bottom"><span><b>{job.matchScore}%</b> match</span><button className="button secondary" type="button" aria-label={`View ${job.title} details`} onClick={(event) => void openDetails(job, event)}>Details <ArrowUpRight size={15} /></button></div>
                 </article>
               ))}
             </div>

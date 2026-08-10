@@ -19,6 +19,19 @@ describe("job filter query codec", () => {
     expect(serializeJobFilters(filters).toString()).toContain("page=3");
   });
 
+  it("round-trips comma-containing free-text facet values atomically", () => {
+    const filters = {
+      ...defaultJobFilters,
+      companies: ["Bain & Company — AI, Insights & Solutions (AIS) / Bain Vector"],
+      skills: ["C++, SQL"],
+    };
+
+    const parsed = parseJobFilterParams(serializeJobFilters(filters));
+
+    expect(parsed.companies).toEqual(filters.companies);
+    expect(parsed.skills).toEqual(filters.skills);
+  });
+
   it("drops invalid numeric, date, and enum values", () => {
     const filters = parseJobFilterParams(new URLSearchParams(
       "year=nope&program=contract&page=-1&pageSize=999&postedAfter=tomorrow",

@@ -54,6 +54,21 @@ describe("queryJobFilterOptions", () => {
       "https://example.com/jobs/1", "open", "2026-01-01", "x".repeat(1_000_000),
     );
     insert.run(
+      "co-op-spaces", "Space Co", "2027 Product Co Op", null, null, null, null,
+      null, "internship", null, "[]", "[]",
+      "https://example.com/jobs/co-op-spaces", "open", "2026-02-02", null,
+    );
+    insert.run(
+      "false-internal", "Audit Co", "Internal Audit 2027", null, null, null, null,
+      null, "regular", null, "[]", "[]",
+      "https://example.com/jobs/false-internal", "open", "2026-02-03", null,
+    );
+    insert.run(
+      "false-international", "Global Co", "International Analyst 12027", null, null, null, null,
+      null, "regular", null, "[]", "[]",
+      "https://example.com/jobs/false-international", "open", "2026-02-04", null,
+    );
+    insert.run(
       "new", "Acme", "2027 Software Intern Co-op", "New York, NY", "New York", "NY", "US",
       "remote", "internship", "Engineering", '["TypeScript","SQL"]', '["English"]',
       "https://example.com/jobs/1", "open", "2026-02-01", "x".repeat(1_000_000),
@@ -91,10 +106,10 @@ describe("queryJobFilterOptions", () => {
     expect(options.companies).toHaveLength(100);
     expect(options.companies).toContainEqual({ value: "Acme", count: 1 });
     expect(options.companies).not.toContainEqual(expect.objectContaining({ value: "Closed Co" }));
-    expect(options.recruitingYears).toEqual([{ value: 2027, count: 1 }]);
+    expect(options.recruitingYears).toEqual([{ value: 2027, count: 3 }]);
     expect(options.programTypes).toEqual(expect.arrayContaining([
       { value: "internship", count: 1 },
-      { value: "coop", count: 1 },
+      { value: "coop", count: 2 },
     ]));
     expect(options.skills).toEqual(expect.arrayContaining([
       { value: "SQL", count: 1 },
@@ -102,7 +117,7 @@ describe("queryJobFilterOptions", () => {
     ]));
     expect(options.languages).toEqual([{ value: "English", count: 1 }]);
     expect(options.employmentTypes).toContainEqual({ value: "Full-Time", count: 1 });
-    expect(options.employmentTypes).toContainEqual({ value: "internship", count: 1 });
+    expect(options.employmentTypes).toContainEqual({ value: "internship", count: 2 });
     expect(options.employmentTypes).not.toContainEqual(expect.objectContaining({ value: "Phoenix" }));
     sqlite.close();
   });

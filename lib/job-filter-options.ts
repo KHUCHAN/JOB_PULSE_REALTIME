@@ -1,4 +1,5 @@
 import type { JobFilterOptions } from "./domain";
+import { titleTokensSql } from "./job-title-tokens";
 
 export const jobFilterOptionKeys = [
   "companies", "locations", "cities", "states", "countries", "arrangements",
@@ -19,15 +20,18 @@ type FilterOptionCountRow = {
   job_count: number;
 };
 
+const titleTokens = titleTokensSql("j.title");
+
 export const filterOptionsSql = `
   WITH RECURSIVE
   years(year) AS (
     VALUES (2000)
-    UNION ALL SELECT year + 1 FROM years WHERE year < 2099
+    UNION ALL SELECT year + 1 FROM years WHERE year < 2100
   ),
   seasons(season) AS (VALUES ('spring'), ('summer'), ('fall'), ('winter')),
-  programs(program, needle, alternate) AS (
-    VALUES ('internship', 'intern', NULL), ('coop', 'co-op', 'coop'), ('regular', 'regular', NULL)
+  programs(program, needle) AS (
+    VALUES ('internship', 'intern'), ('internship', 'internship'),
+           ('coop', 'co op'), ('coop', 'coop'), ('regular', 'regular')
   ),
   ranked AS (
     SELECT
@@ -37,6 +41,7 @@ export const filterOptionsSql = `
       j.industry, j.office, j.skills, j.experience_level, j.salary_currency,
       j.salary_interval, j.education_requirements, j.shift_schedule,
       j.travel_requirements, j.security_clearance, j.languages,
+      ${titleTokens} AS title_tokens,
       row_number() OVER (
         PARTITION BY j.official_url
         ORDER BY j.first_seen_at DESC, j.company ASC, j.id ASC
@@ -73,13 +78,12 @@ export const filterOptionsSql = `
       'securityClearances', d.security_clearance
     )) scalar
     UNION ALL SELECT d.official_url, 'recruitingYears', CAST(y.year AS TEXT)
-      FROM deduped d JOIN years y ON instr(d.title, CAST(y.year AS TEXT)) > 0
+      FROM deduped d JOIN years y ON d.title_tokens LIKE '% ' || CAST(y.year AS TEXT) || ' %'
     UNION ALL SELECT d.official_url, 'programTypes', p.program
       FROM deduped d JOIN programs p
-        ON instr(lower(d.title), p.needle) > 0
-        OR (p.alternate IS NOT NULL AND instr(lower(d.title), p.alternate) > 0)
+        ON d.title_tokens LIKE '% ' || p.needle || ' %'
     UNION ALL SELECT d.official_url, 'seasons', s.season
-      FROM deduped d JOIN seasons s ON instr(lower(d.title), s.season) > 0
+      FROM deduped d JOIN seasons s ON d.title_tokens LIKE '% ' || s.season || ' %'
     UNION ALL SELECT d.official_url, arrays.key, CAST(item.value AS TEXT)
       FROM deduped d,
         json_each(json_object(
