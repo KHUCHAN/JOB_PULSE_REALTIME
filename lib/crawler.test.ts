@@ -1534,11 +1534,11 @@ describe("crawlSource", () => {
     }));
   });
 
-  it("extracts public Phenom jobs embedded in a careers search page", async () => {
+  it("extracts public Phenom jobs and rejects malformed non-string titles", async () => {
     const fetcher: typeof fetch = async () => new Response(`
       <script>var phApp = phApp || {}; phApp.ddo = {"eagerLoadRefineSearch":{"data":{"totalHits":2,"jobs":[
         {"title":"AI Engineer","jobId":"R42","location":"Remote, United States","type":"Full time","descriptionTeaser":"Build useful AI.","applyUrl":"https://jobs.example/apply/R42","postedDate":"2026-08-08T00:00:00.000+0000"},
-        {"title":"Incomplete"}
+        {"title":{"en":"Malformed"},"applyUrl":"https://jobs.example/apply/broken"}
       ]}}};</script>
     `, { status: 200 });
 

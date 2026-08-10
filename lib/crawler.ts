@@ -1036,7 +1036,8 @@ const phenomJobs = (html: string, source: CrawlSource): PhenomPage | null => {
   const normalizedJobs = jobs.flatMap((value) => {
     if (!value || typeof value !== "object") return [];
     const job = value as PhenomJob;
-    if (!job.title || !job.applyUrl) return [];
+    if (typeof job.title !== "string" || !job.title.trim()
+      || typeof job.applyUrl !== "string" || !job.applyUrl.trim()) return [];
     const workplace = `${job.checkRemote ?? ""} ${job.location ?? ""}`.toLowerCase();
     const latitude = typeof job.latitude === "number" ? job.latitude : Number.parseFloat(job.latitude ?? "");
     const longitude = typeof job.longitude === "number" ? job.longitude : Number.parseFloat(job.longitude ?? "");
