@@ -21,7 +21,10 @@ const internshipRules: ProgramRule[] = [
   { label: "externship", pattern: /(?:^|[^\p{L}\p{N}])extern(?:s|ships?)?(?=$|[^\p{L}\p{N}])/u },
   { label: "working student", pattern: /(?:^|[^\p{L}\p{N}])working student(?=$|[^\p{L}\p{N}])/u },
   { label: "student worker", pattern: /(?:^|[^\p{L}\p{N}])(?:student worker|student researcher)(?=$|[^\p{L}\p{N}])/u },
+  { label: "student trainee", pattern: /(?:^|[^\p{L}\p{N}])(?:(?:student|industrial|summer|vacation) trainee|traineeship)(?=$|[^\p{L}\p{N}])/u },
+  { label: "summer student", pattern: /(?:^|[^\p{L}\p{N}])(?:summer student|vacation employment)(?=$|[^\p{L}\p{N}])/u },
   { label: "placement", pattern: /(?:^|[^\p{L}\p{N}])(?:industrial placement|placement student|student placement|placement year|sandwich placement|year in industry|industrial attachment)(?=$|[^\p{L}\p{N}])/u },
+  { label: "work placement", pattern: /(?:^|[^\p{L}\p{N}])(?:work experience placement|work[- ]integrated learning|professional experience year|industry[- ]based learning|student work placement(?: program)?)(?=$|[^\p{L}\p{N}])/u },
   { label: "summer analyst", pattern: /(?:^|[^\p{L}\p{N}])summer (?:analyst|associate)(?=$|[^\p{L}\p{N}])/u },
   { label: "vacation program", pattern: /(?:^|[^\p{L}\p{N}])(?:vacation scheme|vacationer(?: program)?|summer clerk|vacation clerk)(?=$|[^\p{L}\p{N}])/u },
   { label: "cadetship", pattern: /(?:^|[^\p{L}\p{N}])cadetship(?=$|[^\p{L}\p{N}])/u },
@@ -29,7 +32,9 @@ const internshipRules: ProgramRule[] = [
   { label: "werkstudent", pattern: /(?:^|[^\p{L}\p{N}])werkstudent(?:in)?(?=$|[^\p{L}\p{N}])/u },
   { label: "praktikum", pattern: /(?:^|[^\p{L}\p{N}])(?:praktik(?:um|ant(?:in)?)?|praktyk(?:ant|i))(?=$|[^\p{L}\p{N}])/u },
   { label: "stagiaire", pattern: /(?:^|[^\p{L}\p{N}])(?:stagiaire|alternan(?:t|ce)|cesure)(?=$|[^\p{L}\p{N}])/u },
+  { label: "stagiair", pattern: /(?:^|[^\p{L}\p{N}])(?:stagiair|stagiu|stagiar)(?=$|[^\p{L}\p{N}])/u },
   { label: "stage (FR/NL)", pattern: /^(?!(?:stage\s*[-:]?\s*)(?:manager|hand|crew|technician|tech|carpenter|operations|production|lighting|audio|director|supervisor|lead|setup|labor|rigging)(?:$|[^\p{L}\p{N}]))(?:stage\s*[-:]?\s*\p{L}|(?:afstudeer|meewerk)stage)/u },
+  { label: "stage delimited (FR/IT)", pattern: /^(?!.*\b(?:early|growth|late|seed|clinical|development|life)\s*(?:-\s*)?stage\b).*(?:\s[-|/(]\s*)stage(?=$|[^\p{L}\p{N}])/u },
   { label: "estagio", pattern: /(?:^|[^\p{L}\p{N}])estagi(?:o|ari[oa])(?=$|[^\p{L}\p{N}])/u },
   { label: "practicante", pattern: /(?:^|[^\p{L}\p{N}])(?:practicas|practicante|pasantia|pasante|becari[oa])(?=$|[^\p{L}\p{N}])/u },
   { label: "tirocinio", pattern: /(?:^|[^\p{L}\p{N}])(?:tirocinio|tirocinante|stagista)(?=$|[^\p{L}\p{N}])/u },
@@ -38,6 +43,12 @@ const internshipRules: ProgramRule[] = [
   { label: "stajyer", pattern: /(?:^|[^\p{L}\p{N}])stajyer(?=$|[^\p{L}\p{N}])/u },
   { label: "gyakornok", pattern: /(?:^|[^\p{L}\p{N}])gyakornok(?=$|[^\p{L}\p{N}])/u },
   { label: "стажер", pattern: /стажер/u },
+  { label: "стажировка", pattern: /стажировк/u },
+  { label: "praksa", pattern: /(?:^|[^\p{L}\p{N}])praksa(?=$|[^\p{L}\p{N}])/u },
+  { label: "πρακτικη ασκηση", pattern: /πρακτικη ασκηση/u },
+  { label: "magang", pattern: /(?:^|[^\p{L}\p{N}])magang(?=$|[^\p{L}\p{N}])/u },
+  { label: "thuc tap sinh", pattern: /(?:^|[^\p{L}\p{N}])thuc tap sinh(?=$|[^\p{L}\p{N}])/u },
+  { label: "ฝึกงาน", pattern: /(?:ฝึกงาน|ฝกงาน)/u },
   { label: "インターン", pattern: /インターン/u },
   { label: "인턴", pattern: /인턴/u },
   { label: "实习", pattern: /(?:实习|實習)/u },
@@ -45,7 +56,8 @@ const internshipRules: ProgramRule[] = [
 
 const coopRules: ProgramRule[] = [
   { label: "co-op", pattern: /(?:^|[^\p{L}\p{N}])(?:co(?:\s*-\s*|\s+)op|coop)(?=$|[^\p{L}\p{N}])/u },
-  { label: "cooperative education", pattern: /(?:^|[^\p{L}\p{N}])cooperative educat(?:ion|ional)(?=$|[^\p{L}\p{N}])/u },
+  { label: "cooperative education", pattern: /(?:^|[^\p{L}\p{N}])co(?:\s*-\s*|\s*)operative educat(?:ion|ional)(?=$|[^\p{L}\p{N}])/u },
+  { label: "work term", pattern: /(?:^|[^\p{L}\p{N}])(?:cooperative )?work term student(?=$|[^\p{L}\p{N}])/u },
 ];
 
 const firstMatch = (title: string, rules: ProgramRule[]): ProgramRule | undefined =>

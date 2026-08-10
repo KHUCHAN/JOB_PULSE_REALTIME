@@ -3,7 +3,7 @@ import { normalizeEmploymentType } from "./employment-type.ts";
 
 type PendingJobRow = { id: string; title: string; employment_type: string | null };
 
-const BACKFILL_CURSOR_KEY = "job_program_backfill_cursor_v2";
+const BACKFILL_CURSOR_KEY = "job_program_backfill_cursor_v3";
 
 export type JobProgramBackfillResult = {
   processed: number;

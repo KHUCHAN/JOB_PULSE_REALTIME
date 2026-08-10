@@ -58,7 +58,7 @@ describe("backfillJobPrograms", () => {
       { id: "c", employment_type: null },
     ]);
     expect(await backfillJobPrograms(db, 2)).toEqual({ processed: 0, matchedJobs: 0, memberships: 0, remaining: 0 });
-    expect(sqlite.prepare("SELECT value FROM catalog_state WHERE key = 'job_program_backfill_cursor_v2'").get())
+    expect(sqlite.prepare("SELECT value FROM catalog_state WHERE key = 'job_program_backfill_cursor_v3'").get())
       .toEqual({ value: "c" });
   });
 });
