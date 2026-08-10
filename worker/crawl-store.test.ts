@@ -172,8 +172,8 @@ describe("D1CrawlStore enriched job persistence", () => {
       programKeys: ["internship", "coop"],
     }));
     expect(jobRecords[1].employmentType).toBeUndefined();
-    expect(calls.some((call) => call.sql.includes("DELETE FROM job_programs"))).toBe(true);
-    const insert = calls.find((call) => call.sql.includes("INSERT INTO job_programs"));
+    expect(calls.some((call) => call.sql.includes("topic_key LIKE 'program:%'"))).toBe(true);
+    const insert = calls.find((call) => call.sql.includes("'program:' ||"));
     expect(JSON.parse(String(insert?.values[0]))).toEqual([
       expect.objectContaining({ programKey: "internship", evidence: "title:intern" }),
       expect.objectContaining({ programKey: "coop", evidence: "title:co-op" }),

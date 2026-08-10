@@ -137,17 +137,6 @@ export const jobTopics = sqliteTable("job_topics", {
   index("job_topics_topic_job_idx").on(table.topicKey, table.jobId),
 ]);
 
-export const jobPrograms = sqliteTable("job_programs", {
-  jobId: text("job_id").notNull().references(() => jobs.id, { onDelete: "cascade" }),
-  programKey: text("program_key", { enum: ["internship", "coop"] }).notNull(),
-  evidence: text("evidence").notNull(),
-  classifiedAt: text("classified_at").notNull(),
-}, (table) => [
-  primaryKey({ columns: [table.jobId, table.programKey] }),
-  index("job_programs_program_job_idx").on(table.programKey, table.jobId),
-  index("job_programs_job_program_idx").on(table.jobId, table.programKey),
-]);
-
 export const sourceFacets = sqliteTable("source_facets", {
   id: text("id").primaryKey(),
   sourceId: text("source_id").notNull().references(() => sources.id, { onDelete: "cascade" }),

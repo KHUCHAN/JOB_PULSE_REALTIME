@@ -124,16 +124,17 @@ export function buildJobSearchPlan(filters: JobFilters): JobSearchPlan {
 
   const selectedPrograms = asNormalizedValues(filters.programTypes);
   const indexedPrograms = selectedPrograms.filter((program) => program === "internship" || program === "coop");
+  const programTopicKeys = indexedPrograms.map((program) => `program:${program}`);
   const programClauses: string[] = [];
   if (indexedPrograms.length > 0) {
     programClauses.push(`j.id IN (
       SELECT selected_program.job_id
-      FROM job_programs selected_program INDEXED BY job_programs_program_job_idx
-      WHERE selected_program.program_key IN (${indexedPrograms.map(() => "?").join(", ")})
+      FROM job_topics selected_program INDEXED BY job_topics_topic_job_idx
+      WHERE selected_program.topic_key IN (${programTopicKeys.map(() => "?").join(", ")})
     )`);
   }
   if (selectedPrograms.includes("regular")) programClauses.push(`${titleTokens} LIKE '% regular %'`);
-  if (programClauses.length) add(`(${programClauses.join(" OR ")})`, indexedPrograms);
+  if (programClauses.length) add(`(${programClauses.join(" OR ")})`, programTopicKeys);
 
   const seasons = asNormalizedValues(filters.seasons);
   if (seasons.length) {

@@ -26,10 +26,10 @@ describe("backfillJobPrograms", () => {
         id TEXT PRIMARY KEY, title TEXT NOT NULL, status TEXT NOT NULL, employment_type TEXT,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       );
-      CREATE TABLE job_programs (
+      CREATE TABLE job_topics (
         job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
-        program_key TEXT NOT NULL, evidence TEXT NOT NULL, classified_at TEXT NOT NULL,
-        PRIMARY KEY (job_id, program_key)
+        topic_key TEXT NOT NULL, score INTEGER NOT NULL, evidence TEXT NOT NULL, classified_at TEXT NOT NULL,
+        PRIMARY KEY (job_id, topic_key)
       );
       CREATE TABLE catalog_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT);
       INSERT INTO jobs VALUES
@@ -38,16 +38,16 @@ describe("backfillJobPrograms", () => {
         ('c', '2027 Internal Audit Analyst', 'open', 'R244285', CURRENT_TIMESTAMP),
         ('d', '2027 Finance Intern', 'closed', 'INTERN', CURRENT_TIMESTAMP),
         ('e', '2027 Product Internship', 'closed', 'Full-Time', CURRENT_TIMESTAMP);
-      INSERT INTO job_programs VALUES ('c', 'internship', 'stale', '2026-08-09');
+      INSERT INTO job_topics VALUES ('c', 'program:internship', 1, '["stale"]', '2026-08-09');
     `);
 
     const db = createD1(sqlite);
     expect(await backfillJobPrograms(db, 2)).toEqual({ processed: 2, matchedJobs: 2, memberships: 3, remaining: 1 });
     expect(await backfillJobPrograms(db, 2)).toEqual({ processed: 1, matchedJobs: 0, memberships: 0, remaining: 0 });
-    expect(sqlite.prepare("SELECT job_id, program_key FROM job_programs ORDER BY job_id, program_key").all()).toEqual([
-      { job_id: "a", program_key: "coop" },
-      { job_id: "a", program_key: "internship" },
-      { job_id: "b", program_key: "internship" },
+    expect(sqlite.prepare("SELECT job_id, topic_key FROM job_topics ORDER BY job_id, topic_key").all()).toEqual([
+      { job_id: "a", topic_key: "program:coop" },
+      { job_id: "a", topic_key: "program:internship" },
+      { job_id: "b", topic_key: "program:internship" },
     ]);
     expect(sqlite.prepare("SELECT id, employment_type FROM jobs WHERE id IN ('a','b','c') ORDER BY id").all()).toEqual([
       { id: "a", employment_type: "Internship" },

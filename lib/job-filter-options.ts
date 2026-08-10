@@ -57,9 +57,9 @@ export const filterOptionsSql = `
   program_arrays AS (
     SELECT d.official_url, d.title_tokens,
       coalesce((
-        SELECT json_group_array(jp.program_key)
-        FROM job_programs jp INDEXED BY job_programs_job_program_idx
-        WHERE jp.job_id = d.id
+        SELECT json_group_array(substr(jp.topic_key, length('program:') + 1))
+        FROM job_topics jp
+        WHERE jp.job_id = d.id AND jp.topic_key LIKE 'program:%'
       ), '[]') AS program_keys
     FROM deduped d
   ),

@@ -32,7 +32,8 @@ export async function backfillJobPrograms(db: D1Database, requestedLimit: number
 
   for (const chunk of chunksOf(ids, 1_000)) {
     await db.prepare(`
-      DELETE FROM job_programs WHERE job_id IN (SELECT value FROM json_each(?))
+      DELETE FROM job_topics
+      WHERE topic_key LIKE 'program:%' AND job_id IN (SELECT value FROM json_each(?))
     `).bind(JSON.stringify(chunk)).run();
   }
 
@@ -44,12 +45,13 @@ export async function backfillJobPrograms(db: D1Database, requestedLimit: number
   })));
   for (const chunk of chunksOf(memberships, 500)) {
     await db.prepare(`
-      INSERT INTO job_programs (job_id, program_key, evidence, classified_at)
-      SELECT json_extract(value, '$.jobId'), json_extract(value, '$.programKey'),
-             json_extract(value, '$.evidence'), json_extract(value, '$.classifiedAt')
+      INSERT INTO job_topics (job_id, topic_key, score, evidence, classified_at)
+      SELECT json_extract(value, '$.jobId'), 'program:' || json_extract(value, '$.programKey'),
+             1, json_array(json_extract(value, '$.evidence')), json_extract(value, '$.classifiedAt')
       FROM json_each(?)
       WHERE true
-      ON CONFLICT(job_id, program_key) DO UPDATE SET
+      ON CONFLICT(job_id, topic_key) DO UPDATE SET
+        score = excluded.score,
         evidence = excluded.evidence,
         classified_at = excluded.classified_at
     `).bind(JSON.stringify(chunk)).run();

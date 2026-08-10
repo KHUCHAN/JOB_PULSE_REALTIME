@@ -367,8 +367,8 @@ export class D1CrawlStore implements CrawlStore {
       }));
       for (const chunk of chunksByJsonBytes(processedPrograms, 1_500_000)) {
         await this.db.prepare(`
-          DELETE FROM job_programs
-          WHERE job_id IN (
+          DELETE FROM job_topics
+          WHERE topic_key LIKE 'program:%' AND job_id IN (
             SELECT jobs.id
             FROM json_each(?)
             JOIN jobs ON jobs.source_id = json_extract(value, '$.sourceId')
@@ -387,14 +387,15 @@ export class D1CrawlStore implements CrawlStore {
       );
       for (const chunk of chunksByJsonBytes(programMemberships, 1_500_000)) {
         await this.db.prepare(`
-          INSERT INTO job_programs (job_id, program_key, evidence, classified_at)
-          SELECT jobs.id, json_extract(value, '$.programKey'), json_extract(value, '$.evidence'),
-                 json_extract(value, '$.classifiedAt')
+          INSERT INTO job_topics (job_id, topic_key, score, evidence, classified_at)
+          SELECT jobs.id, 'program:' || json_extract(value, '$.programKey'), 1,
+                 json_array(json_extract(value, '$.evidence')), json_extract(value, '$.classifiedAt')
           FROM json_each(?)
           JOIN jobs ON jobs.source_id = json_extract(value, '$.sourceId')
                    AND jobs.official_url = json_extract(value, '$.officialUrl')
           WHERE true
-          ON CONFLICT(job_id, program_key) DO UPDATE SET
+          ON CONFLICT(job_id, topic_key) DO UPDATE SET
+            score = excluded.score,
             evidence = excluded.evidence,
             classified_at = excluded.classified_at
         `).bind(JSON.stringify(chunk)).run();
