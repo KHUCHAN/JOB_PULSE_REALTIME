@@ -12,6 +12,11 @@ export function jobProgramBackfillLimit(requested: number | undefined): number {
   return Math.max(1, Math.min(5_000, requested ?? 5_000));
 }
 
+export function jobAreaRegionBackfillLimit(requested: number | undefined): number {
+  const value = Number.isFinite(requested) ? Math.trunc(requested!) : 500;
+  return Math.max(1, Math.min(500, value));
+}
+
 export function recrawlSourceIds(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return [...new Set(value

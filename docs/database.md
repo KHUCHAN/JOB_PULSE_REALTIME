@@ -25,6 +25,8 @@ The seed contains public company names, verification metadata, career-posting UR
 
 `job_topics` stores deterministic topic membership separately from the large job body. The `ai-data` topic is classified from title, organizational fields, skills, and substantive body signals during every crawl. `jobs.topic_classified_at` makes the existing catalog backfill bounded and resumable, while `job_topics_topic_job_idx(topic_key, job_id)` keeps the public filter path indexed. The private `backfillJobTopics` API action accepts at most 500 pending open jobs per call.
 
+The managed `area:ai-ml`, `area:data-analytics`, and `area:software-engineering` memberships power the 2027 Tech Internship filter. `jobs.location_region` stores `us`, `non_us`, `mixed`, or `unknown`, and `jobs.area_classified_at` makes the production conversion retry-safe. After deploying migration `0045`, call the private `backfillJobAreasAndRegions` action with `limit: 500` sequentially until `remaining` is zero, then call `refreshJobFilterOptions`. Read the existing Sites SIWC bypass token with `get_site`; do not generate or rotate it, and do not change the private site access policy during this operation.
+
 To audit a local SQLite copy without writing to it, pass its absolute path:
 
 ```bash

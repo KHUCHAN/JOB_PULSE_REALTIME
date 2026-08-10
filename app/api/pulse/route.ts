@@ -15,7 +15,8 @@ import { runDueCrawls, type PersistedSource } from "../../../lib/crawl-runner";
 import { jobsFromTeslaState, type CrawledFacet, type CrawledJob, type TeslaState } from "../../../lib/crawler";
 import { normalizeBrowserJobSnapshot } from "../../../lib/browser-crawl-ingest";
 import { ensureCatalogSeeded, type CatalogSeed } from "../../../lib/catalog-bootstrap";
-import { crawlBatchOptions, jobProgramBackfillLimit, jobTopicBackfillLimit, recrawlSourceIds } from "../../../lib/crawl-batch-options";
+import { crawlBatchOptions, jobAreaRegionBackfillLimit, jobProgramBackfillLimit, jobTopicBackfillLimit, recrawlSourceIds } from "../../../lib/crawl-batch-options";
+import { backfillJobAreasAndRegions } from "../../../lib/job-area-region-backfill";
 import { parseJobFilterParams } from "../../../lib/job-filter-query";
 import {
   InvalidJobFilterError,
@@ -354,6 +355,10 @@ export async function POST(request: Request): Promise<Response> {
     if (body.action === "backfillJobPrograms") {
       const requested = typeof body.limit === "number" ? body.limit : undefined;
       return json(await backfillJobPrograms(db(), jobProgramBackfillLimit(requested)));
+    }
+    if (body.action === "backfillJobAreasAndRegions") {
+      const requested = typeof body.limit === "number" ? body.limit : undefined;
+      return json(await backfillJobAreasAndRegions(db(), jobAreaRegionBackfillLimit(requested)));
     }
     if (body.action === "refreshJobFilterOptions") {
       const result = await refreshJobFilterOptions(db(), { force: true });

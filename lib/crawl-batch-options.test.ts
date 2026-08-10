@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { crawlBatchOptions, jobProgramBackfillLimit, jobTopicBackfillLimit, recrawlSourceIds } from "./crawl-batch-options";
+import { crawlBatchOptions, jobAreaRegionBackfillLimit, jobProgramBackfillLimit, jobTopicBackfillLimit, recrawlSourceIds } from "./crawl-batch-options";
 
 describe("remote crawl batch options", () => {
   it("keeps request-driven crawls below the production write-contention ceiling", () => {
@@ -32,5 +32,14 @@ describe("job topic backfill limits", () => {
     expect(jobTopicBackfillLimit(0)).toBe(1);
     expect(jobTopicBackfillLimit(250)).toBe(250);
     expect(jobTopicBackfillLimit(5_000)).toBe(500);
+  });
+});
+
+describe("job area and region backfill limits", () => {
+  it("uses integer batches capped at 500 jobs", () => {
+    expect(jobAreaRegionBackfillLimit(undefined)).toBe(500);
+    expect(jobAreaRegionBackfillLimit(0)).toBe(1);
+    expect(jobAreaRegionBackfillLimit(42.9)).toBe(42);
+    expect(jobAreaRegionBackfillLimit(5_000)).toBe(500);
   });
 });
