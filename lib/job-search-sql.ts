@@ -95,8 +95,11 @@ export function buildJobSearchPlan(filters: JobFilters): JobSearchPlan {
 
   const topics = asNormalizedValues(filters.topics).filter((topic) => topic === "ai-data");
   if (topics.length) {
-    add(`j.id IN (SELECT job_id FROM job_topics WHERE topic_key = ?)`, [topics[0]]);
+    add("selected_topic.topic_key = ?", [topics[0]]);
   }
+  const fromSql = topics.length
+    ? "FROM job_topics selected_topic INDEXED BY job_topics_topic_job_idx JOIN jobs j ON j.id = selected_topic.job_id"
+    : "FROM jobs j";
 
   if (filters.status && filters.status !== "all") add("j.review_state = ?", [filters.status]);
   addAnyEquals("j.company", filters.companies);
@@ -175,12 +178,12 @@ export function buildJobSearchPlan(filters: JobFilters): JobSearchPlan {
 
   return {
     pageSql: `SELECT ${jobListProjection}
-FROM jobs j
+${fromSql}
 WHERE ${clauses.join(" AND ")}
 ORDER BY j.first_seen_at DESC, j.company ASC, j.id ASC
 LIMIT ? OFFSET ?`,
     countSql: `SELECT count(*) AS total
-FROM jobs j
+${fromSql}
 WHERE ${clauses.join(" AND ")}`,
     bindings,
     limit,

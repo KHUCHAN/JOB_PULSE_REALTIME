@@ -41,6 +41,22 @@ describe("classifyAiDataJob", () => {
     })).toMatchObject({ matched: false });
   });
 
+  it("does not double-count duplicated summary and description boilerplate", () => {
+    expect(classifyAiDataJob({
+      title: "Financial Reporting Analyst",
+      summary: "Our company invests in artificial intelligence (AI).",
+      description: "Our company invests in artificial intelligence (AI).",
+      qualifications: "Follow the corporate AI policy.",
+    })).toMatchObject({ matched: false });
+  });
+
+  it("classifies generic titles only when body evidence has multiple distinct domain signals", () => {
+    expect(classifyAiDataJob({
+      title: "Software Engineer",
+      description: "Build machine learning systems powered by large language models.",
+    })).toMatchObject({ matched: true });
+  });
+
   it.each([
     "Paid Media Manager",
     "Retail Training Manager",

@@ -69,6 +69,8 @@ describe("parameterized job search SQL", () => {
     });
 
     expect(plan.pageSql).toContain("job_topics");
+    expect(plan.pageSql).toContain("FROM job_topics selected_topic INDEXED BY job_topics_topic_job_idx");
+    expect(plan.pageSql).not.toContain("j.id IN (SELECT job_id FROM job_topics");
     expect(plan.bindings).toEqual(["ai-data"]);
     expect(output).toContain('"total":1');
     expect(output).toContain("job_topics_topic_job_idx");

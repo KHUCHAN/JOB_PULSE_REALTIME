@@ -71,15 +71,22 @@ const normalized = (value: string | null | undefined): string =>
 
 export function classifyAiDataJob(input: AiDataJobInput): JobTopicClassification {
   const evidence = new Set<string>();
+  const bodyDomainMatches = new Set<string>();
+  const bodySupportingMatches = new Set<string>();
   let score = 0;
-  const addMatches = (source: string, value: string, signals: Signal[], weight: number) => {
+  let structuralMatched = false;
+  let skillMatched = false;
+  const addMatches = (source: string, value: string, signals: Signal[], weight: number): boolean => {
+    let matched = false;
     for (const signal of signals) {
       if (!signal.pattern.test(value)) continue;
       const key = `${source}:${signal.key}`;
       if (evidence.has(key)) continue;
       evidence.add(key);
       score += weight;
+      matched = true;
     }
+    return matched;
   };
 
   const structuralFields: Array<[string, string | null | undefined]> = [
@@ -93,13 +100,13 @@ export function classifyAiDataJob(input: AiDataJobInput): JobTopicClassification
   for (const [source, raw] of structuralFields) {
     const value = normalized(raw);
     if (!value) continue;
-    addMatches(source, value, domainSignals, 4);
-    addMatches(source, value, supportingSignals.slice(0, 3), 4);
+    structuralMatched = addMatches(source, value, domainSignals, 4) || structuralMatched;
+    structuralMatched = addMatches(source, value, supportingSignals.slice(0, 3), 4) || structuralMatched;
   }
 
   for (const skill of input.skills ?? []) {
     const value = normalized(skill);
-    if (value) addMatches("skill", value, skillSignals, 4);
+    if (value) skillMatched = addMatches("skill", value, skillSignals, 4) || skillMatched;
   }
 
   const bodyFields: Array<[string, string | null | undefined]> = [
@@ -108,17 +115,30 @@ export function classifyAiDataJob(input: AiDataJobInput): JobTopicClassification
     ["responsibilities", input.responsibilities],
     ["qualifications", input.qualifications],
   ];
-  for (const [source, raw] of bodyFields) {
+  for (const [, raw] of bodyFields) {
     const value = normalized(raw);
     if (!value) continue;
-    addMatches(source, value, domainSignals, 4);
-    addMatches(source, value, supportingSignals, 2);
+    for (const signal of domainSignals) {
+      if (!signal.pattern.test(value) || bodyDomainMatches.has(signal.key)) continue;
+      bodyDomainMatches.add(signal.key);
+      evidence.add(`body:${signal.key}`);
+      score += 2;
+    }
+    for (const signal of supportingSignals) {
+      if (!signal.pattern.test(value) || bodySupportingMatches.has(signal.key)) continue;
+      bodySupportingMatches.add(signal.key);
+      evidence.add(`body:${signal.key}`);
+      score += 1;
+    }
   }
 
   const orderedEvidence = [...evidence].sort();
+  const bodyMatched = bodyDomainMatches.size >= 2
+    || bodySupportingMatches.size >= 3
+    || (bodyDomainMatches.size >= 1 && bodySupportingMatches.size >= 2);
   return {
     topicKey: "ai-data",
-    matched: score >= 4,
+    matched: structuralMatched || skillMatched || bodyMatched,
     score,
     evidence: orderedEvidence,
   };
