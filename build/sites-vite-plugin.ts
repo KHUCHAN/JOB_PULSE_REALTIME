@@ -26,6 +26,7 @@ export const sitesSchemaMigrationFiles = [
   "0033_case_insensitive_job_filters.sql",
   "0035_catalog_state.sql",
   "0037_ai_data_job_topics.sql",
+  "0038_job_topic_backfill_index.sql",
 ] as const;
 
 // Packages Sites metadata and migrations after Vite finishes compiling.

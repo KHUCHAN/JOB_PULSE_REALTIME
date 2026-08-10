@@ -1,18 +1,22 @@
 import { classifyAiDataJob } from "./job-topic-classifier";
 
-type PendingJobRow = {
+type PendingJobBaseRow = {
   id: string;
   title: string;
-  summary: string | null;
-  description: string | null;
-  responsibilities: string | null;
-  qualifications: string | null;
   skills: string | null;
   department: string | null;
   team: string | null;
   business_unit: string | null;
   job_family: string | null;
   job_function: string | null;
+};
+
+type PendingJobBodyRow = {
+  id: string;
+  summary: string | null;
+  description: string | null;
+  responsibilities: string | null;
+  qualifications: string | null;
 };
 
 export type JobTopicBackfillResult = {
@@ -36,33 +40,82 @@ const chunksOf = <T>(values: T[], size: number): T[][] => {
   return chunks;
 };
 
+const bodyCandidateTerms = [
+  "artificial intelligence", "machine learning", "deep learning", "generative ai", "genai",
+  "large language model", "large language models", "llm", "llms", "natural language processing",
+  "nlp", "computer vision", "reinforcement learning", "recommendation system", "recommendation systems",
+  "recommender system", "recommender systems", "data science", "data scientist", "data scientists",
+  "decision scientist", "applied scientist", "research scientist", "data engineering", "data engineer",
+  "analytics engineering", "analytics engineer", "data analysis", "data analyst", "data analytics",
+  "business intelligence", "ml engineer", "mlops", "model infrastructure", "ai platform", "data platform",
+  "predictive model", "feature engineering", "model training", "training models", "statistical modeling",
+  "data pipeline",
+] as const;
+
+const bodyCandidateFtsQuery = bodyCandidateTerms
+  .map((term) => `"${term.replaceAll('"', '""')}"`)
+  .join(" OR ");
+
 export async function backfillJobTopics(db: D1Database, requestedLimit: number): Promise<JobTopicBackfillResult> {
   const limit = Math.max(1, Math.min(500, Math.trunc(requestedLimit)));
   const selected = await db.prepare(`
-    SELECT id, title, summary, description, responsibilities, qualifications, skills,
-           department, team, business_unit, job_family, job_function
+    SELECT id, title, skills, department, team, business_unit, job_family, job_function
     FROM jobs
     WHERE status = 'open' AND topic_classified_at IS NULL
     ORDER BY id
     LIMIT ?
-  `).bind(limit).all<PendingJobRow>();
+  `).bind(limit).all<PendingJobBaseRow>();
   const classifiedAt = new Date().toISOString();
-  const results = selected.results.map((job) => ({
-    id: job.id,
-    classification: classifyAiDataJob({
+  const baseClassifications = new Map(selected.results.map((job) => [job.id, classifyAiDataJob({
       title: job.title,
-      summary: job.summary,
-      description: job.description,
-      responsibilities: job.responsibilities,
-      qualifications: job.qualifications,
       skills: parseStringArray(job.skills),
       department: job.department,
       team: job.team,
       businessUnit: job.business_unit,
       jobFamily: job.job_family,
       jobFunction: job.job_function,
-    }),
-  }));
+    })]));
+  const bodyCandidateIds = selected.results
+    .filter((job) => !baseClassifications.get(job.id)?.matched)
+    .map((job) => job.id);
+  const bodies = bodyCandidateIds.length > 0
+    ? await db.prepare(`
+      SELECT j.id, j.summary, j.description, j.responsibilities, j.qualifications
+      FROM jobs j
+      WHERE j.id IN (SELECT value FROM json_each(?))
+        AND (
+          j.rowid IN (SELECT rowid FROM jobs_fts WHERE jobs_fts MATCH ?)
+          OR EXISTS (
+            SELECT 1 FROM json_each(?) AS term
+            WHERE instr(lower(coalesce(j.responsibilities, '') || ' ' || coalesce(j.qualifications, '')), term.value) > 0
+          )
+        )
+    `).bind(
+      JSON.stringify(bodyCandidateIds),
+      bodyCandidateFtsQuery,
+      JSON.stringify(bodyCandidateTerms),
+    ).all<PendingJobBodyRow>()
+    : { results: [] as PendingJobBodyRow[] };
+  const bodyById = new Map(bodies.results.map((body) => [body.id, body]));
+  const results = selected.results.map((job) => {
+    const body = bodyById.get(job.id);
+    return {
+      id: job.id,
+      classification: body ? classifyAiDataJob({
+        title: job.title,
+        summary: body.summary,
+        description: body.description,
+        responsibilities: body.responsibilities,
+        qualifications: body.qualifications,
+        skills: parseStringArray(job.skills),
+        department: job.department,
+        team: job.team,
+        businessUnit: job.business_unit,
+        jobFamily: job.job_family,
+        jobFunction: job.job_function,
+      }) : baseClassifications.get(job.id)!,
+    };
+  });
 
   const matches = results
     .filter((result) => result.classification.matched)

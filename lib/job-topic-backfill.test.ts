@@ -2,8 +2,9 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { backfillJobTopics } from "./job-topic-backfill";
 
-const createD1 = (sqlite: DatabaseSync): D1Database => ({
+const createD1 = (sqlite: DatabaseSync, sqlCalls: string[] = []): D1Database => ({
   prepare(sql: string) {
+    sqlCalls.push(sql);
     const statement = sqlite.prepare(sql);
     return {
       first: async <T>() => statement.get() as T | null,
@@ -34,6 +35,10 @@ describe("backfillJobTopics", () => {
         topic_key TEXT NOT NULL, score INTEGER NOT NULL, evidence TEXT NOT NULL,
         classified_at TEXT NOT NULL, PRIMARY KEY (job_id, topic_key)
       );
+      CREATE VIRTUAL TABLE jobs_fts USING fts5(summary, description, content='jobs', content_rowid='rowid');
+      CREATE TRIGGER jobs_fts_insert AFTER INSERT ON jobs BEGIN
+        INSERT INTO jobs_fts(rowid, summary, description) VALUES (new.rowid, new.summary, new.description);
+      END;
     `);
     const insert = sqlite.prepare(`
       INSERT INTO jobs (id, title, description, skills, team, status, topic_classified_at)
@@ -41,6 +46,7 @@ describe("backfillJobTopics", () => {
     `);
     insert.run("a-data", "Data Engineer", "Build reliable pipelines.", "[]", null, "open", null);
     insert.run("b-sales", "Account Executive", "Use AI tools for meeting notes.", "[]", null, "open", null);
+    insert.run("c-body", "Software Engineer", "Build machine learning systems with large language models.", "[]", null, "open", null);
     insert.run("c-ml", "Software Engineer", null, '["PyTorch"]', "Generative AI", "open", null);
     insert.run("d-done", "Machine Learning Engineer", null, "[]", null, "open", "2026-08-09T00:00:00.000Z");
     insert.run("e-closed", "Data Scientist", null, "[]", null, "closed", null);
@@ -49,16 +55,19 @@ describe("backfillJobTopics", () => {
       VALUES ('b-sales', 'ai-data', 99, '["stale"]', '2026-08-09T00:00:00.000Z')
     `).run();
 
-    const db = createD1(sqlite);
-    expect(await backfillJobTopics(db, 2)).toEqual({ processed: 2, matched: 1, remaining: 1 });
+    const sqlCalls: string[] = [];
+    const db = createD1(sqlite, sqlCalls);
+    expect(await backfillJobTopics(db, 2)).toEqual({ processed: 2, matched: 1, remaining: 2 });
     expect(sqlite.prepare("SELECT job_id FROM job_topics ORDER BY job_id").all()).toEqual([{ job_id: "a-data" }]);
     expect(sqlite.prepare("SELECT count(*) AS count FROM jobs WHERE status = 'open' AND topic_classified_at IS NULL").get())
-      .toEqual({ count: 1 });
+      .toEqual({ count: 2 });
 
-    expect(await backfillJobTopics(db, 2)).toEqual({ processed: 1, matched: 1, remaining: 0 });
+    expect(await backfillJobTopics(db, 2)).toEqual({ processed: 2, matched: 2, remaining: 0 });
+    expect(sqlCalls.some((sql) => sql.includes("jobs_fts MATCH"))).toBe(true);
     expect(await backfillJobTopics(db, 2)).toEqual({ processed: 0, matched: 0, remaining: 0 });
     expect(sqlite.prepare("SELECT job_id, topic_key FROM job_topics ORDER BY job_id").all()).toEqual([
       { job_id: "a-data", topic_key: "ai-data" },
+      { job_id: "c-body", topic_key: "ai-data" },
       { job_id: "c-ml", topic_key: "ai-data" },
     ]);
     expect(sqlite.prepare("SELECT topic_classified_at FROM jobs WHERE id = 'd-done'").get())

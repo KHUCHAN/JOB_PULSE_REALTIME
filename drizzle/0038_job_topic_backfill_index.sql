@@ -1,0 +1,1 @@
+CREATE INDEX `jobs_status_topic_classified_id_idx` ON `jobs` (`status`,`topic_classified_at`,`id`);
