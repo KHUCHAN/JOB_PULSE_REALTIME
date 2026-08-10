@@ -20,6 +20,17 @@ describe("crawlSource", () => {
     });
   });
 
+  it("discovers the Oracle API site number when the public slug is not the CX identifier", () => {
+    const html = [
+      '<script src="https://eeho.fa.us2.oraclecloud.com:443/hcmUI/CandExpStatic/app.js"></script>',
+      '<link href="/theme.css?siteNumber=CX_45001&size=16x16">',
+    ].join("");
+    expect(oracleCareerSite(html, "https://careers.oracle.com/en/sites/jobsearch/")).toEqual({
+      apiOrigin: "https://eeho.fa.us2.oraclecloud.com",
+      site: "CX_45001",
+    });
+  });
+
   it("discovers a public Lever JSON feed from a careers page link", () => {
     expect(discoverAts(
       '<a href="https://jobs.lever.co/acme">Open jobs</a>',
@@ -144,6 +155,86 @@ describe("crawlSource", () => {
     expect(requests).toContain("https://careers.acme.example/api/jobs?page=2&limit=100&sortBy=relevance&descending=false&internal=false");
   });
 
+  it("fully paginates a Radancy TalentBrew job search", async () => {
+    const requests: Array<{ url: string; method: string }> = [];
+    let pageAttempts = 0;
+    const first = [
+      '<script src="https://tbcdn.talentbrew.com/js/client/search.js"></script>',
+      '<section id="search-results" data-total-results="2" data-total-pages="2" data-current-page="1" data-records-per-page="1" data-ajax-post-url="/search-jobs/resultspost" data-search-results-module-name="Search Results" data-sort-criteria="5" data-sort-direction="1" data-search-type="5">',
+      '<a href="/job/analyst/1/1">Analyst</a>',
+      '</section>',
+    ].join("");
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      requests.push({ url, method: init?.method ?? "GET" });
+      if (url === "https://jobs.acme.example/search-jobs") return new Response(first, { status: 200 });
+      pageAttempts += 1;
+      if (pageAttempts === 1) return new Response("rate limited", { status: 429 });
+      return new Response(JSON.stringify({ results: '<a href="/job/designer/1/2">Designer</a>' }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+
+    const result = await crawlSource({ id: "radancy", company: "Acme", postingUrl: "https://jobs.acme.example/search-jobs", adapter: "custom" }, fetcher, new Date());
+
+    expect(requests).toContainEqual({ url: "https://jobs.acme.example/search-jobs/resultspost", method: "POST" });
+    expect(pageAttempts).toBe(2);
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs.map((job) => job.officialUrl)).toEqual([
+      "https://jobs.acme.example/job/analyst/1/1",
+      "https://jobs.acme.example/job/designer/1/2",
+    ]);
+  });
+
+  it("fully paginates a SuccessFactors HTML job search", async () => {
+    const requests: string[] = [];
+    const page = (start: number) => [
+      '<script src="https://hcm41.sapsf.com/platform/js/search/search.js"></script>',
+      `<span class="paginationLabel">Results <b>${start + 1} – ${start + 1}</b> of <b>2</b></span>`,
+      start === 0 ? '<a href="?q=&startrow=1" title="Page 2">2</a>' : "",
+      `<a class="jobTitle-link" href="/job/Role-${start + 1}/${100 + start}/">Role ${start + 1}</a>`,
+    ].join("");
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      const start = Number(new URL(url).searchParams.get("startrow") ?? 0);
+      return new Response(page(start), { status: 200 });
+    };
+
+    const result = await crawlSource({ id: "successfactors", company: "Acme", postingUrl: "https://careers.acme.example/search/", adapter: "custom" }, fetcher, new Date());
+
+    expect(requests).toEqual([
+      "https://careers.acme.example/search/",
+      "https://careers.acme.example/search/?q=&startrow=1",
+    ]);
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs.map((job) => job.title)).toEqual(["Role 1", "Role 2"]);
+  });
+
+  it("fully paginates a TalentHub job search", async () => {
+    const requests: string[] = [];
+    const page = (current: number) => [
+      `<p>Showing <span> ${current}</span> to <span>${current}</span> of <span>2</span> results</p>`,
+      current === 1 ? '<a rel="next" href="/en/jobs?page=2">2</a>' : "",
+      `<a href="/en/jobs/role-${current}-en-p1-${100 + current}-1">Role ${current}</a>`,
+    ].join("");
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      return new Response(page(Number(new URL(url).searchParams.get("page") ?? 1)), { status: 200 });
+    };
+
+    const result = await crawlSource({ id: "talenthub", company: "Acme", postingUrl: "https://acme.talenthub.jobs/en/jobs", adapter: "custom" }, fetcher, new Date());
+
+    expect(requests).toEqual([
+      "https://acme.talenthub.jobs/en/jobs",
+      "https://acme.talenthub.jobs/en/jobs?page=2",
+    ]);
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs.map((job) => job.title)).toEqual(["Role 1", "Role 2"]);
+  });
+
   it("fetches large Jibe page ranges concurrently instead of serializing every request", async () => {
     let active = 0;
     let maxActive = 0;
@@ -193,6 +284,19 @@ describe("crawlSource", () => {
     ]));
     expect(result.jobs.map((job) => job.externalId)).toEqual(["REQ-101", "REQ-102"]);
     expect(requests).toContain("https://acme.eightfold.ai/api/apply/v2/jobs?start=1&num=10&sort_by=relevance");
+  });
+
+  it("classifies an Eightfold access-control response as blocked instead of failed", async () => {
+    const fetcher: typeof fetch = async () => new Response('{"message":"Not authorized for PCSX"}', { status: 403 });
+
+    const result = await crawlSource({ id: "blocked-eightfold", company: "Acme", postingUrl: "https://acme.eightfold.ai/careers", adapter: "custom" }, fetcher, new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "blocked",
+      responseStatus: 403,
+      completeListing: false,
+      jobs: [],
+    }));
   });
 
   it("fully paginates an ADP MyJobs public careers API", async () => {
@@ -506,6 +610,35 @@ describe("crawlSource", () => {
       arrangement: "hybrid", employmentType: "Full time", description: "Investigate risk signals.",
       publishedAt: "2026-08-01T00:00:00.000Z",
     }));
+  });
+
+  it("does not truncate Oracle Recruiting catalogs above 500 jobs", async () => {
+    const offsets: number[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url === "https://careers.acme.example/en/sites/CX_1001/jobs") {
+        return new Response('<script src="https://acme.fa.us2.oraclecloud.com/hcmUI/app.js"></script>', { status: 200 });
+      }
+      const finder = new URL(url).searchParams.get("finder") ?? "";
+      const offset = Number(finder.match(/offset=(\d+)/)?.[1] ?? 0);
+      offsets.push(offset);
+      const requisitionList = Array.from({ length: Math.min(25, 525 - offset) }, (_, index) => ({
+        Id: offset + index + 1,
+        Title: `Role ${offset + index + 1}`,
+      }));
+      return new Response(JSON.stringify({ items: [{ TotalJobsCount: 525, requisitionList }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+
+    const result = await crawlSource({
+      id: "oracle-large", company: "Acme", postingUrl: "https://careers.acme.example/en/sites/CX_1001/jobs", adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(offsets).toContain(500);
+    expect(result.jobs).toHaveLength(525);
+    expect(result.completeListing).toBe(true);
   });
 
   it("follows a discovered Lever feed and treats its response as a complete listing", async () => {

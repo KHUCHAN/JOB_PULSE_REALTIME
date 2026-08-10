@@ -3,6 +3,7 @@ import { ensureCatalogSeeded, type CatalogSeed } from "./catalog-bootstrap";
 
 const seed: CatalogSeed = {
   generatedAt: "2026-08-09",
+  version: "catalog-v1",
   sources: Array.from({ length: 501 }, (_, index) => ({
     id: `source-${index}`, masterRow: index + 1, company: `Company ${index}`,
     postingUrl: `https://example.com/${index}`, talentUrl: null, channel: "careers",
@@ -15,24 +16,29 @@ const seed: CatalogSeed = {
   }],
 };
 
-function fakeDb(existing: number) {
-  const writes: string[][] = [];
+function fakeDb(existing: number, version: string | null = null) {
+  const writes: Array<{ kind: "sources" | "talent" | "state"; values: string[] }> = [];
   return {
     writes,
     db: {
       prepare(sql: string) {
-        void sql;
         return {
           bind(...values: unknown[]) {
             return {
-              first: async () => ({ count: existing }),
+              first: async () => ({ count: existing, version }),
               run: async () => {
-                writes.push(JSON.parse(String(values[0])).map((row: { id: string }) => row.id));
+                if (sql.includes("INSERT INTO sources")) {
+                  writes.push({ kind: "sources", values: JSON.parse(String(values[0])).map((row: { id: string }) => row.id) });
+                } else if (sql.includes("INSERT INTO talent_targets")) {
+                  writes.push({ kind: "talent", values: JSON.parse(String(values[0])).map((row: { id: string }) => row.id) });
+                } else if (sql.includes("INSERT INTO catalog_state")) {
+                  writes.push({ kind: "state", values: values.map(String) });
+                }
                 return { success: true };
               },
             };
           },
-          first: async () => ({ count: existing }),
+          first: async () => ({ count: existing, version }),
         };
       },
     },
@@ -40,19 +46,30 @@ function fakeDb(existing: number) {
 }
 
 describe("runtime catalog bootstrap", () => {
-  it("does not rewrite a catalog that is already present", async () => {
-    const { db, writes } = fakeDb(1455);
+  it("does not rewrite a catalog whose version is already current", async () => {
+    const { db, writes } = fakeDb(1455, seed.version);
     expect(await ensureCatalogSeeded(db, seed)).toEqual({ seeded: false, sources: 1455, talentTargets: 0 });
     expect(writes).toEqual([]);
+  });
+
+  it("refreshes an existing catalog when the bundled version changes and records the marker last", async () => {
+    const { db, writes } = fakeDb(1455, "catalog-v0");
+
+    expect(await ensureCatalogSeeded(db, seed)).toEqual({ seeded: true, sources: 501, talentTargets: 1 });
+    expect(writes.at(-1)).toEqual({ kind: "state", values: ["sources", seed.version] });
+    expect(writes.filter((write) => write.kind === "sources")).toHaveLength(2);
+    expect(writes.filter((write) => write.kind === "talent")).toHaveLength(1);
   });
 
   it("inserts bounded source batches before dependent talent targets", async () => {
     const { db, writes } = fakeDb(0);
     expect(await ensureCatalogSeeded(db, seed)).toEqual({ seeded: true, sources: 501, talentTargets: 1 });
-    expect(writes).toHaveLength(3);
-    expect(writes[0]).toHaveLength(500);
-    expect(writes[1]).toEqual(["source-500"]);
-    expect(writes[2]).toEqual(["talent-1"]);
+    expect(writes).toHaveLength(4);
+    expect(writes[0]).toEqual({ kind: "sources", values: expect.arrayContaining(["source-0", "source-499"]) });
+    expect(writes[0].values).toHaveLength(500);
+    expect(writes[1]).toEqual({ kind: "sources", values: ["source-500"] });
+    expect(writes[2]).toEqual({ kind: "talent", values: ["talent-1"] });
+    expect(writes[3]).toEqual({ kind: "state", values: ["sources", seed.version] });
   });
 
   it("executes the bootstrap statements against SQLite", async () => {
@@ -71,6 +88,9 @@ describe("runtime catalog bootstrap", () => {
         id TEXT PRIMARY KEY, source_id TEXT, official_url TEXT, resume_upload TEXT,
         job_alerts TEXT, registration_state TEXT DEFAULT 'not_started', checked_at TEXT,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE catalog_state (
+        key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL
       );
     `);
     const database = {

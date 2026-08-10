@@ -29,6 +29,12 @@ export const sources = sqliteTable("sources", {
   index("sources_company_idx").on(table.company),
 ]);
 
+export const catalogState = sqliteTable("catalog_state", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: updatedAt(),
+});
+
 export const jobs = sqliteTable("jobs", {
   id: text("id").primaryKey(),
   sourceId: text("source_id").notNull().references(() => sources.id, { onDelete: "cascade" }),

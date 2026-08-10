@@ -215,22 +215,43 @@
     {
       "idx": 30,
       "version": "6",
+      "when": 1786276910000,
+      "tag": "0030_job_search_fts",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
       "when": 1786316959093,
       "tag": "0031_structured_job_filter_indexes",
       "breakpoints": true
     },
     {
-      "idx": 31,
+      "idx": 32,
       "version": "6",
       "when": 1786318717697,
       "tag": "0032_job_search_performance",
       "breakpoints": true
     },
     {
-      "idx": 32,
+      "idx": 33,
       "version": "6",
       "when": 1786320347992,
       "tag": "0033_case_insensitive_job_filters",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1786328839463,
+      "tag": "0034_refresh_sources_20260810022719",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "6",
+      "when": 1786329229410,
+      "tag": "0035_catalog_state",
       "breakpoints": true
     }
   ]

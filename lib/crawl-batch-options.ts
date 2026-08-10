@@ -1,5 +1,5 @@
 export function crawlBatchOptions(requested: number | undefined): { limit: number; concurrency: number } {
-  const limit = Math.max(1, Math.min(64, requested ?? 16));
-  const concurrency = limit <= 4 ? limit : Math.min(16, Math.max(8, Math.ceil(limit / 4)));
+  const limit = Math.max(1, Math.min(8, requested ?? 8));
+  const concurrency = Math.min(4, limit);
   return { limit, concurrency };
 }

@@ -46,7 +46,7 @@ Rebuild the committed public seed from audited JSON exports by passing their pat
 npm run db:seed:build -- path/to/batch_1.json path/to/batch_2.json path/to/batch_3.json
 ```
 
-For a catalog change that must reach an already-deployed D1 database, create a new immutable data migration instead:
+For a catalog change, refresh the committed seed and create a new immutable data migration:
 
 ```bash
 npm run db:catalog:refresh -- path/to/batch_1.json path/to/batch_2.json path/to/batch_3.json
@@ -58,4 +58,6 @@ Refresh writers are serialized with an ownership lock and a journal compare-and-
 
 The generated catalog SQL uses upserts, so refreshing verified URLs does not delete crawled jobs, matches, notifications, or external Talent history.
 
-`drizzle/0001_seed_sources.sql` initializes a newly provisioned Sites D1 database. Later refresh migrations apply the same upserts to both new and existing deployments.
+Sites packages schema migrations separately because its migration files have a strict size ceiling. The bundled seed carries a deterministic SHA-256 version; on the first API request after deployment, `catalog_state` is compared with that version. A changed version upserts the source and Talent catalog in bounded batches and writes the marker last, so an interrupted refresh is retried on the next request without touching crawled jobs or user state.
+
+`drizzle/0001_seed_sources.sql` initializes migration-managed D1 databases. Later refresh migrations apply the same upserts there; Sites deployments use the bounded runtime version sync described above.

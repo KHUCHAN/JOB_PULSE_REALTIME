@@ -25,6 +25,7 @@ export interface CatalogTalentSeed {
 
 export interface CatalogSeed {
   generatedAt: string | null;
+  version: string;
   sources: CatalogSourceSeed[];
   talentTargets: CatalogTalentSeed[];
 }
@@ -48,8 +49,12 @@ export async function ensureCatalogSeeded(
   database: CatalogDb,
   seed: CatalogSeed,
 ): Promise<{ seeded: boolean; sources: number; talentTargets: number }> {
-  const existing = await database.prepare("SELECT count(*) AS count FROM sources").first() as { count: number } | null;
-  if ((existing?.count ?? 0) > 0) {
+  const existing = await database.prepare(`
+    SELECT
+      (SELECT count(*) FROM sources) AS count,
+      (SELECT value FROM catalog_state WHERE key = 'sources') AS version
+  `).first() as { count: number; version: string | null } | null;
+  if (existing?.version === seed.version) {
     return { seeded: false, sources: existing?.count ?? 0, talentTargets: 0 };
   }
 
@@ -97,6 +102,12 @@ export async function ensureCatalogSeeded(
         checked_at=excluded.checked_at, updated_at=CURRENT_TIMESTAMP
     `).bind(JSON.stringify(batch)).run();
   }
+
+  await database.prepare(`
+    INSERT INTO catalog_state (key, value, updated_at)
+    VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP
+  `).bind("sources", seed.version).run();
 
   return { seeded: true, sources: seed.sources.length, talentTargets: seed.talentTargets.length };
 }

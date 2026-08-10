@@ -23,6 +23,7 @@ export type SeedMigrationPlan = {
   fileName: string;
   journal: DrizzleJournal;
   snapshotIndex: number;
+  previousSnapshotIndex: number;
 };
 
 type DrizzleSnapshot = {
@@ -45,7 +46,15 @@ export function planSeedMigration({
 
   const previousEntry = journal.entries.at(-1);
   const nextIndex = Math.max(-1, ...journal.entries.map((entry) => entry.idx)) + 1;
-  const prefix = String(nextIndex).padStart(4, "0");
+  const previousSnapshotIndex = Math.max(
+    -1,
+    ...journal.entries.flatMap((entry) => {
+      const match = /^(\d{4})_/.exec(entry.tag);
+      return match ? [Number(match[1])] : [];
+    }),
+  );
+  const snapshotIndex = previousSnapshotIndex + 1;
+  const prefix = String(snapshotIndex).padStart(4, "0");
   const timestamp = now.toISOString().replaceAll(/[-:T]/g, "").replace(/\.\d{3}Z$/, "");
   const tag = `${prefix}_refresh_sources_${timestamp}`;
   const nextEntry: DrizzleJournalEntry = {
@@ -62,7 +71,8 @@ export function planSeedMigration({
       ...journal,
       entries: [...journal.entries, nextEntry],
     },
-    snapshotIndex: nextIndex,
+    snapshotIndex,
+    previousSnapshotIndex,
   };
 }
 

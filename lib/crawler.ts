@@ -607,7 +607,8 @@ const workdayFeed = (postingUrl: string): string | null => {
 
 export const oracleCareerSite = (html: string, postingUrl: string): { apiOrigin: string; site: string } | null => {
   const page = new URL(postingUrl);
-  const site = page.pathname.match(/\/sites\/(CX_[A-Z0-9]+)/i)?.[1];
+  const site = page.pathname.match(/\/sites\/(CX_[A-Z0-9]+)/i)?.[1]
+    ?? html.match(/[?&]siteNumber=(CX_[A-Z0-9]+)/i)?.[1];
   const apiOrigin = html.match(/https:\/\/([a-z0-9.-]+\.fa\.[a-z0-9.-]*oraclecloud\.com)(?::443)?/i)?.[1];
   return site && apiOrigin ? { apiOrigin: `https://${apiOrigin}`, site } : null;
 };
@@ -624,11 +625,7 @@ async function crawlOracle(
   fetcher: typeof fetch,
 ): Promise<SourceCrawlResult> {
   try {
-    const jobs: CrawledJob[] = [];
-    let offset = 0;
-    let total = Number.POSITIVE_INFINITY;
-    let responseStatus = 200;
-    while (offset < total && offset < 500) {
+    const fetchPage = async (offset: number): Promise<{ responseStatus: number; total: number; page: OracleJob[] }> => {
       const endpoint = new URL("/hcmRestApi/resources/latest/recruitingCEJobRequisitions", oracle.apiOrigin);
       endpoint.searchParams.set("onlyData", "true");
       endpoint.searchParams.set("expand", "requisitionList.workLocation");
@@ -636,19 +633,12 @@ async function crawlOracle(
       const response = await fetchWithTimeout(fetcher, endpoint, {
         headers: { accept: "application/json", referer: source.postingUrl },
       });
-      responseStatus = response.status;
-      if (!response.ok) return {
-        status: [401, 403, 429].includes(response.status) ? "blocked" : "failed",
-        responseStatus,
-        completeListing: false,
-        jobs: [],
-        error: `Oracle Recruiting returned HTTP ${response.status}.`,
-      };
+      if (!response.ok) throw new Error(`Oracle Recruiting returned HTTP ${response.status}.`);
       const payload = await response.json() as { items?: Array<{ TotalJobsCount?: number; requisitionList?: OracleJob[] }> };
       const container = payload.items?.[0];
-      const page = container?.requisitionList ?? [];
-      if (!Number.isFinite(total)) total = container?.TotalJobsCount ?? page.length;
-      jobs.push(...page.flatMap((job) => {
+      return { responseStatus: response.status, total: container?.TotalJobsCount ?? 0, page: container?.requisitionList ?? [] };
+    };
+    const normalizePage = (page: OracleJob[]): CrawledJob[] => page.flatMap((job) => {
         if (!job.Id || !job.Title) return [];
         const workplace = `${job.WorkplaceType ?? ""} ${job.WorkplaceTypeCode ?? ""}`.toLowerCase();
         return [{
@@ -663,11 +653,32 @@ async function crawlOracle(
           officialUrl: oracleJobUrl(source.postingUrl, oracle.site, job),
           publishedAt: normalizedDate(job.PostedDate),
         }];
+      });
+
+    const first = await fetchPage(0);
+    const total = first.total || first.page.length;
+    const jobs = normalizePage(first.page);
+    const boundedTotal = Math.min(total, 10_000);
+    const offsets = Array.from({ length: Math.max(0, Math.ceil(boundedTotal / 25) - 1) }, (_, index) => (index + 1) * 25);
+    let successfulPages = 0;
+    for (let index = 0; index < offsets.length; index += 8) {
+      const pages = await Promise.all(offsets.slice(index, index + 8).map(async (offset) => {
+        try {
+          return await fetchPage(offset);
+        } catch {
+          return null;
+        }
       }));
-      if (page.length === 0) break;
-      offset += page.length;
+      successfulPages += pages.filter((page): page is NonNullable<typeof page> => page !== null).length;
+      jobs.push(...pages.flatMap((page) => page ? normalizePage(page.page) : []));
     }
-    return { status: "succeeded", responseStatus, completeListing: offset >= total, jobs, error: null };
+    return {
+      status: "succeeded",
+      responseStatus: first.responseStatus,
+      completeListing: total <= 10_000 && successfulPages === offsets.length && jobs.length >= total,
+      jobs: uniqueJobs(jobs),
+      error: null,
+    };
   } catch (error) {
     return { status: "failed", responseStatus: null, completeListing: false, jobs: [], error: error instanceof Error ? error.message : "Unknown Oracle crawler error." };
   }
@@ -897,6 +908,173 @@ const jobPostingNodes = (value: JsonLdValue): JsonLdValue[] => {
   });
 };
 
+const uniqueJobs = (jobs: CrawledJob[]): CrawledJob[] => [
+  ...new Map(jobs.map((job) => [job.officialUrl, job])).values(),
+];
+
+const dataAttribute = (html: string, name: string): string | null => {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return html.match(new RegExp(`\\b${escaped}=["']([^"']*)["']`, "i"))?.[1] ?? null;
+};
+
+const crawlRadancyPages = async (
+  source: CrawlSource,
+  html: string,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult | null> => {
+  if (!/tbcdn\.talentbrew\.com/i.test(html)) return null;
+  const postPath = dataAttribute(html, "data-ajax-post-url");
+  const totalPages = Number(dataAttribute(html, "data-total-pages"));
+  const totalResults = Number(dataAttribute(html, "data-total-job-results") ?? dataAttribute(html, "data-total-results"));
+  const recordsPerPage = Number(dataAttribute(html, "data-records-per-page"));
+  if (!postPath || !Number.isFinite(totalPages) || totalPages < 1 || !Number.isFinite(totalResults)) return null;
+
+  const jobs = jobsFromBrowserAnchors(anchorsFromHtml(html), source);
+  const pageNumbers = Array.from({ length: Math.min(totalPages, 1_000) - 1 }, (_, index) => index + 2);
+  let successfulPages = 0;
+  for (let index = 0; index < pageNumbers.length; index += 10) {
+    const pages = await Promise.all(pageNumbers.slice(index, index + 10).map(async (currentPage) => {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          const response = await fetchWithTimeout(fetcher, new URL(postPath, source.postingUrl), {
+            method: "POST",
+            headers: { "content-type": "application/json; charset=utf-8", "x-requested-with": "XMLHttpRequest" },
+            body: JSON.stringify({
+            ActiveFacetID: Number(dataAttribute(html, "data-active-facet-id") ?? 0),
+            CurrentPage: currentPage,
+            RecordsPerPage: recordsPerPage,
+            TotalPages: totalPages,
+            TotalResults: totalResults,
+            Distance: Number(dataAttribute(html, "data-distance") ?? 0),
+            Keywords: dataAttribute(html, "data-keywords") ?? "",
+            Location: dataAttribute(html, "data-location") ?? "",
+            ShowRadius: dataAttribute(html, "data-show-radius") === "True",
+            IsPagination: "True",
+            FacetFilters: [],
+            StaticFacets: [],
+            SearchResultsModuleName: dataAttribute(html, "data-search-results-module-name") ?? "Search Results",
+            SortCriteria: Number(dataAttribute(html, "data-sort-criteria") ?? 0),
+            SortDirection: Number(dataAttribute(html, "data-sort-direction") ?? 0),
+            SearchType: Number(dataAttribute(html, "data-search-type") ?? 0),
+            RefinedKeywords: [],
+            ResultsType: Number(dataAttribute(html, "data-results-type") ?? 0),
+            }),
+          });
+          if (response.ok) {
+            const payload = await response.json() as { results?: string };
+            return typeof payload.results === "string" ? jobsFromBrowserAnchors(anchorsFromHtml(payload.results), source) : null;
+          }
+        } catch {
+          // Retry transient page failures before keeping the listing incomplete.
+        }
+        if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+      }
+      return null;
+    }));
+    successfulPages += pages.filter((page): page is CrawledJob[] => page !== null).length;
+    jobs.push(...pages.flatMap((page) => page ?? []));
+  }
+  const normalized = uniqueJobs(jobs);
+  return {
+    status: "succeeded",
+    responseStatus: 200,
+    completeListing: totalPages <= 1_000 && successfulPages === pageNumbers.length && normalized.length >= totalResults,
+    jobs: normalized,
+    error: null,
+  };
+};
+
+const successFactorsRange = (html: string): { pageSize: number; total: number } | null => {
+  const match = html.match(/class=["'][^"']*paginationLabel[^"']*["'][^>]*>[\s\S]*?Results\s*<b>\s*[\d,]+\s*(?:–|-|&ndash;)\s*([\d,]+)\s*<\/b>\s*of\s*<b>\s*([\d,]+)/i);
+  if (!match) return null;
+  const pageSize = Number(match[1].replaceAll(",", ""));
+  const total = Number(match[2].replaceAll(",", ""));
+  return Number.isFinite(pageSize) && pageSize > 0 && Number.isFinite(total) ? { pageSize, total } : null;
+};
+
+const crawlSuccessFactorsPages = async (
+  source: CrawlSource,
+  html: string,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult | null> => {
+  if (!/\.sapsf\.com\//i.test(html)) return null;
+  const range = successFactorsRange(html);
+  if (!range) return null;
+  const paginationHref = anchorsFromHtml(html).find(({ href }) => /[?&]startrow=\d+/i.test(href))?.href;
+  const jobs = jobsFromBrowserAnchors(anchorsFromHtml(html), source);
+  if (range.total <= range.pageSize) return { status: "succeeded", responseStatus: 200, completeListing: jobs.length >= range.total, jobs: uniqueJobs(jobs), error: null };
+  if (!paginationHref) return null;
+
+  const offsets = Array.from({ length: Math.ceil(range.total / range.pageSize) - 1 }, (_, index) => (index + 1) * range.pageSize);
+  let successfulPages = 0;
+  for (let index = 0; index < offsets.length; index += 10) {
+    const pages = await Promise.all(offsets.slice(index, index + 10).map(async (offset) => {
+      try {
+        const url = new URL(paginationHref, source.postingUrl);
+        url.searchParams.set("startrow", String(offset));
+        const response = await fetchWithTimeout(fetcher, url);
+        if (!response.ok) return null;
+        return jobsFromBrowserAnchors(anchorsFromHtml(await response.text()), source);
+      } catch {
+        return null;
+      }
+    }));
+    successfulPages += pages.filter((page): page is CrawledJob[] => page !== null).length;
+    jobs.push(...pages.flatMap((page) => page ?? []));
+  }
+  const normalized = uniqueJobs(jobs);
+  return {
+    status: "succeeded",
+    responseStatus: 200,
+    completeListing: successfulPages === offsets.length && normalized.length >= range.total,
+    jobs: normalized,
+    error: null,
+  };
+};
+
+const crawlTalentHubPages = async (
+  source: CrawlSource,
+  html: string,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult | null> => {
+  if (!new URL(source.postingUrl).hostname.endsWith(".talenthub.jobs")) return null;
+  const range = html.match(/Showing\s*<span[^>]*>\s*([\d,]+)\s*<\/span>\s*to\s*<span[^>]*>\s*([\d,]+)\s*<\/span>\s*of\s*<span[^>]*>\s*([\d,]+)\s*<\/span>\s*results/i);
+  if (!range) return null;
+  const first = Number(range[1].replaceAll(",", ""));
+  const last = Number(range[2].replaceAll(",", ""));
+  const total = Number(range[3].replaceAll(",", ""));
+  const pageSize = last - first + 1;
+  const paginationHref = anchorsFromHtml(html).find(({ href }) => /[?&]page=\d+/i.test(href))?.href;
+  if (!Number.isFinite(pageSize) || pageSize < 1 || !Number.isFinite(total) || (total > pageSize && !paginationHref)) return null;
+
+  const jobs = jobsFromBrowserAnchors(anchorsFromHtml(html), source);
+  const pageNumbers = Array.from({ length: Math.max(0, Math.ceil(total / pageSize) - 1) }, (_, index) => index + 2);
+  let successfulPages = 0;
+  for (let index = 0; index < pageNumbers.length; index += 8) {
+    const pages = await Promise.all(pageNumbers.slice(index, index + 8).map(async (pageNumber) => {
+      try {
+        const url = new URL(paginationHref!, source.postingUrl);
+        url.searchParams.set("page", String(pageNumber));
+        const response = await fetchWithTimeout(fetcher, url);
+        if (!response.ok) return null;
+        return jobsFromBrowserAnchors(anchorsFromHtml(await response.text()), source);
+      } catch {
+        return null;
+      }
+    }));
+    successfulPages += pages.filter((page): page is CrawledJob[] => page !== null).length;
+    jobs.push(...pages.flatMap((page) => page ?? []));
+  }
+  const normalized = uniqueJobs(jobs);
+  return {
+    status: "succeeded",
+    responseStatus: 200,
+    completeListing: successfulPages === pageNumbers.length && normalized.length >= total,
+    jobs: normalized,
+    error: null,
+  };
+};
+
 const asText = (value: unknown): string | null => typeof value === "string" && value.trim() ? value.trim() : null;
 
 const normalizedDate = (value: unknown): string | null => {
@@ -997,6 +1175,12 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
     const html = await response.text();
     const oracle = oracleCareerSite(html, source.postingUrl);
     if (oracle) return crawlOracle(source, oracle, fetcher);
+    const radancy = await crawlRadancyPages(source, html, fetcher);
+    if (radancy) return radancy;
+    const successFactors = await crawlSuccessFactorsPages(source, html, fetcher);
+    if (successFactors) return successFactors;
+    const talentHub = await crawlTalentHubPages(source, html, fetcher);
+    if (talentHub) return talentHub;
     const phenom = phenomJobs(html, source);
     if (phenom) return crawlPhenomPages(source, phenom, fetcher);
     const discovered = discoverAts(html, source.postingUrl);
@@ -1101,7 +1285,13 @@ async function crawlEightfold(source: CrawlSource, fetcher: typeof fetch): Promi
       error: null,
     };
   } catch (error) {
-    return { status: "failed", responseStatus, completeListing: false, jobs: [], error: error instanceof Error ? error.message : "Unknown Eightfold crawler error." };
+    return {
+      status: responseStatus && [401, 403, 429].includes(responseStatus) ? "blocked" : "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Eightfold crawler error.",
+    };
   }
 }
 

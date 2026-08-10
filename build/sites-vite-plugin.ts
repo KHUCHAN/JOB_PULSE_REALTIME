@@ -49,6 +49,7 @@ export function sites(): Plugin {
             "0031_structured_job_filter_indexes.sql",
             "0032_job_search_performance.sql",
             "0033_case_insensitive_job_filters.sql",
+            "0035_catalog_state.sql",
           ],
         });
       }

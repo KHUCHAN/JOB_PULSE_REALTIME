@@ -1,5 +1,6 @@
 {
   "generatedAt": "2026-08-08",
+  "version": "sha256:4eb40db248aa4a6a5cd07244a4361c41c963a2eb28dd735c7da3369774d9861a",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -8645,7 +8646,7 @@
       "id": "p5-0529-adept-ai",
       "masterRow": 2358,
       "company": "Adept AI (most of team → Amazon AGI 2024; new CEO)",
-      "postingUrl": "https://www.adept.ai/careers",
+      "postingUrl": "https://www.adept.ai/about-careers/",
       "talentUrl": "https://www.adept.ai/careers",
       "channel": "공식 채용공고 검색·지원",
       "adapter": "custom",
@@ -8653,7 +8654,7 @@
       "confidence": "medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -12185,7 +12186,7 @@
       "id": "legacy-row-607",
       "masterRow": 2607,
       "company": "Adept AI",
-      "postingUrl": "https://www.adept.ai/",
+      "postingUrl": "https://www.adept.ai/about-careers/",
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
       "adapter": "custom",
@@ -12193,7 +12194,7 @@
       "confidence": "medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -12770,15 +12771,15 @@
       "id": "p5-0523-abb-us",
       "masterRow": 2674,
       "company": "ABB US",
-      "postingUrl": "https://careers.abb/global/en",
+      "postingUrl": "https://abb.wd3.myworkdayjobs.com/External_Career_Page",
       "talentUrl": "https://careers.abb/us/en/jointalentcommunity",
       "channel": "ABB Talent Community",
-      "adapter": "phenom",
+      "adapter": "workday",
       "verification": "valid_direct_talent_form",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -13010,10 +13011,10 @@
       "id": "p5-0716-replit",
       "masterRow": 2700,
       "company": "Replit",
-      "postingUrl": "https://replit.com/careers",
+      "postingUrl": "https://jobs.ashbyhq.com/replit",
       "talentUrl": "https://jobs.ashbyhq.com/replit",
       "channel": "Official Ashby career board",
-      "adapter": "custom",
+      "adapter": "ashby",
       "verification": "career_page_only",
       "confidence": "high",
       "resumeUpload": "unknown",
@@ -13085,7 +13086,7 @@
       "id": "p5-0722-saic",
       "masterRow": 2705,
       "company": "SAIC",
-      "postingUrl": "https://jobs.saic.com/",
+      "postingUrl": "https://jobs.saic.com/search/jobs",
       "talentUrl": "https://jobs.saic.com/",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -13093,7 +13094,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -14270,7 +14271,7 @@
       "id": "legacy-row-784",
       "masterRow": 2784,
       "company": "APi Group",
-      "postingUrl": "https://www.apigroupinc.com/careers",
+      "postingUrl": "https://apigroup.talenthub.jobs/en/jobs",
       "talentUrl": "https://www.apigroupinc.com/careers/",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -14278,7 +14279,7 @@
       "confidence": "high-medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -16280,15 +16281,15 @@
       "id": "p2-0149-persona",
       "masterRow": 2921,
       "company": "Persona",
-      "postingUrl": "https://withpersona.com/careers",
+      "postingUrl": "https://jobs.ashbyhq.com/persona",
       "talentUrl": "https://withpersona.com/careers",
       "channel": "공식 Career Portal",
-      "adapter": "custom",
+      "adapter": "ashby",
       "verification": "career_page_only",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -18530,7 +18531,7 @@
       "id": "p5-0708-qorvo",
       "masterRow": 3079,
       "company": "Qorvo",
-      "postingUrl": "https://www.qorvo.com/about/careers",
+      "postingUrl": "https://careers.qorvo.com/search/",
       "talentUrl": "https://www.qorvo.com/careers",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -18650,7 +18651,7 @@
       "id": "p2-0032-citi",
       "masterRow": 3096,
       "company": "Citi",
-      "postingUrl": "https://citi.eightfold.ai/careers/join?jtn_form_id=jtn-general",
+      "postingUrl": "https://jobs.citi.com/search-jobs",
       "talentUrl": "https://citi.eightfold.ai/careers/join?jtn_form_id=jtn-general",
       "channel": "Eightfold Talent Network / Match Me",
       "adapter": "custom",
@@ -18658,7 +18659,7 @@
       "confidence": "high",
       "resumeUpload": "available",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -19820,7 +19821,7 @@
       "id": "p4-0327-paypal",
       "masterRow": 3238,
       "company": "PayPal",
-      "postingUrl": "https://paypal.eightfold.ai/candidate/login?domain=paypal.com",
+      "postingUrl": "https://careers.pypl.com/home/",
       "talentUrl": "https://paypal.eightfold.ai/candidate/login?domain=paypal.com",
       "channel": "Eightfold Candidate Profile",
       "adapter": "custom",
@@ -19828,7 +19829,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -20450,10 +20451,10 @@
       "id": "p4-0464-ncino",
       "masterRow": 3298,
       "company": "nCino",
-      "postingUrl": "https://www.ncino.com/our-company/careers",
+      "postingUrl": "https://ncino.wd5.myworkdayjobs.com/nCinoCareers",
       "talentUrl": "https://www.ncino.com/careers",
       "channel": "공식 Career Portal",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "career_page_only",
       "confidence": "high",
       "resumeUpload": "unknown",
@@ -21725,7 +21726,7 @@
       "id": "p5-0694-oracle-health",
       "masterRow": 3436,
       "company": "Oracle Health",
-      "postingUrl": "https://www.oracle.com/careers/",
+      "postingUrl": "https://careers.oracle.com/en/sites/jobsearch/",
       "talentUrl": "https://www.oracle.com/careers/",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -21733,7 +21734,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -23754,7 +23755,7 @@
       "officialUrl": "https://www.adept.ai/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p5-0534-akasa",
@@ -25898,7 +25899,7 @@
       "officialUrl": "https://careers.abb/us/en/jointalentcommunity",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p5-0544-amkor-technology",
@@ -26066,7 +26067,7 @@
       "officialUrl": "https://jobs.saic.com/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p5-0727-shield-ai",
@@ -26698,7 +26699,7 @@
       "officialUrl": "https://www.apigroupinc.com/careers/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-785",
@@ -27770,7 +27771,7 @@
       "officialUrl": "https://withpersona.com/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p2-0151-plaid",
@@ -29034,7 +29035,7 @@
       "officialUrl": "https://citi.eightfold.ai/careers/join?jtn_form_id=jtn-general",
       "resumeUpload": "available",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p2-0044-loandepot",
@@ -29658,7 +29659,7 @@
       "officialUrl": "https://paypal.eightfold.ai/candidate/login?domain=paypal.com",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p4-0329-point-b",
@@ -30674,7 +30675,7 @@
       "officialUrl": "https://www.oracle.com/careers/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p5-0697-parexel",

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -71,7 +71,8 @@ const sql = [
 
 const seedDir = resolve(projectRoot, "db/seed");
 await mkdir(seedDir, { recursive: true });
-const seedJson = `${JSON.stringify({ generatedAt: rows[0]?.checkedAt ?? null, sources: rows, talentTargets: talentRows }, null, 2)}\n`;
+const seedVersion = `sha256:${createHash("sha256").update(JSON.stringify({ sources: rows, talentTargets: talentRows })).digest("hex")}`;
+const seedJson = `${JSON.stringify({ generatedAt: rows[0]?.checkedAt ?? null, version: seedVersion, sources: rows, talentTargets: talentRows }, null, 2)}\n`;
 const migrationDir = resolve(projectRoot, "drizzle");
 const metaDir = resolve(migrationDir, "meta");
 const journalPath = resolve(metaDir, "_journal.json");
@@ -92,15 +93,20 @@ if (createMigration) {
     .filter((name) => journalMigrationNames.has(name))
     .sort();
   const catalogSqlHistory = await Promise.all(catalogMigrationFiles.map((name) => readFile(resolve(migrationDir, name), "utf8")));
-  const nextIndex = Math.max(-1, ...journal.entries.map((entry) => entry.idx)) + 1;
-  reconciliation = { migrationDirectory: migrationDir, metaDirectory: metaDir, nextIndex };
+  const nextArtifactIndex = Math.max(
+    -1,
+    ...journal.entries.flatMap((entry) => {
+      const match = /^(\d{4})_/.exec(entry.tag);
+      return match ? [Number(match[1])] : [];
+    }),
+  ) + 1;
+  reconciliation = { migrationDirectory: migrationDir, metaDirectory: metaDir, nextIndex: nextArtifactIndex };
   const plan = planSeedMigration({ journal, catalogSqlHistory, nextSql: sql, now: new Date() });
 
   if (plan) {
-    const previousIndex = journal.entries.at(-1)?.idx;
-    if (previousIndex === undefined) throw new Error("Cannot create a catalog migration without a Drizzle snapshot.");
+    if (plan.previousSnapshotIndex < 0) throw new Error("Cannot create a catalog migration without a Drizzle snapshot.");
 
-    const previousSnapshotPath = resolve(metaDir, `${String(previousIndex).padStart(4, "0")}_snapshot.json`);
+    const previousSnapshotPath = resolve(metaDir, `${String(plan.previousSnapshotIndex).padStart(4, "0")}_snapshot.json`);
     const previousSnapshot = JSON.parse(await readFile(previousSnapshotPath, "utf8"));
     const nextSnapshotPath = resolve(metaDir, `${String(plan.snapshotIndex).padStart(4, "0")}_snapshot.json`);
 

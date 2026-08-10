@@ -42,7 +42,32 @@ describe("planSeedMigration", () => {
         ],
       },
       snapshotIndex: 2,
+      previousSnapshotIndex: 1,
     });
+  });
+
+  it("advances from the latest migration prefix when journal indexes have a numbering gap", () => {
+    const gappedJournal = {
+      ...journal,
+      entries: [
+        journal.entries[0],
+        { ...journal.entries[1], tag: "0002_schema_after_gap" },
+      ],
+    };
+
+    expect(planSeedMigration({
+      journal: gappedJournal,
+      catalogSqlHistory: ["INSERT INTO sources VALUES ('old');\n"],
+      nextSql: "INSERT INTO sources VALUES ('new');\n",
+      now: new Date("2026-08-08T12:34:56Z"),
+    })).toEqual(expect.objectContaining({
+      fileName: "0003_refresh_sources_20260808123456.sql",
+      snapshotIndex: 3,
+      previousSnapshotIndex: 2,
+      journal: expect.objectContaining({
+        entries: expect.arrayContaining([expect.objectContaining({ idx: 2, tag: "0003_refresh_sources_20260808123456" })]),
+      }),
+    }));
   });
 
   it("creates a new migration when reverting to catalog SQL from an older migration", () => {
