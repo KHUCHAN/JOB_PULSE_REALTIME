@@ -23,7 +23,7 @@ describe("backfillJobPrograms", () => {
     const sqlite = new DatabaseSync(":memory:");
     sqlite.exec(`
       CREATE TABLE jobs (
-        id TEXT PRIMARY KEY, title TEXT NOT NULL, status TEXT NOT NULL,
+        id TEXT PRIMARY KEY, title TEXT NOT NULL, status TEXT NOT NULL, employment_type TEXT,
         program_classified_at TEXT, updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       );
       CREATE TABLE job_programs (
@@ -32,11 +32,11 @@ describe("backfillJobPrograms", () => {
         PRIMARY KEY (job_id, program_key)
       );
       INSERT INTO jobs VALUES
-        ('a', '2027 Data Science Intern / Co-op', 'open', NULL, CURRENT_TIMESTAMP),
-        ('b', '2027 Werkstudent Data Science', 'open', NULL, CURRENT_TIMESTAMP),
-        ('c', '2027 Internal Audit Analyst', 'open', NULL, CURRENT_TIMESTAMP),
-        ('d', '2027 Finance Intern', 'closed', NULL, CURRENT_TIMESTAMP),
-        ('e', '2027 Product Internship', 'open', '2026-08-09', CURRENT_TIMESTAMP);
+        ('a', '2027 Data Science Intern / Co-op', 'open', 'INTERN', NULL, CURRENT_TIMESTAMP),
+        ('b', '2027 Werkstudent Data Science', 'open', '["Part time","Part time"]', NULL, CURRENT_TIMESTAMP),
+        ('c', '2027 Internal Audit Analyst', 'open', 'R244285', NULL, CURRENT_TIMESTAMP),
+        ('d', '2027 Finance Intern', 'closed', 'INTERN', NULL, CURRENT_TIMESTAMP),
+        ('e', '2027 Product Internship', 'open', 'Full-Time', '2026-08-09', CURRENT_TIMESTAMP);
       INSERT INTO job_programs VALUES ('c', 'internship', 'stale', '2026-08-09');
     `);
 
@@ -46,6 +46,11 @@ describe("backfillJobPrograms", () => {
       { job_id: "a", program_key: "coop" },
       { job_id: "a", program_key: "internship" },
       { job_id: "b", program_key: "internship" },
+    ]);
+    expect(sqlite.prepare("SELECT id, employment_type FROM jobs WHERE id IN ('a','b','c') ORDER BY id").all()).toEqual([
+      { id: "a", employment_type: "Internship" },
+      { id: "b", employment_type: "Part-time" },
+      { id: "c", employment_type: null },
     ]);
     expect(await backfillJobPrograms(db, 3)).toEqual({ processed: 0, matchedJobs: 0, memberships: 0, remaining: 0 });
   });

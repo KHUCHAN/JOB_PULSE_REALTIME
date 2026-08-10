@@ -1,6 +1,7 @@
 import { classifyJobPrograms } from "./job-program-classifier.ts";
+import { normalizeEmploymentType } from "./employment-type.ts";
 
-type PendingJobRow = { id: string; title: string };
+type PendingJobRow = { id: string; title: string; employment_type: string | null };
 
 export type JobProgramBackfillResult = {
   processed: number;
@@ -18,7 +19,7 @@ const chunksOf = <T>(values: T[], size: number): T[][] => {
 export async function backfillJobPrograms(db: D1Database, requestedLimit: number): Promise<JobProgramBackfillResult> {
   const limit = Math.max(1, Math.min(5_000, Math.trunc(requestedLimit)));
   const selected = await db.prepare(`
-    SELECT id, title
+    SELECT id, title, employment_type
     FROM jobs
     WHERE status = 'open' AND program_classified_at IS NULL
     ORDER BY id
@@ -53,10 +54,19 @@ export async function backfillJobPrograms(db: D1Database, requestedLimit: number
     `).bind(JSON.stringify(chunk)).run();
   }
 
-  for (const chunk of chunksOf(ids, 1_000)) {
+  const normalizedJobs = selected.results.map((job) => ({
+    id: job.id,
+    employmentType: normalizeEmploymentType(job.employment_type),
+  }));
+  for (const chunk of chunksOf(normalizedJobs, 1_000)) {
     await db.prepare(`
-      UPDATE jobs SET program_classified_at = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE program_classified_at IS NULL AND id IN (SELECT value FROM json_each(?))
+      UPDATE jobs
+      SET program_classified_at = ?,
+          employment_type = json_extract(value, '$.employmentType'),
+          updated_at = CURRENT_TIMESTAMP
+      FROM json_each(?) AS value
+      WHERE jobs.program_classified_at IS NULL
+        AND jobs.id = json_extract(value, '$.id')
     `).bind(classifiedAt, JSON.stringify(chunk)).run();
   }
 
