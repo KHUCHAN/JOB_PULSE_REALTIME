@@ -22,6 +22,7 @@ import {
 import { bindJobSearchStatements } from "../../../lib/job-search-execution";
 import { emptyJobFilterOptions, queryJobFilterOptions } from "../../../lib/job-filter-options";
 import { buildJobSearchPlan, jobDetailProjection } from "../../../lib/job-search-sql";
+import { overviewCountsSql } from "../../../lib/overview-sql";
 import {
   mapCrawlActivity,
   mapJob,
@@ -165,13 +166,7 @@ async function listTalent(): Promise<TalentTarget[]> {
 
 async function overview(): Promise<OverviewSnapshot> {
   type Counts = { open_jobs: number; active_sources: number; source_errors: number; unsent_alerts: number };
-  const countRow = await db().prepare(`
-    SELECT
-      (SELECT count(*) FROM jobs WHERE status = 'open') AS open_jobs,
-      (SELECT count(*) FROM sources WHERE enabled = 1 AND posting_url IS NOT NULL) AS active_sources,
-      (SELECT count(*) FROM sources s WHERE (SELECT status FROM crawl_runs WHERE source_id=s.id ORDER BY coalesce(finished_at,started_at) DESC LIMIT 1) IN ('blocked','failed')) AS source_errors,
-      (SELECT count(*) FROM keywords WHERE enabled = 1) AS unsent_alerts
-  `).first<Counts>();
+  const countRow = await db().prepare(overviewCountsSql).first<Counts>();
   const latest = await jobsFor(
     new URL("https://job-pulse.local/api/pulse?resource=jobs&pageSize=5"),
     false,
