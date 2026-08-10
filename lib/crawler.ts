@@ -497,7 +497,8 @@ async function crawlDiscoveredFeed(source: CrawlSource, discovered: DiscoveredAt
       });
       const jobs = normalize(firstItems);
       const pageSize = Math.max(firstItems.length, 1);
-      const pageNumbers = Array.from({ length: Math.max(0, Math.ceil(total / pageSize) - 1) }, (_, index) => index + 2);
+      const boundedTotal = Math.min(total, 10_000);
+      const pageNumbers = Array.from({ length: Math.max(0, Math.ceil(boundedTotal / pageSize) - 1) }, (_, index) => index + 2);
       for (let index = 0; index < pageNumbers.length; index += 8) {
         const pages = await Promise.all(pageNumbers.slice(index, index + 8).map(async (page) => {
           const pageUrl = new URL(discovered.endpoint);
@@ -532,7 +533,7 @@ async function crawlDiscoveredFeed(source: CrawlSource, discovered: DiscoveredAt
       return {
         status: "succeeded",
         responseStatus: response.status,
-        completeListing: jobs.length >= total,
+        completeListing: total <= 10_000 && jobs.length >= total,
         jobs,
         ...(facets.length > 0 ? { facets } : {}),
         error: null,
