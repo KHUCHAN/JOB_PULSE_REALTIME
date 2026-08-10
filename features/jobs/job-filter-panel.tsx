@@ -1,6 +1,6 @@
 "use client";
 
-import { Search, SlidersHorizontal, X } from "lucide-react";
+import { Search, SlidersHorizontal, Sparkles, X } from "lucide-react";
 import { useEffect, useRef } from "react";
 import type { ReactElement } from "react";
 import type { JobFilterOption, JobFilterOptions, JobFilters, JobSeason } from "../../lib/domain";
@@ -82,6 +82,7 @@ export function JobFilterPanel({
   onAdvancedOpenChange(open: boolean): void;
 }): ReactElement {
   const companies = filters.companies ?? [];
+  const aiDataSelected = filters.topics?.includes("ai-data") ?? false;
   const employmentTypes = filters.employmentTypes ?? [];
   const programTypes = filters.programTypes ?? [];
   const seasons = filters.seasons ?? [];
@@ -124,6 +125,14 @@ export function JobFilterPanel({
           <label className="sr-only" htmlFor="job-search">Search jobs</label>
           <input id="job-search" type="search" value={search} onChange={(event) => onSearchChange(event.target.value)} placeholder="Role, company, or keyword" />
         </div>
+        <button
+          className="button secondary topic-preset"
+          type="button"
+          aria-pressed={aiDataSelected}
+          onClick={() => onChange({ topics: aiDataSelected ? [] : ["ai-data"] })}
+        >
+          <Sparkles size={16} aria-hidden="true" /> AI &amp; Data Science
+        </button>
         <DatalistField id="job-company" label="Company" value={companies[0] ?? ""} options={options?.companies} placeholder="Any company" onChange={(value) => setTextArray("companies", value)} />
         <DatalistField id="job-location" label="Location" value={filters.location} options={options?.locations} placeholder="Any location" onChange={(location) => onChange({ location })} />
         <div className="filter-control">

@@ -1,5 +1,5 @@
 import userEvent from "@testing-library/user-event";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FixtureProvider } from "../../components/fixture-provider";
@@ -44,6 +44,33 @@ describe("JobsScreen", () => {
     expect(container.querySelector(".more-filters-button")?.textContent).toContain("More filters (2)");
     expect(html).toContain("Remove Recruiting year: 2027");
     expect(html).toContain("Remove Program type: Co-op");
+  });
+
+  it("toggles the AI & Data Science preset through URL state and a removable chip", async () => {
+    const user = userEvent.setup();
+    render(<FixtureProvider><JobsScreen initialQuery="" /></FixtureProvider>);
+    const preset = screen.getByRole("button", { name: "AI & Data Science" });
+
+    expect(preset).toHaveAttribute("aria-pressed", "false");
+    await user.click(preset);
+    await waitFor(() => expect(window.location.search).toBe("?topic=ai-data"));
+    expect(preset).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Remove Topic: AI & Data Science" })).toBeInTheDocument();
+    expect(screen.queryAllByText("Fraud Strategy Analyst")).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: "Remove Topic: AI & Data Science" }));
+    await waitFor(() => expect(window.location.search).toBe(""));
+    expect(preset).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("presents Company and Role as separate desktop columns and mobile fields", async () => {
+    render(<FixtureProvider><JobsScreen initialQuery="" /></FixtureProvider>);
+    const table = await screen.findByRole("table", { name: "Matching jobs" });
+
+    expect(within(table).getByRole("columnheader", { name: "Company" })).toBeInTheDocument();
+    expect(within(table).getByRole("columnheader", { name: "Role" })).toBeInTheDocument();
+    expect(screen.getAllByLabelText(/^Company:/).length).toBeGreaterThan(0);
+    expect(screen.getAllByLabelText(/^Role:/).length).toBeGreaterThan(0);
   });
 
   it("filters jobs and opens match details", async () => {

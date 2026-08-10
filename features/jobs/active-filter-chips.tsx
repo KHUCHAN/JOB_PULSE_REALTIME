@@ -24,6 +24,9 @@ export function ActiveFilterChips({
   if (filters.status !== "all") chips.push({ key: "status", label: `Job status: ${filters.status}` });
   if (filters.arrangement !== "all") chips.push({ key: "arrangement", label: `Work arrangement: ${filters.arrangement}` });
   if (filters.location.trim()) chips.push({ key: "location", label: `Location: ${filters.location.trim()}` });
+  for (const topic of filters.topics ?? []) {
+    if (topic === "ai-data") chips.push({ key: "topics", value: topic, label: "Topic: AI & Data Science" });
+  }
   for (const year of filters.recruitingYears ?? []) chips.push({ key: "recruitingYears", value: year, label: `Recruiting year: ${year}` });
   for (const program of filters.programTypes ?? []) chips.push({ key: "programTypes", value: program, label: `Program type: ${program === "coop" ? "Co-op" : program === "internship" ? "Internship" : "Regular role"}` });
   for (const season of filters.seasons ?? []) chips.push({ key: "seasons", value: season, label: `Season: ${season}` });

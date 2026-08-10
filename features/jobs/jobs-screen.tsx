@@ -8,6 +8,7 @@ import { EmptyState } from "../../components/ui/empty-state";
 import { ErrorState } from "../../components/ui/error-state";
 import { LoadingState } from "../../components/ui/loading-state";
 import { StatusBadge } from "../../components/ui/status-badge";
+import { CompanyLogo } from "../../components/ui/company-logo";
 import type { JobFilters, JobState } from "../../lib/domain";
 import { formatRelativeDate } from "../../lib/format";
 import { defaultJobFilters, parseJobFilterParams, serializeJobFilters } from "../../lib/job-filter-query";
@@ -28,7 +29,7 @@ const filtersFromLocation = (initialQuery: string, initialSearchParams?: string)
 };
 
 const arrayFilterKeys = new Set<keyof JobFilters>([
-  "companies", "cities", "states", "countries", "employmentTypes", "recruitingYears", "programTypes", "seasons", "departments", "teams", "businessUnits", "jobFamilies", "jobFunctions", "industries", "offices", "skills", "experienceLevels", "salaryCurrencies", "salaryIntervals", "educationRequirements", "shiftSchedules", "travelRequirements", "securityClearances", "languages",
+  "topics", "companies", "cities", "states", "countries", "employmentTypes", "recruitingYears", "programTypes", "seasons", "departments", "teams", "businessUnits", "jobFamilies", "jobFunctions", "industries", "offices", "skills", "experienceLevels", "salaryCurrencies", "salaryIntervals", "educationRequirements", "shiftSchedules", "travelRequirements", "securityClearances", "languages",
 ]);
 
 export function JobsScreen({
@@ -156,11 +157,12 @@ export function JobsScreen({
           <>
             <div className="table-wrap desktop-jobs-table">
               <table className="data-table jobs-table" aria-label="Matching jobs">
-                <thead><tr><th>Role</th><th>Location</th><th>Arrangement</th><th>Matched</th><th>Seen</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr></thead>
+                <thead><tr><th>Company</th><th>Role</th><th>Location</th><th>Arrangement</th><th>Matched</th><th>Seen</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr></thead>
                 <tbody>
                   {jobs.map((job) => (
                     <tr key={job.id}>
-                      <td><strong>{job.title}</strong><span>{job.company}</span></td>
+                      <td><div className="job-company-cell"><CompanyLogo company={job.company} /><span>{job.company}</span></div></td>
+                      <td className="job-role-cell"><strong>{job.title}</strong></td>
                       <td>{job.location}</td>
                       <td>{job.arrangement}</td>
                       <td><b className="match-score">{job.matchScore}%</b><span>{job.matchedTerms.join(" · ")}</span></td>
@@ -176,7 +178,7 @@ export function JobsScreen({
             <div className="mobile-job-list">
               {jobs.map((job) => (
                 <article className="mobile-job-card" key={job.id}>
-                  <div className="mobile-job-top"><span className="company-avatar">{job.company.slice(0, 1)}</span><div><strong>{job.title}</strong><span>{job.company}</span></div><StatusBadge status={job.status} /></div>
+                  <div className="mobile-job-top"><CompanyLogo company={job.company} /><div><span className="mobile-job-company" aria-label={`Company: ${job.company}`}>{job.company}</span><strong aria-label={`Role: ${job.title}`}>{job.title}</strong></div><StatusBadge status={job.status} /></div>
                   <p>{job.location} · {job.arrangement}</p>
                   <div className="mobile-job-bottom"><span><b>{job.matchScore}%</b> match</span><button className="button secondary" type="button" aria-label={`View ${job.title} details`} onClick={(event) => void openDetails(job, event)}>Details <ArrowUpRight size={15} /></button></div>
                 </article>
