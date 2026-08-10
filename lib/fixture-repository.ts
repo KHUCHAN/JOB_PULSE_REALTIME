@@ -11,6 +11,8 @@ import type {
   TalentState,
 } from "./domain";
 import { defaultJobFilters } from "./job-filter-query";
+import { classifyJobAreas } from "./job-area-classifier";
+import { classifyJobRegion } from "./job-region-classifier";
 import { classifyAiDataJob } from "./job-topic-classifier";
 import { classifyJobPrograms } from "./job-program-classifier";
 import {
@@ -26,7 +28,7 @@ import type { RichJobPosting } from "./pulse-mappers";
 const copy = <T>(value: T): T => structuredClone(value);
 
 const optionKeys = [
-  "companies", "locations", "cities", "states", "countries", "arrangements",
+  "companies", "locations", "cities", "states", "countries", "regions", "arrangements",
   "employmentTypes", "recruitingYears", "programTypes", "seasons", "departments",
   "teams", "businessUnits", "jobFamilies", "jobFunctions", "industries", "offices",
   "skills", "experienceLevels", "salaryCurrencies", "salaryIntervals",
@@ -53,8 +55,18 @@ const locationParts = (location: string) => {
 
 const toRichFixtureJob = (job: JobPosting): RichJobPosting => {
   const { city, state, country } = locationParts(job.location);
+  const areaKeys = classifyJobAreas({ title: job.title, summary: job.summary, skills: job.matchedTerms })
+    .map((area) => area.areaKey);
+  const locationRegion = classifyJobRegion({
+    location: job.location,
+    locationCity: city,
+    locationState: state,
+    locationCountry: country,
+  });
   return {
     ...job,
+    areaKeys,
+    locationRegion,
     employmentType: null,
     description: null,
     responsibilities: null,
@@ -115,6 +127,9 @@ const matchesYears = (job: RichJobPosting, years: number[] | undefined): boolean
 const matchesTopics = (job: RichJobPosting, topics: JobFilters["topics"]): boolean =>
   !topics?.length || topics.some((topic) => topic === "ai-data" && classifyAiDataJob(job).matched);
 
+const matchesAreas = (job: RichJobPosting, areas: JobFilters["areas"]): boolean =>
+  !areas?.length || areas.some((area) => job.areaKeys.includes(area));
+
 const emptyOptions = (): JobFilterOptions => Object.fromEntries(
   optionKeys.map((key) => [key, []]),
 ) as unknown as JobFilterOptions;
@@ -125,6 +140,7 @@ const countOptions = (jobs: RichJobPosting[]): JobFilterOptions => {
     cities: jobs.flatMap((job) => job.locationCity ? [job.locationCity] : []),
     states: jobs.flatMap((job) => job.locationState ? [job.locationState] : []),
     countries: jobs.flatMap((job) => job.locationCountry ? [job.locationCountry] : []),
+    regions: jobs.map((job) => job.locationRegion),
     arrangements: jobs.map((job) => job.arrangement),
     employmentTypes: jobs.flatMap((job) => job.employmentType ? [job.employmentType] : []),
     recruitingYears: jobs.flatMap((job) => [...job.title.matchAll(/\b(20\d{2})\b/g)].map((match) => Number(match[1]))),
@@ -179,8 +195,10 @@ const matchesFilters = (job: RichJobPosting, filters: JobFilters): boolean => {
     && hasAny(filters.cities, [job.locationCity])
     && hasAny(filters.states, [job.locationState])
     && hasAny(filters.countries, [job.locationCountry])
+    && hasAny(filters.regions, [job.locationRegion])
     && hasAny(filters.employmentTypes, [job.employmentType])
     && matchesTopics(job, filters.topics)
+    && matchesAreas(job, filters.areas)
     && matchesYears(job, filters.recruitingYears)
     && matchesProgram(job, filters.programTypes)
     && matchesTitleTerm(job, filters.seasons)

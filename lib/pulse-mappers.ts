@@ -1,4 +1,4 @@
-import type { ActivityEvent, JobPosting, SourceHealth } from "./domain";
+import type { ActivityEvent, JobAreaKey, JobPosting, JobRegion, SourceHealth } from "./domain";
 
 export interface JobViewRow {
   id: string;
@@ -28,6 +28,8 @@ export interface JobViewRow {
   location_city?: string | null;
   location_state?: string | null;
   location_country?: string | null;
+  location_region?: string | null;
+  area_keys?: string | null;
   location_postal_code?: string | null;
   latitude?: number | null;
   longitude?: number | null;
@@ -52,6 +54,8 @@ export interface JobViewRow {
 }
 
 export interface RichJobPosting extends JobPosting {
+  areaKeys: JobAreaKey[];
+  locationRegion: JobRegion;
   employmentType: string | null;
   description: string | null;
   responsibilities: string | null;
@@ -102,6 +106,14 @@ const jsonStringArray = (value: string | null | undefined): string[] => {
   }
 };
 
+const jobAreaKeys = (value: string | null | undefined): JobAreaKey[] => {
+  const allowed = new Set<JobAreaKey>(["ai-ml", "data-analytics", "software-engineering"]);
+  return jsonStringArray(value).filter((item): item is JobAreaKey => allowed.has(item as JobAreaKey));
+};
+
+const jobRegion = (value: string | null | undefined): JobRegion =>
+  ["us", "non_us", "mixed", "unknown"].includes(value ?? "") ? value as JobRegion : "unknown";
+
 export interface CrawlActivityRow {
   id: string;
   company: string;
@@ -136,6 +148,8 @@ export function mapJob(row: JobViewRow): RichJobPosting {
     firstSeenAt: row.first_seen_at,
     lastConfirmedAt: row.last_seen_at,
     status,
+    areaKeys: jobAreaKeys(row.area_keys),
+    locationRegion: jobRegion(row.location_region),
     employmentType: nullableText(row.employment_type),
     description: nullableText(row.description),
     responsibilities: nullableText(row.responsibilities),

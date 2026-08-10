@@ -1,8 +1,10 @@
-import type { JobFilters, JobProgramType, JobSeason, JobTopicKey } from "./domain";
+import type { JobAreaKey, JobFilters, JobProgramType, JobRegion, JobSeason, JobTopicKey } from "./domain";
 
 const programTypes = new Set<JobProgramType>(["internship", "coop", "regular"]);
 const seasons = new Set<JobSeason>(["spring", "summer", "fall", "winter"]);
 const topicKeys = new Set<JobTopicKey>(["ai-data"]);
+const areaKeys = new Set<JobAreaKey>(["ai-ml", "data-analytics", "software-engineering"]);
+const regionKeys = new Set<JobRegion>(["us", "non_us", "mixed", "unknown"]);
 const statuses = new Set<JobFilters["status"]>(["all", "new", "saved", "hidden", "applied"]);
 const arrangements = new Set<JobFilters["arrangement"]>(["all", "onsite", "hybrid", "remote"]);
 
@@ -12,6 +14,8 @@ export const defaultJobFilters: JobFilters = {
   arrangement: "all",
   location: "",
   topics: [],
+  areas: [],
+  regions: [],
   companies: [],
   cities: [],
   states: [],
@@ -155,6 +159,8 @@ export function parseJobFilterParams(input: URLSearchParams): JobFilters {
   filters.programTypes = normalizeEnumValues(input.getAll("program"), programTypes);
   filters.seasons = normalizeEnumValues(input.getAll("season"), seasons);
   filters.topics = normalizeEnumValues(input.getAll("topic"), topicKeys);
+  filters.areas = normalizeEnumValues(input.getAll("area"), areaKeys);
+  filters.regions = normalizeEnumValues(input.getAll("region"), regionKeys);
   filters.postedAfter = parseDate(input.get("postedAfter"));
   filters.postedBefore = parseDate(input.get("postedBefore"));
   filters.salaryMin = parseNonNegativeNumber(input.get("salaryMin"));
@@ -185,6 +191,8 @@ export function serializeJobFilters(filters: JobFilters): URLSearchParams {
   }
   appendText("location", normalized.location);
   for (const topic of normalizeEnumValues(normalized.topics, topicKeys)) params.append("topic", topic);
+  for (const area of normalizeEnumValues(normalized.areas, areaKeys)) params.append("area", area);
+  for (const region of normalizeEnumValues(normalized.regions, regionKeys)) params.append("region", region);
   for (const [parameter, property] of arrayKeys.slice(0, 5)) {
     appendValues(params, parameter, normalized[property] as string[] | undefined);
   }
@@ -228,6 +236,8 @@ export function activeFilterCount(filters: JobFilters): number {
     + Number(normalized.arrangement !== "all" && arrangements.has(normalized.arrangement))
     + Number(Boolean(normalized.location.trim()))
     + Number(normalizeEnumValues(normalized.topics, topicKeys).length > 0)
+    + Number(normalizeEnumValues(normalized.areas, areaKeys).length > 0)
+    + Number(normalizeEnumValues(normalized.regions, regionKeys).length > 0)
     + Number(normalizeYears(normalized.recruitingYears).length > 0)
     + Number(normalizeEnumValues(normalized.programTypes, programTypes).length > 0)
     + Number(normalizeEnumValues(normalized.seasons, seasons).length > 0)

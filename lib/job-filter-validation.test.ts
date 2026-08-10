@@ -8,6 +8,16 @@ describe("explicit job-filter validation", () => {
       .toThrow("Invalid topic.");
   });
 
+  it("accepts only supported area and region keys", () => {
+    expect(() => validateExplicitJobFilterValues(new URLSearchParams(
+      "area=ai-ml&area=data-analytics&area=software-engineering&region=us&region=non_us&region=mixed&region=unknown",
+    ))).not.toThrow();
+    expect(() => validateExplicitJobFilterValues(new URLSearchParams("area=security")))
+      .toThrow("Invalid area.");
+    expect(() => validateExplicitJobFilterValues(new URLSearchParams("region=global")))
+      .toThrow("Invalid region.");
+  });
+
   it.each([
     ["page", "page=2&page=invalid"],
     ["pageSize", "pageSize=25&pageSize=101"],

@@ -51,14 +51,26 @@ const jobDetailColumns = [
   "description", "responsibilities", "qualifications", "skills", "department", "team",
   "business_unit", "job_family", "job_function", "industry", "office", "secondary_locations",
   "location_city", "location_state", "location_country", "location_postal_code", "latitude",
-  "longitude", "salary_min", "salary_max", "salary_currency", "salary_interval", "benefits",
+  "longitude", "location_region", "salary_min", "salary_max", "salary_currency", "salary_interval", "benefits",
   "education_requirements", "experience_requirements", "experience_level", "shift_schedule",
   "travel_requirements", "security_clearance", "languages", "requisition_id", "apply_url",
   "source_posted_text", "source_updated_at", "valid_through", "published_at",
 ] as const;
 
-export const jobDetailProjection = (alias = "j"): string =>
-  jobDetailColumns.map((column) => `${alias}.${column} AS ${column}`).join(",\n       ");
+const areaKeysProjection = (alias: string): string => `coalesce((
+         SELECT json_group_array(area_key)
+         FROM (
+           SELECT substr(area_topic.topic_key, length('area:') + 1) AS area_key
+           FROM job_topics area_topic
+           WHERE area_topic.job_id = ${alias}.id AND area_topic.topic_key LIKE 'area:%'
+           ORDER BY area_topic.topic_key
+         )
+       ), '[]') AS area_keys`;
+
+export const jobDetailProjection = (alias = "j"): string => [
+  ...jobDetailColumns.map((column) => `${alias}.${column} AS ${column}`),
+  areaKeysProjection(alias),
+].join(",\n       ");
 
 const jobListProjection = [
   "j.id AS id", "j.source_id AS source_id", "j.company AS company", "j.title AS title",
@@ -66,7 +78,8 @@ const jobListProjection = [
   "substr(coalesce(j.summary, j.description), 1, 1200) AS summary",
   "j.official_url AS official_url", "j.first_seen_at AS first_seen_at",
   "j.last_seen_at AS last_seen_at", "j.review_state AS review_state",
-  "j.employment_type AS employment_type",
+  "j.employment_type AS employment_type", "j.published_at AS published_at",
+  "j.location_region AS location_region", areaKeysProjection("j"),
 ].join(",\n       ");
 
 export function buildJobSearchPlan(filters: JobFilters): JobSearchPlan {
@@ -101,6 +114,18 @@ export function buildJobSearchPlan(filters: JobFilters): JobSearchPlan {
   const fromSql = topics.length
     ? "FROM job_topics selected_topic INDEXED BY job_topics_topic_job_idx JOIN jobs j ON j.id = selected_topic.job_id"
     : "FROM jobs j";
+
+  const areas = asNormalizedValues(filters.areas)
+    .filter((area) => ["ai-ml", "data-analytics", "software-engineering"].includes(area))
+    .map((area) => `area:${area}`);
+  if (areas.length) {
+    add(`j.id IN (
+      SELECT selected_area.job_id
+      FROM job_topics selected_area INDEXED BY job_topics_topic_job_idx
+      WHERE selected_area.topic_key IN (${areas.map(() => "?").join(", ")})
+    )`, areas);
+  }
+  addAnyEquals("j.location_region", filters.regions);
 
   if (filters.status && filters.status !== "all") add("j.review_state = ?", [filters.status]);
   addAnyEquals("j.company", filters.companies);

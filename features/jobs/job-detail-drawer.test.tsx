@@ -17,6 +17,8 @@ const job: RichJobPosting = {
   firstSeenAt: "2026-08-10T00:00:00.000Z",
   lastConfirmedAt: "2026-08-10T00:00:00.000Z",
   status: "new",
+  areaKeys: ["data-analytics"],
+  locationRegion: "unknown",
   employmentType: "Internship",
   description: null,
   responsibilities: null,

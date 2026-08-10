@@ -22,12 +22,14 @@ const executePlan = (sql: string, bindings: unknown[], limit?: number, offset?: 
         employment_type TEXT, description TEXT, responsibilities TEXT, qualifications TEXT, skills TEXT,
         department TEXT, team TEXT, business_unit TEXT, job_family TEXT, job_function TEXT, industry TEXT,
         office TEXT, secondary_locations TEXT, location_city TEXT, location_state TEXT, location_country TEXT,
+        location_region TEXT,
         location_postal_code TEXT, latitude REAL, longitude REAL, salary_min REAL, salary_max REAL,
         salary_currency TEXT, salary_interval TEXT, benefits TEXT, education_requirements TEXT,
         experience_requirements TEXT, experience_level TEXT, shift_schedule TEXT, travel_requirements TEXT,
         security_clearance TEXT, languages TEXT, requisition_id TEXT, apply_url TEXT, source_posted_text TEXT,
         source_updated_at TEXT, valid_through TEXT, published_at TEXT, raw_payload TEXT
       );`,
+      "CREATE TABLE job_topics (job_id TEXT, topic_key TEXT, PRIMARY KEY(job_id, topic_key));",
       "INSERT INTO jobs (id, company, official_url, status, first_seen_at) VALUES ('older-duplicate', 'Acme, Inc.', 'https://acme.example/jobs/1', 'open', '2026-08-01T00:00:00.000Z'), ('newer-duplicate', 'Acme, Inc.', 'https://acme.example/jobs/1', 'open', '2026-08-03T00:00:00.000Z'), ('second-page', 'Acme, Inc.', 'https://acme.example/jobs/2', 'open', '2026-08-02T00:00:00.000Z'), ('not-a-match', 'Acme', 'https://acme.example/jobs/3', 'open', '2026-08-04T00:00:00.000Z');",
       ".parameter init",
       parameters,
@@ -87,6 +89,25 @@ describe("parameterized job search SQL", () => {
     expect(plan.pageSql).toContain("job_topics");
     expect(plan.pageSql).toContain("job_topics_topic_job_idx");
     expect(plan.bindings).toEqual(["program:internship", "program:coop"]);
+  });
+
+  it("uses indexed OR area memberships and direct region equality", () => {
+    const plan = buildJobSearchPlan({
+      ...defaultJobFilters,
+      recruitingYears: [2027],
+      programTypes: ["internship", "coop"],
+      areas: ["ai-ml", "data-analytics", "software-engineering"],
+      regions: ["us"],
+    });
+
+    expect(plan.pageSql).toContain("FROM job_topics selected_area INDEXED BY job_topics_topic_job_idx");
+    expect(plan.pageSql).toContain("selected_area.topic_key IN (?, ?, ?)");
+    expect(plan.pageSql).toContain("j.location_region = ?");
+    expect(plan.pageSql).not.toContain("lower(j.location_region)");
+    expect(plan.bindings).toEqual([
+      "area:ai-ml", "area:data-analytics", "area:software-engineering", "us",
+      "program:internship", "program:coop",
+    ]);
   });
 
   it("matches recruiting-year memberships when the title omits the year", () => {
@@ -167,6 +188,9 @@ describe("parameterized job search SQL", () => {
     expect(plan.pageSql).not.toContain("AS description");
     expect(plan.pageSql).toContain("AS summary");
     expect(plan.pageSql).toContain("j.employment_type AS employment_type");
+    expect(plan.pageSql).toContain("j.published_at AS published_at");
+    expect(plan.pageSql).toContain("j.location_region AS location_region");
+    expect(plan.pageSql).toContain("AS area_keys");
     expect(plan.countSql).toContain("count(*)");
     expect(plan.countSql).not.toContain("row_number() OVER");
   });

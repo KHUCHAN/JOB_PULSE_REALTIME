@@ -18,6 +18,8 @@ const rejectInvalidValues = (
 
 export const validateExplicitJobFilterValues = (params: URLSearchParams) => {
   rejectInvalidValues(params, "topic", (value) => value.trim().toLocaleLowerCase() === "ai-data");
+  rejectInvalidValues(params, "area", (value) => ["ai-ml", "data-analytics", "software-engineering"].includes(value.trim().toLocaleLowerCase()));
+  rejectInvalidValues(params, "region", (value) => ["us", "non_us", "mixed", "unknown"].includes(value.trim().toLocaleLowerCase()));
   rejectInvalidValues(params, "page", (value) =>
     /^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= Number.MAX_SAFE_INTEGER,
   );

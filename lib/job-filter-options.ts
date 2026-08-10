@@ -2,7 +2,7 @@ import type { JobFilterOptions } from "./domain";
 import { titleTokensSql } from "./job-title-tokens";
 
 export const jobFilterOptionKeys = [
-  "companies", "locations", "cities", "states", "countries", "arrangements",
+  "companies", "locations", "cities", "states", "countries", "regions", "arrangements",
   "employmentTypes", "recruitingYears", "programTypes", "seasons", "departments",
   "teams", "businessUnits", "jobFamilies", "jobFunctions", "industries", "offices",
   "skills", "experienceLevels", "salaryCurrencies", "salaryIntervals",
@@ -38,7 +38,7 @@ export const filterOptionsSql = `
   ranked AS (
     SELECT
       j.id, j.official_url, j.company, j.title, j.location, j.location_city,
-      j.location_state, j.location_country, j.arrangement, j.employment_type,
+      j.location_state, j.location_country, j.location_region, j.arrangement, j.employment_type,
       j.department, j.team, j.business_unit, j.job_family, j.job_function,
       j.industry, j.office, j.skills, j.experience_level, j.salary_currency,
       j.salary_interval, j.education_requirements, j.shift_schedule,
@@ -71,6 +71,7 @@ export const filterOptionsSql = `
       'cities', d.location_city,
       'states', d.location_state,
       'countries', d.location_country,
+      'regions', d.location_region,
       'arrangements', d.arrangement,
       'employmentTypes', d.employment_type,
       'departments', d.department,

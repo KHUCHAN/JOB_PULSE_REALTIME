@@ -16,6 +16,20 @@ describe("job filter query codec", () => {
     expect(activeFilterCount({ ...defaultJobFilters, topics: ["ai-data"] })).toBe(1);
   });
 
+  it("round-trips explicit job areas and location regions", () => {
+    const parsed = parseJobFilterParams(new URLSearchParams(
+      "year=2027&program=internship&program=coop&area=ai-ml&area=data-analytics&area=software-engineering&region=us",
+    ));
+
+    expect(parsed.areas).toEqual(["ai-ml", "data-analytics", "software-engineering"]);
+    expect(parsed.regions).toEqual(["us"]);
+    expect(serializeJobFilters(parsed).getAll("area")).toEqual([
+      "ai-ml", "data-analytics", "software-engineering",
+    ]);
+    expect(serializeJobFilters(parsed).getAll("region")).toEqual(["us"]);
+    expect(activeFilterCount(parsed)).toBe(4);
+  });
+
   it("round-trips multi-value structured filters", () => {
     const filters = parseJobFilterParams(new URLSearchParams(
       "year=2027&program=internship&program=coop&company=SpaceX&skill=Python&page=3",
@@ -43,7 +57,7 @@ describe("job filter query codec", () => {
 
   it("drops invalid numeric, date, and enum values", () => {
     const filters = parseJobFilterParams(new URLSearchParams(
-      "year=nope&program=contract&page=-1&pageSize=999&postedAfter=tomorrow",
+      "year=nope&program=contract&area=security&region=global&page=-1&pageSize=999&postedAfter=tomorrow",
     ));
 
     expect(filters).toMatchObject({
@@ -52,6 +66,8 @@ describe("job filter query codec", () => {
       page: 1,
       pageSize: 50,
       postedAfter: "",
+      areas: [],
+      regions: [],
     });
   });
 

@@ -3,6 +3,8 @@ export type WorkArrangement = "onsite" | "hybrid" | "remote";
 export type JobProgramType = "internship" | "coop" | "regular";
 export type JobSeason = "spring" | "summer" | "fall" | "winter";
 export type JobTopicKey = "ai-data";
+export type JobAreaKey = "ai-ml" | "data-analytics" | "software-engineering";
+export type JobRegion = "us" | "non_us" | "mixed" | "unknown";
 export type SourceHealth =
   | "healthy"
   | "changed"
@@ -44,6 +46,8 @@ export interface JobFilters {
   arrangement: "all" | WorkArrangement;
   location: string;
   topics?: JobTopicKey[];
+  areas?: JobAreaKey[];
+  regions?: JobRegion[];
   companies?: string[];
   cities?: string[];
   states?: string[];
@@ -87,6 +91,7 @@ export type JobFilterOptions = Record<
   | "cities"
   | "states"
   | "countries"
+  | "regions"
   | "arrangements"
   | "employmentTypes"
   | "recruitingYears"

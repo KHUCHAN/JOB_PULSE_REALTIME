@@ -15,6 +15,7 @@ const schema = `
     location_city TEXT,
     location_state TEXT,
     location_country TEXT,
+    location_region TEXT,
     arrangement TEXT,
     employment_type TEXT,
     department TEXT,
@@ -129,6 +130,8 @@ describe("queryJobFilterOptions", () => {
         ('new', 'program:coop'),
         ('closed', 'program:internship'),
         ('company-001', 'year:2027');
+      UPDATE jobs SET location_region = 'us' WHERE location_country = 'US';
+      UPDATE jobs SET location_region = 'unknown' WHERE location_region IS NULL;
     `);
 
     for (let index = 1; index <= 101; index += 1) {
@@ -139,6 +142,7 @@ describe("queryJobFilterOptions", () => {
         `https://example.com/jobs/company-${suffix}`, "open", "2026-03-01", "x".repeat(20_000),
       );
     }
+    sqlite.exec("UPDATE jobs SET location_region = 'unknown' WHERE location_region IS NULL");
 
     const d1 = createD1(sqlite, true);
 
@@ -160,6 +164,10 @@ describe("queryJobFilterOptions", () => {
     expect(options.employmentTypes).toContainEqual({ value: "Full-Time", count: 1 });
     expect(options.employmentTypes).toContainEqual({ value: "internship", count: 2 });
     expect(options.employmentTypes).not.toContainEqual(expect.objectContaining({ value: "Phoenix" }));
+    expect(options.regions).toEqual(expect.arrayContaining([
+      { value: "us", count: 1 },
+      { value: "unknown", count: 104 },
+    ]));
     sqlite.close();
   });
 
