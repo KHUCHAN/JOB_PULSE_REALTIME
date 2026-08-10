@@ -117,6 +117,39 @@ describe("D1CrawlStore enriched job persistence", () => {
     expect(insert?.sql).toContain("description_hash = COALESCE(excluded.description_hash, jobs.description_hash)");
   });
 
+  it("upserts AI/data membership and clears stale membership for every processed job", async () => {
+    const { db, calls } = fakeDb();
+    const store = new D1CrawlStore(db);
+    const jobs = [{
+      externalId: "data-1", title: "Data Engineer", company: "Acme", location: "Remote",
+      arrangement: "remote" as const, employmentType: "Full-time", summary: "Build pipelines.",
+      officialUrl: "https://jobs.example/data-1", publishedAt: null,
+    }, {
+      externalId: "sales-1", title: "Account Executive", company: "Acme", location: "Remote",
+      arrangement: "remote" as const, employmentType: "Full-time", summary: "Manage customer accounts.",
+      officialUrl: "https://jobs.example/sales-1", publishedAt: null,
+    }] as CrawledJob[];
+
+    await store.syncJobs("source-1", jobs, false);
+
+    const jobsInsert = calls.find((call) => call.sql.includes("INSERT INTO jobs"));
+    const jobRecords = JSON.parse(String(jobsInsert?.values[0]));
+    expect(jobRecords.every((record: Record<string, unknown>) => typeof record.topicClassifiedAt === "string")).toBe(true);
+
+    const topicInsert = calls.find((call) => call.sql.includes("INSERT INTO job_topics"));
+    const topicRecords = JSON.parse(String(topicInsert?.values[0]));
+    expect(topicRecords).toEqual([
+      expect.objectContaining({ officialUrl: "https://jobs.example/data-1", score: expect.any(Number) }),
+    ]);
+    expect(topicRecords[0].evidence).toContain("title:data engineering");
+
+    const staleDelete = calls.find((call) => call.sql.includes("DELETE FROM job_topics"));
+    expect(staleDelete?.sql).toContain("topic_key = 'ai-data'");
+    expect(JSON.parse(String(staleDelete?.values[0]))).toEqual([
+      expect.objectContaining({ officialUrl: "https://jobs.example/sales-1" }),
+    ]);
+  });
+
   it("upserts source-native facet values observed during the crawl", async () => {
     const { db, calls } = fakeDb();
     const store = new D1CrawlStore(db);

@@ -1,5 +1,6 @@
 import type { CrawlStore, PersistedSource } from "../lib/crawl-runner";
 import type { CrawledFacet, CrawledJob } from "../lib/crawler";
+import { classifyAiDataJob } from "../lib/job-topic-classifier";
 
 type SourceRow = {
   id: string;
@@ -186,6 +187,7 @@ export class D1CrawlStore implements CrawlStore {
     const existingUrls = new Set(existingResult.results.map((row) => row.official_url));
     const visibleUrls = new Set(jobs.map((job) => job.officialUrl));
     const recordFor = async (job: CrawledJob): Promise<Record<string, unknown>> => {
+      const aiData = classifyAiDataJob(job);
       const record = boundedJobRecord({
         id: crypto.randomUUID(), sourceId, externalId: job.externalId, title: job.title,
         company: job.company, location: job.location, arrangement: job.arrangement,
@@ -207,6 +209,8 @@ export class D1CrawlStore implements CrawlStore {
         sourcePostedText: job.sourcePostedText ?? null, sourceUpdatedAt: job.sourceUpdatedAt ?? null,
         validThrough: job.validThrough ?? null, rawPayload: job.rawPayload ?? null,
         officialUrl: job.officialUrl, publishedAt: job.publishedAt, firstSeenAt: now, lastSeenAt: now,
+        topicClassifiedAt: now, aiDataMatched: aiData.matched, aiDataScore: aiData.score,
+        aiDataEvidence: aiData.evidence,
       });
       const descriptionValue = typeof record.description === "string"
         ? record.description
@@ -230,7 +234,7 @@ export class D1CrawlStore implements CrawlStore {
           salary_currency, salary_interval, benefits, education_requirements, experience_requirements,
           experience_level, shift_schedule, travel_requirements, security_clearance, languages,
           requisition_id, apply_url, source_posted_text, source_updated_at, valid_through, raw_payload,
-          published_at, first_seen_at, last_seen_at, closed_at
+          published_at, first_seen_at, last_seen_at, closed_at, topic_classified_at
         )
         SELECT
           json_extract(value, '$.id'), json_extract(value, '$.sourceId'),
@@ -251,7 +255,8 @@ export class D1CrawlStore implements CrawlStore {
           json_extract(value, '$.securityClearance'), json_extract(value, '$.languages'), json_extract(value, '$.requisitionId'),
           json_extract(value, '$.applyUrl'), json_extract(value, '$.sourcePostedText'), json_extract(value, '$.sourceUpdatedAt'),
           json_extract(value, '$.validThrough'), json_extract(value, '$.rawPayload'), json_extract(value, '$.publishedAt'),
-          json_extract(value, '$.firstSeenAt'), json_extract(value, '$.lastSeenAt'), NULL
+          json_extract(value, '$.firstSeenAt'), json_extract(value, '$.lastSeenAt'), NULL,
+          json_extract(value, '$.topicClassifiedAt')
         FROM json_each(?)
         WHERE true
         ON CONFLICT(source_id, official_url) DO UPDATE SET
@@ -302,9 +307,51 @@ export class D1CrawlStore implements CrawlStore {
           status = 'open',
           published_at = COALESCE(excluded.published_at, jobs.published_at),
           last_seen_at = excluded.last_seen_at,
+          topic_classified_at = excluded.topic_classified_at,
           closed_at = NULL,
           updated_at = CURRENT_TIMESTAMP
         `).bind(JSON.stringify(recordsChunk)).run();
+
+        const topicMatches = recordsChunk
+          .filter((record) => record.aiDataMatched === true)
+          .map((record) => ({
+            sourceId: record.sourceId,
+            officialUrl: record.officialUrl,
+            score: record.aiDataScore,
+            evidence: record.aiDataEvidence,
+            classifiedAt: record.topicClassifiedAt,
+          }));
+        if (topicMatches.length > 0) {
+          await this.db.prepare(`
+            INSERT INTO job_topics (job_id, topic_key, score, evidence, classified_at)
+            SELECT jobs.id, 'ai-data', json_extract(value, '$.score'),
+                   json_extract(value, '$.evidence'), json_extract(value, '$.classifiedAt')
+            FROM json_each(?)
+            JOIN jobs ON jobs.source_id = json_extract(value, '$.sourceId')
+                     AND jobs.official_url = json_extract(value, '$.officialUrl')
+            WHERE true
+            ON CONFLICT(job_id, topic_key) DO UPDATE SET
+              score = excluded.score,
+              evidence = excluded.evidence,
+              classified_at = excluded.classified_at
+          `).bind(JSON.stringify(topicMatches)).run();
+        }
+
+        const topicNonmatches = recordsChunk
+          .filter((record) => record.aiDataMatched !== true)
+          .map((record) => ({ sourceId: record.sourceId, officialUrl: record.officialUrl }));
+        if (topicNonmatches.length > 0) {
+          await this.db.prepare(`
+            DELETE FROM job_topics
+            WHERE topic_key = 'ai-data'
+              AND job_id IN (
+                SELECT jobs.id
+                FROM json_each(?)
+                JOIN jobs ON jobs.source_id = json_extract(value, '$.sourceId')
+                         AND jobs.official_url = json_extract(value, '$.officialUrl')
+              )
+          `).bind(JSON.stringify(topicNonmatches)).run();
+        }
       }
     }
 

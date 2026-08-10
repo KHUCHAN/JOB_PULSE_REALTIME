@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 const createdAt = () => text("created_at").notNull().default(sql`(CURRENT_TIMESTAMP)`);
 const updatedAt = () => text("updated_at").notNull().default(sql`(CURRENT_TIMESTAMP)`);
@@ -89,6 +89,7 @@ export const jobs = sqliteTable("jobs", {
   firstSeenAt: text("first_seen_at").notNull(),
   lastSeenAt: text("last_seen_at").notNull(),
   closedAt: text("closed_at"),
+  topicClassifiedAt: text("topic_classified_at"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, (table) => [
@@ -122,6 +123,17 @@ export const jobs = sqliteTable("jobs", {
     table.salaryMin,
     table.salaryMax,
   ),
+]);
+
+export const jobTopics = sqliteTable("job_topics", {
+  jobId: text("job_id").notNull().references(() => jobs.id, { onDelete: "cascade" }),
+  topicKey: text("topic_key").notNull(),
+  score: integer("score").notNull(),
+  evidence: text("evidence", { mode: "json" }).$type<string[]>().notNull().default(sql`'[]'`),
+  classifiedAt: text("classified_at").notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.jobId, table.topicKey] }),
+  index("job_topics_topic_job_idx").on(table.topicKey, table.jobId),
 ]);
 
 export const sourceFacets = sqliteTable("source_facets", {
