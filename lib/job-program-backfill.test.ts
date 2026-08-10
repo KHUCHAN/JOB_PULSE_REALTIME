@@ -31,6 +31,7 @@ describe("backfillJobPrograms", () => {
         program_key TEXT NOT NULL, evidence TEXT NOT NULL, classified_at TEXT NOT NULL,
         PRIMARY KEY (job_id, program_key)
       );
+      CREATE TABLE catalog_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT);
       INSERT INTO jobs VALUES
         ('a', '2027 Data Science Intern / Co-op', 'open', 'INTERN', NULL, CURRENT_TIMESTAMP),
         ('b', '2027 Werkstudent Data Science', 'open', '["Part time","Part time"]', NULL, CURRENT_TIMESTAMP),
@@ -41,7 +42,8 @@ describe("backfillJobPrograms", () => {
     `);
 
     const db = createD1(sqlite);
-    expect(await backfillJobPrograms(db, 3)).toEqual({ processed: 3, matchedJobs: 2, memberships: 3, remaining: 0 });
+    expect(await backfillJobPrograms(db, 2)).toEqual({ processed: 2, matchedJobs: 2, memberships: 3, remaining: 1 });
+    expect(await backfillJobPrograms(db, 2)).toEqual({ processed: 1, matchedJobs: 0, memberships: 0, remaining: 0 });
     expect(sqlite.prepare("SELECT job_id, program_key FROM job_programs ORDER BY job_id, program_key").all()).toEqual([
       { job_id: "a", program_key: "coop" },
       { job_id: "a", program_key: "internship" },
@@ -52,6 +54,8 @@ describe("backfillJobPrograms", () => {
       { id: "b", employment_type: "Part-time" },
       { id: "c", employment_type: null },
     ]);
-    expect(await backfillJobPrograms(db, 3)).toEqual({ processed: 0, matchedJobs: 0, memberships: 0, remaining: 0 });
+    expect(await backfillJobPrograms(db, 2)).toEqual({ processed: 0, matchedJobs: 0, memberships: 0, remaining: 0 });
+    expect(sqlite.prepare("SELECT value FROM catalog_state WHERE key = 'job_program_backfill_cursor'").get())
+      .toEqual({ value: "c" });
   });
 });

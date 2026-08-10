@@ -9,5 +9,4 @@ CREATE TABLE `job_programs` (
 --> statement-breakpoint
 CREATE INDEX `job_programs_program_job_idx` ON `job_programs` (`program_key`,`job_id`);--> statement-breakpoint
 CREATE INDEX `job_programs_job_program_idx` ON `job_programs` (`job_id`,`program_key`);--> statement-breakpoint
-ALTER TABLE `jobs` ADD `program_classified_at` text;--> statement-breakpoint
-CREATE INDEX `jobs_status_program_classified_id_idx` ON `jobs` (`status`,`program_classified_at`,`id`);
+ALTER TABLE `jobs` ADD `program_classified_at` text;

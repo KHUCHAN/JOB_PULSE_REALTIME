@@ -21,7 +21,9 @@ export async function backfillJobPrograms(db: D1Database, requestedLimit: number
   const selected = await db.prepare(`
     SELECT id, title, employment_type
     FROM jobs
-    WHERE status = 'open' AND program_classified_at IS NULL
+    WHERE status = 'open'
+      AND program_classified_at IS NULL
+      AND id > coalesce((SELECT value FROM catalog_state WHERE key = 'job_program_backfill_cursor'), '')
     ORDER BY id
     LIMIT ?
   `).bind(limit).all<PendingJobRow>();
@@ -70,9 +72,21 @@ export async function backfillJobPrograms(db: D1Database, requestedLimit: number
     `).bind(classifiedAt, JSON.stringify(chunk)).run();
   }
 
-  const remaining = await db.prepare(`
-    SELECT count(*) AS count FROM jobs WHERE status = 'open' AND program_classified_at IS NULL
-  `).first<{ count: number }>();
+  const lastId = selected.results.at(-1)?.id;
+  if (lastId) {
+    await db.prepare(`
+      INSERT INTO catalog_state (key, value, updated_at)
+      VALUES ('job_program_backfill_cursor', ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+    `).bind(lastId).run();
+  }
+  const remaining = lastId ? await db.prepare(`
+    SELECT EXISTS(
+      SELECT 1 FROM jobs
+      WHERE status = 'open' AND program_classified_at IS NULL AND id > ?
+      LIMIT 1
+    ) AS count
+  `).bind(lastId).first<{ count: number }>() : { count: 0 };
   return {
     processed: selected.results.length,
     matchedJobs: classified.filter(({ result }) => result.keys.length > 0).length,

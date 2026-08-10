@@ -46,8 +46,6 @@ describe("job topic schema", () => {
     expect(indexes.map((index) => index.name)).toEqual(expect.arrayContaining([
       "job_programs_program_job_idx", "job_programs_job_program_idx",
     ]));
-    const jobIndexes = sqlite.prepare("SELECT name FROM pragma_index_list('jobs')").all() as Array<{ name: string }>;
-    expect(jobIndexes.map((index) => index.name)).toContain("jobs_status_program_classified_id_idx");
     sqlite.prepare("DELETE FROM jobs WHERE id = 'job-1'").run();
     expect(sqlite.prepare("SELECT count(*) AS count FROM job_programs").get()).toEqual({ count: 0 });
   });

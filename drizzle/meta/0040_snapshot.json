@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "317ebfcb-cacd-4c44-95c9-3c989b8a976f",
+  "id": "0ab68c9e-035d-40cd-955e-cb9649cd5438",
   "prevId": "26f52c14-ff5a-4192-bce6-9723db0610f6",
   "tables": {
     "catalog_state": {
@@ -924,15 +924,6 @@
           "columns": [
             "status",
             "topic_classified_at",
-            "id"
-          ],
-          "isUnique": false
-        },
-        "jobs_status_program_classified_id_idx": {
-          "name": "jobs_status_program_classified_id_idx",
-          "columns": [
-            "status",
-            "program_classified_at",
             "id"
           ],
           "isUnique": false
