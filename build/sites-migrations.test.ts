@@ -3,8 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildSitesMigrations } from "./sites-migrations";
+import { sitesSchemaMigrationFiles } from "./sites-vite-plugin";
 
 describe("Sites migration packaging", () => {
+  it("ships the AI/data topic schema without catalog refresh data migrations", () => {
+    expect(sitesSchemaMigrationFiles).toContain("0037_ai_data_job_topics.sql");
+    expect(sitesSchemaMigrationFiles.some((file) => file.includes("refresh_sources"))).toBe(false);
+  });
+
   it("keeps schema migrations and splits only the final catalog into bounded files", async () => {
     const root = await mkdtemp(join(tmpdir(), "job-pulse-sites-"));
     const source = join(root, "source");

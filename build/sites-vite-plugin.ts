@@ -15,6 +15,19 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
+export const sitesSchemaMigrationFiles = [
+  "0000_cold_hellion.sql",
+  "0026_abandoned_polaris.sql",
+  "0028_omniscient_puma.sql",
+  "0029_nice_korvac.sql",
+  "0030_job_search_fts.sql",
+  "0031_structured_job_filter_indexes.sql",
+  "0032_job_search_performance.sql",
+  "0033_case_insensitive_job_filters.sql",
+  "0035_catalog_state.sql",
+  "0037_ai_data_job_topics.sql",
+] as const;
+
 // Packages Sites metadata and migrations after Vite finishes compiling.
 export function sites(): Plugin {
   let root = process.cwd();
@@ -40,17 +53,7 @@ export function sites(): Plugin {
         await buildSitesMigrations({
           sourceDirectory: drizzleSource,
           outputDirectory: resolve(outputDirectory, "drizzle"),
-          schemaFiles: [
-            "0000_cold_hellion.sql",
-            "0026_abandoned_polaris.sql",
-            "0028_omniscient_puma.sql",
-            "0029_nice_korvac.sql",
-            "0030_job_search_fts.sql",
-            "0031_structured_job_filter_indexes.sql",
-            "0032_job_search_performance.sql",
-            "0033_case_insensitive_job_filters.sql",
-            "0035_catalog_state.sql",
-          ],
+          schemaFiles: [...sitesSchemaMigrationFiles],
         });
       }
     },
