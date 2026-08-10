@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add reliable AI/ML, Data/Analytics/Quant, and direct Software Engineering area classification plus U.S./non-U.S./mixed/unknown region filtering to the Jobs page and the 2027 internship preset.
+**Goal:** Add reliable AI/ML, Data/Analytics/Quant, and direct Software Engineering area classification plus U.S./non-U.S./mixed/unknown region filtering and honest posting-date visibility to the Jobs page and the 2027 internship preset.
 
 **Architecture:** Pure classifiers derive stable area topic keys and a single location-region value from normalized job data. The crawler stores those values during normal upserts, while a bounded API backfill classifies existing open jobs without a large transaction. Search uses the indexed `job_topics` table for OR-selected areas and an indexed `jobs.location_region` column for region, and the Jobs UI exposes a deep-linkable preset, visible region selector, and per-row badges.
 
@@ -19,6 +19,7 @@
 - Migrations are additive and immutable; do not modify migrations `0000` through `0044` or their snapshots.
 - D1 JSON payloads remain at or below 1,500,000 bytes and Worker persistence remains within the existing bounded-query design.
 - The Sites project remains private with its current access policy unchanged.
+- Main result rows show `Posted` from `published_at`; when unavailable they show `First seen` from `first_seen_at` and never relabel crawler discovery time as the employer posting date.
 
 ---
 
@@ -47,6 +48,7 @@
 - Modify `features/jobs/job-filter-panel.tsx`: 2027 Tech preset, explicit area controls, and visible Region select.
 - Modify `features/jobs/active-filter-chips.tsx`: removable area and region chips.
 - Modify `features/jobs/jobs-screen.tsx`: desktop/mobile area and region badges.
+- Modify `lib/format.ts`: deterministic absolute job-row date formatting.
 - Modify `features/jobs/jobs-screen.test.tsx`: preset, URL state, visible filters, and badge rendering.
 - Modify `app/globals.css`: responsive area/region badge and filter layout styling.
 - Modify `docs/database.md`: operational migration/backfill/verification commands.
@@ -518,6 +520,7 @@ git commit -m "feat: filter jobs by area and region"
 - Modify: `features/jobs/active-filter-chips.tsx`
 - Modify: `features/jobs/jobs-screen.tsx:20-200`
 - Modify: `features/jobs/jobs-screen.test.tsx`
+- Modify: `lib/format.ts`
 - Modify: `app/globals.css:410-525`
 
 **Interfaces:**
@@ -539,9 +542,10 @@ await user.selectOptions(screen.getByLabelText("Region"), "us");
 expect(mockRepository.searchJobs).toHaveBeenLastCalledWith(expect.objectContaining({ regions: ["us"] }));
 expect(screen.getByText("US")).toBeVisible();
 expect(screen.getByText("Software Engineering")).toBeVisible();
+expect(screen.getByText("Posted Aug 8, 2026")).toBeVisible();
 ```
 
-Add desktop and mobile assertions, removable chips, clear-all behavior, deep-link initialization, keyboard focus restoration, and no generic `Employment type` dependency.
+Add a second fixture with `publishedAt: null` and assert `First seen Aug 7, 2026`. Add desktop and mobile assertions, removable chips, clear-all behavior, deep-link initialization, keyboard focus restoration, and no generic `Employment type` dependency.
 
 - [ ] **Step 2: Run the UI test and confirm failure**
 
@@ -565,7 +569,7 @@ Use repeated URL values from Task 5 and reset pagination whenever the selection 
 
 - [ ] **Step 4: Render result metadata**
 
-Display compact area badges beneath the role title and a location-region badge adjacent to the location on desktop and mobile. Use full accessible labels (`United States`, `Outside United States`, `Mixed United States and international`, `Unknown region`) even when visual copy is shortened.
+Display compact area badges beneath the role title and a location-region badge adjacent to the location on desktop and mobile. Add a `Posted` column using `publishedAt` when present and `firstSeenAt` as an explicitly labelled fallback. Format both as an absolute `MMM D, YYYY` date so results remain understandable after several days. Use full accessible labels (`United States`, `Outside United States`, `Mixed United States and international`, `Unknown region`) even when visual copy is shortened.
 
 - [ ] **Step 5: Style responsive layouts**
 
@@ -580,7 +584,7 @@ Expected: UI tests and lint PASS.
 - [ ] **Step 7: Commit the UI task**
 
 ```bash
-git add features/jobs/job-filter-panel.tsx features/jobs/active-filter-chips.tsx features/jobs/jobs-screen.tsx features/jobs/jobs-screen.test.tsx app/globals.css
+git add features/jobs/job-filter-panel.tsx features/jobs/active-filter-chips.tsx features/jobs/jobs-screen.tsx features/jobs/jobs-screen.test.tsx lib/format.ts app/globals.css
 git commit -m "feat: add tech internship and region controls"
 ```
 
@@ -661,6 +665,6 @@ If verification required fixes, commit them with a focused message and repeat St
 
 ## Self-review record
 
-- Spec coverage: the plan covers narrow Software Engineering semantics, AI/Data/Quant areas, internship/co-op independence from employment type, four-state regions, indexed storage/search, bounded backfill, URL compatibility, responsive UI, private Sites deployment, and live exact-record verification.
+- Spec coverage: the plan covers narrow Software Engineering semantics, AI/Data/Quant areas, internship/co-op independence from employment type, four-state regions, indexed storage/search, bounded backfill, URL compatibility, honest posted/first-seen timing, responsive UI, private Sites deployment, and live exact-record verification.
 - Placeholder scan: the plan contains no deferred implementation markers or unspecified error-handling steps.
 - Type consistency: `JobAreaKey`, `JobRegion`, `areas`, `regions`, `areaKeys`, `locationRegion`, and `backfillJobAreasAndRegions` use the same names across classifier, storage, search, API, and UI tasks.

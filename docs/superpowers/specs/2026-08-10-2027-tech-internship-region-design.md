@@ -73,7 +73,7 @@ The existing common filter bar gains:
 - three area toggle controls in the structured filter sheet;
 - a first-class Region select in the common bar, not hidden only under advanced filters.
 
-Each desktop and mobile result displays company, role, raw location, region badge, arrangement, and area badges. The existing country filter remains available for exact-country refinement.
+Each desktop and mobile result displays company, role, raw location, region badge, arrangement, area badges, and posting timing. When the ATS provides `published_at`, the row labels the absolute date as `Posted`. When the ATS has no trustworthy posting date, the row labels `first_seen_at` as `First seen` so the UI does not misrepresent crawler discovery time as the employer's posting time. The existing country filter remains available for exact-country refinement.
 
 ## Backfill and deployment
 
@@ -90,6 +90,6 @@ Production verification must confirm:
 
 ## Testing and acceptance
 
-Classifier unit tests cover direct positives, misleading development negatives, multi-area roles, punctuation variants, and body-only evidence. Region unit tests cover structured countries, secondary locations, city/state fallbacks, ambiguity, mixed locations, and unknowns. SQL and URL-codec tests cover OR/AND semantics, case-insensitivity, canonical deduplication, legacy compatibility, and index use. React tests cover preset state, visible region selection, active-filter chips, badges, and mobile/desktop rendering.
+Classifier unit tests cover direct positives, misleading development negatives, multi-area roles, punctuation variants, and body-only evidence. Region unit tests cover structured countries, secondary locations, city/state fallbacks, ambiguity, mixed locations, and unknowns. SQL and URL-codec tests cover OR/AND semantics, case-insensitivity, canonical deduplication, legacy compatibility, and index use. React tests cover preset state, visible region selection, active-filter chips, area/region badges, `Posted` versus `First seen` timing, and mobile/desktop rendering.
 
 All focused tests, the full test suite, typecheck, lint, production build, migration snapshot validation, and an in-app browser pass against the private live deployment must pass before completion.
