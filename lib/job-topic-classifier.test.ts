@@ -76,4 +76,17 @@ describe("classifyAiDataJob", () => {
     const evidence = classifyAiDataJob(input).evidence;
     expect(new Set(evidence).size).toBe(evidence.length);
   });
+
+  it("ignores non-string ATS metadata instead of failing the crawl persistence step", () => {
+    expect(() => classifyAiDataJob({
+      title: "Software Engineer",
+      department: { label: "Engineering" } as unknown as string,
+      skills: [42 as unknown as string, "PyTorch"],
+    })).not.toThrow();
+    expect(classifyAiDataJob({
+      title: "Software Engineer",
+      department: { label: "Engineering" } as unknown as string,
+      skills: [42 as unknown as string, "PyTorch"],
+    })).toMatchObject({ matched: true });
+  });
 });

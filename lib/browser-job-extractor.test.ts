@@ -51,6 +51,12 @@ describe("jobsFromBrowserAnchors", () => {
     ], { ...source, postingUrl: "https://jobs.acme.com" })).toEqual([]);
   });
 
+  it("rejects unresolved client-side URL templates", () => {
+    expect(jobsFromBrowserAnchors([
+      { href: "https://jobs.acme.com/jobs/{{assessmentUrl}}", text: "Assessment" },
+    ], { ...source, postingUrl: "https://jobs.acme.com" })).toEqual([]);
+  });
+
   it("keeps a corporate career detail whose slug carries a requisition id", () => {
     const jobs = jobsFromBrowserAnchors([
       { href: "https://acme.com/company/careers/engineering/staff-engineer-8487325002", text: "Staff Engineer" },
@@ -71,6 +77,19 @@ describe("jobsFromBrowserAnchors", () => {
     expect(jobs).toEqual([expect.objectContaining({
       externalId: "1f447539-e5ba-45b5-a973-4b9d59c802d3",
       title: "Financial Coordinator - Tickets",
+    })]);
+  });
+
+  it("keeps EPAM-style vacancy detail links", () => {
+    const epam = { ...source, postingUrl: "https://careers.epam.com/en/jobs/united_states_of_america" };
+    const jobs = jobsFromBrowserAnchors([{
+      href: "https://careers.epam.com/en/vacancy/kdb-developer-blt00a7c484be80494c_en",
+      text: "KDB Developer",
+    }], epam);
+
+    expect(jobs).toEqual([expect.objectContaining({
+      title: "KDB Developer",
+      officialUrl: "https://careers.epam.com/en/vacancy/kdb-developer-blt00a7c484be80494c_en",
     })]);
   });
 

@@ -11,7 +11,9 @@ import type {
   SourceRecord,
   TalentTarget,
 } from "../../../lib/domain";
-import { runDueCrawls } from "../../../lib/crawl-runner";
+import { runDueCrawls, type PersistedSource } from "../../../lib/crawl-runner";
+import { jobsFromTeslaState, type CrawledFacet, type CrawledJob, type TeslaState } from "../../../lib/crawler";
+import { normalizeBrowserJobSnapshot } from "../../../lib/browser-crawl-ingest";
 import { ensureCatalogSeeded, type CatalogSeed } from "../../../lib/catalog-bootstrap";
 import { crawlBatchOptions, jobProgramBackfillLimit, jobTopicBackfillLimit, recrawlSourceIds } from "../../../lib/crawl-batch-options";
 import { parseJobFilterParams } from "../../../lib/job-filter-query";
@@ -58,6 +60,68 @@ const parseJsonArray = (value: string | null): string[] => {
 };
 
 let filterOptionsCache: { expiresAt: number; value: Awaited<ReturnType<typeof queryJobFilterOptions>> } | null = null;
+
+type BrowserIngestSourceRow = {
+  id: string;
+  company: string;
+  posting_url: string;
+  adapter: PersistedSource["adapter"];
+  next_crawl_at: string | null;
+};
+
+async function browserIngestSource(database: D1Database, sourceId: string): Promise<PersistedSource | null> {
+  const row = await database.prepare(`
+    SELECT id, company, posting_url, adapter, next_crawl_at
+    FROM sources
+    WHERE id = ? AND enabled = 1 AND posting_url IS NOT NULL
+  `).bind(sourceId).first<BrowserIngestSourceRow>();
+  return row ? {
+    id: row.id,
+    company: row.company,
+    postingUrl: row.posting_url,
+    adapter: row.adapter,
+    nextCrawlAt: row.next_crawl_at,
+  } : null;
+}
+
+async function persistBrowserSnapshot(
+  database: D1Database,
+  source: PersistedSource,
+  jobs: CrawledJob[],
+  facets?: CrawledFacet[],
+): Promise<{ sourceId: string; jobs: number; created: number; updated: number; closed: number }> {
+  const store = new D1CrawlStore(database);
+  const now = new Date();
+  const runId = await store.startRun(source, now.toISOString());
+  try {
+    const changes = await store.syncJobs(source.id, jobs, true, facets);
+    await store.finishRun(runId, {
+      status: "succeeded",
+      responseStatus: 200,
+      jobsSeen: jobs.length,
+      jobsCreated: changes.created,
+      jobsUpdated: changes.updated,
+      jobsClosed: changes.closed,
+      error: null,
+      finishedAt: new Date().toISOString(),
+    });
+    await store.scheduleNext(source.id, new Date(now.getTime() + 2 * 60 * 60 * 1_000).toISOString());
+    filterOptionsCache = null;
+    return { sourceId: source.id, jobs: jobs.length, ...changes };
+  } catch (error) {
+    await store.finishRun(runId, {
+      status: "failed",
+      responseStatus: null,
+      jobsSeen: 0,
+      jobsCreated: 0,
+      jobsUpdated: 0,
+      jobsClosed: 0,
+      error: error instanceof Error ? error.message : "Browser snapshot ingestion failed.",
+      finishedAt: new Date().toISOString(),
+    });
+    throw error;
+  }
+}
 
 async function availableFilterOptions(): Promise<Awaited<ReturnType<typeof queryJobFilterOptions>>> {
   if (filterOptionsCache && filterOptionsCache.expiresAt > Date.now()) return filterOptionsCache.value;
@@ -250,6 +314,28 @@ export async function POST(request: Request): Promise<Response> {
       await db().prepare("UPDATE talent_targets SET registration_state = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(state, body.targetId).run();
       const targets = await listTalent();
       return json(targets.find((item) => item.id === body.targetId) ?? null);
+    }
+    if (body.action === "ingestBrowserJobs") {
+      const sourceId = typeof body.sourceId === "string" ? body.sourceId : "";
+      if (sourceId !== "p4-0214-alvarez-marsal") return json({ error: "This source does not accept browser job snapshots." }, 400);
+      const database = db();
+      const source = await browserIngestSource(database, sourceId);
+      if (!source) return json({ error: "Browser crawl source is unavailable." }, 404);
+      const snapshot = normalizeBrowserJobSnapshot(source, body.jobs);
+      if (snapshot.jobs.length === 0) return json({ error: "Browser snapshot contained no valid jobs." }, 400);
+      return json(await persistBrowserSnapshot(database, source, snapshot.jobs, snapshot.facets));
+    }
+    if (body.action === "ingestTeslaState") {
+      const sourceId = typeof body.sourceId === "string" ? body.sourceId : "";
+      if (sourceId !== "p5-1077-tesla" || !body.state || typeof body.state !== "object") {
+        return json({ error: "A valid Tesla browser state snapshot is required." }, 400);
+      }
+      const database = db();
+      const source = await browserIngestSource(database, sourceId);
+      if (!source) return json({ error: "Tesla crawl source is unavailable." }, 404);
+      const jobs = jobsFromTeslaState(source, body.state as TeslaState);
+      if (jobs.length === 0) return json({ error: "Tesla browser state contained no US jobs." }, 400);
+      return json(await persistBrowserSnapshot(database, source, jobs));
     }
     if (body.action === "crawlBatch") {
       const requested = typeof body.limit === "number" ? body.limit : 4;

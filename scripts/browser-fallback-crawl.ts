@@ -8,7 +8,7 @@ import { chromium, type Page } from "playwright";
 import { jobsFromBrowserAnchors, type BrowserAnchor } from "../lib/browser-job-extractor.ts";
 import { needsBrowserFallback, type LatestCrawlSummary } from "../lib/browser-fallback-selection.ts";
 import { numericPaginationTargets } from "../lib/browser-pagination.ts";
-import { anchorsFromHtml, crawlSource, extractJobsFromHtml, type CrawledFacet, type CrawledJob, type CrawlSource } from "../lib/crawler.ts";
+import { anchorsFromHtml, crawlSource, extractJobsFromHtml, jobsFromTeslaState, type CrawledFacet, type CrawledJob, type CrawlSource, type TeslaState } from "../lib/crawler.ts";
 import { careerCandidates } from "../lib/url-remediation.ts";
 
 export type BrowserFallbackResult = {
@@ -17,6 +17,7 @@ export type BrowserFallbackResult = {
   finalUrl: string | null;
   jobs: CrawledJob[];
   facets?: CrawledFacet[];
+  browserState?: { kind: "tesla"; state: TeslaState };
   error: string | null;
 };
 
@@ -128,6 +129,20 @@ const inspect = async (page: Page, source: CrawlSource): Promise<BrowserFallback
     const http1Jobs = await jobsViaHttp1(source);
     if (http1Jobs.length > 0) {
       return { source, status: 200, finalUrl: source.postingUrl, jobs: http1Jobs, error: null };
+    }
+    if (source.id === "p5-1077-tesla" || source.company === "Tesla") {
+      const stateResponse = page.waitForResponse((response) => response.url() === "https://www.tesla.com/cua-api/apps/careers/state", { timeout: 30_000 });
+      const response = await page.goto(source.postingUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
+      const state = await (await stateResponse).json() as TeslaState;
+      const jobs = jobsFromTeslaState(source, state);
+      return {
+        source,
+        status: response?.status() ?? 200,
+        finalUrl: page.url(),
+        jobs,
+        browserState: { kind: "tesla", state },
+        error: jobs.length > 0 ? null : "Tesla browser state contained no US jobs.",
+      };
     }
     const response = await page.goto(source.postingUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
     // Client-rendered ATS pages such as Dayforce populate job cards after hydration.

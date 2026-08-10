@@ -186,14 +186,24 @@ type EightfoldPosition = {
   id?: string | number;
   name?: string;
   location?: string;
+  locations?: string[];
+  standardizedLocations?: string[];
   ats_job_id?: string;
+  atsJobId?: string;
+  displayJobId?: string;
   department?: string;
   work_location_option?: string | null;
+  workLocationOption?: string | null;
   canonicalPositionUrl?: string;
+  positionUrl?: string;
   t_create?: number;
+  creationTs?: number;
+  postedTs?: number;
   business_unit?: string;
+  businessUnit?: string;
   type?: string;
   job_description?: string;
+  jobDescription?: string;
 };
 
 type AdpJob = {
@@ -206,6 +216,20 @@ type AdpJob = {
   postingDate?: string;
   workLevelCode?: string;
   requisitionLocations?: Array<{ address?: { cityName?: string; countrySubdivisionLevel1?: { longName?: string }; country?: { longName?: string } } }>;
+};
+
+type WorkforceNowJob = {
+  itemID?: string;
+  requisitionTitle?: string;
+  clientRequisitionID?: string;
+  postDate?: string;
+  requisitionDescription?: string;
+  workLevelCode?: { shortName?: string };
+  requisitionLocations?: Array<{
+    nameCode?: { shortName?: string };
+    address?: { cityName?: string; countrySubdivisionLevel1?: { codeValue?: string; longName?: string }; country?: { longName?: string }; countryCode?: string };
+  }>;
+  customFieldGroup?: { stringFields?: Array<{ stringValue?: string; nameCode?: { codeValue?: string } }> };
 };
 
 type PhenomJob = {
@@ -250,14 +274,34 @@ type TeslaListing = {
   y?: string | number;
 };
 
-type TeslaState = {
+export type TeslaState = {
   lookup?: {
     locations?: Record<string, string>;
     departments?: Record<string, string>;
     types?: Record<string, string>;
   };
-  geo?: Array<{ sites?: Array<{ id?: string; cities?: Record<string, string[]> }> }>;
+  geo?: Array<{ sites?: Array<{
+    id?: string;
+    cities?: Record<string, string[]>;
+    states?: Array<{ id?: string; name?: string; cities?: Record<string, string[]> }>;
+  }> }>;
   listings?: TeslaListing[];
+};
+
+type MetaCareerJob = {
+  id?: string;
+  title?: string;
+  locations?: string[];
+  teams?: string[];
+  sub_teams?: string[];
+};
+
+type MetaCareerPayload = {
+  data?: {
+    job_search_with_featured_jobs_v2?: {
+      all_jobs?: MetaCareerJob[];
+    };
+  };
 };
 
 type OracleJob = {
@@ -291,8 +335,98 @@ type McKinseyJob = {
   friendlyURL?: string;
 };
 
+type MediaTekJob = {
+  id?: string;
+  title?: string;
+  summary?: string | null;
+  description?: string | null;
+  publishedDate?: string | null;
+  properties?: {
+    category?: { label?: string | null; code?: string | null } | null;
+    workExperience?: { label?: string | null; code?: string | null } | null;
+    location?: { label?: string | null; code?: string | null } | null;
+    program?: { label?: string | null; code?: string | null } | null;
+    jobEducationInfos?: Array<{ educationDegree?: string | null; educationMajor?: string | null }>;
+  } | null;
+};
+
+type PaylocityJob = {
+  JobId?: number | string;
+  JobTitle?: string;
+  LocationName?: string | null;
+  PublishedDate?: string | null;
+  Description?: string | null;
+  HiringDepartment?: string | null;
+  JobLocation?: {
+    City?: string | null;
+    State?: string | null;
+    Zip?: string | null;
+    Country?: string | null;
+  } | null;
+  IsRemote?: boolean;
+};
+
+type EpamJob = {
+  uid?: string;
+  unique_id?: string;
+  name?: string;
+  posting_type?: string;
+  city?: Array<{ name?: string; state?: { name?: string }; country?: { id?: string; name?: string } }>;
+  country?: Array<{ id?: string; name?: string }>;
+  vacancy_type?: string;
+  seniority?: string;
+  skills?: string[];
+  primary_skill?: string;
+  request_id?: string;
+  description?: string;
+  category?: { responsibilities?: string[] | null; requirements?: string[] | null };
+  seo?: { url?: string };
+  created_at?: string;
+  updated_at?: string;
+  benefits?: Array<{ content?: string }>;
+  job_specialization?: string[];
+};
+
+type EpamPayload = {
+  props?: { pageProps?: { jobs?: {
+    total?: number;
+    jobs?: EpamJob[];
+    facets?: Record<string, Array<{ key?: unknown; doc_count?: number }>>;
+  } } };
+};
+
+type TalemetryLocation = {
+  locality?: string | null;
+  region_abbr?: string | null;
+  region_full?: string | null;
+  country?: string | null;
+  postal_code?: string | null;
+  name?: string | null;
+};
+
+type TalemetryEntry = {
+  id?: string | number;
+  talemetry_job_id?: string | number;
+  permalink?: string;
+  title?: string;
+  location?: TalemetryLocation | null;
+  employment_type?: string | null;
+  date_posted?: string | null;
+  posted_at?: string | null;
+  updated_at?: string | null;
+};
+
+type TalemetryPayload = {
+  current_page?: number;
+  per_page?: number;
+  total_entries?: number;
+  entries?: TalemetryEntry[];
+};
+
 const REQUEST_TIMEOUT_MS = 15_000;
+const REQUEST_ATTEMPTS = 2;
 const BLOCKED_HTTP_STATUSES = new Set([401, 403, 429, 520, 521, 522, 523, 524]);
+const RETRYABLE_HTTP_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524]);
 const BROWSER_REQUEST_HEADERS = {
   accept: "text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7",
   "accept-language": "en-US,en;q=0.9",
@@ -305,22 +439,43 @@ const fetchWithTimeout = async (
   fetcher: typeof fetch,
   input: RequestInfo | URL,
   init?: RequestInit,
+  browserHeaders = true,
+  requestOptions?: { attempts?: number; timeoutMs?: number },
 ): Promise<Response> => {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort("15 second crawl timeout"), REQUEST_TIMEOUT_MS);
+  const defaults: Record<string, string> = browserHeaders ? BROWSER_REQUEST_HEADERS : {};
   const headers = init?.headers instanceof Headers
     ? new Headers(init.headers)
-    : { ...BROWSER_REQUEST_HEADERS, ...(init?.headers ?? {}) };
+    : { ...defaults, ...(init?.headers ?? {}) };
   if (headers instanceof Headers) {
-    for (const [name, value] of Object.entries(BROWSER_REQUEST_HEADERS)) {
+    for (const [name, value] of Object.entries(defaults)) {
       if (!headers.has(name)) headers.set(name, value);
     }
   }
-  try {
-    return await fetcher(input, { ...init, headers, signal: controller.signal });
-  } finally {
-    clearTimeout(timeout);
+
+  let lastError: unknown;
+  const attempts = requestOptions?.attempts ?? REQUEST_ATTEMPTS;
+  const timeoutMs = requestOptions?.timeoutMs ?? REQUEST_TIMEOUT_MS;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(new Error(`${timeoutMs / 1_000} second crawl timeout`)), timeoutMs);
+    try {
+      const response = await fetcher(input, { ...init, headers, signal: controller.signal });
+      if (!RETRYABLE_HTTP_STATUSES.has(response.status) || attempt === attempts - 1) return response;
+      await response.body?.cancel().catch(() => undefined);
+      const retryAfter = response.headers.get("retry-after");
+      const retryAfterMs = retryAfter && /^\d+(?:\.\d+)?$/.test(retryAfter)
+        ? Number(retryAfter) * 1_000
+        : 250;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(Math.max(retryAfterMs, 0), 750)));
+    } catch (error) {
+      lastError = error;
+      if (attempt === attempts - 1) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    } finally {
+      clearTimeout(timeout);
+    }
   }
+  throw lastError;
 };
 
 const plainText = (value: string | null | undefined): string | null => {
@@ -377,7 +532,7 @@ export function discoverAts(html: string, _pageUrl: string): DiscoveredAts | nul
   const smartRecruitersWidget = html.match(/["']company_code["']\s*:\s*["']([a-z0-9-]+)["']/i);
   if (smartRecruitersWidget) return { kind: "smartrecruiters", endpoint: `https://api.smartrecruiters.com/v1/companies/${smartRecruitersWidget[1]}/postings` };
 
-  if (/app\.jibecdn\.com\/prod\/search\//i.test(html)) {
+  if (/(?:app\.jibecdn\.com\/prod\/search\/|cms\.jibecdn\.com\/prod\/)/i.test(html)) {
     const page = new URL(_pageUrl);
     return { kind: "jibe", endpoint: `${page.origin}/api/jobs?page=1&limit=100&sortBy=relevance&descending=false&internal=false` };
   }
@@ -639,8 +794,8 @@ const workdayFeed = (postingUrl: string): string | null => {
 
 export const oracleCareerSite = (html: string, postingUrl: string): { apiOrigin: string; site: string } | null => {
   const page = new URL(postingUrl);
-  const site = page.pathname.match(/\/sites\/(CX_[A-Z0-9]+)/i)?.[1]
-    ?? html.match(/[?&]siteNumber=(CX_[A-Z0-9]+)/i)?.[1];
+  const site = page.pathname.match(/\/sites\/(CX(?:_[A-Z0-9]+)?)(?:\/|$)/i)?.[1]
+    ?? html.match(/[?&]siteNumber=(CX(?:_[A-Z0-9]+)?)(?:[&#"']|$)/i)?.[1];
   const apiOrigin = html.match(/https:\/\/([a-z0-9.-]+\.fa\.[a-z0-9.-]*oraclecloud\.com)(?::443)?/i)?.[1];
   return site && apiOrigin ? { apiOrigin: `https://${apiOrigin}`, site } : null;
 };
@@ -814,6 +969,37 @@ const embeddedJobItems = (html: string, source: CrawlSource): CrawledJob[] => (
   }];
 });
 
+const paylocityJobs = (html: string, source: CrawlSource): CrawledJob[] | null => {
+  if (new URL(source.postingUrl).hostname !== "recruiting.paylocity.com") return null;
+  const pageData = embeddedJsonObject(html, "window.pageData = ");
+  if (!pageData || !Array.isArray(pageData.Jobs)) return null;
+  const origin = new URL(source.postingUrl).origin;
+  return (pageData.Jobs as PaylocityJob[]).flatMap((job) => {
+    if (job.JobId == null || !job.JobTitle) return [];
+    const id = String(job.JobId);
+    const description = plainText(job.Description);
+    return [{
+      externalId: id,
+      title: job.JobTitle,
+      company: source.company,
+      location: job.LocationName ?? null,
+      arrangement: job.IsRemote ? "remote" as const : "unknown" as const,
+      employmentType: null,
+      summary: description,
+      description,
+      ...(job.HiringDepartment ? { department: job.HiringDepartment } : {}),
+      ...(job.JobLocation?.City ? { locationCity: job.JobLocation.City } : {}),
+      ...(job.JobLocation?.State ? { locationState: job.JobLocation.State } : {}),
+      ...(job.JobLocation?.Country ? { locationCountry: job.JobLocation.Country } : {}),
+      ...(job.JobLocation?.Zip ? { locationPostalCode: job.JobLocation.Zip } : {}),
+      requisitionId: id,
+      applyUrl: new URL(`/Recruiting/Jobs/Apply/${encodeURIComponent(id)}`, origin).href,
+      officialUrl: new URL(`/Recruiting/Jobs/Details/${encodeURIComponent(id)}`, origin).href,
+      publishedAt: normalizedDate(job.PublishedDate),
+    }];
+  });
+};
+
 type PhenomPage = SourceCrawlResult & { totalHits: number | null; pageHits: number | null };
 
 const phenomJobs = (html: string, source: CrawlSource): PhenomPage | null => {
@@ -922,6 +1108,8 @@ const crawlPhenomPages = async (source: CrawlSource, first: PhenomPage, fetcher:
 export const extractJobsFromHtml = (html: string, source: CrawlSource): { jobs: CrawledJob[]; completeListing: boolean } => {
   const phenom = phenomJobs(html, source);
   if (phenom) return { jobs: phenom.jobs, completeListing: phenom.completeListing };
+  const paylocity = paylocityJobs(html, source);
+  if (paylocity) return { jobs: paylocity, completeListing: true };
   const embedded = embeddedJobItems(html, source);
   if (embedded.length > 0) return { jobs: embedded, completeListing: true };
   const nodes = jsonLdScripts(html).flatMap(jobPostingNodes);
@@ -943,6 +1131,171 @@ const jobPostingNodes = (value: JsonLdValue): JsonLdValue[] => {
 const uniqueJobs = (jobs: CrawledJob[]): CrawledJob[] => [
   ...new Map(jobs.map((job) => [job.officialUrl, job])).values(),
 ];
+
+const READER_JOB_DETAIL = /(?:\/jobs\/\d{4,}(?:[-/]|$)|\/site\/careers\/jobs\/\d+|\/careers\/(?:jobdetail(?:[/?]|$)|details\/|position\/)|[?&](?:jobid|job_id|gh_jid|reqid|pid|opportunityid)=)/i;
+
+const markdownJobAnchors = (markdown: string, source: CrawlSource): BrowserAnchor[] => {
+  const sourceHost = new URL(source.postingUrl).hostname.replace(/^www\./, "");
+  return [...markdown.matchAll(/\[([^\]]{2,240})\]\((https?:\/\/[^)\s]+|\/[^)\s]+)\)/g)].flatMap((match) => {
+    let url: URL;
+    try {
+      url = new URL(match[2], source.postingUrl);
+    } catch {
+      return [];
+    }
+    const targetHost = url.hostname.replace(/^www\./, "");
+    if (!targetHost.endsWith(sourceHost) && !sourceHost.endsWith(targetHost)) return [];
+    if (!READER_JOB_DETAIL.test(`${url.pathname}${url.search}`)) return [];
+    const text = match[1].replaceAll(/[*_#`]/g, "").replace(/^!\[?/, "").replace(/\s+/g, " ").trim();
+    return text.length >= 4 && text.length <= 180 ? [{ href: url.href, text }] : [];
+  });
+};
+
+const markdownStaticJobs = (markdown: string, source: CrawlSource): CrawledJob[] => {
+  if (new URL(source.postingUrl).hostname !== "ase.aseglobal.com") return [];
+  return [...markdown.matchAll(/^#{2,4}\s+(?:!\[[^\]]*\]\([^)]*\)\s*)?(.+?)\s+#(\d+)\s*$/gm)].map((match) => ({
+    externalId: match[2],
+    title: match[1].replace(/\s+/g, " ").trim(),
+    company: source.company,
+    location: null,
+    arrangement: "unknown" as const,
+    employmentType: null,
+    summary: null,
+    officialUrl: `${new URL(source.postingUrl).origin}${new URL(source.postingUrl).pathname}#job-${match[2]}`,
+    publishedAt: null,
+  }));
+};
+
+const crawlReaderFallback = async (
+  source: CrawlSource,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult | null> => {
+  try {
+    const endpoint = `https://r.jina.ai/${source.postingUrl}`;
+    const baseHeaders = {
+      accept: "text/plain",
+      "x-retain-links": "all",
+      "x-with-links-summary": "all",
+    };
+    const jobsFromMarkdown = (markdown: string): CrawledJob[] => uniqueJobs([
+      ...jobsFromBrowserAnchors(markdownJobAnchors(markdown, source), source),
+      ...markdownStaticJobs(markdown, source),
+    ]);
+    const response = await fetchWithTimeout(fetcher, endpoint, { headers: baseHeaders }, false);
+    if (!response.ok) return null;
+    let jobs = jobsFromMarkdown(await response.text());
+    if (jobs.length === 0) {
+      const freshResponse = await fetchWithTimeout(fetcher, endpoint, {
+        headers: { ...baseHeaders, "x-no-cache": "true" },
+      }, false, { attempts: 1, timeoutMs: 30_000 });
+      if (!freshResponse.ok) return null;
+      jobs = jobsFromMarkdown(await freshResponse.text());
+    }
+    return jobs.length > 0 ? {
+      status: "succeeded",
+      responseStatus: response.status,
+      completeListing: false,
+      jobs,
+      error: null,
+    } : null;
+  } catch {
+    return null;
+  }
+};
+
+const parseTalemetryPayload = (text: string): TalemetryPayload | null => {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) return null;
+  try {
+    const value = JSON.parse(text.slice(start, end + 1)) as TalemetryPayload;
+    return Array.isArray(value.entries) && Number.isFinite(value.total_entries) ? value : null;
+  } catch {
+    return null;
+  }
+};
+
+const crawlTalemetryJson = async (
+  source: CrawlSource,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult | null> => {
+  const posting = new URL(source.postingUrl);
+  if (!/\/search\/jobs\/?$/i.test(posting.pathname)) return null;
+  const endpointFor = (page: number) => {
+    const endpoint = new URL("/search/jobs.json", posting.origin);
+    endpoint.searchParams.set("per_page", "100");
+    endpoint.searchParams.set("page", String(page));
+    return endpoint;
+  };
+  const fetchPage = async (page: number): Promise<TalemetryPayload | null> => {
+    const endpoint = endpointFor(page);
+    try {
+      const direct = await fetchWithTimeout(fetcher, endpoint, { headers: { accept: "application/json" } }, false, { attempts: 1, timeoutMs: 10_000 });
+      if (direct.ok) {
+        const parsed = parseTalemetryPayload(await direct.text());
+        if (parsed) return parsed;
+      }
+    } catch {
+      // The public JSON route is commonly protected by the same edge as the HTML page.
+    }
+    try {
+      const reader = await fetchWithTimeout(fetcher, `https://r.jina.ai/${endpoint.href}`, {
+        headers: { accept: "text/plain" },
+      }, false, { attempts: 1, timeoutMs: 30_000 });
+      return reader.ok ? parseTalemetryPayload(await reader.text()) : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const first = await fetchPage(1);
+  if (!first) return null;
+  const perPage = Math.max(1, first.per_page ?? first.entries?.length ?? 100);
+  const totalEntries = Math.max(0, first.total_entries ?? first.entries?.length ?? 0);
+  const totalPages = Math.ceil(totalEntries / perPage);
+  const boundedPages = Math.min(totalPages, 100);
+  const pages: Array<TalemetryPayload | null> = [first];
+  for (let page = 2; page <= boundedPages; page += 4) {
+    pages.push(...await Promise.all(Array.from(
+      { length: Math.min(4, boundedPages - page + 1) },
+      (_, index) => fetchPage(page + index),
+    )));
+  }
+  const successful = pages.filter((page): page is TalemetryPayload => page !== null);
+  const jobs = uniqueJobs(successful.flatMap((page) => page.entries ?? []).flatMap((job): CrawledJob[] => {
+    const externalId = asText(job.talemetry_job_id) ?? asText(job.id);
+    const title = asText(job.title);
+    const permalink = asText(job.permalink);
+    if (!externalId || !title || !permalink) return [];
+    const location = job.location;
+    const locationText = asText(location?.name)
+      ?? [asText(location?.locality), asText(location?.region_abbr), asText(location?.country)].filter(Boolean).join(", ")
+      ?? null;
+    const officialUrl = new URL(`/jobs/${externalId}-${permalink}`, posting.origin).href;
+    return [{
+      externalId,
+      title,
+      company: source.company,
+      location: locationText || null,
+      arrangement: /\bremote\b/i.test(locationText ?? "") ? "remote" : "unknown",
+      employmentType: normalizeEmploymentType(job.employment_type),
+      summary: null,
+      ...(asText(location?.locality) ? { locationCity: asText(location?.locality) } : {}),
+      ...(asText(location?.region_abbr) ?? asText(location?.region_full) ? { locationState: asText(location?.region_abbr) ?? asText(location?.region_full) } : {}),
+      ...(asText(location?.country) ? { locationCountry: asText(location?.country) } : {}),
+      ...(asText(location?.postal_code) ? { locationPostalCode: asText(location?.postal_code) } : {}),
+      officialUrl,
+      publishedAt: normalizedDate(job.date_posted ?? job.posted_at ?? job.updated_at),
+    }];
+  }));
+  return {
+    status: "succeeded",
+    responseStatus: 200,
+    completeListing: totalPages <= 100 && successful.length === totalPages && jobs.length >= totalEntries,
+    jobs,
+    error: null,
+  };
+};
 
 const dataAttribute = (html: string, name: string): string | null => {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -1185,6 +1538,226 @@ const normalizedDate = (value: unknown): string | null => {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 };
 
+const crawlMediaTek = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  type PagePayload = {
+    jobs?: MediaTekJob[];
+    pagination?: { current_page?: number; total_pages?: number; total_items?: number };
+  };
+  let responseStatus: number | null = null;
+
+  const fetchPage = async (page: number): Promise<PagePayload | null> => {
+    const endpoint = new URL("https://careers.mediatek.com/api/trpc/job.getJobs");
+    endpoint.searchParams.set("batch", "1");
+    endpoint.searchParams.set("input", JSON.stringify({
+      "0": {
+        json: {
+          locales: "en_US",
+          page,
+          jobQueryInfo: {},
+          filters: {},
+          sortBy: "publishedDate",
+          order: "DESC",
+          limit: 100,
+        },
+      },
+    }));
+    const response = await fetchWithTimeout(fetcher, endpoint, {
+      headers: { accept: "application/json", cookie: "NEXT_LOCALE=en" },
+    });
+    responseStatus = response.status;
+    if (!response.ok) return null;
+    const payload = await response.json() as Array<{ result?: { data?: { json?: PagePayload } } }>;
+    return payload[0]?.result?.data?.json ?? null;
+  };
+
+  const normalizeJobs = (items: MediaTekJob[]): CrawledJob[] => items.flatMap((job) => {
+    if (!job.id || !job.title) return [];
+    const education = (job.properties?.jobEducationInfos ?? []).flatMap((item) => {
+      const degree = asText(item.educationDegree);
+      const major = asText(item.educationMajor);
+      return degree || major ? [`${degree ?? ""}${degree && major ? ": " : ""}${major ?? ""}`] : [];
+    });
+    const description = plainText(job.description ?? job.summary);
+    return [{
+      externalId: job.id,
+      title: job.title,
+      company: source.company,
+      location: asText(job.properties?.location?.code) ?? asText(job.properties?.location?.label),
+      arrangement: "unknown" as const,
+      employmentType: null,
+      summary: description,
+      description,
+      ...(asText(job.properties?.category?.label) ? { department: asText(job.properties?.category?.label) } : {}),
+      ...(education.length > 0 ? { educationRequirements: education.join("; ") } : {}),
+      ...(asText(job.properties?.workExperience?.code) ? { experienceRequirements: asText(job.properties?.workExperience?.code) } : {}),
+      ...(asText(job.properties?.program?.code) ? { jobFamily: asText(job.properties?.program?.code) } : {}),
+      officialUrl: `https://careers.mediatek.com/en/jobs/${encodeURIComponent(job.id)}`,
+      publishedAt: normalizedDate(job.publishedDate),
+    }];
+  });
+
+  try {
+    const first = await fetchPage(1);
+    if (!first) return {
+      status: responseStatus && isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: `MediaTek jobs API returned HTTP ${responseStatus ?? "unknown"}.`,
+    };
+    const totalPages = Math.min(Math.max(first.pagination?.total_pages ?? 1, 1), 100);
+    const pages: Array<PagePayload | null> = [first];
+    for (let start = 2; start <= totalPages; start += 6) {
+      pages.push(...await Promise.all(Array.from(
+        { length: Math.min(6, totalPages - start + 1) },
+        (_, index) => fetchPage(start + index),
+      )));
+    }
+    const jobs = uniqueJobs(pages.flatMap((page) => normalizeJobs(page?.jobs ?? [])));
+    const totalItems = first.pagination?.total_items ?? jobs.length;
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: totalPages < 100 && pages.every(Boolean) && jobs.length >= totalItems,
+      jobs,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown MediaTek crawler error.",
+    };
+  }
+};
+
+const epamPayloadFromHtml = (html: string): EpamPayload | null => {
+  const json = html.match(/<script\b[^>]*\bid=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i)?.[1];
+  if (!json) return null;
+  try {
+    return JSON.parse(json) as EpamPayload;
+  } catch {
+    return null;
+  }
+};
+
+const crawlEpam = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  const fetchLandingPage = async (): Promise<EpamPayload | null> => {
+    const endpoint = new URL(source.postingUrl);
+    const response = await fetchWithTimeout(fetcher, endpoint);
+    responseStatus = response.status;
+    if (!response.ok) return null;
+    return epamPayloadFromHtml(await response.text());
+  };
+
+  const normalizeJobs = (items: EpamJob[]): CrawledJob[] => items.flatMap((job) => {
+    if (!job.uid || !job.name) return [];
+    const locations = [...new Set((job.city ?? []).flatMap((city) => {
+      const location = [city.name, city.state?.name, city.country?.name].filter(Boolean).join(", ");
+      return location ? [location] : [];
+    }))];
+    if (locations.length === 0) locations.push(...(job.country ?? []).flatMap((country) => country.name ? [country.name] : []));
+    const primaryCity = job.city?.[0];
+    const mode = job.vacancy_type ?? "";
+    const description = plainText(job.description);
+    const responsibilities = plainText(job.category?.responsibilities?.join("\n"));
+    const qualifications = plainText(job.category?.requirements?.join("\n"));
+    const benefits = plainText((job.benefits ?? []).flatMap((benefit) => benefit.content ? [benefit.content] : []).join("\n"));
+    const jobFamily = job.job_specialization?.filter(Boolean).join("; ") || null;
+    return [{
+      externalId: job.unique_id ?? job.uid,
+      title: job.name,
+      company: source.company,
+      location: locations.join("; ") || null,
+      arrangement: /remote/i.test(mode) ? "remote" as const : /hybrid/i.test(mode) ? "hybrid" as const : /office|on.?site/i.test(mode) ? "onsite" as const : "unknown" as const,
+      employmentType: job.posting_type ?? null,
+      summary: description,
+      description,
+      ...(responsibilities ? { responsibilities } : {}),
+      ...(qualifications ? { qualifications } : {}),
+      ...(job.skills?.length ? { skills: job.skills } : {}),
+      ...(jobFamily ? { jobFamily } : {}),
+      ...(job.primary_skill ? { department: job.primary_skill } : {}),
+      ...(job.seniority ? { experienceLevel: job.seniority } : {}),
+      ...(benefits ? { benefits } : {}),
+      ...(locations.length > 1 ? { secondaryLocations: locations.slice(1) } : {}),
+      ...(primaryCity?.name ? { locationCity: primaryCity.name } : {}),
+      ...(primaryCity?.state?.name ? { locationState: primaryCity.state.name } : {}),
+      ...((primaryCity?.country?.name ?? job.country?.[0]?.name) ? { locationCountry: primaryCity?.country?.name ?? job.country?.[0]?.name } : {}),
+      requisitionId: job.request_id ?? job.uid,
+      officialUrl: new URL(job.seo?.url ?? `/en/vacancy/${job.uid}`, source.postingUrl).href,
+      ...(normalizedDate(job.updated_at) ? { sourceUpdatedAt: normalizedDate(job.updated_at) } : {}),
+      publishedAt: normalizedDate(job.created_at),
+    }];
+  });
+
+  try {
+    const first = await fetchLandingPage();
+    const firstJobs = first?.props?.pageProps?.jobs;
+    if (!firstJobs) return {
+      status: responseStatus && isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: `EPAM jobs page returned HTTP ${responseStatus ?? "unknown"} or no public job payload.`,
+    };
+    const total = Math.max(firstJobs.total ?? firstJobs.jobs?.length ?? 0, 0);
+    const pageSize = Math.max(firstJobs.jobs?.length ?? 0, 1);
+    const totalPages = Math.min(Math.max(Math.ceil(total / pageSize), 1), 250);
+    const countryId = firstJobs.jobs?.flatMap((job) => job.country ?? []).map((country) => asText(country.id)).find(Boolean)
+      ?? firstJobs.jobs?.flatMap((job) => job.city ?? []).map((city) => asText(city.country?.id)).find(Boolean);
+    const fetchApiPage = async (pageNumber: number): Promise<EpamPayload | null> => {
+      if (!countryId) return null;
+      const endpoint = new URL("/api/jobs/v2/search/careers-i18n", new URL(source.postingUrl).origin);
+      endpoint.searchParams.set("lang", "en");
+      endpoint.searchParams.set("sortBy", "relevance;relocation=asc");
+      endpoint.searchParams.set("size", String(pageSize));
+      endpoint.searchParams.set("from", String((pageNumber - 1) * pageSize));
+      endpoint.searchParams.set("facets", `country=${countryId}`);
+      endpoint.searchParams.set("websiteLocale", "en-us");
+      const response = await fetchWithTimeout(fetcher, endpoint, { headers: { accept: "application/json" } });
+      responseStatus = response.status;
+      if (!response.ok) return null;
+      const payload = await response.json() as { data?: EpamPayload["props"] extends { pageProps?: { jobs?: infer T } } ? T : never };
+      return payload.data ? { props: { pageProps: { jobs: payload.data } } } : null;
+    };
+    const pages: Array<EpamPayload | null> = [first];
+    for (let start = 2; start <= totalPages; start += 6) {
+      pages.push(...await Promise.all(Array.from(
+        { length: Math.min(6, totalPages - start + 1) },
+        (_, index) => fetchApiPage(start + index),
+      )));
+    }
+    const jobs = uniqueJobs(pages.flatMap((page) => normalizeJobs(page?.props?.pageProps?.jobs?.jobs ?? [])));
+    const facets = Object.entries(firstJobs.facets ?? {}).flatMap(([key, values]) => {
+      const normalized = values.flatMap((value) => {
+        const valueKey = asText(value.key);
+        return valueKey ? [{ key: valueKey, label: valueKey.split("#").at(-1) ?? valueKey, count: value.doc_count ?? null }] : [];
+      });
+      return normalized.length ? [{ key, label: key.replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase()), values: normalized }] : [];
+    });
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: totalPages < 250 && pages.every(Boolean) && jobs.length >= total,
+      jobs,
+      ...(facets.length ? { facets } : {}),
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown EPAM crawler error.",
+    };
+  }
+};
+
 const crawlMcKinsey = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
   const sourceUrl = new URL(source.postingUrl);
   const query = sourceUrl.searchParams.get("query")?.trim() || source.company.replace(/^.*?—\s*/, "").trim();
@@ -1362,6 +1935,12 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
   try {
     const response = await fetchWithTimeout(fetcher, source.postingUrl);
     if (!response.ok) {
+      if (isBlockedHttpStatus(response.status)) {
+        const talemetry = await crawlTalemetryJson(source, fetcher);
+        if (talemetry) return talemetry;
+        const fallback = await crawlReaderFallback(source, fetcher);
+        if (fallback) return fallback;
+      }
       return {
         status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
         responseStatus: response.status,
@@ -1414,6 +1993,8 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
       error: null,
     };
   } catch (error) {
+    const fallback = await crawlReaderFallback(source, fetcher);
+    if (fallback) return fallback;
     return {
       status: "failed",
       responseStatus: null,
@@ -1425,28 +2006,69 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
 }
 
 async function crawlEightfold(source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> {
-  const origin = new URL(source.postingUrl).origin;
+  const page = new URL(source.postingUrl);
+  const origin = page.origin;
+  const tenant = page.hostname.split(".")[0];
+  const domain = page.searchParams.get("domain") ?? `${tenant}.com`;
   const positions: EightfoldPosition[] = [];
   let facets: CrawledFacet[] = [];
   let responseStatus: number | null = null;
   try {
-    const fetchPage = async (start: number, requirePositions = false) => {
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        const endpoint = new URL("/api/apply/v2/jobs", origin);
+    type Payload = { count?: number; positions?: EightfoldPosition[]; facets?: Record<string, unknown>; filterDef?: { facets?: Record<string, unknown> } };
+    type ApiMode = "pcsx" | "legacy";
+    let apiMode: ApiMode = "pcsx";
+
+    const normalizedFacets = (value: Record<string, unknown> | undefined): CrawledFacet[] => Object.entries(value ?? {}).flatMap(([key, rawValues]) => {
+      const values = Array.isArray(rawValues)
+        ? rawValues.flatMap((entry) => Array.isArray(entry) && typeof entry[0] === "string"
+          ? [{ key: entry[0], label: entry[0], count: typeof entry[1] === "number" ? entry[1] : null }]
+          : [])
+        : rawValues && typeof rawValues === "object"
+          ? Object.entries(rawValues).flatMap(([label, count]) => typeof count === "number" ? [{ key: label, label, count }] : [])
+          : [];
+      return values.length > 0 ? [{
+        key,
+        label: key.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (letter) => letter.toUpperCase()),
+        values,
+      }] : [];
+    });
+
+    const requestPage = async (start: number, mode: ApiMode): Promise<{ response: Response; payload: Payload }> => {
+      const endpoint = new URL(mode === "pcsx" ? "/api/pcsx/search" : "/api/apply/v2/jobs", origin);
+      endpoint.searchParams.set("start", String(start));
+      if (mode === "pcsx") {
+        endpoint.searchParams.set("domain", domain);
+        endpoint.searchParams.set("query", "");
+        endpoint.searchParams.set("location", "");
+        // Keep the parameter order aligned with the browser client.
+        endpoint.searchParams.delete("start");
+        endpoint.searchParams.set("domain", domain);
+        endpoint.searchParams.set("query", "");
+        endpoint.searchParams.set("location", "");
         endpoint.searchParams.set("start", String(start));
+      } else {
         endpoint.searchParams.set("num", "10");
         endpoint.searchParams.set("sort_by", "relevance");
-        const response = await fetchWithTimeout(fetcher, endpoint);
-        responseStatus = response.status;
-        if (!response.ok) throw new Error(`Eightfold returned HTTP ${response.status}.`);
-        const payload = await response.json() as { count?: number; positions?: EightfoldPosition[]; facets?: Record<string, Record<string, number>> };
-        if (start === 0 && payload.facets) {
-          facets = Object.entries(payload.facets).map(([key, values]) => ({
-            key,
-            label: key.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (letter) => letter.toUpperCase()),
-            values: Object.entries(values).map(([label, count]) => ({ key: label, label, count })),
-          }));
+      }
+      const response = await fetchWithTimeout(fetcher, endpoint, {
+        headers: { accept: "application/json", referer: `${origin}/careers?domain=${encodeURIComponent(domain)}` },
+      });
+      responseStatus = response.status;
+      if (!response.ok) return { response, payload: {} };
+      const raw = await response.json() as Payload & { data?: Payload };
+      return { response, payload: raw.data ?? raw };
+    };
+
+    const fetchPage = async (start: number, requirePositions = false): Promise<Payload> => {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        let result = await requestPage(start, apiMode);
+        if (start === 0 && apiMode === "pcsx" && [400, 404].includes(result.response.status)) {
+          apiMode = "legacy";
+          result = await requestPage(start, apiMode);
         }
+        if (!result.response.ok) throw new Error(`Eightfold returned HTTP ${result.response.status}.`);
+        const payload = result.payload;
+        if (start === 0) facets = normalizedFacets(payload.filterDef?.facets ?? payload.facets);
         if (!requirePositions || (payload.positions?.length ?? 0) > 0 || attempt === 2) return payload;
         await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
       }
@@ -1455,7 +2077,7 @@ async function crawlEightfold(source: CrawlSource, fetcher: typeof fetch): Promi
     const first = await fetchPage(0);
     positions.push(...(first.positions ?? []));
     const total = first.count ?? positions.length;
-    const pageSize = Math.max(positions.length, 1);
+    const pageSize = apiMode === "pcsx" ? 10 : Math.max(positions.length, 1);
     const offsets = Array.from({ length: Math.max(0, Math.ceil((total - pageSize) / pageSize)) }, (_, index) => pageSize * (index + 1));
     for (let index = 0; index < offsets.length; index += 8) {
       const pages = await Promise.all(offsets.slice(index, index + 8).map((offset) => fetchPage(offset, true)));
@@ -1466,21 +2088,28 @@ async function crawlEightfold(source: CrawlSource, fetcher: typeof fetch): Promi
       status: "succeeded",
       responseStatus,
       completeListing: uniquePositions.length >= total,
-      jobs: uniquePositions.flatMap((position) => position.id != null && position.name ? [{
-        externalId: position.ats_job_id ?? String(position.id),
+      jobs: uniquePositions.flatMap((position) => position.id != null && position.name ? (() => {
+        const location = position.location ?? position.locations?.join("; ") ?? null;
+        const workLocation = position.work_location_option ?? position.workLocationOption ?? "";
+        const externalId = position.ats_job_id ?? position.atsJobId ?? position.displayJobId ?? String(position.id);
+        const description = position.job_description ?? position.jobDescription;
+        const publishedTimestamp = position.postedTs || position.creationTs || position.t_create;
+        return [{
+        externalId,
         title: position.name,
         company: source.company,
-        location: position.location ?? null,
-        arrangement: /remote/i.test(`${position.location ?? ""} ${position.work_location_option ?? ""}`) ? "remote" as const : /hybrid/i.test(position.work_location_option ?? "") ? "hybrid" as const : "unknown" as const,
+        location,
+        arrangement: /remote/i.test(`${location ?? ""} ${workLocation}`) ? "remote" as const : /hybrid/i.test(workLocation) ? "hybrid" as const : /on.?site/i.test(workLocation) ? "onsite" as const : "unknown" as const,
         employmentType: position.type ?? null,
         summary: position.department ?? null,
         ...(position.department ? { department: position.department } : {}),
-        ...(position.business_unit ? { businessUnit: position.business_unit } : {}),
-        ...(position.job_description ? { description: plainText(position.job_description) } : {}),
-        requisitionId: position.ats_job_id ?? String(position.id),
-        officialUrl: position.canonicalPositionUrl ?? `${origin}/careers/job/${position.id}`,
-        publishedAt: position.t_create ? new Date(position.t_create * 1000).toISOString() : null,
-      }] : []),
+        ...((position.business_unit ?? position.businessUnit) ? { businessUnit: position.business_unit ?? position.businessUnit } : {}),
+        ...(description ? { description: plainText(description) } : {}),
+        requisitionId: externalId,
+        officialUrl: position.canonicalPositionUrl ?? (position.positionUrl ? new URL(position.positionUrl, origin).href : `${origin}/careers/job/${position.id}`),
+        publishedAt: publishedTimestamp ? new Date(publishedTimestamp * 1000).toISOString() : null,
+      }];
+      })() : []),
       ...(facets.length > 0 ? { facets } : {}),
       error: null,
     };
@@ -1571,6 +2200,310 @@ async function crawlAdpMyJobs(source: CrawlSource, fetcher: typeof fetch): Promi
   }
 }
 
+async function crawlAdpWorkforceNow(source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> {
+  const page = new URL(source.postingUrl);
+  const cid = page.searchParams.get("cid");
+  const ccId = page.searchParams.get("ccId");
+  const locale = page.searchParams.get("lang") ?? "en_US";
+  if (!cid || !ccId) return { status: "failed", responseStatus: null, completeListing: false, jobs: [], error: "ADP Workforce Now cid or ccId is missing." };
+  const base = `${page.origin}/mascsr/default/careercenter/public/events/staffing/v1/job-requisitions`;
+  const headers = {
+    accept: "application/json",
+    "accept-language": locale,
+    locale,
+    "x-requested-with": "XMLHttpRequest",
+    "content-type": "application/json",
+    "x-forwarded-host": page.hostname,
+    referer: source.postingUrl,
+  };
+  let responseStatus: number | null = null;
+
+  const endpointFor = (suffix = ""): URL => {
+    const endpoint = new URL(`${base}${suffix}`);
+    endpoint.searchParams.set("cid", cid);
+    endpoint.searchParams.set("ccId", ccId);
+    endpoint.searchParams.set("lang", locale);
+    endpoint.searchParams.set("locale", locale);
+    return endpoint;
+  };
+
+  try {
+    const jobs: WorkforceNowJob[] = [];
+    let total = Number.POSITIVE_INFINITY;
+    while (jobs.length < total && jobs.length < 5_000) {
+      const endpoint = endpointFor();
+      endpoint.searchParams.set("$skip", String(jobs.length));
+      endpoint.searchParams.set("$top", "100");
+      endpoint.searchParams.set("userQuery", "");
+      const response = await fetchWithTimeout(fetcher, endpoint, { headers });
+      responseStatus = response.status;
+      if (!response.ok) return {
+        status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
+        responseStatus,
+        completeListing: false,
+        jobs: [],
+        error: `ADP Workforce Now jobs API returned HTTP ${response.status}.`,
+      };
+      const payload = await response.json() as { jobRequisitions?: WorkforceNowJob[]; meta?: { totalNumber?: number } };
+      const additions = payload.jobRequisitions ?? [];
+      total = payload.meta?.totalNumber ?? jobs.length + additions.length;
+      if (additions.length === 0) break;
+      jobs.push(...additions);
+    }
+
+    const detailed = new Map<string, WorkforceNowJob>();
+    for (let start = 0; start < jobs.length; start += 6) {
+      const details = await Promise.all(jobs.slice(start, start + 6).map(async (job) => {
+        if (!job.itemID) return job;
+        try {
+          const response = await fetchWithTimeout(fetcher, endpointFor(`/${encodeURIComponent(job.itemID)}`), { headers });
+          responseStatus = response.status;
+          if (!response.ok) return job;
+          return { ...job, ...await response.json() as WorkforceNowJob };
+        } catch {
+          return job;
+        }
+      }));
+      for (const job of details) if (job.itemID) detailed.set(job.itemID, job);
+    }
+
+    const normalized = uniqueJobs(jobs.flatMap((baseJob): CrawledJob[] => {
+      const job = baseJob.itemID ? detailed.get(baseJob.itemID) ?? baseJob : baseJob;
+      if (!job.requisitionTitle || !job.itemID) return [];
+      const externalId = job.customFieldGroup?.stringFields?.find((field) => field.nameCode?.codeValue === "ExternalJobID")?.stringValue
+        ?? job.clientRequisitionID
+        ?? job.itemID;
+      const locations = [...new Set((job.requisitionLocations ?? []).flatMap((location) => location.nameCode?.shortName ? [location.nameCode.shortName] : []))];
+      const primaryAddress = job.requisitionLocations?.[0]?.address;
+      const description = plainText(job.requisitionDescription);
+      const officialUrl = new URL(source.postingUrl);
+      officialUrl.searchParams.set("jobId", externalId);
+      return [{
+        externalId,
+        title: job.requisitionTitle,
+        company: source.company,
+        location: locations.join("; ") || null,
+        arrangement: /remote/i.test(locations.join(" ")) ? "remote" : "unknown",
+        employmentType: job.workLevelCode?.shortName ?? null,
+        summary: description,
+        description,
+        requisitionId: job.clientRequisitionID ?? externalId,
+        ...(locations.length > 1 ? { secondaryLocations: locations.slice(1) } : {}),
+        ...(primaryAddress?.cityName ? { locationCity: primaryAddress.cityName } : {}),
+        ...((primaryAddress?.countrySubdivisionLevel1?.longName ?? primaryAddress?.countrySubdivisionLevel1?.codeValue) ? { locationState: primaryAddress.countrySubdivisionLevel1?.longName ?? primaryAddress.countrySubdivisionLevel1?.codeValue } : {}),
+        ...((primaryAddress?.country?.longName ?? primaryAddress?.countryCode) ? { locationCountry: primaryAddress.country?.longName ?? primaryAddress.countryCode } : {}),
+        officialUrl: officialUrl.href,
+        publishedAt: normalizedDate(job.postDate),
+      }];
+    }));
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: jobs.length >= total && jobs.length < 5_000,
+      jobs: normalized,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown ADP Workforce Now crawler error.",
+    };
+  }
+}
+
+const metaFacet = (key: string, label: string, jobs: MetaCareerJob[], select: (job: MetaCareerJob) => string[] | undefined): CrawledFacet | null => {
+  const counts = new Map<string, number>();
+  for (const job of jobs) {
+    for (const value of new Set((select(job) ?? []).map((item) => item.trim()).filter(Boolean))) {
+      counts.set(value, (counts.get(value) ?? 0) + 1);
+    }
+  }
+  if (counts.size === 0) return null;
+  return {
+    key,
+    label,
+    values: [...counts.entries()]
+      .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+      .map(([value, count]) => ({ key: value, label: value, count })),
+  };
+};
+
+async function crawlMetaCareers(source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> {
+  let responseStatus: number | null = null;
+  try {
+    // Meta's edge rejects a fabricated browser User-Agent from server runtimes, while
+    // the public no-cookie document and GraphQL operation remain directly available.
+    const pageResponse = await fetchWithTimeout(fetcher, source.postingUrl, undefined, false);
+    responseStatus = pageResponse.status;
+    if (!pageResponse.ok) return {
+      status: isBlockedHttpStatus(pageResponse.status) ? "blocked" : "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: `Meta careers page returned HTTP ${pageResponse.status}.`,
+    };
+    const html = await pageResponse.text();
+    const lsd = html.match(/\["LSD",\[\],\{"token":"([^"]+)"/)?.[1];
+    const scriptUrls = [...new Set([...html.matchAll(/<script[^>]+src=["']([^"']+\.js(?:[^"']*)?)["']/gi)]
+      .map((match) => new URL(match[1].replaceAll("&amp;", "&"), source.postingUrl).href))];
+
+    let operationId: string | null = null;
+    for (let start = 0; start < scriptUrls.length && !operationId; start += 6) {
+      const scripts = await Promise.all(scriptUrls.slice(start, start + 6).map(async (url) => {
+        try {
+          const response = await fetchWithTimeout(fetcher, url, undefined, false, { attempts: 1, timeoutMs: 10_000 });
+          return response.ok ? response.text() : "";
+        } catch {
+          return "";
+        }
+      }));
+      operationId = scripts.flatMap((script) => script.match(/CareersJobSearchResultsV2DataQuery_candidate_portalRelayOperation[\s\S]{0,240}?exports="(\d+)"/)?.[1] ?? []).at(0) ?? null;
+    }
+    if (!lsd || !operationId) return {
+      status: "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: "Meta careers public search operation could not be discovered.",
+    };
+
+    const variables = {
+      search_input: {
+        q: null,
+        divisions: [],
+        offices: [],
+        roles: [],
+        leadership_levels: [],
+        saved_jobs: [],
+        saved_searches: [],
+        sub_teams: [],
+        teams: [],
+        is_leadership: false,
+        is_remote_only: false,
+        sort_by_new: false,
+        results_per_page: null,
+      },
+      viewasUserID: null,
+      isLoggedIn: false,
+    };
+    const body = new URLSearchParams({
+      lsd,
+      fb_api_caller_class: "RelayModern",
+      fb_api_req_friendly_name: "CareersJobSearchResultsV2DataQuery",
+      server_timestamps: "true",
+      variables: JSON.stringify(variables),
+      doc_id: operationId,
+    });
+    const response = await fetchWithTimeout(fetcher, "https://www.metacareers.com/graphql", {
+      method: "POST",
+      headers: {
+        accept: "*/*",
+        "content-type": "application/x-www-form-urlencoded",
+        referer: source.postingUrl,
+        "x-fb-friendly-name": "CareersJobSearchResultsV2DataQuery",
+        "x-fb-lsd": lsd,
+      },
+      body,
+    }, false, { attempts: 1, timeoutMs: 30_000 });
+    responseStatus = response.status;
+    if (!response.ok) return {
+      status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: `Meta careers search returned HTTP ${response.status}.`,
+    };
+    const payload = await response.json() as MetaCareerPayload;
+    const rawJobs = payload.data?.job_search_with_featured_jobs_v2?.all_jobs;
+    if (!Array.isArray(rawJobs)) return {
+      status: "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: "Meta careers search returned an unexpected payload.",
+    };
+    const jobs = uniqueJobs(rawJobs.flatMap((job): CrawledJob[] => {
+      if (!job.id || !job.title) return [];
+      const locations = [...new Set((job.locations ?? []).map((value) => value.trim()).filter(Boolean))];
+      const teams = [...new Set((job.teams ?? []).map((value) => value.trim()).filter(Boolean))];
+      const subTeams = [...new Set((job.sub_teams ?? []).map((value) => value.trim()).filter(Boolean))];
+      const programText = [job.title, ...teams, ...subTeams].join(" ");
+      const employmentType = /\b(?:co[\s-]?op|cooperative education)\b/i.test(programText)
+        ? "Co-op"
+        : /\b(?:intern(?:ship)?|trainee|industrial placement)\b/i.test(programText) ? "Internship" : null;
+      return [{
+        externalId: job.id,
+        title: job.title,
+        company: source.company,
+        location: locations[0] ?? null,
+        arrangement: locations.some((location) => /\bremote\b/i.test(location)) ? "remote" : "unknown",
+        employmentType,
+        summary: [...teams, ...subTeams].join(" · ") || null,
+        ...(teams.length > 0 ? { department: teams.join("; ") } : {}),
+        ...(subTeams.length > 0 ? { team: subTeams.join("; ") } : {}),
+        ...(locations.length > 1 ? { secondaryLocations: locations.slice(1) } : {}),
+        rawPayload: { teams, subTeams },
+        officialUrl: `https://www.metacareers.com/jobs/${job.id}/`,
+        publishedAt: null,
+      }];
+    }));
+    const facets = [
+      metaFacet("department", "Department", rawJobs, (job) => job.teams),
+      metaFacet("team", "Team", rawJobs, (job) => job.sub_teams),
+    ].filter((facet): facet is CrawledFacet => facet !== null);
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: jobs.length === rawJobs.filter((job) => job.id && job.title).length,
+      jobs,
+      ...(facets.length > 0 ? { facets } : {}),
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Meta careers crawler error.",
+    };
+  }
+}
+
+export function jobsFromTeslaState(source: CrawlSource, payload: TeslaState): CrawledJob[] {
+  const usLocations = new Set(payload.geo?.flatMap((region) => region.sites ?? [])
+    .filter((site) => site.id === "US")
+    .flatMap((site) => [
+      ...Object.values(site.cities ?? {}).flat(),
+      ...(site.states ?? []).flatMap((state) => Object.values(state.cities ?? {}).flat()),
+    ]) ?? []);
+  return uniqueJobs((payload.listings ?? []).flatMap((listing): CrawledJob[] => {
+    if (!listing.id || !listing.t || !listing.l || !usLocations.has(listing.l)) return [];
+    const slug = listing.t.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    const location = payload.lookup?.locations?.[listing.l] ?? null;
+    const department = payload.lookup?.departments?.[listing.dp ?? ""] ?? null;
+    return [{
+      externalId: listing.id,
+      title: listing.t,
+      company: source.company,
+      location,
+      arrangement: /\bremote\b/i.test(location ?? "") ? "remote" : "unknown",
+      employmentType: payload.lookup?.types?.[String(listing.y)] ?? null,
+      summary: department,
+      department,
+      rawPayload: {
+        ...(listing.dp ? { departmentId: listing.dp } : {}),
+        ...(listing.y != null ? { employmentTypeId: String(listing.y) } : {}),
+      },
+      officialUrl: `https://www.tesla.com/careers/search/job/${slug}-${listing.id}`,
+      publishedAt: null,
+    }];
+  }));
+}
+
 async function crawlTesla(source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> {
   const endpoint = "https://www.tesla.com/cua-api/apps/careers/state";
   try {
@@ -1585,26 +2518,7 @@ async function crawlTesla(source: CrawlSource, fetcher: typeof fetch): Promise<S
       error: `Tesla careers API returned HTTP ${response.status}.`,
     };
     const payload = await response.json() as TeslaState;
-    const usLocations = new Set(payload.geo?.flatMap((region) => region.sites ?? [])
-      .filter((site) => site.id === "US")
-      .flatMap((site) => Object.values(site.cities ?? {}).flat()) ?? []);
-    const jobs = (payload.listings ?? []).flatMap((listing) => {
-      if (!listing.id || !listing.t || !listing.l || !usLocations.has(listing.l)) return [];
-      const slug = listing.t.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-      const location = payload.lookup?.locations?.[listing.l] ?? null;
-      return [{
-        externalId: listing.id,
-        title: listing.t,
-        company: source.company,
-        location,
-        arrangement: /\bremote\b/i.test(location ?? "") ? "remote" as const : "unknown" as const,
-        employmentType: payload.lookup?.types?.[String(listing.y)] ?? null,
-        summary: payload.lookup?.departments?.[listing.dp ?? ""] ?? null,
-        department: payload.lookup?.departments?.[listing.dp ?? ""] ?? null,
-        officialUrl: `https://www.tesla.com/careers/search/job/${slug}-${listing.id}`,
-        publishedAt: null,
-      }];
-    });
+    const jobs = jobsFromTeslaState(source, payload);
     return { status: "succeeded", responseStatus: response.status, completeListing: true, jobs, error: null };
   } catch (error) {
     return {
@@ -1710,9 +2624,13 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
 
 export async function crawlSource(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
   if (source.id === "p5-1077-tesla" || source.company === "Tesla") return crawlTesla(source, fetcher);
+  if (new URL(source.postingUrl).hostname === "www.metacareers.com") return crawlMetaCareers(source, fetcher);
+  if (new URL(source.postingUrl).hostname === "careers.epam.com") return crawlEpam(source, fetcher);
+  if (new URL(source.postingUrl).hostname.endsWith("mediatek.com")) return crawlMediaTek(source, fetcher);
   if (new URL(source.postingUrl).hostname.endsWith("mckinsey.com") && new URL(source.postingUrl).pathname.includes("/careers/search-jobs")) return crawlMcKinsey(source, fetcher);
   if (new URL(source.postingUrl).hostname.endsWith("eightfold.ai")) return crawlEightfold(source, fetcher);
   if (new URL(source.postingUrl).hostname === "myjobs.adp.com") return crawlAdpMyJobs(source, fetcher);
+  if (new URL(source.postingUrl).hostname === "workforcenow.adp.com") return crawlAdpWorkforceNow(source, fetcher);
   const board = source.adapter === "greenhouse" ? greenhouseBoard(source.postingUrl) : null;
   const workday = source.adapter === "workday" ? workdayFeed(source.postingUrl) : null;
   if (workday) return crawlWorkday(source, workday, fetcher, now);

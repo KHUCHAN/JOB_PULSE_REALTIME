@@ -66,8 +66,8 @@ const skillSignals: Signal[] = [
   ...supportingSignals.slice(0, 3),
 ];
 
-const normalized = (value: string | null | undefined): string =>
-  value?.normalize("NFKC").replace(/\s+/g, " ").trim() ?? "";
+const normalized = (value: unknown): string =>
+  typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g, " ").trim() : "";
 
 export function classifyAiDataJob(input: AiDataJobInput): JobTopicClassification {
   const evidence = new Set<string>();

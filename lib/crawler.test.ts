@@ -20,6 +20,14 @@ describe("crawlSource", () => {
     });
   });
 
+  it("accepts Oracle's default CX site identifier", () => {
+    const html = '<script src="https://egcu.fa.us6.oraclecloud.com:443/hcmUI/CandExpStatic/app.js"></script>';
+    expect(oracleCareerSite(html, "https://egcu.fa.us6.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/")).toEqual({
+      apiOrigin: "https://egcu.fa.us6.oraclecloud.com",
+      site: "CX",
+    });
+  });
+
   it("discovers the Oracle API site number when the public slug is not the CX identifier", () => {
     const html = [
       '<script src="https://eeho.fa.us2.oraclecloud.com:443/hcmUI/CandExpStatic/app.js"></script>',
@@ -78,6 +86,16 @@ describe("crawlSource", () => {
     )).toEqual({
       kind: "smartrecruiters",
       endpoint: "https://api.smartrecruiters.com/v1/companies/Expeditors/postings",
+    });
+  });
+
+  it("discovers the Jibe API from the current CMS asset host", () => {
+    expect(discoverAts(
+      '<script src="https://cms.jibecdn.com/prod/stonex/app.js"></script>',
+      "https://join.stonex.com/jobs",
+    )).toEqual({
+      kind: "jibe",
+      endpoint: "https://join.stonex.com/api/jobs?page=1&limit=100&sortBy=relevance&descending=false&internal=false",
     });
   });
 
@@ -346,13 +364,15 @@ describe("crawlSource", () => {
       const url = new URL(String(input));
       requests.push(url.toString());
       const start = Number(url.searchParams.get("start"));
-      const position = start === 0
-        ? { id: 101, name: "Engineer", location: "Remote", ats_job_id: "REQ-101", canonicalPositionUrl: "https://acme.eightfold.ai/careers/job/101", t_create: 1785888000 }
-        : { id: 102, name: "Designer", location: "New York, NY", ats_job_id: "REQ-102", canonicalPositionUrl: "https://acme.eightfold.ai/careers/job/102", t_create: 1785801600 };
+      const positions = start === 0
+        ? Array.from({ length: 10 }, (_, index) => ({ id: 101 + index, name: index === 0 ? "Engineer" : `Engineer ${index + 1}`, locations: ["Remote"], atsJobId: `REQ-${101 + index}`, positionUrl: `/careers/job/${101 + index}`, creationTs: 1785888000, workLocationOption: "remote", department: "Engineering", businessUnit: "Technology", type: "Full-time", jobDescription: "Build reliable systems." }))
+        : [{ id: 111, name: "Designer", locations: ["New York, NY"], atsJobId: "REQ-111", positionUrl: "/careers/job/111", creationTs: 1785801600, workLocationOption: "onsite", department: "Design" }];
       return new Response(JSON.stringify({
-        count: 2,
-        facets: { department: { Engineering: 2 }, skills: { Python: 1 }, seniority: { Senior: 1 } },
-        positions: [{ ...position, department: "Engineering", business_unit: "Technology", type: "Full-time", job_description: "Build reliable systems." }],
+        data: {
+          count: 11,
+          filterDef: { facets: { department: { Engineering: 10, Design: 1 }, skills: { Python: 10 }, seniority: { Senior: 10 } } },
+          positions,
+        },
       }), { status: 200, headers: { "content-type": "application/json" } });
     };
 
@@ -361,11 +381,172 @@ describe("crawlSource", () => {
     expect(result.completeListing).toBe(true);
     expect(result.jobs[0]).toEqual(expect.objectContaining({ department: "Engineering", businessUnit: "Technology", employmentType: "Full-time", description: "Build reliable systems." }));
     expect(result.facets).toEqual(expect.arrayContaining([
-      { key: "department", label: "Department", values: [{ key: "Engineering", label: "Engineering", count: 2 }] },
-      { key: "skills", label: "Skills", values: [{ key: "Python", label: "Python", count: 1 }] },
+      { key: "department", label: "Department", values: [{ key: "Engineering", label: "Engineering", count: 10 }, { key: "Design", label: "Design", count: 1 }] },
+      { key: "skills", label: "Skills", values: [{ key: "Python", label: "Python", count: 10 }] },
     ]));
-    expect(result.jobs.map((job) => job.externalId)).toEqual(["REQ-101", "REQ-102"]);
-    expect(requests).toContain("https://acme.eightfold.ai/api/apply/v2/jobs?start=1&num=10&sort_by=relevance");
+    expect(result.jobs).toHaveLength(11);
+    expect(result.jobs[0].externalId).toBe("REQ-101");
+    expect(result.jobs.at(-1)?.externalId).toBe("REQ-111");
+    expect(requests).toContain("https://acme.eightfold.ai/api/pcsx/search?domain=acme.com&query=&location=&start=10");
+  });
+
+  it("falls back to Eightfold's legacy public API when the PCSX search route is unavailable", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.toString());
+      if (url.pathname === "/api/pcsx/search") return new Response("missing", { status: 404 });
+      return new Response(JSON.stringify({
+        count: 1,
+        positions: [{ id: 101, name: "Engineer", location: "Remote", ats_job_id: "REQ-101", canonicalPositionUrl: "https://acme.eightfold.ai/careers/job/101" }],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+
+    const result = await crawlSource({ id: "legacy-eightfold", company: "Acme", postingUrl: "https://acme.eightfold.ai/careers", adapter: "custom" }, fetcher, new Date());
+
+    expect(result.status).toBe("succeeded");
+    expect(result.jobs.map((job) => job.externalId)).toEqual(["REQ-101"]);
+    expect(requests.some((url) => url.includes("/api/apply/v2/jobs"))).toBe(true);
+  });
+
+  it("collects every MediaTek page through its public jobs API", async () => {
+    const pages: number[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = new URL(String(input));
+      expect(url.pathname).toBe("/api/trpc/job.getJobs");
+      const request = JSON.parse(url.searchParams.get("input") ?? "{}") as { "0": { json: { page: number } } };
+      const page = request["0"].json.page;
+      pages.push(page);
+      const headers = new Headers(init?.headers);
+      expect(headers.get("cookie")).toBe("NEXT_LOCALE=en");
+      const jobs = page === 1 ? [
+        { id: "MTK-1", title: "AI Intern", description: "Build models", publishedDate: "2026-08-09T16:00:00.000Z", properties: { category: { code: "AI", label: "Algorithm" }, location: { code: "San Jose", label: "US" }, workExperience: { code: "No experience", label: "0" }, jobEducationInfos: [{ educationDegree: "Bachelor", educationMajor: "Computer Science" }] } },
+        { id: "MTK-2", title: "Data Engineer", description: "Build pipelines", properties: { location: { code: "HsinChu", label: "TW" } } },
+      ] : [{ id: "MTK-3", title: "RF Engineer", description: "Build radios", properties: { location: { code: "Taipei", label: "TW" } } }];
+      return Response.json([{ result: { data: { json: { jobs, pagination: { current_page: page, total_pages: 2, total_items: 3 } } } } }]);
+    };
+
+    const result = await crawlSource({ id: "mediatek", company: "MediaTek", postingUrl: "https://careers.mediatek.com/en", adapter: "custom" }, fetcher, new Date());
+
+    expect(result.status).toBe("succeeded");
+    expect(result.completeListing).toBe(true);
+    expect(pages).toEqual([1, 2]);
+    expect(result.jobs).toHaveLength(3);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "MTK-1",
+      title: "AI Intern",
+      location: "San Jose",
+      department: "Algorithm",
+      educationRequirements: "Bachelor: Computer Science",
+      officialUrl: "https://careers.mediatek.com/en/jobs/MTK-1",
+    }));
+  });
+
+  it("discovers Meta's current public GraphQL operation and collects the complete job list", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === "https://www.metacareers.com/jobsearch/") {
+        return new Response([
+          '<script src="https://static.xx.fbcdn.net/meta-careers.js"></script>',
+          '<script type="application/json">["LSD",[],{"token":"fresh-lsd-token"}]</script>',
+        ].join(""));
+      }
+      if (url === "https://static.xx.fbcdn.net/meta-careers.js") {
+        return new Response('__d("CareersJobSearchResultsV2DataQuery_candidate_portalRelayOperation",[],function(){exports="27129360303422352"})');
+      }
+      expect(url).toBe("https://www.metacareers.com/graphql");
+      expect(init?.method).toBe("POST");
+      const body = new URLSearchParams(String(init?.body));
+      expect(body.get("doc_id")).toBe("27129360303422352");
+      expect(body.get("lsd")).toBe("fresh-lsd-token");
+      return Response.json({
+        data: {
+          job_search_with_featured_jobs_v2: {
+            all_jobs: [{
+              id: "2916726525182155",
+              title: "Research Scientist Intern, Generative AI (PhD)",
+              locations: ["Bellevue, WA", "Menlo Park, CA"],
+              teams: ["AI Research", "Internship - PhD"],
+              sub_teams: ["Machine Learning", "Research"],
+            }],
+          },
+        },
+      });
+    };
+
+    const result = await crawlSource({
+      id: "meta", company: "Meta", postingUrl: "https://www.metacareers.com/jobsearch/", adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result.status).toBe("succeeded");
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "2916726525182155",
+      title: "Research Scientist Intern, Generative AI (PhD)",
+      location: "Bellevue, WA",
+      secondaryLocations: ["Menlo Park, CA"],
+      employmentType: "Internship",
+      department: "AI Research; Internship - PhD",
+      team: "Machine Learning; Research",
+      officialUrl: "https://www.metacareers.com/jobs/2916726525182155/",
+    })]);
+    expect(result.facets).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: "department" }),
+      expect.objectContaining({ key: "team" }),
+    ]));
+    expect(requests).toEqual([
+      "https://www.metacareers.com/jobsearch/",
+      "https://static.xx.fbcdn.net/meta-careers.js",
+      "https://www.metacareers.com/graphql",
+    ]);
+  });
+
+  it("collects every EPAM page from its public Next.js job payload", async () => {
+    const calls: string[] = [];
+    const html = (jobs: unknown[], total = 3) => `<script id="__NEXT_DATA__" type="application/json">${JSON.stringify({
+      props: { pageProps: { jobs: { total, jobs, facets: { seniority: [{ key: "Senior", doc_count: 2 }], malformed: [{ key: { unexpected: true }, doc_count: 1 }] } } } },
+    })}</script>`;
+    const first = [{
+      uid: "blt-1", name: "AI Engineer", vacancy_type: "Hybrid", posting_type: "Standard",
+      city: [{ name: "New York", state: { name: "New York" }, country: { id: "country-1", name: "USA" } }],
+      country: [{ id: "country-1", name: "USA" }],
+      skills: ["Python"], seniority: "Senior", description: "<p>Build AI systems.</p>",
+      category: { responsibilities: ["Ship models"], requirements: ["Python"] },
+      job_specialization: ["Developer"], seo: { url: "/en/vacancy/ai-engineer-blt-1_en" },
+      created_at: "2026-08-01T00:00:00.000Z", updated_at: "2026-08-02T00:00:00.000Z",
+    }, {
+      uid: "blt-2", name: "Data Scientist", vacancy_type: "Remote",
+      country: [{ name: "USA" }], seo: { url: "/en/vacancy/data-scientist-blt-2_en" },
+    }];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      calls.push(url);
+      return url.includes("/api/jobs/v2/search/")
+        ? new Response(JSON.stringify({ data: { total: 3, jobs: [{ uid: "blt-3", name: "ML Engineer", vacancy_type: "Office", seo: { url: "/en/vacancy/ml-engineer-blt-3_en" } }], facets: {} } }))
+        : new Response(html(first));
+    };
+
+    const result = await crawlSource({
+      id: "epam", company: "EPAM Systems", postingUrl: "https://careers.epam.com/en/jobs/united_states_of_america", adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(calls).toEqual([
+      "https://careers.epam.com/en/jobs/united_states_of_america",
+      "https://careers.epam.com/api/jobs/v2/search/careers-i18n?lang=en&sortBy=relevance%3Brelocation%3Dasc&size=2&from=2&facets=country%3Dcountry-1&websiteLocale=en-us",
+    ]);
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs).toHaveLength(3);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      title: "AI Engineer", arrangement: "hybrid", location: "New York, New York, USA",
+      skills: ["Python"], responsibilities: "Ship models", qualifications: "Python",
+      jobFamily: "Developer", experienceLevel: "Senior",
+      officialUrl: "https://careers.epam.com/en/vacancy/ai-engineer-blt-1_en",
+    }));
+    expect(result.facets).toEqual([expect.objectContaining({
+      key: "seniority", values: [{ key: "Senior", label: "Senior", count: 2 }],
+    })]);
   });
 
   it("classifies an Eightfold access-control response as blocked instead of failed", async () => {
@@ -407,6 +588,212 @@ describe("crawlSource", () => {
 
     expect(result.status).toBe("succeeded");
     expect(result.jobs.map((job) => job.title)).toEqual(["Engineer"]);
+  });
+
+  it("retries a transient upstream response before classifying the source as blocked", async () => {
+    let attempts = 0;
+    const fetcher: typeof fetch = async () => {
+      attempts += 1;
+      return attempts === 1
+        ? new Response("rate limited", { status: 429, headers: { "retry-after": "0" } })
+        : new Response('<a href="/jobs/101">Engineer</a>', { status: 200 });
+    };
+
+    const result = await crawlSource({ id: "transient", company: "Acme", postingUrl: "https://careers.acme.example/jobs", adapter: "custom" }, fetcher, new Date());
+
+    expect(attempts).toBe(2);
+    expect(result.status).toBe("succeeded");
+    expect(result.jobs.map((job) => job.title)).toEqual(["Engineer"]);
+  });
+
+  it("retries a transient network failure once", async () => {
+    let attempts = 0;
+    const fetcher: typeof fetch = async () => {
+      attempts += 1;
+      if (attempts === 1) throw new TypeError("fetch failed");
+      return new Response('<a href="/jobs/101">Engineer</a>', { status: 200 });
+    };
+
+    const result = await crawlSource({ id: "network-transient", company: "Acme", postingUrl: "https://careers.acme.example/jobs", adapter: "custom" }, fetcher, new Date());
+
+    expect(attempts).toBe(2);
+    expect(result.status).toBe("succeeded");
+  });
+
+  it("recovers official job links through the read-only reader when the careers edge blocks requests", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      requests.push(url);
+      if (url.startsWith("https://r.jina.ai/")) {
+        const headers = new Headers(init?.headers);
+        expect(headers.get("accept-language")).toBeNull();
+        expect(headers.get("x-no-cache")).toBeNull();
+        expect(headers.get("x-retain-links")).toBe("all");
+        expect(headers.get("x-with-links-summary")).toBe("all");
+        return new Response([
+          "# Job Search Results",
+          "[Skip to content](https://careers.acme.example/search/jobs#main)",
+          "[Data Science Intern](https://careers.acme.example/jobs/18099108-data-science-intern)",
+          "[Software Engineer](https://careers.acme.example/careers/details/software-engineer/)",
+          "[Page 2](https://careers.acme.example/search/jobs?page=2)",
+        ].join("\n"), { status: 200 });
+      }
+      return new Response("blocked", { status: 403 });
+    };
+
+    const result = await crawlSource({ id: "edge-blocked", company: "Acme", postingUrl: "https://careers.acme.example/search/jobs", adapter: "custom" }, fetcher, new Date());
+
+    expect(result.status).toBe("succeeded");
+    expect(result.completeListing).toBe(false);
+    expect(result.jobs.map((job) => job.title)).toEqual(["Data Science Intern", "Software Engineer"]);
+    expect(result.jobs.map((job) => job.officialUrl)).toEqual([
+      "https://careers.acme.example/jobs/18099108-data-science-intern",
+      "https://careers.acme.example/careers/details/software-engineer/",
+    ]);
+    expect(requests).toContain("https://r.jina.ai/https://careers.acme.example/search/jobs");
+  });
+
+  it("fully paginates a Talemetry JSON feed through the reader when the careers edge blocks requests", async () => {
+    const requests: string[] = [];
+    const feed = (page: number) => ({
+      current_page: page,
+      per_page: 1,
+      total_entries: 2,
+      entries: page === 1 ? [{
+        id: "18099108",
+        talemetry_job_id: "18099108",
+        permalink: "data-science-intern",
+        title: "Data Science Intern",
+        location: { locality: "Mayfield", region_abbr: "OH", country: "United States", postal_code: "44143", name: "OH | Mayfield" },
+      }] : [{
+        id: "18099109",
+        talemetry_job_id: "18099109",
+        permalink: "software-engineer",
+        title: "Software Engineer",
+        location: { locality: null, region_abbr: null, country: "United States", postal_code: null, name: "US | Remote" },
+      }],
+    });
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (!url.startsWith("https://r.jina.ai/")) return new Response("blocked", { status: 403 });
+      const page = Number(new URL(url.slice("https://r.jina.ai/".length)).searchParams.get("page") ?? 1);
+      return new Response(`Title:\n\nMarkdown Content:\n${JSON.stringify(feed(page))}`, { status: 200 });
+    };
+
+    const result = await crawlSource({ id: "talemetry-blocked", company: "Acme", postingUrl: "https://careers.acme.example/search/jobs", adapter: "custom" }, fetcher, new Date());
+
+    expect(result.status).toBe("succeeded");
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        externalId: "18099108", title: "Data Science Intern", location: "OH | Mayfield",
+        locationCity: "Mayfield", locationState: "OH", locationCountry: "United States", locationPostalCode: "44143",
+        officialUrl: "https://careers.acme.example/jobs/18099108-data-science-intern",
+      }),
+      expect.objectContaining({
+        externalId: "18099109", title: "Software Engineer", arrangement: "remote",
+        officialUrl: "https://careers.acme.example/jobs/18099109-software-engineer",
+      }),
+    ]);
+    expect(requests).toContain("https://r.jina.ai/https://careers.acme.example/search/jobs.json?per_page=100&page=1");
+    expect(requests).toContain("https://r.jina.ai/https://careers.acme.example/search/jobs.json?per_page=100&page=2");
+  });
+
+  it("bypasses a stale reader challenge snapshot when the cached response has no jobs", async () => {
+    let readerRequests = 0;
+    const fetcher: typeof fetch = async (input, init) => {
+      if (!String(input).startsWith("https://r.jina.ai/")) return new Response("blocked", { status: 403 });
+      if (String(input).includes("/search/jobs.json")) return new Response("not found", { status: 404 });
+      readerRequests += 1;
+      const headers = new Headers(init?.headers);
+      if (readerRequests === 1) {
+        expect(headers.get("x-no-cache")).toBeNull();
+        return new Response("Enable JavaScript and cookies to continue", { status: 200 });
+      }
+      expect(headers.get("x-no-cache")).toBe("true");
+      return new Response([
+        "Links/Buttons:",
+        "- [Data Science Intern](https://careers.acme.example/jobs/18099108-data-science-intern)",
+      ].join("\n"), { status: 200 });
+    };
+
+    const result = await crawlSource({ id: "stale-reader", company: "Acme", postingUrl: "https://careers.acme.example/search/jobs", adapter: "custom" }, fetcher, new Date());
+
+    expect(readerRequests).toBe(2);
+    expect(result.status).toBe("succeeded");
+    expect(result.jobs.map((job) => job.title)).toEqual(["Data Science Intern"]);
+  });
+
+  it("preserves the direct blocked result when the reader exposes no official job details", async () => {
+    const fetcher: typeof fetch = async (input) => String(input).startsWith("https://r.jina.ai/")
+      ? new Response("[Careers](https://careers.acme.example/careers)", { status: 200 })
+      : new Response("blocked", { status: 403 });
+
+    const result = await crawlSource({ id: "still-blocked", company: "Acme", postingUrl: "https://careers.acme.example/careers", adapter: "custom" }, fetcher, new Date());
+
+    expect(result.status).toBe("blocked");
+    expect(result.jobs).toEqual([]);
+    expect(result.responseStatus).toBe(403);
+  });
+
+  it("extracts official static ASE openings that do not have separate detail links", async () => {
+    const fetcher: typeof fetch = async (input) => String(input).startsWith("https://r.jina.ai/")
+      ? new Response([
+          "## Career Opportunities in the U.S.",
+          "### ![Image 1](https://ase.aseglobal.com/icon.svg) ACCOUNT MANAGER/SR. ACCOUNT MANAGER #500",
+          "JOB ID #500",
+          "### ![Image 2](https://ase.aseglobal.com/icon.svg) DIRECTOR, ENGINEERING & TECHNICAL MARKETING #499",
+          "JOB ID #499",
+        ].join("\n"), { status: 200 })
+      : new Response("blocked", { status: 403 });
+
+    const result = await crawlSource({ id: "p5-0806-ase-group", company: "ASE Group", postingUrl: "https://ase.aseglobal.com/careers-us/", adapter: "custom" }, fetcher, new Date());
+
+    expect(result.status).toBe("succeeded");
+    expect(result.jobs).toEqual([
+      expect.objectContaining({ externalId: "500", title: "ACCOUNT MANAGER/SR. ACCOUNT MANAGER", officialUrl: "https://ase.aseglobal.com/careers-us/#job-500" }),
+      expect.objectContaining({ externalId: "499", title: "DIRECTOR, ENGINEERING & TECHNICAL MARKETING", officialUrl: "https://ase.aseglobal.com/careers-us/#job-499" }),
+    ]);
+  });
+
+  it("extracts every Paylocity job from its embedded public page data", async () => {
+    const fetcher: typeof fetch = async () => new Response(`
+      <html><script>
+        window.ATSJobDetailsBaseUrl = '/Recruiting/Jobs/Details/';
+        window.pageData = {"ModuleTitle":"Premier America Credit Union","Jobs":[
+          {"JobId":4352550,"JobTitle":"Personal Banker IV - Reseda","LocationName":"Reseda","PublishedDate":"2026-08-07T18:49:34-05:00","Description":"Serve members.","HiringDepartment":"Retail Banking","JobLocation":{"City":"Reseda","State":"CA","Zip":"91335","Country":"USA"},"IsRemote":false,"IndeedRemoteType":2},
+          {"JobId":4403763,"JobTitle":"Director - EPMO","LocationName":"Chatsworth","PublishedDate":"2026-08-07T17:35:32-05:00","Description":"Lead programs.","HiringDepartment":null,"JobLocation":{"City":"Chatsworth","State":"CA","Zip":"91311","Country":"USA"},"IsRemote":true,"IndeedRemoteType":1}
+        ]};
+      </script></html>
+    `, { status: 200, headers: { "content-type": "text/html" } });
+
+    const result = await crawlSource({
+      id: "paylocity",
+      company: "Premier America Credit Union",
+      postingUrl: "https://recruiting.paylocity.com/recruiting/jobs/All/tenant/Premier-America-Credit-Union",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result.status).toBe("succeeded");
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        externalId: "4352550",
+        title: "Personal Banker IV - Reseda",
+        locationCity: "Reseda",
+        locationState: "CA",
+        department: "Retail Banking",
+        officialUrl: "https://recruiting.paylocity.com/Recruiting/Jobs/Details/4352550",
+      }),
+      expect.objectContaining({
+        externalId: "4403763",
+        title: "Director - EPMO",
+        arrangement: "remote",
+        officialUrl: "https://recruiting.paylocity.com/Recruiting/Jobs/Details/4403763",
+      }),
+    ]);
   });
 
   it("uses McKinsey's public job API instead of the edge-blocked careers HTML", async () => {
@@ -486,6 +873,43 @@ describe("crawlSource", () => {
       "https://myjobs.adp.com/acme/cx/job-details?reqId=102",
     ]);
     expect(requests.some((url) => url.includes("%24skip=1"))).toBe(true);
+  });
+
+  it("collects ADP Workforce Now public jobs and their descriptions", async () => {
+    const requests: string[] = [];
+    const listJob = {
+      itemID: "9201331335969_1",
+      requisitionTitle: "Manufacturing Process Engineer",
+      clientRequisitionID: "5096",
+      postDate: "2026-07-12T05:34:00.000-04:00",
+      workLevelCode: { shortName: "Regular Full-Time" },
+      requisitionLocations: [{ nameCode: { shortName: "UK - Greenock, GB" }, address: { cityName: "Greenock", countrySubdivisionLevel1: { codeValue: "Scotland" }, countryCode: "GB" } }],
+      customFieldGroup: { stringFields: [{ stringValue: "591974", nameCode: { codeValue: "ExternalJobID" } }] },
+    };
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (/job-requisitions\/9201331335969_1/.test(url)) {
+        return new Response(JSON.stringify({ ...listJob, requisitionDescription: "<p>Improve manufacturing processes.</p>" }));
+      }
+      return new Response(JSON.stringify({ jobRequisitions: [listJob], meta: { totalNumber: 1 } }));
+    };
+
+    const result = await crawlSource({
+      id: "diodes", company: "Diodes Inc.",
+      postingUrl: "https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=d72519df-1ce1-4f1d-b01b-50a082de06d5&ccId=9201183304503_2&lang=en_US",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "591974", title: "Manufacturing Process Engineer",
+      location: "UK - Greenock, GB", employmentType: "Regular Full-Time",
+      description: "Improve manufacturing processes.", requisitionId: "5096",
+      locationCity: "Greenock", locationState: "Scotland", locationCountry: "GB",
+      officialUrl: expect.stringContaining("jobId=591974"),
+    })]);
+    expect(requests).toHaveLength(2);
   });
 
   it("uses the public Greenhouse board API and normalizes its open roles", async () => {
@@ -725,7 +1149,13 @@ describe("crawlSource", () => {
           departments: { "8": "Engineering" },
           types: { "1": "Full-Time" },
         },
-        geo: [{ id: "5", sites: [{ id: "US", cities: { Austin: ["77"] } }] }],
+        geo: [{
+          id: "5",
+          sites: [{
+            id: "US",
+            states: [{ id: "TX", name: "Texas", cities: { Austin: ["77"] } }],
+          }],
+        }],
         listings: [
           { id: "277001", t: "Software Engineer", dp: "8", l: "77", y: 1 },
           { id: "277002", t: "European Engineer", dp: "8", l: "88", y: 1 },
