@@ -82,7 +82,8 @@ describe("runtime catalog bootstrap", () => {
       CREATE TABLE sources (
         id TEXT PRIMARY KEY, master_row INTEGER, company TEXT, posting_url TEXT, talent_url TEXT,
         channel TEXT, adapter TEXT, verification TEXT, confidence TEXT, resume_upload TEXT,
-        job_alerts TEXT, enabled INTEGER, checked_at TEXT, updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        job_alerts TEXT, enabled INTEGER, checked_at TEXT, next_crawl_at TEXT,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       );
       CREATE TABLE talent_targets (
         id TEXT PRIMARY KEY, source_id TEXT, official_url TEXT, resume_upload TEXT,
@@ -112,6 +113,15 @@ describe("runtime catalog bootstrap", () => {
 
     expect(sqlite.prepare("SELECT count(*) AS count FROM sources").get()).toEqual({ count: 1 });
     expect(sqlite.prepare("SELECT count(*) AS count FROM talent_targets").get()).toEqual({ count: 1 });
+
+    sqlite.prepare("UPDATE sources SET next_crawl_at = '2099-01-01 00:00:00' WHERE id = ?").run(seed.sources[0].id);
+    await ensureCatalogSeeded(database, {
+      ...seed,
+      version: "catalog-v2",
+      sources: [{ ...seed.sources[0], postingUrl: "https://example.com/updated" }],
+    });
+    expect(sqlite.prepare("SELECT posting_url AS postingUrl, next_crawl_at AS nextCrawlAt FROM sources").get())
+      .toMatchObject({ postingUrl: "https://example.com/updated", nextCrawlAt: expect.not.stringContaining("2099") });
     sqlite.close();
   });
 });

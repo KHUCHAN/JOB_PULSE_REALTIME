@@ -58,6 +58,6 @@ Refresh writers are serialized with an ownership lock and a journal compare-and-
 
 The generated catalog SQL uses upserts, so refreshing verified URLs does not delete crawled jobs, matches, notifications, or external Talent history.
 
-Sites packages schema migrations separately because its migration files have a strict size ceiling. The bundled seed carries a deterministic SHA-256 version; on the first API request after deployment, `catalog_state` is compared with that version. A changed version upserts the source and Talent catalog in bounded batches and writes the marker last, so an interrupted refresh is retried on the next request without touching crawled jobs or user state.
+Sites packages schema migrations separately because its migration files have a strict size ceiling. The bundled seed carries a deterministic SHA-256 version; on the first API request after deployment, `catalog_state` is compared with that version. A changed version upserts the source and Talent catalog in bounded batches, schedules only sources whose posting URL or adapter changed for an immediate crawl, and writes the marker last. An interrupted refresh is retried on the next request without touching crawled jobs or user state.
 
 `drizzle/0001_seed_sources.sql` initializes migration-managed D1 databases. Later refresh migrations apply the same upserts there; Sites deployments use the bounded runtime version sync described above.

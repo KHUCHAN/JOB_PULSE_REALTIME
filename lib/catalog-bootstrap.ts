@@ -76,6 +76,11 @@ export async function ensureCatalogSeeded(
       WHERE true
       ON CONFLICT(id) DO UPDATE SET
         master_row=excluded.master_row, company=excluded.company,
+        next_crawl_at=CASE
+          WHEN sources.posting_url IS NOT excluded.posting_url OR sources.adapter IS NOT excluded.adapter
+          THEN CURRENT_TIMESTAMP
+          ELSE sources.next_crawl_at
+        END,
         posting_url=excluded.posting_url, talent_url=excluded.talent_url,
         channel=excluded.channel, adapter=excluded.adapter,
         verification=excluded.verification, confidence=excluded.confidence,

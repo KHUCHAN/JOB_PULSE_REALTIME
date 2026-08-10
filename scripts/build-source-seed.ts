@@ -71,7 +71,7 @@ const sql = [
 
 const seedDir = resolve(projectRoot, "db/seed");
 await mkdir(seedDir, { recursive: true });
-const seedVersion = `sha256:${createHash("sha256").update(JSON.stringify({ sources: rows, talentTargets: talentRows })).digest("hex")}`;
+const seedVersion = `v2:sha256:${createHash("sha256").update(JSON.stringify({ sources: rows, talentTargets: talentRows })).digest("hex")}`;
 const seedJson = `${JSON.stringify({ generatedAt: rows[0]?.checkedAt ?? null, version: seedVersion, sources: rows, talentTargets: talentRows }, null, 2)}\n`;
 const migrationDir = resolve(projectRoot, "drizzle");
 const metaDir = resolve(migrationDir, "meta");
