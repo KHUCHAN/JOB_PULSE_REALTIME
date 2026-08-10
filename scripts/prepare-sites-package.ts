@@ -14,7 +14,7 @@ await cp(resolve(projectRoot, "drizzle"), resolve(outputRoot, "drizzle"), { recu
 
 const drizzleDirectory = resolve(outputRoot, "drizzle");
 const catalogMigrations = (await readdir(drizzleDirectory))
-  .filter((name) => /^\d{4}_refresh_sources_.+\.sql$/.test(name));
+  .filter((name) => name === "0001_seed_sources.sql" || /^\d{4}_refresh_sources_.+\.sql$/.test(name));
 for (const file of catalogMigrations) {
   await writeFile(
     resolve(drizzleDirectory, file),
