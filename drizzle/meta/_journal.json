@@ -281,6 +281,13 @@
       "when": 1786349904938,
       "tag": "0039_job_filter_options_cache",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "6",
+      "when": 1786354000000,
+      "tag": "0040_indexed_job_programs",
+      "breakpoints": true
     }
   ]
 }
