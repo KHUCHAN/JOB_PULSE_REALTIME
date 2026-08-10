@@ -150,6 +150,47 @@ describe("D1CrawlStore enriched job persistence", () => {
     ]);
   });
 
+  it("stores direct job areas and location regions while clearing stale managed areas", async () => {
+    const { db, calls } = fakeDb();
+    const store = new D1CrawlStore(db);
+    const jobs = [{
+      externalId: "swe-1", title: "Spring 2027 Software Engineering Internship/Co-op",
+      company: "Acme", location: "Hawthorne, CA", locationCountry: "United States",
+      arrangement: "onsite" as const, employmentType: "Internship", summary: "Build flight software.",
+      officialUrl: "https://jobs.example/swe-1", publishedAt: "2026-08-08T00:00:00.000Z",
+    }, {
+      externalId: "leadership-1", title: "2027 Leadership Development Program Intern",
+      company: "Acme", location: "Remote", arrangement: "remote" as const,
+      employmentType: "Internship", summary: "Rotate through business teams.",
+      officialUrl: "https://jobs.example/leadership-1", publishedAt: null,
+    }] as CrawledJob[];
+
+    await store.syncJobs("source-1", jobs, false);
+
+    const jobsInsert = calls.find((call) => call.sql.includes("INSERT INTO jobs"));
+    const records = JSON.parse(String(jobsInsert?.values[0]));
+    expect(records[0]).toEqual(expect.objectContaining({
+      locationRegion: "us",
+      areaClassifiedAt: expect.any(String),
+      areaMemberships: [expect.objectContaining({ topicKey: "area:software-engineering" })],
+    }));
+    expect(records[1]).toEqual(expect.objectContaining({
+      locationRegion: "unknown",
+      areaClassifiedAt: expect.any(String),
+      areaMemberships: [],
+    }));
+    expect(jobsInsert?.sql).toContain("location_region = CASE WHEN excluded.location_region = 'unknown'");
+    const areaDelete = calls.find((call) => call.sql.includes("topic_key LIKE 'area:%'"));
+    expect(JSON.parse(String(areaDelete?.values[0]))).toHaveLength(2);
+    const areaInsert = calls.find((call) => call.sql.includes("'area:' ||"));
+    expect(JSON.parse(String(areaInsert?.values[0]))).toEqual([
+      expect.objectContaining({
+        officialUrl: "https://jobs.example/swe-1",
+        areaKey: "software-engineering",
+      }),
+    ]);
+  });
+
   it("indexes every recognized internship title during crawl persistence", async () => {
     const { db, calls } = fakeDb();
     const store = new D1CrawlStore(db);

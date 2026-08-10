@@ -1,5 +1,7 @@
 import type { CrawlStore, PersistedSource } from "../lib/crawl-runner";
 import type { CrawledFacet, CrawledJob } from "../lib/crawler";
+import { classifyJobAreas } from "../lib/job-area-classifier";
+import { classifyJobRegion } from "../lib/job-region-classifier";
 import { classifyAiDataJob } from "../lib/job-topic-classifier";
 import { classifyJobPrograms } from "../lib/job-program-classifier";
 import { classifyRecruitingYears } from "../lib/job-recruiting-year-classifier";
@@ -195,6 +197,12 @@ export class D1CrawlStore implements CrawlStore {
     const visibleUrls = new Set(jobs.map((job) => job.officialUrl));
     const recordFor = async (job: CrawledJob): Promise<Record<string, unknown>> => {
       const aiData = classifyAiDataJob(job);
+      const areaMemberships = classifyJobAreas(job).map((area) => ({
+        topicKey: `area:${area.areaKey}`,
+        score: area.score,
+        evidence: area.evidence,
+      }));
+      const locationRegion = classifyJobRegion(job);
       const titlePrograms = classifyJobPrograms(job.title);
       const employmentType = normalizeEmploymentType(job.employmentType)
         ?? (titlePrograms.keys.length > 0 ? "Internship" : null);
@@ -223,6 +231,7 @@ export class D1CrawlStore implements CrawlStore {
         jobFunction: job.jobFunction ?? null, industry: job.industry ?? null, office: job.office ?? null,
         secondaryLocations: job.secondaryLocations ?? [], locationCity: job.locationCity ?? null,
         locationState: job.locationState ?? null, locationCountry: job.locationCountry ?? null,
+        locationRegion,
         locationPostalCode: job.locationPostalCode ?? null, latitude: job.latitude ?? null, longitude: job.longitude ?? null,
         salaryMin: job.salaryMin ?? null, salaryMax: job.salaryMax ?? null,
         salaryCurrency: job.salaryCurrency ?? null, salaryInterval: job.salaryInterval ?? null,
@@ -236,6 +245,7 @@ export class D1CrawlStore implements CrawlStore {
         officialUrl: job.officialUrl, publishedAt: job.publishedAt, firstSeenAt: now, lastSeenAt: now,
         topicClassifiedAt: now, aiDataMatched: aiData.matched, aiDataScore: aiData.score,
         aiDataEvidence: aiData.evidence,
+        areaClassifiedAt: now, areaMemberships,
         programKeys, programEvidence,
         recruitingYears: recruitingYears.years,
         recruitingYearEvidence: recruitingYears.evidence,
@@ -258,11 +268,11 @@ export class D1CrawlStore implements CrawlStore {
           employment_type, summary, description_hash, official_url, status,
           description, responsibilities, qualifications, skills, department, team, business_unit,
           job_family, job_function, industry, office, secondary_locations, location_city, location_state,
-          location_country, location_postal_code, latitude, longitude, salary_min, salary_max,
+          location_country, location_region, location_postal_code, latitude, longitude, salary_min, salary_max,
           salary_currency, salary_interval, benefits, education_requirements, experience_requirements,
           experience_level, shift_schedule, travel_requirements, security_clearance, languages,
           requisition_id, apply_url, source_posted_text, source_updated_at, valid_through, raw_payload,
-          published_at, first_seen_at, last_seen_at, closed_at, topic_classified_at
+          published_at, first_seen_at, last_seen_at, closed_at, topic_classified_at, area_classified_at
         )
         SELECT
           json_extract(value, '$.id'), json_extract(value, '$.sourceId'),
@@ -275,7 +285,8 @@ export class D1CrawlStore implements CrawlStore {
           json_extract(value, '$.department'), json_extract(value, '$.team'), json_extract(value, '$.businessUnit'),
           json_extract(value, '$.jobFamily'), json_extract(value, '$.jobFunction'), json_extract(value, '$.industry'),
           json_extract(value, '$.office'), json_extract(value, '$.secondaryLocations'), json_extract(value, '$.locationCity'),
-          json_extract(value, '$.locationState'), json_extract(value, '$.locationCountry'), json_extract(value, '$.locationPostalCode'),
+          json_extract(value, '$.locationState'), json_extract(value, '$.locationCountry'), json_extract(value, '$.locationRegion'),
+          json_extract(value, '$.locationPostalCode'),
           json_extract(value, '$.latitude'), json_extract(value, '$.longitude'), json_extract(value, '$.salaryMin'),
           json_extract(value, '$.salaryMax'), json_extract(value, '$.salaryCurrency'), json_extract(value, '$.salaryInterval'),
           json_extract(value, '$.benefits'), json_extract(value, '$.educationRequirements'), json_extract(value, '$.experienceRequirements'),
@@ -284,7 +295,7 @@ export class D1CrawlStore implements CrawlStore {
           json_extract(value, '$.applyUrl'), json_extract(value, '$.sourcePostedText'), json_extract(value, '$.sourceUpdatedAt'),
           json_extract(value, '$.validThrough'), json_extract(value, '$.rawPayload'), json_extract(value, '$.publishedAt'),
           json_extract(value, '$.firstSeenAt'), json_extract(value, '$.lastSeenAt'), NULL,
-          json_extract(value, '$.topicClassifiedAt')
+          json_extract(value, '$.topicClassifiedAt'), json_extract(value, '$.areaClassifiedAt')
         FROM json_each(?)
         WHERE true
         ON CONFLICT(source_id, official_url) DO UPDATE SET
@@ -310,6 +321,8 @@ export class D1CrawlStore implements CrawlStore {
           location_city = COALESCE(excluded.location_city, jobs.location_city),
           location_state = COALESCE(excluded.location_state, jobs.location_state),
           location_country = COALESCE(excluded.location_country, jobs.location_country),
+          location_region = CASE WHEN excluded.location_region = 'unknown' AND jobs.location_region IS NOT NULL
+            THEN jobs.location_region ELSE excluded.location_region END,
           location_postal_code = COALESCE(excluded.location_postal_code, jobs.location_postal_code),
           latitude = COALESCE(excluded.latitude, jobs.latitude),
           longitude = COALESCE(excluded.longitude, jobs.longitude),
@@ -336,6 +349,7 @@ export class D1CrawlStore implements CrawlStore {
           published_at = COALESCE(excluded.published_at, jobs.published_at),
           last_seen_at = excluded.last_seen_at,
           topic_classified_at = excluded.topic_classified_at,
+          area_classified_at = excluded.area_classified_at,
           closed_at = NULL,
           updated_at = CURRENT_TIMESTAMP
         `).bind(JSON.stringify(recordsChunk)).run();
@@ -379,6 +393,46 @@ export class D1CrawlStore implements CrawlStore {
                          AND jobs.official_url = json_extract(value, '$.officialUrl')
               )
           `).bind(JSON.stringify(topicNonmatches)).run();
+        }
+
+        const processedAreas = recordsChunk.map((record) => ({
+          sourceId: record.sourceId,
+          officialUrl: record.officialUrl,
+        }));
+        await this.db.prepare(`
+          DELETE FROM job_topics
+          WHERE topic_key LIKE 'area:%' AND job_id IN (
+            SELECT jobs.id
+            FROM json_each(?)
+            JOIN jobs ON jobs.source_id = json_extract(value, '$.sourceId')
+                     AND jobs.official_url = json_extract(value, '$.officialUrl')
+          )
+        `).bind(JSON.stringify(processedAreas)).run();
+        const areaMemberships = recordsChunk.flatMap((record) =>
+          (record.areaMemberships as Array<{ topicKey: string; score: number; evidence: string[] }>).map((area) => ({
+            sourceId: record.sourceId,
+            officialUrl: record.officialUrl,
+            areaKey: area.topicKey.slice("area:".length),
+            score: area.score,
+            evidence: area.evidence,
+            classifiedAt: record.areaClassifiedAt,
+          })),
+        );
+        for (const membershipChunk of chunksByJsonBytes(areaMemberships, 1_500_000)) {
+          await this.db.prepare(`
+            INSERT INTO job_topics (job_id, topic_key, score, evidence, classified_at)
+            SELECT jobs.id, 'area:' || json_extract(value, '$.areaKey'),
+                   json_extract(value, '$.score'), json_extract(value, '$.evidence'),
+                   json_extract(value, '$.classifiedAt')
+            FROM json_each(?)
+            JOIN jobs ON jobs.source_id = json_extract(value, '$.sourceId')
+                     AND jobs.official_url = json_extract(value, '$.officialUrl')
+            WHERE true
+            ON CONFLICT(job_id, topic_key) DO UPDATE SET
+              score = excluded.score,
+              evidence = excluded.evidence,
+              classified_at = excluded.classified_at
+          `).bind(JSON.stringify(membershipChunk)).run();
         }
       }
 
