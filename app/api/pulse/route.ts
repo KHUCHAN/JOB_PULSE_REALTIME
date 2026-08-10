@@ -254,7 +254,7 @@ export async function POST(request: Request): Promise<Response> {
       return json(targets.find((item) => item.id === body.targetId) ?? null);
     }
     if (body.action === "crawlBatch") {
-      const requested = typeof body.limit === "number" ? body.limit : 8;
+      const requested = typeof body.limit === "number" ? body.limit : 4;
       return json(await runDueCrawls(new D1CrawlStore(db()), fetch, new Date(), crawlBatchOptions(requested)));
     }
     if (body.action === "recrawlSources") {
