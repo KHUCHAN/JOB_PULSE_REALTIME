@@ -1,0 +1,63 @@
+import { describe, expect, it } from "vitest";
+import { classifyAiDataJob } from "./job-topic-classifier";
+
+describe("classifyAiDataJob", () => {
+  it.each([
+    "Senior Machine Learning Engineer",
+    "Data Scientist, Product Analytics",
+    "Data Engineer",
+    "MLOps Platform Engineer",
+    "Computer Vision Research Scientist",
+    "Business Intelligence Analyst",
+  ])("classifies a strong AI/data role title: %s", (title) => {
+    expect(classifyAiDataJob({ title })).toMatchObject({
+      topicKey: "ai-data",
+      matched: true,
+    });
+  });
+
+  it("classifies strong organization and skill evidence even when the title is generic", () => {
+    expect(classifyAiDataJob({
+      title: "Software Engineer II",
+      team: "Generative AI",
+      skills: ["PyTorch"],
+    })).toMatchObject({ matched: true });
+  });
+
+  it("classifies two independent supporting signals in body text", () => {
+    const result = classifyAiDataJob({
+      title: "Platform Engineer",
+      description: "Build predictive models and productionize ML workflows with feature engineering.",
+    });
+
+    expect(result.matched).toBe(true);
+    expect(result.evidence.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("does not classify a single incidental AI mention", () => {
+    expect(classifyAiDataJob({
+      title: "Account Executive",
+      description: "Use AI tools to take meeting notes.",
+    })).toMatchObject({ matched: false });
+  });
+
+  it.each([
+    "Paid Media Manager",
+    "Retail Training Manager",
+    "Email Marketing Lead",
+  ])("does not match short AI or ML tokens inside unrelated words: %s", (title) => {
+    expect(classifyAiDataJob({ title })).toMatchObject({ matched: false });
+  });
+
+  it("returns deterministic deduplicated evidence", () => {
+    const input = {
+      title: "Machine Learning Engineer",
+      summary: "Machine learning systems",
+      skills: ["PyTorch", "PyTorch"],
+    };
+
+    expect(classifyAiDataJob(input)).toEqual(classifyAiDataJob(input));
+    const evidence = classifyAiDataJob(input).evidence;
+    expect(new Set(evidence).size).toBe(evidence.length);
+  });
+});
