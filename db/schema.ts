@@ -103,6 +103,19 @@ export const jobs = sqliteTable("jobs", {
     table.company,
     table.id,
   ),
+  index("jobs_status_company_nocase_idx").on(table.status, sql`${table.company} COLLATE NOCASE`),
+  index("jobs_status_employment_type_nocase_idx").on(table.status, sql`${table.employmentType} COLLATE NOCASE`),
+  index("jobs_location_country_state_city_nocase_idx").on(
+    sql`${table.locationCountry} COLLATE NOCASE`,
+    sql`${table.locationState} COLLATE NOCASE`,
+    sql`${table.locationCity} COLLATE NOCASE`,
+  ),
+  index("jobs_experience_level_nocase_idx").on(sql`${table.experienceLevel} COLLATE NOCASE`),
+  index("jobs_salary_currency_min_max_nocase_idx").on(
+    sql`${table.salaryCurrency} COLLATE NOCASE`,
+    table.salaryMin,
+    table.salaryMax,
+  ),
 ]);
 
 export const sourceFacets = sqliteTable("source_facets", {

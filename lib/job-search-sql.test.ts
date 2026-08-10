@@ -73,8 +73,8 @@ describe("parameterized job search SQL", () => {
       pageSize: 25,
     });
 
-    expect(plan.pageSql).toMatch(/\(j\.company = \? OR j\.company = \?\)/);
-    expect(plan.pageSql).toContain("j.location_city = ?");
+    expect(plan.pageSql).toMatch(/\(j\.company = \? COLLATE NOCASE OR j\.company = \? COLLATE NOCASE\)/);
+    expect(plan.pageSql).toContain("j.location_city = ? COLLATE NOCASE");
     expect(plan.pageSql).toContain("j.salary_max >= ?");
     expect(plan.pageSql).toContain("j.salary_min <= ?");
     expect(plan.bindings).toEqual(["Acme", "Globex", "Seattle", 100_000, 160_000]);
@@ -138,7 +138,7 @@ describe("parameterized job search SQL", () => {
       postedBefore: "2026-08-09",
     });
 
-    expect(plan.pageSql).toContain("j.company = ?");
+    expect(plan.pageSql).toContain("j.company = ? COLLATE NOCASE");
     expect(plan.pageSql).not.toContain("lower(j.company)");
     expect(plan.pageSql).toContain("j.published_at >= ?");
     expect(plan.pageSql).toContain("j.published_at < ?");
@@ -205,5 +205,15 @@ describe("parameterized job search SQL", () => {
     expect(executePlan(secondPage.pageSql, secondPage.bindings, secondPage.limit, secondPage.offset))
       .toMatchObject([{ id: "second-page" }]);
     expect(executePlan(firstPage.countSql, firstPage.bindings)).toEqual([{ total: 2 }]);
+  });
+
+  it("matches free-text equality filters case-insensitively", () => {
+    const plan = buildJobSearchPlan({
+      ...defaultJobFilters,
+      companies: ["acme, inc."],
+    });
+
+    expect(executePlan(plan.countSql, plan.bindings)).toEqual([{ total: 2 }]);
+    expect(plan.pageSql).toContain("j.company = ? COLLATE NOCASE");
   });
 });

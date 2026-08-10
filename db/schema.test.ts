@@ -43,14 +43,24 @@ describe("filterable job schema", () => {
       ["jobs_salary_currency_min_max_idx", ["salary_currency", "salary_min", "salary_max"]],
       ["jobs_status_url_seen_company_id_idx", ["status", "official_url", "first_seen_at", "company", "id"]],
     ]));
+    expect(getTableConfig(schema.jobs).indexes.map((entry) => entry.config.name)).toEqual(expect.arrayContaining([
+      "jobs_status_company_nocase_idx",
+      "jobs_status_employment_type_nocase_idx",
+      "jobs_location_country_state_city_nocase_idx",
+      "jobs_experience_level_nocase_idx",
+      "jobs_salary_currency_min_max_nocase_idx",
+    ]));
   });
 
   it("keeps immutable, correctly chained snapshots for the search performance migration", () => {
     const before = JSON.parse(readFileSync(join(process.cwd(), "drizzle/meta/0031_snapshot.json"), "utf8"));
     const after = JSON.parse(readFileSync(join(process.cwd(), "drizzle/meta/0032_snapshot.json"), "utf8"));
+    const noCase = JSON.parse(readFileSync(join(process.cwd(), "drizzle/meta/0033_snapshot.json"), "utf8"));
 
     expect(before.tables.jobs.indexes).not.toHaveProperty("jobs_status_url_seen_company_id_idx");
     expect(after.prevId).toBe(before.id);
     expect(after.tables.jobs.indexes).toHaveProperty("jobs_status_url_seen_company_id_idx");
+    expect(noCase.prevId).toBe(after.id);
+    expect(noCase.tables.jobs.indexes).toHaveProperty("jobs_status_company_nocase_idx");
   });
 });

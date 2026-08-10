@@ -225,6 +225,13 @@
       "when": 1786318717697,
       "tag": "0032_job_search_performance",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1786320347992,
+      "tag": "0033_case_insensitive_job_filters",
+      "breakpoints": true
     }
   ]
 }

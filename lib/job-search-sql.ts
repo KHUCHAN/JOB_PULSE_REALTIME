@@ -77,7 +77,9 @@ export function buildJobSearchPlan(filters: JobFilters): JobSearchPlan {
   };
   const addAnyEquals = (column: string, values: string[] | undefined) => {
     const normalized = asValues(values);
-    if (normalized.length) add(`(${normalized.map(() => `${column} = ?`).join(" OR ")})`, normalized);
+    if (normalized.length) {
+      add(`(${normalized.map(() => `${column} = ? COLLATE NOCASE`).join(" OR ")})`, normalized);
+    }
   };
   const addJsonMembership = (column: string, values: string[] | undefined) => {
     const normalized = asNormalizedValues(values);
