@@ -216,7 +216,7 @@ export class D1CrawlStore implements CrawlStore {
         validThrough: job.validThrough ?? null, rawPayload: job.rawPayload ?? null,
         officialUrl: job.officialUrl, publishedAt: job.publishedAt, firstSeenAt: now, lastSeenAt: now,
         topicClassifiedAt: now, aiDataMatched: aiData.matched, aiDataScore: aiData.score,
-        aiDataEvidence: aiData.evidence, programClassifiedAt: now,
+        aiDataEvidence: aiData.evidence,
         programKeys: programs.keys, programEvidence: programs.evidence,
       });
       const descriptionValue = typeof record.description === "string"
@@ -241,7 +241,7 @@ export class D1CrawlStore implements CrawlStore {
           salary_currency, salary_interval, benefits, education_requirements, experience_requirements,
           experience_level, shift_schedule, travel_requirements, security_clearance, languages,
           requisition_id, apply_url, source_posted_text, source_updated_at, valid_through, raw_payload,
-          published_at, first_seen_at, last_seen_at, closed_at, topic_classified_at, program_classified_at
+          published_at, first_seen_at, last_seen_at, closed_at, topic_classified_at
         )
         SELECT
           json_extract(value, '$.id'), json_extract(value, '$.sourceId'),
@@ -263,7 +263,7 @@ export class D1CrawlStore implements CrawlStore {
           json_extract(value, '$.applyUrl'), json_extract(value, '$.sourcePostedText'), json_extract(value, '$.sourceUpdatedAt'),
           json_extract(value, '$.validThrough'), json_extract(value, '$.rawPayload'), json_extract(value, '$.publishedAt'),
           json_extract(value, '$.firstSeenAt'), json_extract(value, '$.lastSeenAt'), NULL,
-          json_extract(value, '$.topicClassifiedAt'), json_extract(value, '$.programClassifiedAt')
+          json_extract(value, '$.topicClassifiedAt')
         FROM json_each(?)
         WHERE true
         ON CONFLICT(source_id, official_url) DO UPDATE SET
@@ -315,7 +315,6 @@ export class D1CrawlStore implements CrawlStore {
           published_at = COALESCE(excluded.published_at, jobs.published_at),
           last_seen_at = excluded.last_seen_at,
           topic_classified_at = excluded.topic_classified_at,
-          program_classified_at = excluded.program_classified_at,
           closed_at = NULL,
           updated_at = CURRENT_TIMESTAMP
         `).bind(JSON.stringify(recordsChunk)).run();
@@ -383,7 +382,7 @@ export class D1CrawlStore implements CrawlStore {
           officialUrl: record.officialUrl,
           programKey,
           evidence: (record.programEvidence as Record<string, string>)[programKey],
-          classifiedAt: record.programClassifiedAt,
+          classifiedAt: record.lastSeenAt,
         }))
       );
       for (const chunk of chunksByJsonBytes(programMemberships, 1_500_000)) {

@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "0ab68c9e-035d-40cd-955e-cb9649cd5438",
+  "id": "9d5dd6c3-fd43-4a8c-b3c2-ef061e84027c",
   "prevId": "26f52c14-ff5a-4192-bce6-9723db0610f6",
   "tables": {
     "catalog_state": {
@@ -873,13 +873,6 @@
         },
         "topic_classified_at": {
           "name": "topic_classified_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "program_classified_at": {
-          "name": "program_classified_at",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

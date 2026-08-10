@@ -24,7 +24,7 @@ describe("backfillJobPrograms", () => {
     sqlite.exec(`
       CREATE TABLE jobs (
         id TEXT PRIMARY KEY, title TEXT NOT NULL, status TEXT NOT NULL, employment_type TEXT,
-        program_classified_at TEXT, updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       );
       CREATE TABLE job_programs (
         job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
@@ -33,11 +33,11 @@ describe("backfillJobPrograms", () => {
       );
       CREATE TABLE catalog_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT);
       INSERT INTO jobs VALUES
-        ('a', '2027 Data Science Intern / Co-op', 'open', 'INTERN', NULL, CURRENT_TIMESTAMP),
-        ('b', '2027 Werkstudent Data Science', 'open', '["Part time","Part time"]', NULL, CURRENT_TIMESTAMP),
-        ('c', '2027 Internal Audit Analyst', 'open', 'R244285', NULL, CURRENT_TIMESTAMP),
-        ('d', '2027 Finance Intern', 'closed', 'INTERN', NULL, CURRENT_TIMESTAMP),
-        ('e', '2027 Product Internship', 'open', 'Full-Time', '2026-08-09', CURRENT_TIMESTAMP);
+        ('a', '2027 Data Science Intern / Co-op', 'open', 'INTERN', CURRENT_TIMESTAMP),
+        ('b', '2027 Werkstudent Data Science', 'open', '["Part time","Part time"]', CURRENT_TIMESTAMP),
+        ('c', '2027 Internal Audit Analyst', 'open', 'R244285', CURRENT_TIMESTAMP),
+        ('d', '2027 Finance Intern', 'closed', 'INTERN', CURRENT_TIMESTAMP),
+        ('e', '2027 Product Internship', 'closed', 'Full-Time', CURRENT_TIMESTAMP);
       INSERT INTO job_programs VALUES ('c', 'internship', 'stale', '2026-08-09');
     `);
 

@@ -170,7 +170,6 @@ describe("D1CrawlStore enriched job persistence", () => {
     expect(jobRecords[0]).toEqual(expect.objectContaining({
       employmentType: "Internship",
       programKeys: ["internship", "coop"],
-      programClassifiedAt: expect.any(String),
     }));
     expect(jobRecords[1].employmentType).toBeUndefined();
     expect(calls.some((call) => call.sql.includes("DELETE FROM job_programs"))).toBe(true);

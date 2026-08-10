@@ -90,7 +90,6 @@ export const jobs = sqliteTable("jobs", {
   lastSeenAt: text("last_seen_at").notNull(),
   closedAt: text("closed_at"),
   topicClassifiedAt: text("topic_classified_at"),
-  programClassifiedAt: text("program_classified_at"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, (table) => [
