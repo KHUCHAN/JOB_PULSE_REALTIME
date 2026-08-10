@@ -243,7 +243,6 @@ export function createFixtureRepository(): JobPulseRepository {
       total: matchingJobs.length,
       page,
       pageSize,
-      availableFilters: countOptions(deduplicate(jobs)),
     });
   };
 
@@ -274,6 +273,10 @@ export function createFixtureRepository(): JobPulseRepository {
     },
 
     searchJobs,
+
+    async getJobFilterOptions() {
+      return copy(countOptions(deduplicate(jobs)));
+    },
 
     async listJobs(filters = {}) {
       return (await searchJobs(filters)).items;

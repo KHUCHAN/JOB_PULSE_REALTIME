@@ -3,6 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FixtureProvider } from "../../components/fixture-provider";
+import { createFixtureRepository } from "../../lib/fixture-repository";
 import { JobsScreen } from "./jobs-screen";
 
 describe("JobsScreen", () => {
@@ -13,6 +14,22 @@ describe("JobsScreen", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     window.history.replaceState({}, "", "/jobs");
+  });
+
+  it("renders job results while global filter options are still pending", async () => {
+    const base = createFixtureRepository();
+    const getJobFilterOptions = vi.fn(() => new Promise<never>(() => undefined));
+    const repository = { ...base, getJobFilterOptions };
+
+    render(
+      <FixtureProvider repository={repository}>
+        <JobsScreen initialQuery="" />
+      </FixtureProvider>,
+    );
+
+    expect((await screen.findAllByText("Senior Data Scientist, Fraud")).length).toBeGreaterThan(0);
+    await waitFor(() => expect(getJobFilterOptions).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText("Loading jobs")).not.toBeInTheDocument();
   });
 
   it("server-renders the same structured URL filters that hydrate on the client", () => {

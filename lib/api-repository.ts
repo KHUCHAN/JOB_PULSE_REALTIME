@@ -1,6 +1,7 @@
 import type {
   ActivityFilters,
   CreateKeywordInput,
+  JobFilterOptions,
   JobFilters,
   JobPosting,
   JobState,
@@ -46,6 +47,7 @@ export function createApiRepository(): JobPulseRepository {
   return {
     getOverview: () => request(query("overview")),
     searchJobs: (filters: Partial<JobFilters> = {}) => request(jobQuery(filters)),
+    getJobFilterOptions: () => request<JobFilterOptions>(query("jobFilterOptions")),
     listJobs: async (filters: Partial<JobFilters> = {}) => {
       const result = await request<Awaited<ReturnType<JobPulseRepository["searchJobs"]>> | Awaited<ReturnType<JobPulseRepository["listJobs"]>>>(jobQuery(filters));
       return Array.isArray(result) ? result : result.items;

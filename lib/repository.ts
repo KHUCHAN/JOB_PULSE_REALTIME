@@ -2,6 +2,7 @@ import type {
   ActivityEvent,
   ActivityFilters,
   CreateKeywordInput,
+  JobFilterOptions,
   JobFilters,
   JobSearchResult,
   JobPosting,
@@ -21,6 +22,7 @@ export type RichJobSearchResult = Omit<JobSearchResult, "items"> & {
 export interface JobPulseRepository {
   getOverview(): Promise<OverviewSnapshot>;
   searchJobs(filters?: Partial<JobFilters>): Promise<RichJobSearchResult>;
+  getJobFilterOptions(): Promise<JobFilterOptions>;
   listJobs(filters?: Partial<JobFilters>): Promise<RichJobPosting[]>;
   getJob(jobId: string): Promise<RichJobPosting | null>;
   updateJobState(jobId: string, state: JobState): Promise<JobPosting>;

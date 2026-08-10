@@ -33,7 +33,6 @@ describe("API repository", () => {
         total: 246,
         page: 2,
         pageSize: 50,
-        availableFilters: {},
       });
     });
     vi.stubGlobal("fetch", fetcher);
@@ -54,6 +53,19 @@ describe("API repository", () => {
     expect(requestUrl).toContain("page=2");
     expect(result.total).toBe(246);
     expect(result.items).toEqual([{ id: "job-1", title: "2027 Internship" }]);
+    expect(result).not.toHaveProperty("availableFilters");
+  });
+
+  it("loads global filter options from an independent resource", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe("/api/pulse?resource=jobFilterOptions");
+      return Response.json({ companies: [{ value: "Acme", count: 10 }] });
+    });
+    vi.stubGlobal("fetch", fetcher);
+
+    const options = await createApiRepository().getJobFilterOptions();
+
+    expect(options.companies).toEqual([{ value: "Acme", count: 10 }]);
   });
 
   it("persists keyword rules through the live API", async () => {

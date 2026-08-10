@@ -36,12 +36,13 @@ describe("fixture repository", () => {
     expect(result.page).toBe(2);
     expect(result.pageSize).toBe(2);
     expect(result.items.map((job) => job.id)).toEqual(["job-004", "job-011"]);
-    expect(result.availableFilters.arrangements).toEqual([
+    const options = await repository.getJobFilterOptions();
+    expect(options.arrangements).toEqual([
       { value: "hybrid", count: 5 },
       { value: "remote", count: 5 },
       { value: "onsite", count: 2 },
     ]);
-    expect(result.availableFilters.companies).toContainEqual({ value: "Stripe", count: 1 });
+    expect(options.companies).toContainEqual({ value: "Stripe", count: 1 });
   });
 
   it("treats City, ST fixture locations as United States country facets", async () => {
@@ -49,7 +50,7 @@ describe("fixture repository", () => {
     const result = await repository.searchJobs({ countries: ["US"] });
 
     expect(result.total).toBe(12);
-    expect(result.availableFilters.countries).toEqual([{ value: "US", count: 12 }]);
+    expect((await repository.getJobFilterOptions()).countries).toEqual([{ value: "US", count: 12 }]);
   });
 
   it("creates a demo crawl event without a network result", async () => {

@@ -20,7 +20,7 @@ import {
   validateExplicitJobFilterValues,
 } from "../../../lib/job-filter-validation";
 import { bindJobSearchStatements } from "../../../lib/job-search-execution";
-import { emptyJobFilterOptions, queryJobFilterOptions } from "../../../lib/job-filter-options";
+import { queryJobFilterOptions } from "../../../lib/job-filter-options";
 import { buildJobSearchPlan, jobDetailProjection } from "../../../lib/job-search-sql";
 import { overviewCountsSql } from "../../../lib/overview-sql";
 import { backfillJobTopics } from "../../../lib/job-topic-backfill";
@@ -61,23 +61,21 @@ async function availableFilterOptions(): Promise<Awaited<ReturnType<typeof query
   return value;
 }
 
-async function jobsFor(url: URL, includeAvailableFilters = true): Promise<JobSearchResult> {
+async function jobsFor(url: URL): Promise<JobSearchResult> {
   validateExplicitJobFilterValues(url.searchParams);
   const filters: JobFilters = parseJobFilterParams(url.searchParams);
   const plan = buildJobSearchPlan(filters);
   const database = db();
   const statements = bindJobSearchStatements(database.prepare.bind(database), plan);
-  const [pageResult, countResult, availableFilters] = await Promise.all([
+  const [pageResult, countResult] = await Promise.all([
     statements.page.all<JobViewRow>(),
     statements.count.first<{ total: number }>(),
-    includeAvailableFilters ? availableFilterOptions() : Promise.resolve(emptyJobFilterOptions()),
   ]);
   return {
     items: pageResult.results.map(mapJob),
     total: countResult?.total ?? 0,
     page: filters.page ?? 1,
     pageSize: filters.pageSize ?? 50,
-    availableFilters,
   };
 }
 
@@ -168,10 +166,7 @@ async function listTalent(): Promise<TalentTarget[]> {
 async function overview(): Promise<OverviewSnapshot> {
   type Counts = { open_jobs: number; active_sources: number; source_errors: number; unsent_alerts: number };
   const countRow = await db().prepare(overviewCountsSql).first<Counts>();
-  const latest = await jobsFor(
-    new URL("https://job-pulse.local/api/pulse?resource=jobs&pageSize=5"),
-    false,
-  );
+  const latest = await jobsFor(new URL("https://job-pulse.local/api/pulse?resource=jobs&pageSize=5"));
   const activity = await activityFor(5);
   const talentCount = await db().prepare("SELECT count(*) AS count FROM talent_targets").first<{ count: number }>();
   return {
@@ -191,6 +186,7 @@ export async function GET(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const resource = url.searchParams.get("resource");
     if (resource === "jobs") return json(await jobsFor(url));
+    if (resource === "jobFilterOptions") return json(await availableFilterOptions());
     if (resource === "job") {
       const row = await db().prepare(`
         SELECT ${jobDetailProjection("j")}

@@ -20,8 +20,8 @@ export interface JobPulseContextValue {
 
 const JobPulseContext = createContext<JobPulseContextValue | null>(null);
 
-export function FixtureProvider({ children }: { children: ReactNode }): ReactElement {
-  const [repository] = useState<JobPulseRepository>(() => createFixtureRepository());
+export function FixtureProvider({ children, repository: suppliedRepository }: { children: ReactNode; repository?: JobPulseRepository }): ReactElement {
+  const [repository] = useState<JobPulseRepository>(() => suppliedRepository ?? createFixtureRepository());
   const [revision, setRevision] = useState(0);
 
   const mutate = useCallback(async <T,>(operation: () => Promise<T>): Promise<T> => {

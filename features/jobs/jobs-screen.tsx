@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowUpRight } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { MouseEvent, ReactElement } from "react";
 import { useJobPulse } from "../../components/fixture-provider";
 import { EmptyState } from "../../components/ui/empty-state";
@@ -42,6 +42,7 @@ export function JobsScreen({
   const [filters, setFilters] = useState<JobFilters>(() => filtersFromLocation(initialQuery, initialSearchParams));
   const [search, setSearch] = useState(() => filtersFromLocation(initialQuery, initialSearchParams).query);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [optionsRequested, setOptionsRequested] = useState(false);
   const [selectedJob, setSelectedJob] = useState<RichJobPosting | null>(null);
   const [message, setMessage] = useState("");
   const lastTrigger = useRef<HTMLButtonElement | null>(null);
@@ -63,6 +64,11 @@ export function JobsScreen({
     [revision, filters],
   );
   const result = query.data;
+  const shouldLoadOptions = optionsRequested || result !== null;
+  const optionsQuery = useRepositoryQuery(
+    () => shouldLoadOptions ? repository.getJobFilterOptions() : Promise.resolve(undefined),
+    [revision, shouldLoadOptions],
+  );
   const jobs = result?.items ?? [];
   const total = result?.total ?? 0;
   const page = result?.page ?? filters.page ?? 1;
@@ -116,6 +122,10 @@ export function JobsScreen({
   };
 
   const goToPage = (nextPage: number) => updateFilters({ page: nextPage }, false);
+  const changeAdvancedOpen = useCallback((open: boolean) => {
+    if (open) setOptionsRequested(true);
+    setAdvancedOpen(open);
+  }, []);
 
   return (
     <div className="page-stack jobs-page">
@@ -127,7 +137,7 @@ export function JobsScreen({
         <span className="result-count">{total} roles found</span>
       </header>
 
-      <JobFilterPanel filters={filters} options={result?.availableFilters} search={search} advancedOpen={advancedOpen} onSearchChange={setSearch} onChange={updateFilters} onAdvancedOpenChange={setAdvancedOpen} />
+      <JobFilterPanel filters={filters} options={optionsQuery.data ?? undefined} search={search} advancedOpen={advancedOpen} onSearchChange={setSearch} onChange={updateFilters} onAdvancedOpenChange={changeAdvancedOpen} />
       <ActiveFilterChips filters={filters} onRemove={removeFilter} onClear={clearFilters} />
 
       {message ? <div className="inline-feedback" aria-live="polite">{message}</div> : null}

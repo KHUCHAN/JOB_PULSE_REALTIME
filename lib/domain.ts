@@ -116,7 +116,6 @@ export interface JobSearchResult {
   total: number;
   page: number;
   pageSize: number;
-  availableFilters: JobFilterOptions;
 }
 
 export interface SourceRecord {
