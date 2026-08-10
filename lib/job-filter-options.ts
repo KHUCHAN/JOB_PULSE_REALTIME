@@ -136,12 +136,17 @@ const cachedFilterOptionsSql = `
   ORDER BY filter_key ASC, job_count DESC, value_label COLLATE NOCASE ASC
 `;
 
-const refreshFilterOptionsSql = `
+const insertCachedFilterOptionsSql = `
   INSERT INTO job_filter_options_cache (
     filter_key, normalized_value, value_label, job_count, refreshed_at
   )
-  SELECT filter_key, lower(trim(value_label)), value_label, job_count, CURRENT_TIMESTAMP
-  FROM (${filterOptionsSql})
+  SELECT
+    json_extract(value, '$.filter_key'),
+    lower(trim(json_extract(value, '$.value_label'))),
+    json_extract(value, '$.value_label'),
+    json_extract(value, '$.job_count'),
+    ?
+  FROM json_each(?)
 `;
 
 const rowsToOptions = (rows: FilterOptionCountRow[]): JobFilterOptions => {
@@ -176,7 +181,9 @@ export async function refreshJobFilterOptions(
   `).first<{ refreshed_at: string | null; option_count: number }>();
   const now = options.now ?? new Date();
   const maxAgeMs = options.maxAgeMs ?? 60 * 60 * 1000;
-  const refreshedAtMs = latest?.refreshed_at ? Date.parse(`${latest.refreshed_at.replace(" ", "T")}Z`) : Number.NaN;
+  const refreshedAtMs = latest?.refreshed_at
+    ? Date.parse(latest.refreshed_at.includes("T") ? latest.refreshed_at : `${latest.refreshed_at.replace(" ", "T")}Z`)
+    : Number.NaN;
   if (!options.force && Number.isFinite(refreshedAtMs) && now.getTime() - refreshedAtMs < maxAgeMs) {
     return {
       refreshed: false,
@@ -185,17 +192,15 @@ export async function refreshJobFilterOptions(
     };
   }
 
+  const computed = await database.prepare(filterOptionsSql).all<FilterOptionCountRow>();
+  const refreshedAt = now.toISOString();
   await database.batch([
     database.prepare("DELETE FROM job_filter_options_cache"),
-    database.prepare(refreshFilterOptionsSql),
+    database.prepare(insertCachedFilterOptionsSql).bind(refreshedAt, JSON.stringify(computed.results)),
   ]);
-  const refreshed = await database.prepare(`
-    SELECT max(refreshed_at) AS refreshed_at, count(*) AS option_count
-    FROM job_filter_options_cache
-  `).first<{ refreshed_at: string | null; option_count: number }>();
   return {
     refreshed: true,
-    optionCount: Number(refreshed?.option_count ?? 0),
-    refreshedAt: refreshed?.refreshed_at ?? null,
+    optionCount: computed.results.length,
+    refreshedAt,
   };
 }
