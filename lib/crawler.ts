@@ -1646,7 +1646,6 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
           "content-type": "application/json",
           origin: endpointUrl.origin,
           referer,
-          "user-agent": "JobPulseCrawler/1.0 (+https://job-pulse.local)",
         },
         // Workday's public CXS endpoint rejects page sizes above 20.
         body: JSON.stringify({ appliedFacets: {}, limit: 20, offset, searchText: "" }),

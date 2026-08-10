@@ -878,7 +878,7 @@ describe("crawlSource", () => {
           accept: "application/json",
           origin: "https://acme.wd5.myworkdayjobs.com",
           referer: "https://acme.wd5.myworkdayjobs.com/Careers",
-          "user-agent": "JobPulseCrawler/1.0 (+https://job-pulse.local)",
+          "user-agent": expect.stringMatching(/^Mozilla\/5\.0 /),
         }),
       }),
     }]);
