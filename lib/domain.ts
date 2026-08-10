@@ -2,6 +2,7 @@ export type JobState = "new" | "saved" | "hidden" | "applied";
 export type WorkArrangement = "onsite" | "hybrid" | "remote";
 export type JobProgramType = "internship" | "coop" | "regular";
 export type JobSeason = "spring" | "summer" | "fall" | "winter";
+export type JobTopicKey = "ai-data";
 export type SourceHealth =
   | "healthy"
   | "changed"
@@ -42,6 +43,7 @@ export interface JobFilters {
   status: "all" | JobState;
   arrangement: "all" | WorkArrangement;
   location: string;
+  topics?: JobTopicKey[];
   companies?: string[];
   cities?: string[];
   states?: string[];

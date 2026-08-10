@@ -7,6 +7,15 @@ import {
 } from "./job-filter-query";
 
 describe("job filter query codec", () => {
+  it("round-trips the indexed AI/data topic as a repeated URL parameter", () => {
+    const parsed = parseJobFilterParams(new URLSearchParams("topic=ai-data"));
+
+    expect(parsed.topics).toEqual(["ai-data"]);
+    expect(serializeJobFilters({ ...defaultJobFilters, topics: ["ai-data"] }).toString())
+      .toBe("topic=ai-data");
+    expect(activeFilterCount({ ...defaultJobFilters, topics: ["ai-data"] })).toBe(1);
+  });
+
   it("round-trips multi-value structured filters", () => {
     const filters = parseJobFilterParams(new URLSearchParams(
       "year=2027&program=internship&program=coop&company=SpaceX&skill=Python&page=3",

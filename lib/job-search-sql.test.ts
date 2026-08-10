@@ -38,6 +38,42 @@ const executePlan = (sql: string, bindings: unknown[], limit?: number, offset?: 
 };
 
 describe("parameterized job search SQL", () => {
+  it("uses the topic membership index and composes with 2027 internship filters", () => {
+    const plan = buildJobSearchPlan({
+      ...defaultJobFilters,
+      topics: ["ai-data"],
+      recruitingYears: [2027],
+      programTypes: ["internship"],
+    });
+    const parameters = plan.bindings.map((value, index) =>
+      `.parameter set ?${index + 1} ${sqliteLiteral(value)}`,
+    ).join("\n");
+    const output = execFileSync("sqlite3", ["-json", "-batch", ":memory:"], {
+      encoding: "utf8",
+      input: [
+        `CREATE TABLE jobs (
+          id TEXT PRIMARY KEY, company TEXT, title TEXT, official_url TEXT, status TEXT, first_seen_at TEXT
+        );`,
+        "CREATE TABLE job_topics (job_id TEXT, topic_key TEXT, PRIMARY KEY(job_id, topic_key));",
+        "CREATE INDEX job_topics_topic_job_idx ON job_topics(topic_key, job_id);",
+        `INSERT INTO jobs VALUES
+          ('ai-intern','Acme','2027 Machine Learning Intern','https://e/1','open','2026-01-03'),
+          ('finance-intern','Acme','2027 Finance Intern','https://e/2','open','2026-01-02'),
+          ('ai-regular','Acme','2026 Data Scientist','https://e/3','open','2026-01-01');`,
+        "INSERT INTO job_topics VALUES ('ai-intern','ai-data'),('ai-regular','ai-data');",
+        ".parameter init",
+        parameters,
+        `${plan.countSql};`,
+        `EXPLAIN QUERY PLAN ${plan.countSql};`,
+      ].join("\n"),
+    });
+
+    expect(plan.pageSql).toContain("job_topics");
+    expect(plan.bindings).toEqual(["ai-data"]);
+    expect(output).toContain('"total":1');
+    expect(output).toContain("job_topics_topic_job_idx");
+  });
+
   it("builds title-only 2027 internship and co-op predicates", () => {
     const plan = buildJobSearchPlan({
       ...defaultJobFilters,

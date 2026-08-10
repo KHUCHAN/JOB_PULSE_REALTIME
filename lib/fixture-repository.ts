@@ -11,6 +11,7 @@ import type {
   TalentState,
 } from "./domain";
 import { defaultJobFilters } from "./job-filter-query";
+import { classifyAiDataJob } from "./job-topic-classifier";
 import {
   fixtureActivity,
   fixtureJobs,
@@ -109,6 +110,9 @@ const matchesProgram = (job: RichJobPosting, values: JobFilters["programTypes"])
 const matchesYears = (job: RichJobPosting, years: number[] | undefined): boolean =>
   !years?.length || years.some((year) => normalized(job.title).includes(String(year)));
 
+const matchesTopics = (job: RichJobPosting, topics: JobFilters["topics"]): boolean =>
+  !topics?.length || topics.some((topic) => topic === "ai-data" && classifyAiDataJob(job).matched);
+
 const emptyOptions = (): JobFilterOptions => Object.fromEntries(
   optionKeys.map((key) => [key, []]),
 ) as unknown as JobFilterOptions;
@@ -176,6 +180,7 @@ const matchesFilters = (job: RichJobPosting, filters: JobFilters): boolean => {
     && hasAny(filters.states, [job.locationState])
     && hasAny(filters.countries, [job.locationCountry])
     && hasAny(filters.employmentTypes, [job.employmentType])
+    && matchesTopics(job, filters.topics)
     && matchesYears(job, filters.recruitingYears)
     && matchesProgram(job, filters.programTypes)
     && matchesTitleTerm(job, filters.seasons)

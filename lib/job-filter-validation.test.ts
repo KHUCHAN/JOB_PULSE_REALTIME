@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import { validateExplicitJobFilterValues } from "./job-filter-validation";
 
 describe("explicit job-filter validation", () => {
+  it("rejects unknown topic keys without rejecting ai-data", () => {
+    expect(() => validateExplicitJobFilterValues(new URLSearchParams("topic=ai-data"))).not.toThrow();
+    expect(() => validateExplicitJobFilterValues(new URLSearchParams("topic=unknown")))
+      .toThrow("Invalid topic.");
+  });
+
   it.each([
     ["page", "page=2&page=invalid"],
     ["pageSize", "pageSize=25&pageSize=101"],

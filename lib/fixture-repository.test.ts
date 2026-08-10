@@ -2,6 +2,15 @@ import { describe, expect, it } from "vitest";
 import { createFixtureRepository } from "./fixture-repository";
 
 describe("fixture repository", () => {
+  it("uses the same deterministic AI/data topic classification in demo mode", async () => {
+    const repository = createFixtureRepository();
+    const result = await repository.searchJobs({ topics: ["ai-data"] });
+
+    expect(result.items.map((job) => job.id)).toContain("job-002");
+    expect(result.items.map((job) => job.id)).not.toContain("job-001");
+    expect(result.total).toBeLessThan(12);
+  });
+
   it("filters jobs by query and match status", async () => {
     const repository = createFixtureRepository();
     const jobs = await repository.listJobs({ query: "fraud", status: "new" });

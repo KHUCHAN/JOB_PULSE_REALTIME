@@ -17,6 +17,7 @@ const rejectInvalidValues = (
 };
 
 export const validateExplicitJobFilterValues = (params: URLSearchParams) => {
+  rejectInvalidValues(params, "topic", (value) => value.trim().toLocaleLowerCase() === "ai-data");
   rejectInvalidValues(params, "page", (value) =>
     /^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= Number.MAX_SAFE_INTEGER,
   );

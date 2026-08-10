@@ -93,6 +93,11 @@ export function buildJobSearchPlan(filters: JobFilters): JobSearchPlan {
   const query = ftsQuery(filters.query ?? "");
   if (query) add("j.rowid IN (SELECT rowid FROM jobs_fts WHERE jobs_fts MATCH ?)", [query]);
 
+  const topics = asNormalizedValues(filters.topics).filter((topic) => topic === "ai-data");
+  if (topics.length) {
+    add(`j.id IN (SELECT job_id FROM job_topics WHERE topic_key = ?)`, [topics[0]]);
+  }
+
   if (filters.status && filters.status !== "all") add("j.review_state = ?", [filters.status]);
   addAnyEquals("j.company", filters.companies);
 
