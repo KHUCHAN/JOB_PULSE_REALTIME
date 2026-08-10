@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { advanceSeedSnapshot, catalogDeltaSql, planSeedMigration, versionedCatalogSql } from "./seed-migration";
 
@@ -116,6 +118,30 @@ describe("advanceSeedSnapshot", () => {
       version: "6",
       dialect: "sqlite",
       tables: { sources: { name: "sources" } },
+    });
+  });
+});
+
+describe("tech job area and region migration", () => {
+  const drizzlePath = resolve(process.cwd(), "drizzle");
+
+  it("adds region, area backfill state, and the indexed region search path", () => {
+    const sql = readFileSync(resolve(drizzlePath, "0045_tech_job_areas_regions.sql"), "utf8");
+
+    expect(sql).toContain('ALTER TABLE `jobs` ADD `location_region` text');
+    expect(sql).toContain('ALTER TABLE `jobs` ADD `area_classified_at` text');
+    expect(sql).toContain('CREATE INDEX `jobs_status_location_region_seen_idx`');
+  });
+
+  it("chains the immutable snapshot and journal after migration 0044", () => {
+    const previous = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0044_snapshot.json"), "utf8"));
+    const current = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0045_snapshot.json"), "utf8"));
+    const currentJournal = JSON.parse(readFileSync(resolve(drizzlePath, "meta/_journal.json"), "utf8"));
+
+    expect(current.prevId).toBe(previous.id);
+    expect(currentJournal.entries.at(-1)).toMatchObject({
+      idx: 45,
+      tag: "0045_tech_job_areas_regions",
     });
   });
 });

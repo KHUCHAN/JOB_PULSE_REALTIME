@@ -60,6 +60,7 @@ export const jobs = sqliteTable("jobs", {
   locationCity: text("location_city"),
   locationState: text("location_state"),
   locationCountry: text("location_country"),
+  locationRegion: text("location_region", { enum: ["us", "non_us", "mixed", "unknown"] }),
   locationPostalCode: text("location_postal_code"),
   latitude: real("latitude"),
   longitude: real("longitude"),
@@ -90,6 +91,7 @@ export const jobs = sqliteTable("jobs", {
   lastSeenAt: text("last_seen_at").notNull(),
   closedAt: text("closed_at"),
   topicClassifiedAt: text("topic_classified_at"),
+  areaClassifiedAt: text("area_classified_at"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, (table) => [
@@ -101,6 +103,7 @@ export const jobs = sqliteTable("jobs", {
   index("jobs_status_arrangement_idx").on(table.status, table.arrangement),
   index("jobs_status_employment_type_idx").on(table.status, table.employmentType),
   index("jobs_status_published_at_idx").on(table.status, table.publishedAt),
+  index("jobs_status_location_region_seen_idx").on(table.status, table.locationRegion, table.firstSeenAt),
   index("jobs_location_country_state_city_idx").on(table.locationCountry, table.locationState, table.locationCity),
   index("jobs_experience_level_idx").on(table.experienceLevel),
   index("jobs_salary_currency_min_max_idx").on(table.salaryCurrency, table.salaryMin, table.salaryMax),
