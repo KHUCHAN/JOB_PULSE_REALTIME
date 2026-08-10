@@ -70,7 +70,7 @@ const rawLocation = (value: unknown): RegionEvidence => {
   if ([...usCountryAliases].some((country) => containsPhrase(location, country))) return "us";
   if (nonUsCountryNames.some((country) => containsPhrase(location, country))) return "non_us";
   if (usStateNames.some((state) => containsPhrase(location, state))) return "us";
-  const contextualCode = original.match(/,\s*([A-Z]{2})(?:\s*[,\-]|\s+\d{5}|$)/);
+  const contextualCode = original.match(/,\s*([A-Z]{2})(?:\s*[,-]|\s+\d{5}|$)/);
   if (contextualCode && usStateCodes.has(contextualCode[1])) return "us";
   return null;
 };

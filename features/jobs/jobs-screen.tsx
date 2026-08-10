@@ -10,7 +10,7 @@ import { LoadingState } from "../../components/ui/loading-state";
 import { StatusBadge } from "../../components/ui/status-badge";
 import { CompanyLogo } from "../../components/ui/company-logo";
 import type { JobFilters, JobState } from "../../lib/domain";
-import { formatRelativeDate } from "../../lib/format";
+import { formatJobDate } from "../../lib/format";
 import { defaultJobFilters, parseJobFilterParams, serializeJobFilters } from "../../lib/job-filter-query";
 import type { RichJobPosting } from "../../lib/pulse-mappers";
 import { useRepositoryQuery } from "../../lib/use-repository-query";
@@ -29,8 +29,25 @@ const filtersFromLocation = (initialQuery: string, initialSearchParams?: string)
 };
 
 const arrayFilterKeys = new Set<keyof JobFilters>([
-  "topics", "companies", "cities", "states", "countries", "employmentTypes", "recruitingYears", "programTypes", "seasons", "departments", "teams", "businessUnits", "jobFamilies", "jobFunctions", "industries", "offices", "skills", "experienceLevels", "salaryCurrencies", "salaryIntervals", "educationRequirements", "shiftSchedules", "travelRequirements", "securityClearances", "languages",
+  "topics", "areas", "regions", "companies", "cities", "states", "countries", "employmentTypes", "recruitingYears", "programTypes", "seasons", "departments", "teams", "businessUnits", "jobFamilies", "jobFunctions", "industries", "offices", "skills", "experienceLevels", "salaryCurrencies", "salaryIntervals", "educationRequirements", "shiftSchedules", "travelRequirements", "securityClearances", "languages",
 ]);
+
+const areaLabels = {
+  "ai-ml": "AI / ML",
+  "data-analytics": "Data / Analytics / Quant",
+  "software-engineering": "Software Engineering",
+} as const;
+
+const regionLabels = {
+  us: "United States",
+  non_us: "Outside U.S.",
+  mixed: "U.S. / international",
+  unknown: "Unknown region",
+} as const;
+
+const postingTiming = (job: RichJobPosting): string => job.publishedAt
+  ? `Posted ${formatJobDate(job.publishedAt)}`
+  : `First seen ${formatJobDate(job.firstSeenAt)}`;
 
 export function JobsScreen({
   initialQuery = "",
@@ -157,16 +174,16 @@ export function JobsScreen({
           <>
             <div className="table-wrap desktop-jobs-table">
               <table className="data-table jobs-table" aria-label="Matching jobs">
-                <thead><tr><th>Company</th><th>Role</th><th>Location</th><th>Arrangement</th><th>Matched</th><th>Seen</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr></thead>
+                <thead><tr><th>Company</th><th>Role</th><th>Location</th><th>Arrangement</th><th>Matched</th><th>Posted</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr></thead>
                 <tbody>
                   {jobs.map((job) => (
                     <tr key={job.id}>
                       <td><div className="job-company-cell"><CompanyLogo company={job.company} /><span>{job.company}</span></div></td>
-                      <td className="job-role-cell"><strong>{job.title}</strong></td>
-                      <td>{job.location}</td>
+                      <td className="job-role-cell"><strong>{job.title}</strong>{job.areaKeys.length ? <span className="job-area-list">{job.areaKeys.map((area) => <span className="job-area-badge" key={area}>{areaLabels[area]}</span>)}</span> : null}</td>
+                      <td><span className="job-location-meta"><span>{job.location}</span><span className="job-region-badge" aria-label={`Region: ${regionLabels[job.locationRegion]}`}>{regionLabels[job.locationRegion]}</span></span></td>
                       <td>{job.arrangement}</td>
                       <td><b className="match-score">{job.matchScore}%</b><span>{job.matchedTerms.join(" · ")}</span></td>
-                      <td>{formatRelativeDate(job.firstSeenAt)}</td>
+                      <td><span className="job-posting-time">{postingTiming(job)}</span></td>
                       <td><StatusBadge status={job.status} /></td>
                       <td><button className="row-action" type="button" aria-label={`View ${job.title} details`} onClick={(event) => void openDetails(job, event)}><ArrowUpRight size={16} aria-hidden="true" /></button></td>
                     </tr>
@@ -179,8 +196,9 @@ export function JobsScreen({
               {jobs.map((job) => (
                 <article className="mobile-job-card" key={job.id}>
                   <div className="mobile-job-top"><CompanyLogo company={job.company} /><div><span className="mobile-job-company" aria-label={`Company: ${job.company}`}>{job.company}</span><strong aria-label={`Role: ${job.title}`}>{job.title}</strong></div><StatusBadge status={job.status} /></div>
-                  <p>{job.location} · {job.arrangement}</p>
-                  <div className="mobile-job-bottom"><span><b>{job.matchScore}%</b> match</span><button className="button secondary" type="button" aria-label={`View ${job.title} details`} onClick={(event) => void openDetails(job, event)}>Details <ArrowUpRight size={15} /></button></div>
+                  {job.areaKeys.length ? <div className="job-area-list">{job.areaKeys.map((area) => <span className="job-area-badge" key={area}>{areaLabels[area]}</span>)}</div> : null}
+                  <p><span>{job.location} · {job.arrangement}</span><span className="job-region-badge" aria-label={`Region: ${regionLabels[job.locationRegion]}`}>{regionLabels[job.locationRegion]}</span></p>
+                  <div className="mobile-job-bottom"><span><b>{job.matchScore}%</b> match · {postingTiming(job)}</span><button className="button secondary" type="button" aria-label={`View ${job.title} details`} onClick={(event) => void openDetails(job, event)}>Details <ArrowUpRight size={15} /></button></div>
                 </article>
               ))}
             </div>

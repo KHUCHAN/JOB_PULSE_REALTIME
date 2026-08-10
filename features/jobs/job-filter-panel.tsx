@@ -3,10 +3,13 @@
 import { Search, SlidersHorizontal, Sparkles, X } from "lucide-react";
 import { useEffect, useRef } from "react";
 import type { ReactElement } from "react";
-import type { JobFilterOption, JobFilterOptions, JobFilters, JobSeason } from "../../lib/domain";
+import type { JobAreaKey, JobFilterOption, JobFilterOptions, JobFilters, JobRegion, JobSeason } from "../../lib/domain";
 import { activeFilterCount } from "../../lib/job-filter-query";
 
 type FilterPatch = Partial<JobFilters>;
+
+const aiDataAreas: JobAreaKey[] = ["ai-ml", "data-analytics"];
+const techInternshipAreas: JobAreaKey[] = [...aiDataAreas, "software-engineering"];
 
 const optionValues = (options: JobFilterOption[] | undefined): string[] =>
   (options ?? []).map((option) => String(option.value));
@@ -82,8 +85,11 @@ export function JobFilterPanel({
   onAdvancedOpenChange(open: boolean): void;
 }): ReactElement {
   const companies = filters.companies ?? [];
-  const aiDataSelected = filters.topics?.includes("ai-data") ?? false;
+  const areas = filters.areas ?? [];
+  const regions = filters.regions ?? [];
+  const aiDataSelected = areas.includes("ai-ml") && areas.includes("data-analytics");
   const internshipPresetSelected = aiDataSelected
+    && areas.includes("software-engineering")
     && filters.recruitingYears?.includes(2027) === true
     && filters.programTypes?.includes("internship") === true
     && filters.programTypes?.includes("coop") === true;
@@ -133,7 +139,7 @@ export function JobFilterPanel({
           className="button secondary topic-preset"
           type="button"
           aria-pressed={aiDataSelected}
-          onClick={() => onChange({ topics: aiDataSelected ? [] : ["ai-data"] })}
+          onClick={() => onChange({ areas: aiDataSelected ? areas.filter((area) => !aiDataAreas.includes(area)) : [...new Set<JobAreaKey>([...areas, ...aiDataAreas])] })}
         >
           <Sparkles size={16} aria-hidden="true" /> AI &amp; Data Science
         </button>
@@ -142,13 +148,23 @@ export function JobFilterPanel({
           type="button"
           aria-pressed={internshipPresetSelected}
           onClick={() => onChange(internshipPresetSelected
-            ? { recruitingYears: [], programTypes: [] }
-            : { topics: ["ai-data"], recruitingYears: [2027], programTypes: ["internship", "coop"] })}
+            ? { areas: areas.filter((area) => !techInternshipAreas.includes(area)), recruitingYears: [], programTypes: [] }
+            : { areas: techInternshipAreas, recruitingYears: [2027], programTypes: ["internship", "coop"] })}
         >
-          2027 AI/Data Internships
+          2027 Tech Internships
         </button>
         <DatalistField id="job-company" label="Company" value={companies[0] ?? ""} options={options?.companies} placeholder="Any company" onChange={(value) => setTextArray("companies", value)} />
         <DatalistField id="job-location" label="Location" value={filters.location} options={options?.locations} placeholder="Any location" onChange={(location) => onChange({ location })} />
+        <div className="filter-control">
+          <label htmlFor="job-region">Region</label>
+          <select id="job-region" value={regions[0] ?? ""} onChange={(event) => onChange({ regions: event.target.value ? [event.target.value as JobRegion] : [] })}>
+            <option value="">Any region</option>
+            <option value="us">United States</option>
+            <option value="non_us">Outside U.S.</option>
+            <option value="mixed">U.S. / international</option>
+            <option value="unknown">Unknown region</option>
+          </select>
+        </div>
         <div className="filter-control">
           <label htmlFor="job-status">Job status</label>
           <select id="job-status" value={filters.status} onChange={(event) => onChange({ status: event.target.value as JobFilters["status"] })}>
@@ -188,6 +204,11 @@ export function JobFilterPanel({
                   {recruitingYears.map((year) => <option key={year} value={year}>{year}</option>)}
                 </select>
               </div>
+              <fieldset className="filter-fieldset"><legend>Job area</legend><div className="filter-check-grid">
+                <CheckboxOption id="area-ai-ml" label="AI / ML" value="ai-ml" selected={areas} onChange={(values) => onChange({ areas: values })} />
+                <CheckboxOption id="area-data-analytics" label="Data / Analytics / Quant" value="data-analytics" selected={areas} onChange={(values) => onChange({ areas: values })} />
+                <CheckboxOption id="area-software-engineering" label="Software Engineering" value="software-engineering" selected={areas} onChange={(values) => onChange({ areas: values })} />
+              </div></fieldset>
               <fieldset className="filter-fieldset"><legend>Program type</legend><div className="filter-check-grid">
                 <CheckboxOption id="program-internship" label="Internship" value="internship" selected={programTypes} onChange={(values) => onChange({ programTypes: values })} />
                 <CheckboxOption id="program-coop" label="Co-op" value="coop" selected={programTypes} onChange={(values) => onChange({ programTypes: values })} />

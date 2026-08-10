@@ -423,6 +423,12 @@ a { color: inherit; }
 .job-company-cell { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .job-company-cell > span:last-child { color: var(--ink); font-size: 11px; font-weight: 700; line-height: 1.35; }
 .job-role-cell strong { display: block; line-height: 1.4; }
+.job-area-list { margin-top: 7px; display: flex; flex-wrap: wrap; gap: 5px; }
+.job-area-badge, .job-region-badge { width: max-content; padding: 3px 6px; display: inline-flex; align-items: center; border-radius: 999px; font-size: 8px; font-weight: 750; line-height: 1.2; }
+.job-area-badge { color: #234c7b; background: #edf4fb; border: 1px solid #d8e6f5; }
+.job-region-badge { color: #31506f; background: #f4f7fa; border: 1px solid #dbe3ec; }
+.job-location-meta { display: grid; gap: 7px; line-height: 1.4; }
+.job-posting-time { display: block; color: #46566a; font-size: 10px; font-weight: 650; line-height: 1.35; }
 .row-action { width: 44px; min-height: 44px; display: grid; place-items: center; color: var(--info); background: transparent; border: 0; border-radius: 10px; cursor: pointer; }
 .row-action:hover { background: #edf4fb; }
 .mobile-job-list { display: none; }
@@ -452,7 +458,7 @@ a { color: inherit; }
 .danger-text { color: var(--danger) !important; }
 
 .job-filter-panel { position: relative; z-index: 31; }
-.job-filter-common { grid-template-columns: minmax(220px, 1.35fr) repeat(2, auto) repeat(5, minmax(130px, .72fr)) auto; }
+.job-filter-common { grid-template-columns: minmax(220px, 1.35fr) repeat(2, auto) repeat(6, minmax(130px, .72fr)) auto; }
 .topic-preset { min-width: max-content; white-space: nowrap; }
 .topic-preset[aria-pressed="true"] { color: #fff; background: var(--info); border-color: var(--info); }
 .more-filters-button { min-width: max-content; white-space: nowrap; }
@@ -514,7 +520,8 @@ a { color: inherit; }
   .mobile-job-top > div strong { display: block; margin-top: 3px; font-size: 12px; line-height: 1.35; }
   .mobile-job-top .mobile-job-company { display: block; color: var(--muted); font-size: 10px; font-weight: 700; }
   .mobile-job-top .status-badge { padding-inline: 7px; font-size: 9px; }
-  .mobile-job-card > p { margin: 13px 0; color: var(--muted); font-size: 10px; text-transform: capitalize; }
+  .mobile-job-card > .job-area-list { margin-top: 12px; }
+  .mobile-job-card > p { margin: 10px 0 13px; display: flex; align-items: center; flex-wrap: wrap; gap: 7px; color: var(--muted); font-size: 10px; text-transform: capitalize; }
   .mobile-job-bottom { display: flex; align-items: center; justify-content: space-between; }
   .mobile-job-bottom > span { color: var(--muted); font-size: 10px; }
   .mobile-job-bottom b { color: var(--info); font-size: 12px; }

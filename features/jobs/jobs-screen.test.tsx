@@ -4,6 +4,7 @@ import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FixtureProvider } from "../../components/fixture-provider";
 import { createFixtureRepository } from "../../lib/fixture-repository";
+import type { JobAreaKey } from "../../lib/domain";
 import { JobsScreen } from "./jobs-screen";
 
 describe("JobsScreen", () => {
@@ -53,28 +54,63 @@ describe("JobsScreen", () => {
 
     expect(preset).toHaveAttribute("aria-pressed", "false");
     await user.click(preset);
-    await waitFor(() => expect(window.location.search).toBe("?topic=ai-data"));
+    await waitFor(() => expect(window.location.search).toBe("?area=ai-ml&area=data-analytics"));
     expect(preset).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: "Remove Topic: AI & Data Science" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove Area: AI / ML" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove Area: Data / Analytics / Quant" })).toBeInTheDocument();
     expect(screen.queryAllByText("Fraud Strategy Analyst")).toHaveLength(0);
 
-    await user.click(screen.getByRole("button", { name: "Remove Topic: AI & Data Science" }));
+    await user.click(preset);
     await waitFor(() => expect(window.location.search).toBe(""));
     expect(preset).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("applies the one-click 2027 AI/Data internship preset", async () => {
+  it("applies the one-click 2027 Tech internship preset", async () => {
     const user = userEvent.setup();
     render(<FixtureProvider><JobsScreen initialQuery="" /></FixtureProvider>);
-    const preset = screen.getByRole("button", { name: "2027 AI/Data Internships" });
+    const preset = screen.getByRole("button", { name: "2027 Tech Internships" });
 
     expect(preset).toHaveAttribute("aria-pressed", "false");
     await user.click(preset);
     await waitFor(() => expect(window.location.search)
-      .toBe("?topic=ai-data&year=2027&program=internship&program=coop"));
+      .toBe("?area=ai-ml&area=data-analytics&area=software-engineering&year=2027&program=internship&program=coop"));
     expect(preset).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "Remove Recruiting year: 2027" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Remove Program type: Internship" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove Area: Software Engineering" })).toBeInTheDocument();
+  });
+
+  it("keeps region filtering visible and writes it to URL state", async () => {
+    const user = userEvent.setup();
+    render(<FixtureProvider><JobsScreen initialQuery="" /></FixtureProvider>);
+
+    await user.selectOptions(screen.getByLabelText("Region"), "us");
+
+    await waitFor(() => expect(window.location.search).toBe("?region=us"));
+    expect(screen.getByRole("button", { name: "Remove Region: United States" })).toBeInTheDocument();
+  });
+
+  it("shows area, region, and honest posted or first-seen timing on desktop and mobile", async () => {
+    const base = createFixtureRepository();
+    const searchJobs = vi.fn(async (...args: Parameters<typeof base.searchJobs>) => {
+      const result = await base.searchJobs(...args);
+      return {
+        ...result,
+        items: result.items.map((job, index) => index === 0 ? {
+          ...job,
+          areaKeys: ["ai-ml", "software-engineering"] as JobAreaKey[],
+          locationRegion: "us" as const,
+          publishedAt: "2026-08-08T00:00:00.000Z",
+        } : job),
+      };
+    });
+    render(<FixtureProvider repository={{ ...base, searchJobs }}><JobsScreen initialQuery="" /></FixtureProvider>);
+
+    expect((await screen.findAllByText("AI / ML")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Software Engineering").length).toBeGreaterThan(0);
+    expect(screen.getAllByLabelText("Region: United States").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Posted Aug 8, 2026").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/First seen Aug/).length).toBeGreaterThan(0);
   });
 
   it("presents Company and Role as separate desktop columns and mobile fields", async () => {

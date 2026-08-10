@@ -16,6 +16,17 @@ export function formatRelativeDate(value: string): string {
   return formatter.format(Math.round(hours / 24), "day");
 }
 
+export function formatJobDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.valueOf())) return "Unknown date";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(date);
+}
+
 export function titleCase(value: string): string {
   return value
     .replaceAll("_", " ")

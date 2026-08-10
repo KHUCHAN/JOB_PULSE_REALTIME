@@ -10,6 +10,19 @@ const arrayLabels: Array<[keyof JobFilters, string]> = [
   ["departments", "Department"], ["teams", "Team"], ["businessUnits", "Business unit"], ["jobFamilies", "Job family"], ["jobFunctions", "Job function"], ["industries", "Industry"], ["offices", "Office"], ["skills", "Skill"], ["experienceLevels", "Experience level"], ["salaryCurrencies", "Salary currency"], ["salaryIntervals", "Salary interval"], ["educationRequirements", "Education"], ["shiftSchedules", "Shift"], ["travelRequirements", "Travel"], ["securityClearances", "Security clearance"], ["languages", "Language"],
 ];
 
+const areaLabels: Record<string, string> = {
+  "ai-ml": "AI / ML",
+  "data-analytics": "Data / Analytics / Quant",
+  "software-engineering": "Software Engineering",
+};
+
+const regionLabels: Record<string, string> = {
+  us: "United States",
+  non_us: "Outside U.S.",
+  mixed: "U.S. / international",
+  unknown: "Unknown region",
+};
+
 export function ActiveFilterChips({
   filters,
   onRemove,
@@ -27,6 +40,8 @@ export function ActiveFilterChips({
   for (const topic of filters.topics ?? []) {
     if (topic === "ai-data") chips.push({ key: "topics", value: topic, label: "Topic: AI & Data Science" });
   }
+  for (const area of filters.areas ?? []) chips.push({ key: "areas", value: area, label: `Area: ${areaLabels[area] ?? area}` });
+  for (const region of filters.regions ?? []) chips.push({ key: "regions", value: region, label: `Region: ${regionLabels[region] ?? region}` });
   for (const year of filters.recruitingYears ?? []) chips.push({ key: "recruitingYears", value: year, label: `Recruiting year: ${year}` });
   for (const program of filters.programTypes ?? []) chips.push({ key: "programTypes", value: program, label: `Program type: ${program === "coop" ? "Co-op" : program === "internship" ? "Internship" : "Regular role"}` });
   for (const season of filters.seasons ?? []) chips.push({ key: "seasons", value: season, label: `Season: ${season}` });
