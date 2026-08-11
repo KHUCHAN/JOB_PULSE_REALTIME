@@ -2890,34 +2890,50 @@ const crawlGoogleCareers = async (source: CrawlSource, fetcher: typeof fetch): P
     if (page > 1) endpoint.searchParams.set("page", String(page));
     return endpoint;
   };
-  const fetchPage = async (page: number): Promise<{ status: number; html: string } | null> => {
+  const fetchPage = async (page: number): Promise<{ status: number; jobs: CrawledJob[]; total: number | null } | null> => {
     try {
       const response = await fetchWithTimeout(fetcher, endpointFor(page), { headers: { accept: "text/html" } });
-      return response.ok ? { status: response.status, html: await response.text() } : null;
+      if (!response.ok) return null;
+      const html = await response.text();
+      const totalText = page === 1
+        ? html.match(/<span\b[^>]*class=["'][^"']*\bSWhIm\b[^"']*["'][^>]*>\s*([\d,]+)\s*<\/span>\s*jobs matched/i)?.[1]
+        : null;
+      return {
+        status: response.status,
+        jobs: googleJobsFromHtml(html, source),
+        total: totalText ? Number(totalText.replaceAll(",", "")) : null,
+      };
     } catch {
       return null;
     }
   };
   const first = await fetchPage(1);
   if (!first) return { status: "failed", responseStatus: null, completeListing: false, jobs: [], error: "Google Careers results did not return a usable first page." };
-  const firstJobs = googleJobsFromHtml(first.html, source);
-  const totalText = first.html.match(/<span\b[^>]*class=["'][^"']*\bSWhIm\b[^"']*["'][^>]*>\s*([\d,]+)\s*<\/span>\s*jobs matched/i)?.[1];
-  const total = Number((totalText ?? String(firstJobs.length)).replaceAll(",", ""));
-  const pageSize = Math.max(firstJobs.length, 1);
+  const total = first.total ?? first.jobs.length;
+  const pageSize = Math.max(first.jobs.length, 1);
   const totalPages = Math.ceil(total / pageSize);
   const boundedPages = Math.min(totalPages, 500);
-  const pages: Array<{ status: number; html: string } | null> = [];
-  for (let page = 2; page <= boundedPages; page += 8) {
-    pages.push(...await Promise.all(Array.from({ length: Math.min(8, boundedPages - page + 1) }, (_, index) => fetchPage(page + index))));
+  const jobsByUrl = new Map(first.jobs.map((job) => [job.officialUrl, job]));
+  let successfulPages = 1;
+  const pageConcurrency = 4;
+  for (let page = 2; page <= boundedPages; page += pageConcurrency) {
+    const pages = await Promise.all(
+      Array.from(
+        { length: Math.min(pageConcurrency, boundedPages - page + 1) },
+        (_, index) => fetchPage(page + index),
+      ),
+    );
+    for (const result of pages) {
+      if (!result) continue;
+      successfulPages += 1;
+      for (const job of result.jobs) jobsByUrl.set(job.officialUrl, job);
+    }
   }
-  const jobs = uniqueJobs([
-    ...firstJobs,
-    ...pages.flatMap((page) => page ? googleJobsFromHtml(page.html, source) : []),
-  ]);
+  const jobs = [...jobsByUrl.values()];
   return {
     status: "succeeded",
     responseStatus: first.status,
-    completeListing: totalPages <= 500 && pages.every(Boolean) && jobs.length >= total,
+    completeListing: totalPages <= 500 && successfulPages === boundedPages && jobs.length >= total,
     jobs,
     error: null,
   };
