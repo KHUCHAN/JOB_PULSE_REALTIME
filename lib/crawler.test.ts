@@ -863,7 +863,7 @@ Wrong description.
       crawlPageCursor: 21,
     }, fetcher, new Date());
 
-    expect(requests).toEqual([1, 21, 22, 22]);
+    expect(requests).toEqual([1, 21, 22]);
     expect(result).toEqual(expect.objectContaining({
       completeListing: false,
       pagination: { nextPage: 22, cycleComplete: false, totalPages: 22 },

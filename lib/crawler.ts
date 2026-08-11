@@ -2608,7 +2608,13 @@ const crawlAmazonJobs = async (source: CrawlSource, fetcher: typeof fetch): Prom
   };
   const fetchPage = async (offset: number): Promise<{ status: number; total: number; jobs: CrawledJob[] } | null> => {
     try {
-      const response = await fetchWithTimeout(fetcher, endpointFor(offset), { headers: { accept: "application/json" } });
+      const response = await fetchWithTimeout(
+        fetcher,
+        endpointFor(offset),
+        { headers: { accept: "application/json" } },
+        true,
+        source.id === "p4-0394-amazon" ? { attempts: 1 } : undefined,
+      );
       if (!response.ok) return null;
       const payload = await response.json() as AmazonSearchPayload;
       return {
@@ -2983,7 +2989,13 @@ const crawlGoogleCareers = async (source: CrawlSource, fetcher: typeof fetch): P
   };
   const fetchPage = async (page: number): Promise<{ status: number; jobs: CrawledJob[]; total: number | null } | null> => {
     try {
-      const response = await fetchWithTimeout(fetcher, endpointFor(page), { headers: { accept: "text/html" } });
+      const response = await fetchWithTimeout(
+        fetcher,
+        endpointFor(page),
+        { headers: { accept: "text/html" } },
+        true,
+        source.id === "p4-0285-google" ? { attempts: 1 } : undefined,
+      );
       if (!response.ok) return null;
       const pageData = await googleJobsFromResponse(response, source, page === 1);
       return {
