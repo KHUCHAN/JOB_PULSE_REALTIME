@@ -40,11 +40,27 @@ describe("backfillJobAreasAndRegions", () => {
         ('b', 'Software Engineer Intern', 'open', '[]', '[]');
     `);
 
-    expect(await backfillJobAreasAndRegions(createD1(sqlite), 1)).toEqual({
+    const db = createD1(sqlite);
+    expect(await backfillJobAreasAndRegions(db, 1)).toEqual({
       processed: 1,
       areaMatched: 1,
       regionResolved: 0,
       remaining: -1,
+      nextCursor: "a",
+    });
+    expect(await backfillJobAreasAndRegions(db, 1, "a")).toEqual({
+      processed: 1,
+      areaMatched: 1,
+      regionResolved: 0,
+      remaining: -1,
+      nextCursor: "b",
+    });
+    expect(await backfillJobAreasAndRegions(db, 1, "b")).toEqual({
+      processed: 0,
+      areaMatched: 0,
+      regionResolved: 0,
+      remaining: 0,
+      nextCursor: null,
     });
   });
 
@@ -83,6 +99,7 @@ describe("backfillJobAreasAndRegions", () => {
       areaMatched: 2,
       regionResolved: 4,
       remaining: 0,
+      nextCursor: "f",
     });
     expect(sqlite.prepare("SELECT id, location_region FROM jobs WHERE status = 'open' ORDER BY id").all()).toEqual([
       { id: "a", location_region: "us" },
@@ -106,6 +123,7 @@ describe("backfillJobAreasAndRegions", () => {
       areaMatched: 0,
       regionResolved: 0,
       remaining: 0,
+      nextCursor: null,
     });
   });
 });

@@ -363,7 +363,10 @@ export async function POST(request: Request): Promise<Response> {
     }
     if (body.action === "backfillJobAreasAndRegions") {
       const requested = typeof body.limit === "number" ? body.limit : undefined;
-      return json(await backfillJobAreasAndRegions(db(), jobAreaRegionBackfillLimit(requested)));
+      const afterId = typeof body.afterId === "string" && body.afterId.trim()
+        ? body.afterId.trim().slice(0, 200)
+        : null;
+      return json(await backfillJobAreasAndRegions(db(), jobAreaRegionBackfillLimit(requested), afterId));
     }
     if (body.action === "refreshJobFilterOptions") {
       const result = await refreshJobFilterOptions(db(), {

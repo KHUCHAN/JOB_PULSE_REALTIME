@@ -36,6 +36,7 @@ export type JobAreaRegionBackfillResult = {
   areaMatched: number;
   regionResolved: number;
   remaining: number;
+  nextCursor: string | null;
 };
 
 const bodyCandidateTerms = [
@@ -82,6 +83,7 @@ const classificationInput = (job: PendingJobRow, body?: PendingJobBodyRow) => ({
 export async function backfillJobAreasAndRegions(
   db: D1Database,
   requestedLimit: number,
+  afterId: string | null = null,
 ): Promise<JobAreaRegionBackfillResult> {
   const limit = Math.max(1, Math.min(500, Math.trunc(requestedLimit)));
   const selected = await db.prepare(`
@@ -91,11 +93,12 @@ export async function backfillJobAreasAndRegions(
     FROM jobs
     WHERE status = 'open'
       AND (area_classified_at IS NULL OR area_classified_at NOT LIKE 'v2:%' OR location_region IS NULL)
+      AND (? IS NULL OR id > ?)
     ORDER BY id
     LIMIT ?
-  `).bind(limit).all<PendingJobRow>();
+  `).bind(afterId, afterId, limit).all<PendingJobRow>();
   if (selected.results.length === 0) {
-    return { processed: 0, areaMatched: 0, regionResolved: 0, remaining: 0 };
+    return { processed: 0, areaMatched: 0, regionResolved: 0, remaining: 0, nextCursor: null };
   }
 
   const areaPendingIds = selected.results
@@ -193,5 +196,6 @@ export async function backfillJobAreasAndRegions(
     // A full checkpoint deliberately avoids a global COUNT over the jobs table.
     // The caller continues until the first short/empty checkpoint proves completion.
     remaining: records.length < limit ? 0 : -1,
+    nextCursor: records.at(-1)?.job.id ?? null,
   };
 }
