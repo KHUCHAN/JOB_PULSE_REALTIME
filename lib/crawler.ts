@@ -1953,9 +1953,11 @@ const jsonLdJob = (value: JsonLdValue, source: CrawlSource): CrawledJob | null =
 };
 
 type CitadelSitemapEntry = { url: string; lastModified: string | null };
+type CitadelSitemap = { entries: CitadelSitemapEntry[]; closureSafe: boolean };
 
-const citadelSitemapEntries = (xml: string): CitadelSitemapEntry[] => {
-  const entries = [...xml.matchAll(/<url>([\s\S]*?)<\/url>/gi)].flatMap((match) => {
+const citadelSitemapEntries = (xml: string): CitadelSitemap => {
+  const blocks = [...xml.matchAll(/<url\b[^>]*>([\s\S]*?)<\/url>/gi)];
+  const entries = blocks.flatMap((match) => {
     const location = match[1].match(/<loc>\s*([\s\S]*?)\s*<\/loc>/i)?.[1];
     if (!location) return [];
     let url: URL;
@@ -1968,7 +1970,21 @@ const citadelSitemapEntries = (xml: string): CitadelSitemapEntry[] => {
     const lastModified = match[1].match(/<lastmod>\s*([\s\S]*?)\s*<\/lastmod>/i)?.[1]?.trim() ?? null;
     return [{ url: url.href, lastModified }];
   });
-  return [...new Map(entries.map((entry) => [entry.url, entry])).values()];
+  const uniqueEntries = [...new Map(entries.map((entry) => [entry.url, entry])).values()];
+  const rootClose = [...xml.matchAll(/<\/urlset\s*>/gi)].at(-1);
+  const trailing = rootClose ? xml.slice((rootClose.index ?? 0) + rootClose[0].length).replace(/<!--[\s\S]*?-->/g, "").trim() : "";
+  const urlOpenCount = [...xml.matchAll(/<url(?=[\s>])/gi)].length;
+  const urlCloseCount = [...xml.matchAll(/<\/url\s*>/gi)].length;
+  return {
+    entries: uniqueEntries,
+    closureSafe: /<urlset\b[^>]*>/i.test(xml)
+      && rootClose !== undefined
+      && trailing.length === 0
+      && urlOpenCount === urlCloseCount
+      && urlOpenCount === blocks.length
+      && uniqueEntries.length === blocks.length
+      && uniqueEntries.length >= 10,
+  };
 };
 
 const citadelTitleToken = (token: string): string => {
@@ -2024,7 +2040,8 @@ const crawlCitadel = async (source: CrawlSource, fetcher: typeof fetch): Promise
       jobs: [],
       error: `Citadel career sitemap returned HTTP ${sitemapResponse.status}.`,
     };
-    const entries = citadelSitemapEntries(await sitemapResponse.text());
+    const sitemap = citadelSitemapEntries(await sitemapResponse.text());
+    const { entries } = sitemap;
     if (entries.length === 0) return {
       status: "failed",
       responseStatus: sitemapResponse.status,
@@ -2057,9 +2074,18 @@ const crawlCitadel = async (source: CrawlSource, fetcher: typeof fetch): Promise
         const externalId = job.externalId
           ?? new URL(entry.url).pathname.match(/\/careers\/details\/([^/]+)/i)?.[1]
           ?? null;
+        const fallback = jobsByUrl.get(entry.url)!;
         jobsByUrl.set(entry.url, {
+          ...fallback,
           ...job,
-          externalId,
+          externalId: externalId ?? fallback.externalId,
+          title: job.title || fallback.title,
+          location: job.location ?? fallback.location,
+          arrangement: job.arrangement === "unknown" ? fallback.arrangement : job.arrangement,
+          employmentType: job.employmentType ?? fallback.employmentType,
+          summary: job.summary ?? fallback.summary,
+          locationCountry: job.locationCountry ?? fallback.locationCountry,
+          publishedAt: job.publishedAt ?? fallback.publishedAt,
           officialUrl: entry.url,
           ...(entry.lastModified ? { sourceUpdatedAt: normalizedDate(entry.lastModified) } : {}),
         });
@@ -2077,7 +2103,7 @@ const crawlCitadel = async (source: CrawlSource, fetcher: typeof fetch): Promise
     return {
       status: "succeeded",
       responseStatus: sitemapResponse.status,
-      completeListing: unique.length === entries.length,
+      completeListing: sitemap.closureSafe && unique.length === entries.length,
       jobs: unique,
       error: null,
     };

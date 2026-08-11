@@ -14,15 +14,16 @@ describe("large catalog content", () => {
 describe("crawlSource", () => {
   it("crawls Citadel jobs from its public career sitemap when the listing page is edge-blocked", async () => {
     const jobUrl = "https://www.citadel.com/careers/details/sector-data-scientist-2027-intern-us/";
+    const sitemapUrls = [jobUrl, ...Array.from({ length: 9 }, (_, index) => `https://www.citadel.com/careers/details/example-role-${index + 1}/`)];
     const requests: Array<{ url: string; returnFormat: string | null }> = [];
     const fetcher: typeof fetch = async (input, init) => {
       const url = String(input);
       const headers = new Headers(init?.headers);
       requests.push({ url, returnFormat: headers.get("x-return-format") });
       if (url === "https://www.citadel.com/career-sitemap.xml") {
-        return new Response(`<?xml version="1.0"?><urlset>
-          <url><loc>${jobUrl}</loc><lastmod>2026-08-11T14:14:26+00:00</lastmod></url>
-        </urlset>`, { status: 200, headers: { "content-type": "application/xml" } });
+        return new Response(`<?xml version="1.0"?><urlset>${sitemapUrls.map((sitemapUrl) =>
+          `<url><loc>${sitemapUrl}</loc><lastmod>2026-08-11T14:14:26+00:00</lastmod></url>`).join("")}</urlset>`,
+        { status: 200, headers: { "content-type": "application/xml" } });
       }
       if (url === "https://r.jina.ai/http://www.citadel.com/careers/details/sector-data-scientist-2027-intern-us/") {
         return new Response(`<script type="application/ld+json">{
@@ -45,32 +46,32 @@ describe("crawlSource", () => {
       adapter: "custom",
     }, fetcher, new Date("2026-08-11T15:00:00Z"));
 
-    expect(result).toEqual(expect.objectContaining({
-      status: "succeeded",
-      completeListing: true,
-      responseStatus: 200,
-      jobs: [expect.objectContaining({
-        externalId: "sector-data-scientist-2027-intern-us",
-        title: "Sector Data Scientist - 2027 Intern (US)",
-        employmentType: "Internship",
-        location: "New York, NY, US",
-        locationCity: "New York",
-        locationState: "NY",
-        locationCountry: "US",
-        officialUrl: jobUrl,
-        publishedAt: "2026-08-11T00:00:00.000Z",
-      })],
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true, responseStatus: 200 }));
+    expect(result.jobs).toHaveLength(10);
+    expect(result.jobs.find((job) => job.officialUrl === jobUrl)).toEqual(expect.objectContaining({
+      externalId: "sector-data-scientist-2027-intern-us",
+      title: "Sector Data Scientist - 2027 Intern (US)",
+      employmentType: "Internship",
+      location: "New York, NY, US",
+      locationCity: "New York",
+      locationState: "NY",
+      locationCountry: "US",
+      officialUrl: jobUrl,
+      publishedAt: "2026-08-11T00:00:00.000Z",
     }));
-    expect(requests).toEqual([
-      { url: "https://www.citadel.com/career-sitemap.xml", returnFormat: null },
-      { url: "https://r.jina.ai/http://www.citadel.com/careers/details/sector-data-scientist-2027-intern-us/", returnFormat: "html" },
-    ]);
+    expect(requests[0]).toEqual({ url: "https://www.citadel.com/career-sitemap.xml", returnFormat: null });
+    expect(requests).toContainEqual({
+      url: "https://r.jina.ai/http://www.citadel.com/careers/details/sector-data-scientist-2027-intern-us/",
+      returnFormat: "html",
+    });
   });
 
   it("still detects every Citadel sitemap job when a detail reader receives a challenge page", async () => {
     const jobUrl = "https://www.citadel.com/careers/details/sector-data-scientist-2027-intern-us/";
+    const sitemapUrls = [jobUrl, ...Array.from({ length: 9 }, (_, index) => `https://www.citadel.com/careers/details/example-role-${index + 1}/`)];
     const fetcher: typeof fetch = async (input) => String(input).endsWith("career-sitemap.xml")
-      ? new Response(`<urlset><url><loc>${jobUrl}</loc><lastmod>2026-08-11T14:14:26+00:00</lastmod></url></urlset>`, { status: 200 })
+      ? new Response(`<urlset>${sitemapUrls.map((sitemapUrl) =>
+        `<url><loc>${sitemapUrl}</loc><lastmod>2026-08-11T14:14:26+00:00</lastmod></url>`).join("")}</urlset>`, { status: 200 })
       : new Response("<html><title>Just a moment...</title></html>", { status: 200 });
 
     const result = await crawlSource({
@@ -80,20 +81,61 @@ describe("crawlSource", () => {
       adapter: "custom",
     }, fetcher, new Date("2026-08-11T15:00:00Z"));
 
-    expect(result).toEqual(expect.objectContaining({
-      status: "succeeded",
-      completeListing: true,
-      jobs: [expect.objectContaining({
-        externalId: "sector-data-scientist-2027-intern-us",
-        title: "Sector Data Scientist - 2027 Intern (US)",
-        employmentType: "Internship",
-        location: "United States",
-        locationCountry: "US",
-        officialUrl: jobUrl,
-        publishedAt: null,
-        sourceUpdatedAt: "2026-08-11T14:14:26.000Z",
-      })],
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toHaveLength(10);
+    expect(result.jobs.find((job) => job.officialUrl === jobUrl)).toEqual(expect.objectContaining({
+      externalId: "sector-data-scientist-2027-intern-us",
+      title: "Sector Data Scientist - 2027 Intern (US)",
+      employmentType: "Internship",
+      location: "United States",
+      locationCountry: "US",
+      officialUrl: jobUrl,
+      publishedAt: null,
+      sourceUpdatedAt: "2026-08-11T14:14:26.000Z",
     }));
+  });
+
+  it("preserves Citadel sitemap classifications when detail JSON-LD is partial", async () => {
+    const jobUrl = "https://www.citadel.com/careers/details/sector-data-scientist-2027-intern-us/";
+    const sitemapUrls = [jobUrl, ...Array.from({ length: 9 }, (_, index) => `https://www.citadel.com/careers/details/example-role-${index + 1}/`)];
+    const fetcher: typeof fetch = async (input) => String(input).endsWith("career-sitemap.xml")
+      ? new Response(`<urlset>${sitemapUrls.map((sitemapUrl) => `<url><loc>${sitemapUrl}</loc></url>`).join("")}</urlset>`, { status: 200 })
+      : String(input).includes("sector-data-scientist-2027-intern-us")
+        ? new Response(`<script type="application/ld+json">{
+          "@type":"JobPosting", "title":"Sector Data Scientist - 2027 Intern (US)",
+          "mainEntityOfPage":{"url":"${jobUrl}"}
+        }</script>`, { status: 200 })
+        : new Response("challenge", { status: 403 });
+
+    const result = await crawlSource({
+      id: "p5-0575-citadel", company: "Citadel / Citadel Securities",
+      postingUrl: "https://www.citadel.com/careers/open-opportunities/", adapter: "custom",
+    }, fetcher, new Date("2026-08-11T15:00:00Z"));
+    const target = result.jobs.find((job) => job.officialUrl === jobUrl);
+
+    expect(result.completeListing).toBe(true);
+    expect(target).toEqual(expect.objectContaining({
+      externalId: "sector-data-scientist-2027-intern-us",
+      employmentType: "Internship",
+      location: "United States",
+      locationCountry: "US",
+    }));
+  });
+
+  it("does not authorize Citadel closures from a truncated sitemap", async () => {
+    const rows = Array.from({ length: 10 }, (_, index) =>
+      `<url><loc>https://www.citadel.com/careers/details/example-role-${index + 1}/</loc></url>`).join("");
+    const fetcher: typeof fetch = async (input) => String(input).endsWith("career-sitemap.xml")
+      ? new Response(`<urlset>${rows}`, { status: 200 })
+      : new Response("challenge", { status: 403 });
+
+    const result = await crawlSource({
+      id: "p5-0575-citadel", company: "Citadel / Citadel Securities",
+      postingUrl: "https://www.citadel.com/careers/open-opportunities/", adapter: "custom",
+    }, fetcher, new Date("2026-08-11T15:00:00Z"));
+
+    expect(result.jobs).toHaveLength(10);
+    expect(result.completeListing).toBe(false);
   });
 
   it("discovers the Oracle API tenant behind a vanity careers domain", () => {
