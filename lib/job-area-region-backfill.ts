@@ -86,17 +86,20 @@ export async function backfillJobAreasAndRegions(
   afterId: string | null = null,
 ): Promise<JobAreaRegionBackfillResult> {
   const limit = Math.max(1, Math.min(500, Math.trunc(requestedLimit)));
-  const selected = await db.prepare(`
+  const selectedStatement = db.prepare(`
     SELECT id, title, skills, department, team, business_unit, job_family, job_function,
            location, location_city, location_state, location_country, secondary_locations,
            location_region, area_classified_at
     FROM jobs
     WHERE status = 'open'
       AND (area_classified_at IS NULL OR area_classified_at NOT LIKE 'v2:%' OR location_region IS NULL)
-      AND (? IS NULL OR id > ?)
+      ${afterId ? "AND id > ?" : ""}
     ORDER BY id
     LIMIT ?
-  `).bind(afterId, afterId, limit).all<PendingJobRow>();
+  `);
+  const selected = afterId
+    ? await selectedStatement.bind(afterId, limit).all<PendingJobRow>()
+    : await selectedStatement.bind(limit).all<PendingJobRow>();
   if (selected.results.length === 0) {
     return { processed: 0, areaMatched: 0, regionResolved: 0, remaining: 0, nextCursor: null };
   }
