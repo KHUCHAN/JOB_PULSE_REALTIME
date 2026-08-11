@@ -78,6 +78,12 @@ export interface JobFilters {
   languages?: string[];
   page?: number;
   pageSize?: number;
+  resumeMatchProfile?: "chanyoung-resume";
+}
+
+export interface ResumeMatchSummary {
+  score: number;
+  evidence: string[];
 }
 
 export interface JobFilterOption {

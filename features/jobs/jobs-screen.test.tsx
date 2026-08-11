@@ -80,6 +80,35 @@ describe("JobsScreen", () => {
     expect(screen.getByRole("button", { name: "Remove Area: Software Engineering" })).toBeInTheDocument();
   });
 
+  it("activates My Resume Match and explains the score", async () => {
+    const user = userEvent.setup();
+    const base = createFixtureRepository();
+    const searchJobs: typeof base.searchJobs = async (filters = {}) => {
+      const result = await base.searchJobs({});
+      if (!filters.resumeMatchProfile) return base.searchJobs(filters);
+      return {
+        ...result,
+        total: 1,
+        items: [{
+          ...result.items[0],
+          title: "Machine Learning Intern",
+          locationRegion: "us",
+          resumeMatchScore: 92,
+          resumeMatchEvidence: ["AI or machine learning role", "Python or PySpark"],
+        }],
+      };
+    };
+    render(<FixtureProvider repository={{ ...base, searchJobs }}><JobsScreen initialQuery="" /></FixtureProvider>);
+
+    await user.click(screen.getByRole("button", { name: "My Resume Match" }));
+
+    await waitFor(() => expect(window.location.search).toBe(
+      "?resumeMatch=chanyoung-resume&region=us&program=internship&program=coop",
+    ));
+    expect(screen.getByRole("button", { name: "Remove My Resume Match" })).toBeInTheDocument();
+    expect((await screen.findAllByText(/% Match/)).length).toBeGreaterThan(0);
+  });
+
   it("keeps region filtering visible and writes it to URL state", async () => {
     const user = userEvent.setup();
     render(<FixtureProvider><JobsScreen initialQuery="" /></FixtureProvider>);
@@ -137,7 +166,7 @@ describe("JobsScreen", () => {
     expect(rows.length).toBeGreaterThan(0);
     await user.click(rows[0]);
     expect(screen.getByRole("dialog", { name: "Job details" })).toBeInTheDocument();
-    expect(screen.getByText("Why it matched")).toBeInTheDocument();
+    expect(screen.getByText("Why this matches")).toBeInTheDocument();
   });
 
   it("applies 2027 internship and co-op filters and exposes removable chips", async () => {

@@ -627,3 +627,18 @@ a { color: inherit; }
   .overview-jobs-table th:nth-child(2), .overview-jobs-table td:nth-child(2),
   .overview-jobs-table th:nth-child(4), .overview-jobs-table td:nth-child(4) { display: none; }
 }
+.resume-match-preset[aria-pressed="true"],
+.resume-score {
+  color: #075985;
+}
+
+.resume-match-explanation {
+  border: 1px solid #bae6fd;
+  border-radius: 14px;
+  background: #f0f9ff;
+  padding: 16px;
+}
+
+.muted-value {
+  color: var(--muted);
+}

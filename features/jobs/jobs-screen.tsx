@@ -182,7 +182,7 @@ export function JobsScreen({
                       <td className="job-role-cell"><strong>{job.title}</strong>{job.areaKeys.length ? <span className="job-area-list">{job.areaKeys.map((area) => <span className="job-area-badge" key={area}>{areaLabels[area]}</span>)}</span> : null}</td>
                       <td><span className="job-location-meta"><span>{job.location}</span><span className="job-region-badge" aria-label={`Region: ${regionLabels[job.locationRegion]}`}>{regionLabels[job.locationRegion]}</span></span></td>
                       <td>{job.arrangement}</td>
-                      <td><b className="match-score">{job.matchScore}%</b><span>{job.matchedTerms.join(" · ")}</span></td>
+                      <td>{job.resumeMatchScore !== null ? <><b className="match-score resume-score">{job.resumeMatchScore}% Match</b><span>{job.resumeMatchEvidence.slice(0, 2).join(" · ")}</span></> : <span className="muted-value">—</span>}</td>
                       <td><span className="job-posting-time">{postingTiming(job)}</span></td>
                       <td><StatusBadge status={job.status} /></td>
                       <td><button className="row-action" type="button" aria-label={`View ${job.title} details`} onClick={(event) => void openDetails(job, event)}><ArrowUpRight size={16} aria-hidden="true" /></button></td>
@@ -198,7 +198,7 @@ export function JobsScreen({
                   <div className="mobile-job-top"><CompanyLogo company={job.company} /><div><span className="mobile-job-company" aria-label={`Company: ${job.company}`}>{job.company}</span><strong aria-label={`Role: ${job.title}`}>{job.title}</strong></div><StatusBadge status={job.status} /></div>
                   {job.areaKeys.length ? <div className="job-area-list">{job.areaKeys.map((area) => <span className="job-area-badge" key={area}>{areaLabels[area]}</span>)}</div> : null}
                   <p><span>{job.location} · {job.arrangement}</span><span className="job-region-badge" aria-label={`Region: ${regionLabels[job.locationRegion]}`}>{regionLabels[job.locationRegion]}</span></p>
-                  <div className="mobile-job-bottom"><span><b>{job.matchScore}%</b> match · {postingTiming(job)}</span><button className="button secondary" type="button" aria-label={`View ${job.title} details`} onClick={(event) => void openDetails(job, event)}>Details <ArrowUpRight size={15} /></button></div>
+                  <div className="mobile-job-bottom"><span>{job.resumeMatchScore !== null ? <><b>{job.resumeMatchScore}% Match</b> · </> : null}{postingTiming(job)}</span><button className="button secondary" type="button" aria-label={`View ${job.title} details`} onClick={(event) => void openDetails(job, event)}>Details <ArrowUpRight size={15} /></button></div>
                 </article>
               ))}
             </div>

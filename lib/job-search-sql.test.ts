@@ -314,4 +314,19 @@ describe("parameterized job search SQL", () => {
     expect(executePlan(plan.countSql, plan.bindings)).toEqual([{ total: 2 }]);
     expect(plan.pageSql).toContain("j.company = ? COLLATE NOCASE");
   });
+
+  it("filters active matches and orders by score before posting freshness", () => {
+    const plan = buildJobSearchPlan({
+      ...defaultJobFilters,
+      resumeMatchProfile: "chanyoung-resume",
+      regions: ["us"],
+      programTypes: ["internship", "coop"],
+    });
+
+    expect(plan.pageSql).toContain("resume_match.is_active = 1");
+    expect(plan.pageSql).toContain("resume_match.open_generation = j.open_generation");
+    expect(plan.pageSql).toContain("ORDER BY resume_match.score DESC");
+    expect(plan.pageSql).toContain("resume_match.score AS resume_match_score");
+    expect(plan.bindings).toContain("chanyoung-resume");
+  });
 });

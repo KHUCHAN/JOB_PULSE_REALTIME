@@ -37,6 +37,7 @@ export function ActiveFilterChips({
   if (filters.status !== "all") chips.push({ key: "status", label: `Job status: ${filters.status}` });
   if (filters.arrangement !== "all") chips.push({ key: "arrangement", label: `Work arrangement: ${filters.arrangement}` });
   if (filters.location.trim()) chips.push({ key: "location", label: `Location: ${filters.location.trim()}` });
+  if (filters.resumeMatchProfile === "chanyoung-resume") chips.push({ key: "resumeMatchProfile", label: "My Resume Match" });
   for (const topic of filters.topics ?? []) {
     if (topic === "ai-data") chips.push({ key: "topics", value: topic, label: "Topic: AI & Data Science" });
   }

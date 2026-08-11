@@ -104,6 +104,8 @@ const toRichFixtureJob = (job: JobPosting): RichJobPosting => {
     sourceUpdatedAt: null,
     validThrough: null,
     publishedAt: null,
+    resumeMatchScore: job.matchScore,
+    resumeMatchEvidence: [...job.matchedTerms],
   };
 };
 
@@ -221,7 +223,8 @@ const matchesFilters = (job: RichJobPosting, filters: JobFilters): boolean => {
     && hasAny(filters.shiftSchedules, [job.shiftSchedule])
     && hasAny(filters.travelRequirements, [job.travelRequirements])
     && hasAny(filters.securityClearances, [job.securityClearance])
-    && matchesArray(filters.languages, job.languages);
+    && matchesArray(filters.languages, job.languages)
+    && (!filters.resumeMatchProfile || job.resumeMatchScore !== null);
 };
 
 const deduplicate = (jobs: RichJobPosting[]): RichJobPosting[] => {

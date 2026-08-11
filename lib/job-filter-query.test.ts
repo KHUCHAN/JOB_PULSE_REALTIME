@@ -146,4 +146,14 @@ describe("job filter query codec", () => {
       salaryMax: Infinity,
     })).toBe(0);
   });
+
+  it("round-trips the personal resume preset as an atomic profile id", () => {
+    const filters = parseJobFilterParams(new URLSearchParams(
+      "resumeMatch=chanyoung-resume&region=us&program=internship&program=coop",
+    ));
+
+    expect(filters.resumeMatchProfile).toBe("chanyoung-resume");
+    expect(serializeJobFilters(filters).get("resumeMatch")).toBe("chanyoung-resume");
+    expect(activeFilterCount(filters)).toBe(3);
+  });
 });

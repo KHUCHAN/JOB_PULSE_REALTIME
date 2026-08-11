@@ -52,13 +52,23 @@ export function JobDetailDrawer({
             <p>{job.summary}</p>
           </section>
 
-          <section>
-            <h3>Why it matched</h3>
-            <div className="term-list">
-              {job.matchedTerms.map((term) => <span key={term}>{term}</span>)}
-            </div>
-            <div className="score-line"><span>Relevance score</span><strong>{job.matchScore}%</strong></div>
-          </section>
+          {job.resumeMatchScore !== null ? (
+            <section className="resume-match-explanation">
+              <h3>Why this matches</h3>
+              <div className="term-list">
+                {job.resumeMatchEvidence.map((term) => <span key={term}>{term}</span>)}
+              </div>
+              <div className="score-line"><span>Resume fit</span><strong>{job.resumeMatchScore}% Match</strong></div>
+            </section>
+          ) : (
+            <section>
+              <h3>Why it matched</h3>
+              <div className="term-list">
+                {job.matchedTerms.map((term) => <span key={term}>{term}</span>)}
+              </div>
+              <div className="score-line"><span>Relevance score</span><strong>{job.matchScore}%</strong></div>
+            </section>
+          )}
 
           <section className="timeline-block">
             <h3>Lifecycle</h3>

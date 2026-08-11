@@ -70,9 +70,25 @@ const areaKeysProjection = (alias: string): string => `coalesce((
 export const jobDetailProjection = (alias = "j"): string => [
   ...jobDetailColumns.map((column) => `${alias}.${column} AS ${column}`),
   areaKeysProjection(alias),
+  `(SELECT detail_match.score
+    FROM job_matches detail_match
+    JOIN match_profiles detail_profile ON detail_profile.keyword_id = detail_match.keyword_id
+    WHERE detail_profile.id = 'chanyoung-resume'
+      AND detail_match.job_id = ${alias}.id
+      AND detail_match.open_generation = ${alias}.open_generation
+      AND detail_match.is_active = 1
+    LIMIT 1) AS resume_match_score`,
+  `(SELECT detail_match.matched_terms
+    FROM job_matches detail_match
+    JOIN match_profiles detail_profile ON detail_profile.keyword_id = detail_match.keyword_id
+    WHERE detail_profile.id = 'chanyoung-resume'
+      AND detail_match.job_id = ${alias}.id
+      AND detail_match.open_generation = ${alias}.open_generation
+      AND detail_match.is_active = 1
+    LIMIT 1) AS resume_match_evidence`,
 ].join(",\n       ");
 
-const jobListProjection = [
+const jobListProjection = (withResumeMatch: boolean): string => [
   "j.id AS id", "j.source_id AS source_id", "j.company AS company", "j.title AS title",
   "j.location AS location", "j.arrangement AS arrangement",
   "substr(coalesce(j.summary, j.description), 1, 1200) AS summary",
@@ -80,11 +96,14 @@ const jobListProjection = [
   "j.last_seen_at AS last_seen_at", "j.review_state AS review_state",
   "j.employment_type AS employment_type", "j.published_at AS published_at",
   "j.location_region AS location_region", areaKeysProjection("j"),
+  withResumeMatch ? "resume_match.score AS resume_match_score" : "NULL AS resume_match_score",
+  withResumeMatch ? "resume_match.matched_terms AS resume_match_evidence" : "NULL AS resume_match_evidence",
 ].join(",\n       ");
 
 export function buildJobSearchPlan(filters: JobFilters): JobSearchPlan {
   const clauses = ["j.status = 'open'"];
   const bindings: unknown[] = [];
+  const fromBindings: unknown[] = [];
   const add = (clause: string, values: unknown[] = []) => {
     clauses.push(clause);
     bindings.push(...values);
@@ -111,9 +130,20 @@ export function buildJobSearchPlan(filters: JobFilters): JobSearchPlan {
   if (topics.length) {
     add("selected_topic.topic_key = ?", [topics[0]]);
   }
-  const fromSql = topics.length
+  let fromSql = topics.length
     ? "FROM job_topics selected_topic INDEXED BY job_topics_topic_job_idx JOIN jobs j ON j.id = selected_topic.job_id"
     : "FROM jobs j";
+  const resumeMatchSelected = filters.resumeMatchProfile === "chanyoung-resume";
+  if (resumeMatchSelected) {
+    fromSql += `
+JOIN match_profiles selected_profile ON selected_profile.id = ?
+JOIN job_matches resume_match
+  ON resume_match.keyword_id = selected_profile.keyword_id
+ AND resume_match.job_id = j.id
+ AND resume_match.open_generation = j.open_generation
+ AND resume_match.is_active = 1`;
+    fromBindings.push("chanyoung-resume");
+  }
 
   const areas = asNormalizedValues(filters.areas)
     .filter((area) => ["ai-ml", "data-analytics", "software-engineering"].includes(area))
@@ -211,15 +241,15 @@ export function buildJobSearchPlan(filters: JobFilters): JobSearchPlan {
   const offset = (validPage(filters.page) - 1) * limit;
 
   return {
-    pageSql: `SELECT ${jobListProjection}
+    pageSql: `SELECT ${jobListProjection(resumeMatchSelected)}
 ${fromSql}
 WHERE ${clauses.join(" AND ")}
-ORDER BY j.first_seen_at DESC, j.company ASC, j.id ASC
+ORDER BY ${resumeMatchSelected ? "resume_match.score DESC, COALESCE(j.published_at, j.first_seen_at) DESC" : "j.first_seen_at DESC"}, j.company ASC, j.id ASC
 LIMIT ? OFFSET ?`,
     countSql: `SELECT count(*) AS total
 ${fromSql}
 WHERE ${clauses.join(" AND ")}`,
-    bindings,
+    bindings: [...fromBindings, ...bindings],
     limit,
     offset,
   };

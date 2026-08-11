@@ -46,6 +46,7 @@ export const defaultJobFilters: JobFilters = {
   languages: [],
   page: 1,
   pageSize: 50,
+  resumeMatchProfile: undefined,
 };
 
 const arrayKeys = [
@@ -165,6 +166,9 @@ export function parseJobFilterParams(input: URLSearchParams): JobFilters {
   filters.postedBefore = parseDate(input.get("postedBefore"));
   filters.salaryMin = parseNonNegativeNumber(input.get("salaryMin"));
   filters.salaryMax = parseNonNegativeNumber(input.get("salaryMax"));
+  filters.resumeMatchProfile = input.get("resumeMatch") === "chanyoung-resume"
+    ? "chanyoung-resume"
+    : undefined;
 
   const page = parseInteger(input.get("page"));
   if (page !== undefined && page >= 1) filters.page = page;
@@ -190,6 +194,9 @@ export function serializeJobFilters(filters: JobFilters): URLSearchParams {
     params.append("arrangement", normalized.arrangement);
   }
   appendText("location", normalized.location);
+  if (normalized.resumeMatchProfile === "chanyoung-resume") {
+    params.append("resumeMatch", normalized.resumeMatchProfile);
+  }
   for (const topic of normalizeEnumValues(normalized.topics, topicKeys)) params.append("topic", topic);
   for (const area of normalizeEnumValues(normalized.areas, areaKeys)) params.append("area", area);
   for (const region of normalizeEnumValues(normalized.regions, regionKeys)) params.append("region", region);
@@ -235,6 +242,7 @@ export function activeFilterCount(filters: JobFilters): number {
     + Number(normalized.status !== "all" && statuses.has(normalized.status))
     + Number(normalized.arrangement !== "all" && arrangements.has(normalized.arrangement))
     + Number(Boolean(normalized.location.trim()))
+    + Number(normalized.resumeMatchProfile === "chanyoung-resume")
     + Number(normalizeEnumValues(normalized.topics, topicKeys).length > 0)
     + Number(normalizeEnumValues(normalized.areas, areaKeys).length > 0)
     + Number(normalizeEnumValues(normalized.regions, regionKeys).length > 0)

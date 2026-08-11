@@ -93,6 +93,7 @@ export function JobFilterPanel({
     && filters.recruitingYears?.includes(2027) === true
     && filters.programTypes?.includes("internship") === true
     && filters.programTypes?.includes("coop") === true;
+  const resumePresetSelected = filters.resumeMatchProfile === "chanyoung-resume";
   const employmentTypes = filters.employmentTypes ?? [];
   const programTypes = filters.programTypes ?? [];
   const seasons = filters.seasons ?? [];
@@ -135,6 +136,21 @@ export function JobFilterPanel({
           <label className="sr-only" htmlFor="job-search">Search jobs</label>
           <input id="job-search" type="search" value={search} onChange={(event) => onSearchChange(event.target.value)} placeholder="Role, company, or keyword" />
         </div>
+        <button
+          className="button secondary topic-preset resume-match-preset"
+          type="button"
+          aria-pressed={resumePresetSelected}
+          onClick={() => onChange(resumePresetSelected
+            ? { resumeMatchProfile: undefined, regions: [], programTypes: [] }
+            : {
+                resumeMatchProfile: "chanyoung-resume",
+                regions: ["us"],
+                programTypes: ["internship", "coop"],
+                recruitingYears: [],
+              })}
+        >
+          <Sparkles size={16} aria-hidden="true" /> My Resume Match
+        </button>
         <button
           className="button secondary topic-preset"
           type="button"

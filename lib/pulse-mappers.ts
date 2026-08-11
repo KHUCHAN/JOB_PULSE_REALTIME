@@ -51,6 +51,8 @@ export interface JobViewRow {
   source_updated_at?: string | null;
   valid_through?: string | null;
   published_at?: string | null;
+  resume_match_score?: number | null;
+  resume_match_evidence?: string | null;
 }
 
 export interface RichJobPosting extends JobPosting {
@@ -93,6 +95,8 @@ export interface RichJobPosting extends JobPosting {
   sourceUpdatedAt: string | null;
   validThrough: string | null;
   publishedAt: string | null;
+  resumeMatchScore: number | null;
+  resumeMatchEvidence: string[];
 }
 
 const nullableText = (value: string | null | undefined): string | null => value?.trim() || null;
@@ -114,6 +118,10 @@ const jobAreaKeys = (value: string | null | undefined): JobAreaKey[] => {
 const jobRegion = (value: string | null | undefined): JobRegion =>
   ["us", "non_us", "mixed", "unknown"].includes(value ?? "") ? value as JobRegion : "unknown";
 
+const resumeEvidenceLabels = (value: string | null | undefined): string[] => jsonStringArray(value)
+  .map((item) => item.split("|")[1]?.trim() || item)
+  .filter((item, index, values) => item && values.indexOf(item) === index);
+
 export interface CrawlActivityRow {
   id: string;
   company: string;
@@ -134,6 +142,8 @@ export function mapJob(row: JobViewRow): RichJobPosting {
   const status = ["new", "saved", "hidden", "applied"].includes(row.review_state ?? "")
     ? row.review_state as JobPosting["status"]
     : "new";
+  const resumeMatchScore = row.resume_match_score ?? null;
+  const resumeMatchEvidence = resumeEvidenceLabels(row.resume_match_evidence);
   return {
     id: row.id,
     sourceId: row.source_id,
@@ -143,8 +153,8 @@ export function mapJob(row: JobViewRow): RichJobPosting {
     arrangement,
     summary: row.summary || "Open the official posting for the full role description.",
     officialUrl: row.official_url,
-    matchedTerms: [],
-    matchScore: 0,
+    matchedTerms: resumeMatchEvidence,
+    matchScore: resumeMatchScore ?? 0,
     firstSeenAt: row.first_seen_at,
     lastConfirmedAt: row.last_seen_at,
     status,
@@ -187,6 +197,8 @@ export function mapJob(row: JobViewRow): RichJobPosting {
     sourceUpdatedAt: nullableText(row.source_updated_at),
     validThrough: nullableText(row.valid_through),
     publishedAt: nullableText(row.published_at),
+    resumeMatchScore,
+    resumeMatchEvidence,
   };
 }
 

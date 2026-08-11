@@ -73,12 +73,16 @@ describe("live D1 view mapping", () => {
       location_region: "us",
       area_keys: '["ai-ml","software-engineering","invalid"]',
       published_at: "2026-08-08T00:00:00.000Z",
+      resume_match_score: 92,
+      resume_match_evidence: '["role:ai-ml|AI or machine learning role|35","skill:python|Python or PySpark|8"]',
     });
 
     expect(job).toMatchObject({
       locationRegion: "us",
       areaKeys: ["ai-ml", "software-engineering"],
       publishedAt: "2026-08-08T00:00:00.000Z",
+      resumeMatchScore: 92,
+      resumeMatchEvidence: ["AI or machine learning role", "Python or PySpark"],
     });
   });
 

@@ -56,6 +56,8 @@ const job: RichJobPosting = {
   sourceUpdatedAt: null,
   validThrough: null,
   publishedAt: null,
+  resumeMatchScore: null,
+  resumeMatchEvidence: [],
 };
 
 it("opens the collected direct application URL when the ATS provides one", () => {
@@ -63,4 +65,16 @@ it("opens the collected direct application URL when the ATS provides one", () =>
 
   expect(screen.getByRole("link", { name: /Open official job page/ }))
     .toHaveAttribute("href", job.applyUrl);
+});
+
+it("explains a personal resume match without exposing raw rule codes", () => {
+  render(<JobDetailDrawer job={{
+    ...job,
+    resumeMatchScore: 92,
+    resumeMatchEvidence: ["AI or machine learning role", "Python or PySpark"],
+  }} onClose={vi.fn()} onChangeState={vi.fn()} />);
+
+  expect(screen.getByRole("heading", { name: "Why this matches" })).toBeInTheDocument();
+  expect(screen.getByText("92% Match")).toBeInTheDocument();
+  expect(screen.getByText("Python or PySpark")).toBeInTheDocument();
 });
