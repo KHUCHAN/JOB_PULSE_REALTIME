@@ -782,6 +782,66 @@ Wrong description.
     }));
   });
 
+  it("streams Google result bodies instead of materializing every full HTML page", async () => {
+    const encoder = new TextEncoder();
+    const html = `<span class="SWhIm">1</span> jobs matched
+      <a href="/about/careers/applications/jobs/results/100-streamed-role" aria-label="Learn more about Streamed Role"></a>`;
+    const fetcher: typeof fetch = async () => {
+      const response = new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(html.slice(0, 67)));
+          controller.enqueue(encoder.encode(html.slice(67)));
+          controller.close();
+        },
+      }), { status: 200 });
+      response.text = async () => { throw new Error("Google pages must be parsed from the response stream."); };
+      return response;
+    };
+
+    const result = await crawlSource({
+      id: "p4-0285-google",
+      company: "Google / Alphabet",
+      postingUrl: "https://www.google.com/about/careers/applications/jobs/results/",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      jobs: [expect.objectContaining({ externalId: "100", title: "Streamed Role" })],
+    }));
+  });
+
+  it("checkpoints oversized Google catalogs across bounded crawl invocations", async () => {
+    const requests: number[] = [];
+    const page = (start: number, count: number) => Array.from({ length: count }, (_, index) => {
+      const id = start + index;
+      return `<a href="/about/careers/applications/jobs/results/${id}-role-${id}" aria-label="Learn more about Role ${id}"></a>`;
+    }).join("");
+    const fetcher: typeof fetch = async (input) => {
+      const pageNumber = Number(new URL(String(input)).searchParams.get("page") ?? 1);
+      requests.push(pageNumber);
+      const count = pageNumber === 22 ? 1 : 20;
+      return new Response(`<span class="SWhIm">421</span> jobs matched ${page(pageNumber * 100, count)}`, { status: 200 });
+    };
+
+    const result = await crawlSource({
+      id: "p4-0285-google",
+      company: "Google / Alphabet",
+      postingUrl: "https://www.google.com/about/careers/applications/jobs/results/",
+      adapter: "custom",
+      crawlPageCursor: 21,
+    }, fetcher, new Date());
+
+    expect(requests).toEqual([1, 21, 22]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 22 },
+    }));
+    expect(result.jobs).toHaveLength(41);
+  });
+
   it("keeps Google DeepMind's official company filter on every careers page", async () => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input) => {

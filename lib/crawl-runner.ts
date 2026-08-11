@@ -8,6 +8,11 @@ export interface CrawlStore {
   dueSources(now: string, limit: number): Promise<PersistedSource[]>;
   startRun(source: PersistedSource, scheduledFor: string): Promise<string>;
   syncJobs(sourceId: string, jobs: CrawledJob[], completeListing: boolean, facets?: CrawledFacet[]): Promise<{ created: number; updated: number; closed: number }>;
+  advancePagedCrawl(
+    sourceId: string,
+    pagination: { nextPage: number; cycleComplete: boolean; totalPages: number },
+    cycleStartedAt: string,
+  ): Promise<{ closed: number }>;
   finishRun(runId: string, values: Record<string, unknown>): Promise<void>;
   scheduleNext(sourceId: string, nextCrawlAt: string): Promise<void>;
 }
@@ -44,6 +49,14 @@ const runSource = async (
   if (crawl.status === "succeeded") {
     try {
       changes = await store.syncJobs(source.id, crawl.jobs, crawl.completeListing, crawl.facets);
+      if (crawl.pagination) {
+        const paged = await store.advancePagedCrawl(
+          source.id,
+          crawl.pagination,
+          source.crawlCycleStartedAt ?? scheduledFor,
+        );
+        changes.closed += paged.closed;
+      }
     } catch (syncError) {
       status = "failed";
       error = syncError instanceof Error ? syncError.message : "Could not persist crawl results.";

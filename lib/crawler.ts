@@ -7,6 +7,8 @@ export type CrawlSource = {
   company: string;
   postingUrl: string;
   adapter: "greenhouse" | "lever" | "workday" | "ashby" | "icims" | "phenom" | "custom";
+  crawlPageCursor?: number;
+  crawlCycleStartedAt?: string | null;
 };
 
 export type CrawledJob = {
@@ -69,6 +71,7 @@ export type SourceCrawlResult = {
   completeListing: boolean;
   jobs: CrawledJob[];
   facets?: CrawledFacet[];
+  pagination?: { nextPage: number; cycleComplete: boolean; totalPages: number };
   error: string | null;
 };
 
@@ -2881,6 +2884,61 @@ const googleJobsFromHtml = (html: string, source: CrawlSource): CrawledJob[] => 
   return uniqueJobs(jobs);
 };
 
+const googleJobsFromResponse = async (
+  response: Response,
+  source: CrawlSource,
+  readTotal: boolean,
+): Promise<{ jobs: CrawledJob[]; total: number | null }> => {
+  if (!response.body) {
+    const html = await response.text();
+    const totalText = readTotal
+      ? html.match(/<span\b[^>]*class=["'][^"']*\bSWhIm\b[^"']*["'][^>]*>\s*([\d,]+)\s*<\/span>\s*jobs matched/i)?.[1]
+      : null;
+    return {
+      jobs: googleJobsFromHtml(html, source),
+      total: totalText ? Number(totalText.replaceAll(",", "")) : null,
+    };
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const jobs: CrawledJob[] = [];
+  let buffer = "";
+  let metadataTail = "";
+  let total: number | null = null;
+  const consume = (text: string): void => {
+    if (!text) return;
+    if (readTotal && total === null) {
+      const metadata = metadataTail + text;
+      const totalText = metadata.match(/<span\b[^>]*class=["'][^"']*\bSWhIm\b[^"']*["'][^>]*>\s*([\d,]+)\s*<\/span>\s*jobs matched/i)?.[1];
+      if (totalText) total = Number(totalText.replaceAll(",", ""));
+      metadataTail = metadata.slice(-2_048);
+    }
+
+    buffer += text;
+    const anchorPattern = /<a\b[^>]*>/gi;
+    let lastCompleteEnd = 0;
+    for (const match of buffer.matchAll(anchorPattern)) {
+      jobs.push(...googleJobsFromHtml(match[0], source));
+      lastCompleteEnd = (match.index ?? 0) + match[0].length;
+    }
+    if (lastCompleteEnd > 0) buffer = buffer.slice(lastCompleteEnd);
+    if (buffer.length > 8_192) {
+      const partialAnchor = buffer.toLowerCase().lastIndexOf("<a");
+      buffer = partialAnchor >= 0 ? buffer.slice(partialAnchor) : buffer.slice(-4_096);
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    consume(decoder.decode(value, { stream: true }));
+  }
+  consume(decoder.decode());
+  if (buffer) jobs.push(...googleJobsFromHtml(buffer, source));
+  return { jobs: uniqueJobs(jobs), total };
+};
+
 const crawlGoogleCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
   const endpointFor = (page: number) => {
     const endpoint = new URL("https://www.google.com/about/careers/applications/jobs/results/");
@@ -2894,14 +2952,11 @@ const crawlGoogleCareers = async (source: CrawlSource, fetcher: typeof fetch): P
     try {
       const response = await fetchWithTimeout(fetcher, endpointFor(page), { headers: { accept: "text/html" } });
       if (!response.ok) return null;
-      const html = await response.text();
-      const totalText = page === 1
-        ? html.match(/<span\b[^>]*class=["'][^"']*\bSWhIm\b[^"']*["'][^>]*>\s*([\d,]+)\s*<\/span>\s*jobs matched/i)?.[1]
-        : null;
+      const pageData = await googleJobsFromResponse(response, source, page === 1);
       return {
         status: response.status,
-        jobs: googleJobsFromHtml(html, source),
-        total: totalText ? Number(totalText.replaceAll(",", "")) : null,
+        jobs: pageData.jobs,
+        total: pageData.total,
       };
     } catch {
       return null;
@@ -2915,11 +2970,20 @@ const crawlGoogleCareers = async (source: CrawlSource, fetcher: typeof fetch): P
   const boundedPages = Math.min(totalPages, 500);
   const jobsByUrl = new Map(first.jobs.map((job) => [job.officialUrl, job]));
   let successfulPages = 1;
-  const pageConcurrency = 4;
-  for (let page = 2; page <= boundedPages; page += pageConcurrency) {
+  const pageConcurrency = 1;
+  const isCheckpointedCatalog = source.id === "p4-0285-google" && totalPages > 20;
+  const startPage = isCheckpointedCatalog
+    ? Math.min(Math.max(source.crawlPageCursor ?? 1, 1), boundedPages)
+    : 1;
+  const endPage = isCheckpointedCatalog
+    ? Math.min(startPage + 19, boundedPages)
+    : boundedPages;
+  const firstRequestedPage = Math.max(startPage, 2);
+  successfulPages = startPage === 1 ? 1 : 0;
+  for (let page = firstRequestedPage; page <= endPage; page += pageConcurrency) {
     const pages = await Promise.all(
       Array.from(
-        { length: Math.min(pageConcurrency, boundedPages - page + 1) },
+        { length: Math.min(pageConcurrency, endPage - page + 1) },
         (_, index) => fetchPage(page + index),
       ),
     );
@@ -2930,6 +2994,20 @@ const crawlGoogleCareers = async (source: CrawlSource, fetcher: typeof fetch): P
     }
   }
   const jobs = [...jobsByUrl.values()];
+  if (isCheckpointedCatalog) {
+    return {
+      status: "succeeded",
+      responseStatus: first.status,
+      completeListing: false,
+      jobs,
+      pagination: {
+        nextPage: endPage === boundedPages ? 1 : endPage + 1,
+        cycleComplete: endPage === boundedPages,
+        totalPages,
+      },
+      error: null,
+    };
+  }
   return {
     status: "succeeded",
     responseStatus: first.status,

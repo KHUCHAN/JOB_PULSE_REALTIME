@@ -7,6 +7,7 @@ class MemoryStore implements CrawlStore {
 
   readonly runs: Array<Record<string, unknown>> = [];
   readonly synced: Array<{ sourceId: string; jobs: CrawledJob[]; completeListing: boolean }> = [];
+  readonly paged: Array<{ sourceId: string; nextPage: number; cycleComplete: boolean; cycleStartedAt: string }> = [];
 
   async dueSources(): Promise<PersistedSource[]> {
     return this.sources;
@@ -22,6 +23,15 @@ class MemoryStore implements CrawlStore {
     if (this.failSync) throw new Error("D1 unavailable");
     this.synced.push({ sourceId, jobs, completeListing });
     return { created: jobs.length, updated: 0, closed: completeListing ? 1 : 0 };
+  }
+
+  async advancePagedCrawl(
+    sourceId: string,
+    pagination: { nextPage: number; cycleComplete: boolean; totalPages: number },
+    cycleStartedAt: string,
+  ): Promise<{ closed: number }> {
+    this.paged.push({ sourceId, nextPage: pagination.nextPage, cycleComplete: pagination.cycleComplete, cycleStartedAt });
+    return { closed: pagination.cycleComplete ? 2 : 0 };
   }
 
   async finishRun(runId: string, values: Record<string, unknown>): Promise<void> {
@@ -100,6 +110,38 @@ describe("runDueCrawls", () => {
     await expect(runSpecificCrawls(store, [source], fetcher, new Date("2026-08-08T12:00:00Z"), { concurrency: 1 }))
       .resolves.toEqual(expect.objectContaining({ attempted: 1, succeeded: 1 }));
     expect(store.synced).toEqual([expect.objectContaining({ sourceId: "repair-me" })]);
+  });
+
+  it("advances a paged crawl checkpoint and closes stale rows only after the final page window", async () => {
+    const source: PersistedSource = {
+      id: "p4-0285-google",
+      company: "Google / Alphabet",
+      postingUrl: "https://www.google.com/about/careers/applications/jobs/results/",
+      adapter: "custom",
+      nextCrawlAt: null,
+      crawlPageCursor: 21,
+      crawlCycleStartedAt: "2026-08-08T08:00:00.000Z",
+    };
+    const store = new MemoryStore([source]);
+    const page = (start: number, count: number) => Array.from({ length: count }, (_, index) => {
+      const id = start + index;
+      return `<a href="/about/careers/applications/jobs/results/${id}-role-${id}" aria-label="Learn more about Role ${id}"></a>`;
+    }).join("");
+    const fetcher: typeof fetch = async (input) => {
+      const pageNumber = Number(new URL(String(input)).searchParams.get("page") ?? 1);
+      return new Response(`<span class="SWhIm">421</span> jobs matched ${page(pageNumber * 100, pageNumber === 22 ? 1 : 20)}`, { status: 200 });
+    };
+
+    const result = await runDueCrawls(store, fetcher, new Date("2026-08-08T12:00:00.000Z"), { concurrency: 1 });
+
+    expect(result).toEqual(expect.objectContaining({ succeeded: 1, closed: 2 }));
+    expect(store.synced[0]).toEqual(expect.objectContaining({ completeListing: false }));
+    expect(store.paged).toEqual([{
+      sourceId: "p4-0285-google",
+      nextPage: 1,
+      cycleComplete: true,
+      cycleStartedAt: "2026-08-08T08:00:00.000Z",
+    }]);
   });
 
 });

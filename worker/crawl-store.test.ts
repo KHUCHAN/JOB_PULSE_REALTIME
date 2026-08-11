@@ -497,4 +497,53 @@ describe("D1CrawlStore source leasing", () => {
     expect(calls[0].sql).toContain("RETURNING id, company, posting_url, adapter, next_crawl_at");
     expect(calls[0].values).toEqual(["2026-08-09T12:10:00.000Z", "2026-08-09T12:00:00.000Z", 16]);
   });
+
+  it("hydrates Google's bounded page checkpoint from catalog state", async () => {
+    const db = {
+      prepare(sql: string) {
+        return {
+          bind() {
+            return { all: async () => ({ results: sql.includes("UPDATE sources") ? [{
+              id: "p4-0285-google", company: "Google / Alphabet",
+              posting_url: "https://www.google.com/about/careers/applications/jobs/results/",
+              adapter: "custom", next_crawl_at: "2026-08-09T12:10:00.000Z",
+            }] : [{ value: JSON.stringify({ nextPage: 41, cycleStartedAt: "2026-08-09T08:00:00.000Z" }) }] }) };
+          },
+        };
+      },
+    } as unknown as D1Database;
+
+    await expect(new D1CrawlStore(db).dueSources("2026-08-09T12:00:00.000Z", 1)).resolves.toEqual([
+      expect.objectContaining({
+        crawlPageCursor: 41,
+        crawlCycleStartedAt: "2026-08-09T08:00:00.000Z",
+      }),
+    ]);
+  });
+
+  it("persists the next page and closes stale Google rows only at cycle completion", async () => {
+    const calls: Array<{ sql: string; values: unknown[] }> = [];
+    const db = {
+      prepare(sql: string) {
+        return {
+          bind(...values: unknown[]) {
+            calls.push({ sql, values });
+            return { run: async () => ({ meta: { changes: sql.includes("UPDATE jobs") ? 3 : 1 } }) };
+          },
+        };
+      },
+    } as unknown as D1Database;
+    const store = new D1CrawlStore(db);
+
+    await expect(store.advancePagedCrawl("p4-0285-google", {
+      nextPage: 41, cycleComplete: false, totalPages: 178,
+    }, "2026-08-09T08:00:00.000Z")).resolves.toEqual({ closed: 0 });
+    await expect(store.advancePagedCrawl("p4-0285-google", {
+      nextPage: 1, cycleComplete: true, totalPages: 178,
+    }, "2026-08-09T08:00:00.000Z")).resolves.toEqual({ closed: 3 });
+
+    expect(calls[0].sql).toContain("INSERT INTO catalog_state");
+    expect(calls[1].sql).toContain("last_seen_at < ?");
+    expect(calls[2].sql).toContain("DELETE FROM catalog_state");
+  });
 });

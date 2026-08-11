@@ -25,6 +25,13 @@ type ExistingJobRow = {
   resume_match_hash: string | null;
 };
 
+type PagedCrawlState = {
+  nextPage: number;
+  cycleStartedAt: string;
+};
+
+const pagedCrawlStateKey = (sourceId: string): string => `crawl_page_checkpoint:${sourceId}`;
+
 const isNavigationArtifact = (job: ExistingJobRow): boolean => {
   const title = job.title.replace(/\s+/g, " ").trim();
   if (/\.(?:pdf|docx?)(?:[?#]|$)/i.test(job.official_url)) return true;
@@ -180,13 +187,31 @@ export class D1CrawlStore implements CrawlStore {
       RETURNING id, company, posting_url, adapter, next_crawl_at
     `).bind(leaseUntil, now, limit).all<SourceRow>();
 
-    return result.results.map((row) => ({
+    const sources: PersistedSource[] = result.results.map((row) => ({
       id: row.id,
       company: row.company,
       postingUrl: row.posting_url,
       adapter: row.adapter,
       nextCrawlAt: row.next_crawl_at,
     }));
+    const google = sources.find((source) => source.id === "p4-0285-google");
+    if (!google) return sources;
+
+    const checkpointResult = await this.db.prepare(`
+      SELECT value FROM catalog_state WHERE key = ?
+    `).bind(pagedCrawlStateKey(google.id)).all<{ value: string }>();
+    const value = checkpointResult.results[0]?.value;
+    if (!value) return sources;
+    try {
+      const checkpoint = JSON.parse(value) as Partial<PagedCrawlState>;
+      if (Number.isInteger(checkpoint.nextPage) && Number(checkpoint.nextPage) > 0 && typeof checkpoint.cycleStartedAt === "string") {
+        google.crawlPageCursor = Number(checkpoint.nextPage);
+        google.crawlCycleStartedAt = checkpoint.cycleStartedAt;
+      }
+    } catch {
+      // Ignore a malformed checkpoint and restart from page one safely.
+    }
+    return sources;
   }
 
   async startRun(source: PersistedSource, scheduledFor: string): Promise<string> {
@@ -202,6 +227,35 @@ export class D1CrawlStore implements CrawlStore {
       VALUES (?, ?, ?, ?, 'running')
     `).bind(id, source.id, scheduledFor, startedAt).run();
     return id;
+  }
+
+  async advancePagedCrawl(
+    sourceId: string,
+    pagination: { nextPage: number; cycleComplete: boolean; totalPages: number },
+    cycleStartedAt: string,
+  ): Promise<{ closed: number }> {
+    const key = pagedCrawlStateKey(sourceId);
+    if (!pagination.cycleComplete) {
+      await this.db.prepare(`
+        INSERT INTO catalog_state (key, value, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+      `).bind(key, JSON.stringify({ nextPage: pagination.nextPage, cycleStartedAt })).run();
+      return { closed: 0 };
+    }
+
+    const now = new Date().toISOString();
+    const closed = await this.db.prepare(`
+      UPDATE jobs
+      SET status = 'closed', closed_at = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE source_id = ? AND status = 'open' AND last_seen_at < ?
+    `).bind(now, sourceId, cycleStartedAt).run();
+    await this.db.prepare(`
+      DELETE FROM catalog_state
+      WHERE key = ?
+        AND (json_extract(value, '$.cycleStartedAt') = ? OR value IS NULL)
+    `).bind(key, cycleStartedAt).run();
+    return { closed: Number(closed.meta?.changes ?? 0) };
   }
 
   async syncJobs(sourceId: string, jobs: CrawledJob[], completeListing: boolean, facets?: CrawledFacet[]): Promise<{ created: number; updated: number; closed: number }> {
