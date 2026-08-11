@@ -31,6 +31,7 @@ import {
   rotatingJobFilterOptionKeys,
 } from "../../../lib/job-filter-options";
 import { buildJobSearchPlan, jobDetailProjection } from "../../../lib/job-search-sql";
+import { normalizeJobUrlRepairs } from "../../../lib/job-url-repair";
 import { overviewCountsSql } from "../../../lib/overview-sql";
 import { backfillJobTopics } from "../../../lib/job-topic-backfill";
 import { backfillJobPrograms } from "../../../lib/job-program-backfill";
@@ -508,6 +509,37 @@ export async function POST(request: Request): Promise<Response> {
         sourceIds: sources.map((source) => source.id),
         nextAfterSourceId: sources.at(-1)?.id ?? null,
       });
+    }
+    if (body.action === "repairCanonicalJobUrls") {
+      const repairs = normalizeJobUrlRepairs(body.repairs);
+      if (repairs.length === 0) return json({ error: "At least one valid same-origin URL repair is required." }, 400);
+      const result = await db().prepare(`
+        UPDATE jobs
+        SET official_url = (
+              SELECT json_extract(value, '$.officialUrl')
+              FROM json_each(?1)
+              WHERE json_extract(value, '$.id') = jobs.id
+            ),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE status = 'open'
+          AND id IN (SELECT json_extract(value, '$.id') FROM json_each(?1))
+          AND official_url = (
+            SELECT json_extract(value, '$.currentUrl')
+            FROM json_each(?1)
+            WHERE json_extract(value, '$.id') = jobs.id
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM jobs target
+            WHERE target.source_id = jobs.source_id
+              AND target.official_url = (
+                SELECT json_extract(value, '$.officialUrl')
+                FROM json_each(?1)
+                WHERE json_extract(value, '$.id') = jobs.id
+              )
+          )
+        RETURNING id
+      `).bind(JSON.stringify(repairs)).all<{ id: string }>();
+      return json({ requested: repairs.length, updated: result.results.length, ids: result.results.map((row) => row.id) });
     }
     return json({ error: "Unknown action." }, 400);
   } catch (error) {
