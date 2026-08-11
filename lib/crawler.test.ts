@@ -1180,7 +1180,7 @@ Wrong description.
         if (url === "https://static.xx.fbcdn.net/meta-careers.js") {
           return new Response('__d("CareersJobSearchResultsV2DataQuery_candidate_portalRelayOperation",[],function(){exports="99999999999999999"})');
         }
-        if (url === "https://www.metacareers.com/jobs/sitemap.xml") return new Response("temporary", { status: 503 });
+        if (url.includes("sitemap.xml")) return new Response("temporary", { status: 503 });
         operationIds.push(new URLSearchParams(String(init?.body)).get("doc_id") ?? "");
         return Response.json({ data: { job_search_with_featured_jobs_v2: { all_jobs: allJobs } } });
       };
@@ -1300,6 +1300,120 @@ Wrong description.
     }, fetcher, new Date());
 
     expect(result).toEqual(expect.objectContaining({ status: "failed", completeListing: false, jobs: [] }));
+  });
+
+  it("uses the reader copy of Meta's official sitemap when both direct sitemap paths return HTML", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === "https://www.metacareers.com/jobsearch/") return new Response("<main>no token</main>");
+      if (url === "https://www.metacareers.com/jobs/sitemap.xml" || url === "https://www.metacareers.com/jobsearch/sitemap.xml") {
+        return new Response("<!DOCTYPE html><title>Blocked</title>");
+      }
+      if (url === "https://r.jina.ai/https://www.metacareers.com/jobs/sitemap.xml") {
+        return new Response([
+          "Title: Sitemap",
+          "[https://www.metacareers.com/profile/job_details/201/](https://www.metacareers.com/profile/job_details/201/)",
+        ].join("\n"));
+      }
+      if (url === "https://r.jina.ai/http://www.metacareers.com/jobs/sitemap.xml") {
+        return new Response("[https://www.metacareers.com/profile/job_details/201/](https://www.metacareers.com/profile/job_details/201/)");
+      }
+      return new Response(`<script type="application/ld+json">${JSON.stringify({
+        "@type": "JobPosting", title: "Research Scientist", identifier: { value: "201" },
+      })}</script>`);
+    };
+
+    const result = await crawlSource({
+      id: "p4-0308-meta", company: "Meta", postingUrl: "https://www.metacareers.com/jobsearch/", adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests).toEqual([
+      "https://www.metacareers.com/jobsearch/",
+      "https://www.metacareers.com/jobs/sitemap.xml",
+      "https://www.metacareers.com/jobsearch/sitemap.xml",
+      "https://r.jina.ai/https://www.metacareers.com/jobs/sitemap.xml",
+      "https://r.jina.ai/http://www.metacareers.com/jobs/sitemap.xml",
+      "https://www.metacareers.com/profile/job_details/201/",
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      jobs: [expect.objectContaining({ externalId: "201", title: "Research Scientist" })],
+      pagination: { nextPage: 1_000_001, cycleComplete: false, totalPages: 1 },
+    }));
+  });
+
+  it("continues to the next Meta sitemap candidate after a direct request throws", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === "https://www.metacareers.com/jobsearch/") return new Response("<main>no token</main>");
+      if (url === "https://www.metacareers.com/jobs/sitemap.xml") return {
+        ok: true,
+        status: 200,
+        text: async () => { throw new Error("body stream reset"); },
+      } as unknown as Response;
+      if (url === "https://www.metacareers.com/jobsearch/sitemap.xml") {
+        return new Response('<urlset><url><loc>https://www.metacareers.com/profile/job_details/301/</loc></url></urlset>');
+      }
+      return new Response(`<script type="application/ld+json">${JSON.stringify({
+        "@type": "JobPosting", title: "Software Engineer", identifier: { value: "301" },
+      })}</script>`);
+    };
+
+    const result = await crawlSource({
+      id: "p4-0308-meta", company: "Meta", postingUrl: "https://www.metacareers.com/jobsearch/", adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests).toContain("https://www.metacareers.com/jobsearch/sitemap.xml");
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", jobs: [expect.objectContaining({ externalId: "301" })] }));
+  });
+
+  it("rejects disagreeing reader copies of Meta's official sitemap", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url === "https://www.metacareers.com/jobsearch/") return new Response("<main>no token</main>");
+      if (url === "https://r.jina.ai/https://www.metacareers.com/jobs/sitemap.xml") {
+        return new Response("https://www.metacareers.com/profile/job_details/401/");
+      }
+      if (url === "https://r.jina.ai/http://www.metacareers.com/jobs/sitemap.xml") {
+        return new Response("https://www.metacareers.com/profile/job_details/402/");
+      }
+      return new Response("<!DOCTYPE html>");
+    };
+
+    const result = await crawlSource({
+      id: "p4-0308-meta", company: "Meta", postingUrl: "https://www.metacareers.com/jobsearch/", adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result).toEqual(expect.objectContaining({ status: "failed", completeListing: false, jobs: [] }));
+  });
+
+  it("restarts authoritative Meta pagination at page one after a reader checkpoint", async () => {
+    const detailRequests: string[] = [];
+    const urls = Array.from({ length: 81 }, (_, index) => 1_001 + index)
+      .map((id) => `<url><loc>https://www.metacareers.com/profile/job_details/${id}/</loc></url>`)
+      .join("");
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url === "https://www.metacareers.com/jobsearch/") return new Response("<main>no token</main>");
+      if (url === "https://www.metacareers.com/jobs/sitemap.xml") return new Response(`<urlset>${urls}</urlset>`);
+      detailRequests.push(url);
+      const id = url.match(/\/(\d+)\/$/)?.[1] ?? "";
+      return new Response(`<script type="application/ld+json">${JSON.stringify({
+        "@type": "JobPosting", title: `Role ${id}`, identifier: { value: id },
+      })}</script>`);
+    };
+
+    const result = await crawlSource({
+      id: "p4-0308-meta", company: "Meta", postingUrl: "https://www.metacareers.com/jobsearch/", adapter: "custom",
+      crawlPageCursor: 1_000_005,
+    }, fetcher, new Date());
+
+    expect(detailRequests[0]).toBe("https://www.metacareers.com/profile/job_details/1001/");
+    expect(result.pagination).toEqual({ nextPage: 2, cycleComplete: false, totalPages: 3 });
   });
 
   it("reads Databricks' complete official Gatsby Greenhouse catalog", async () => {

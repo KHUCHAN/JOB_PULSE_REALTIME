@@ -4059,10 +4059,14 @@ const metaFacet = (key: string, label: string, jobs: MetaCareerJob[], select: (j
   };
 };
 
-const metaSitemapEntries = (xml: string): Array<{ id: string; url: string }> => [...xml.matchAll(/<loc>\s*([^<]+?)\s*<\/loc>/gi)]
-  .flatMap((match) => {
+const metaSitemapEntries = (text: string, allowPlainUrls = false): Array<{ id: string; url: string }> => [
+  ...[...text.matchAll(/<loc>\s*([^<]+?)\s*<\/loc>/gi)].map((match) => match[1]),
+  ...(allowPlainUrls
+    ? [...text.matchAll(/https:\/\/www\.metacareers\.com\/profile\/job_details\/\d+\//gi)].map((match) => match[0])
+    : []),
+].flatMap((candidate) => {
     try {
-      const url = new URL(decodeHtmlAttribute(match[1]));
+      const url = new URL(decodeHtmlAttribute(candidate));
       const id = url.pathname.match(/^\/profile\/job_details\/(\d+)\/$/i)?.[1];
       return url.origin === "https://www.metacareers.com"
         && !url.username && !url.password && !url.search && !url.hash && id
@@ -4114,23 +4118,55 @@ const metaStructuredJob = (html: string, entry: { id: string; url: string }, sou
 };
 
 async function crawlMetaSitemapFallback(source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> {
-  const sitemapUrl = "https://www.metacareers.com/jobs/sitemap.xml";
+  const readerCursorBase = 1_000_000;
+  const directSitemapUrls = [
+    "https://www.metacareers.com/jobs/sitemap.xml",
+    "https://www.metacareers.com/jobsearch/sitemap.xml",
+  ];
+  const readerSitemapUrls = [
+    "https://r.jina.ai/https://www.metacareers.com/jobs/sitemap.xml",
+    "https://r.jina.ai/http://www.metacareers.com/jobs/sitemap.xml",
+  ];
   try {
-    const sitemapResponse = await fetchWithTimeout(fetcher, sitemapUrl, {
-      headers: { accept: "application/xml,text/xml;q=0.9,*/*;q=0.7" },
-    }, false, { attempts: 1, timeoutMs: 20_000 });
-    if (!sitemapResponse.ok) return {
-      status: isBlockedHttpStatus(sitemapResponse.status) ? "blocked" : "failed",
-      responseStatus: sitemapResponse.status,
-      completeListing: false,
-      jobs: [],
-      error: `Meta careers sitemap returned HTTP ${sitemapResponse.status}.`,
-    };
-    const entries = [...new Map(metaSitemapEntries(await sitemapResponse.text()).map((entry) => [entry.id, entry])).values()]
+    let responseStatus: number | null = null;
+    let entries: Array<{ id: string; url: string }> = [];
+    let authoritativeSitemap = false;
+    const sortedUnique = (values: Array<{ id: string; url: string }>) => [...new Map(values.map((entry) => [entry.id, entry])).values()]
       .sort((left, right) => left.id.localeCompare(right.id, "en", { numeric: true }));
+    const fetchSitemapText = async (url: string, reader: boolean): Promise<string | null> => {
+      try {
+        const response = await fetchWithTimeout(fetcher, url, {
+          headers: { accept: reader ? "text/plain" : "application/xml,text/xml;q=0.9,*/*;q=0.7" },
+        }, false, { attempts: 1, timeoutMs: 20_000 });
+        responseStatus = response.status;
+        return response.ok ? await response.text() : null;
+      } catch {
+        return null;
+      }
+    };
+    for (const sitemapUrl of directSitemapUrls) {
+      const text = await fetchSitemapText(sitemapUrl, false);
+      if (!text || !/<urlset\b/i.test(text) || !/<\/urlset>\s*$/i.test(text)) continue;
+      entries = sortedUnique(metaSitemapEntries(text));
+      if (entries.length > 0) {
+        authoritativeSitemap = true;
+        break;
+      }
+    }
+    if (entries.length === 0) {
+      const readerCopies: Array<Array<{ id: string; url: string }>> = [];
+      for (const sitemapUrl of readerSitemapUrls) {
+        const text = await fetchSitemapText(sitemapUrl, true);
+        readerCopies.push(text ? sortedUnique(metaSitemapEntries(text, true)) : []);
+      }
+      if (readerCopies.length === 2 && readerCopies.every((copy) => copy.length > 0)) {
+        const signatures = readerCopies.map((copy) => JSON.stringify(copy.map((entry) => [entry.id, entry.url])));
+        if (signatures[0] === signatures[1]) entries = readerCopies[0];
+      }
+    }
     if (entries.length === 0) return {
       status: "failed",
-      responseStatus: sitemapResponse.status,
+      responseStatus,
       completeListing: false,
       jobs: [],
       error: "Meta careers sitemap returned no official job URLs.",
@@ -4139,7 +4175,11 @@ async function crawlMetaSitemapFallback(source: CrawlSource, fetcher: typeof fet
     const pageSize = 40;
     const pageStride = pageSize - 1;
     const totalPages = entries.length <= pageSize ? 1 : 1 + Math.ceil((entries.length - pageSize) / pageStride);
-    const page = Math.min(Math.max(source.crawlPageCursor ?? 1, 1), totalPages);
+    const persistedCursor = source.crawlPageCursor ?? 1;
+    const requestedPage = authoritativeSitemap
+      ? persistedCursor > readerCursorBase ? 1 : persistedCursor
+      : persistedCursor > readerCursorBase ? persistedCursor - readerCursorBase : 1;
+    const page = Math.min(Math.max(requestedPage, 1), totalPages);
     const pageStart = (page - 1) * pageStride;
     const pageEntries = entries.slice(pageStart, pageStart + pageSize);
     const jobs: CrawledJob[] = [];
@@ -4162,19 +4202,21 @@ async function crawlMetaSitemapFallback(source: CrawlSource, fetcher: typeof fet
     }
     if (failedDetail || jobs.length !== pageEntries.length) return {
       status: "failed",
-      responseStatus: sitemapResponse.status,
+      responseStatus,
       completeListing: false,
       jobs: [],
       error: `Meta careers sitemap detail segment ${page} was incomplete.`,
     };
     return {
       status: "succeeded",
-      responseStatus: sitemapResponse.status,
+      responseStatus,
       completeListing: false,
       jobs,
       pagination: {
-        nextPage: page === totalPages ? 1 : page + 1,
-        cycleComplete: page === totalPages,
+        nextPage: authoritativeSitemap
+          ? page === totalPages ? 1 : page + 1
+          : readerCursorBase + (page === totalPages ? 1 : page + 1),
+        cycleComplete: authoritativeSitemap && page === totalPages,
         totalPages,
       },
       error: null,
