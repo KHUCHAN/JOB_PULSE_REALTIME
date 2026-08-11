@@ -175,7 +175,11 @@ Analyze large unstructured data sets. Experience with Python, SQL, and Excel. Pu
       }
       if (!url.includes("sector-data-scientist-2027-intern-us")) return new Response("challenge", { status: 403 });
       const headers = new Headers(init?.headers);
-      if (headers.get("x-return-format") === "html") return new Response("challenge", { status: 200 });
+      if (headers.get("x-return-format") === "html") return new Response(`<script type="application/ld+json">{
+        "@type":"JobPosting", "title":"Wrong HTML Role", "url":"https://www.citadel.com/careers/details/different-role/",
+        "description":"Wrong HTML description.",
+        "jobLocation":{"address":{"addressLocality":"London","addressCountry":"GB"}}
+      }</script>`, { status: 200 });
       return new Response(`Title: Wrong Role - Citadel
 URL Source: http://www.citadel.com/careers/details/different-role/
 # Wrong Role

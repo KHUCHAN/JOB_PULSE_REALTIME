@@ -2097,13 +2097,15 @@ const crawlCitadel = async (source: CrawlSource, fetcher: typeof fetch): Promise
           }, false, { attempts: 2, timeoutMs: 30_000 });
           if (response.ok) {
             const extracted = extractJobsFromHtml(await response.text(), source).jobs;
+            const expectedUrl = new URL(entry.url);
             job = extracted.find((candidate) => {
               try {
-                return new URL(candidate.officialUrl).pathname === new URL(entry.url).pathname;
+                const candidateUrl = new URL(candidate.officialUrl);
+                return candidateUrl.hostname === expectedUrl.hostname && candidateUrl.pathname === expectedUrl.pathname;
               } catch {
                 return false;
               }
-            }) ?? (extracted.length === 1 ? extracted[0] : null);
+            }) ?? null;
           }
         } catch {
           // HTML is optional; the text reader below can still provide the detail.
