@@ -1053,13 +1053,15 @@ Wrong description.
         return new Response([
           '<script src="https://static.xx.fbcdn.net/meta-careers.js"></script>',
           '<script type="application/json">["LSD",[],{"token":"fresh-lsd-token"}]</script>',
-        ].join(""));
+        ].join(""), { headers: { "set-cookie": "datr=meta-session; Path=/; Secure; HttpOnly" } });
       }
       if (url === "https://static.xx.fbcdn.net/meta-careers.js") {
         return new Response('__d("CareersJobSearchResultsV2DataQuery_candidate_portalRelayOperation",[],function(){exports="27129360303422352"})');
       }
       expect(url).toBe("https://www.metacareers.com/graphql");
       expect(init?.method).toBe("POST");
+      expect(new Headers(init?.headers).get("origin")).toBe("https://www.metacareers.com");
+      expect(new Headers(init?.headers).get("cookie")).toBe("datr=meta-session");
       const body = new URLSearchParams(String(init?.body));
       expect(body.get("doc_id")).toBe("27129360303422352");
       expect(body.get("lsd")).toBe("fresh-lsd-token");
@@ -2586,6 +2588,101 @@ Wrong description.
     }));
   });
 
+  it("uses Cisco's official Workday catalog and checkpoints it within the request budget", async () => {
+    const offsets: number[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      expect(String(input)).toBe("https://cisco.wd5.myworkdayjobs.com/wday/cxs/cisco/Cisco_Careers/jobs");
+      const body = JSON.parse(String(init?.body)) as { offset: number };
+      offsets.push(body.offset);
+      const count = Math.min(20, 1_142 - body.offset);
+      return Response.json({
+        total: 1_142,
+        jobPostings: Array.from({ length: count }, (_, index) => {
+          const id = body.offset + index;
+          return {
+            title: `Cisco Role ${id}`,
+            externalPath: `/job/San-Jose-California-US/Cisco-Role-${id}_${id}`,
+            locationsText: "San Jose, California, US",
+            postedOn: "Posted Today",
+          };
+        }),
+      });
+    };
+
+    const result = await crawlSource({
+      id: "p4-0245-cisco",
+      company: "Cisco",
+      postingUrl: "https://careers.cisco.com/global/en/search-results",
+      adapter: "phenom",
+      crawlPageCursor: 41,
+    }, fetcher, new Date("2026-08-11T12:00:00Z"));
+
+    expect(offsets).toEqual([0, ...Array.from({ length: 18 }, (_, index) => 800 + index * 20)]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 58 },
+    }));
+    expect(result.jobs).toHaveLength(362);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      title: "Cisco Role 0",
+      officialUrl: "https://cisco.wd5.myworkdayjobs.com/Cisco_Careers/job/San-Jose-California-US/Cisco-Role-0_0",
+    }));
+  });
+
+  it("never treats an empty Cisco Workday response as an authoritative zero-job catalog", async () => {
+    const result = await crawlSource({
+      id: "p4-0245-cisco",
+      company: "Cisco",
+      postingUrl: "https://careers.cisco.com/global/en/search-results",
+      adapter: "phenom",
+    }, async () => Response.json({ total: 0, jobPostings: [] }), new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed",
+      responseStatus: 200,
+      completeListing: false,
+      jobs: [],
+    }));
+    expect(result.pagination).toBeUndefined();
+  });
+
+  it("does not advance Cisco when a Workday page contains unusable cards", async () => {
+    const fetcher: typeof fetch = async (_input, init) => {
+      const { offset } = JSON.parse(String(init?.body)) as { offset: number };
+      const count = Math.min(20, 1_142 - offset);
+      return Response.json({
+        total: 1_142,
+        jobPostings: Array.from({ length: count }, (_, index) => ({
+          ...(offset === 800 && index === 0 ? {} : { title: `Cisco Role ${offset + index}` }),
+          externalPath: `/job/Cisco-Role-${offset + index}_${offset + index}`,
+        })),
+      });
+    };
+
+    const result = await crawlSource({
+      id: "p4-0245-cisco", company: "Cisco",
+      postingUrl: "https://careers.cisco.com/global/en/search-results", adapter: "phenom",
+      crawlPageCursor: 41,
+    }, fetcher, new Date());
+
+    expect(result.pagination).toEqual({ nextPage: 41, cycleComplete: false, totalPages: 58 });
+  });
+
+  it("keeps Cisco within the request budget by disabling per-page automatic retries", async () => {
+    let calls = 0;
+    const result = await crawlSource({
+      id: "p4-0245-cisco", company: "Cisco",
+      postingUrl: "https://careers.cisco.com/global/en/search-results", adapter: "phenom",
+    }, async () => {
+      calls += 1;
+      return new Response("temporary", { status: 503 });
+    }, new Date());
+
+    expect(calls).toBe(1);
+    expect(result).toEqual(expect.objectContaining({ status: "failed", responseStatus: 503 }));
+  });
+
   it("bounds the Aetna source to Aetna matches instead of crawling every CVS retail role", async () => {
     const bodies: string[] = [];
     const fetcher: typeof fetch = async (_input, init) => {
@@ -2896,7 +2993,7 @@ Wrong description.
     };
 
     const result = await crawlSource({
-      id: "p4-0245-cisco",
+      id: "checkpointed-phenom",
       company: "Cisco",
       postingUrl: "https://careers.cisco.com/global/en/search-results",
       adapter: "phenom",
@@ -2921,7 +3018,7 @@ Wrong description.
     );
 
     const result = await crawlSource({
-      id: "p4-0245-cisco", company: "Cisco",
+      id: "checkpointed-phenom", company: "Cisco",
       postingUrl: "https://careers.cisco.com/global/en/search-results", adapter: "phenom",
       crawlPageCursor: 41,
     }, fetcher, new Date());
@@ -2945,7 +3042,7 @@ Wrong description.
       } })};</script>`);
     };
     const result = await crawlSource({
-      id: "p4-0245-cisco", company: "Cisco",
+      id: "checkpointed-phenom", company: "Cisco",
       postingUrl: "https://careers.cisco.com/global/en/search-results", adapter: "phenom",
       crawlPageCursor: 41,
     }, fetcher, new Date());

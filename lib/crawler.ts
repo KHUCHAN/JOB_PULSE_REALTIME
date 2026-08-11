@@ -4074,6 +4074,10 @@ async function crawlMetaCareers(source: CrawlSource, fetcher: typeof fetch): Pro
       jobs: [],
       error: `Meta careers page returned HTTP ${pageResponse.status}.`,
     };
+    const sessionCookie = [...(pageResponse.headers.get("set-cookie") ?? "")
+      .matchAll(/(?:^|,\s*)([!#$%&'*+\-.^_`|~0-9A-Za-z]+)=([^;,\s]+)/g)]
+      .map((match) => `${match[1]}=${match[2]}`)
+      .join("; ");
     const html = await pageResponse.text();
     const lsd = html.match(/\["LSD",\[\],\{"token":"([^"]+)"/)?.[1];
     const scriptUrls = [...new Set([...html.matchAll(/<script[^>]+src=["']([^"']+\.js(?:[^"']*)?)["']/gi)]
@@ -4132,9 +4136,11 @@ async function crawlMetaCareers(source: CrawlSource, fetcher: typeof fetch): Pro
       headers: {
         accept: "*/*",
         "content-type": "application/x-www-form-urlencoded",
+        origin: "https://www.metacareers.com",
         referer: source.postingUrl,
         "x-fb-friendly-name": "CareersJobSearchResultsV2DataQuery",
         "x-fb-lsd": lsd,
+        ...(sessionCookie ? { cookie: sessionCookie } : {}),
       },
       body,
     }, false, { attempts: 1, timeoutMs: 30_000 });
@@ -4272,6 +4278,7 @@ const workdayPublishedAt = (value: string | undefined, now: Date): string | null
 
 async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
   try {
+    const isCisco = source.id === "p4-0245-cisco";
     const endpointUrl = new URL(endpoint);
     const site = endpointUrl.pathname.split("/").at(-2);
     const referer = site ? `${endpointUrl.origin}/${site}` : endpointUrl.origin;
@@ -4288,7 +4295,7 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
         headers,
         // Workday's public CXS endpoint rejects page sizes above 20.
         body: JSON.stringify({ appliedFacets, limit: 20, offset, searchText }),
-      });
+      }, true, isCisco ? { attempts: 1 } : undefined);
       if (!response.ok) {
         throw Object.assign(new Error(`Workday returned HTTP ${response.status}.`), { responseStatus: response.status });
       }
@@ -4297,17 +4304,48 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
 
     const first = await fetchPage(0);
     const total = first.payload.total ?? first.payload.jobPostings?.length ?? 0;
-    const pagePayloads = [first.payload];
-    const offsets = Array.from(
-      { length: Math.max(0, Math.ceil(Math.min(total, 2_000) / 20) - 1) },
-      (_, index) => (index + 1) * 20,
+    const usableFirstJobs = (first.payload.jobPostings ?? [])
+      .filter((job) => Boolean(job.title && job.externalPath));
+    if (isCisco && (total <= 0 || usableFirstJobs.length === 0)) return {
+      status: "failed",
+      responseStatus: first.status,
+      completeListing: false,
+      jobs: [],
+      error: "Cisco's official Workday catalog returned no usable jobs.",
+    };
+    const totalPages = Math.max(1, Math.ceil(Math.min(total, 2_000) / 20));
+    const isCheckpointed = isCisco;
+    const startPage = isCheckpointed ? Math.min(Math.max(source.crawlPageCursor ?? 1, 1), totalPages) : 1;
+    const endPage = isCheckpointed ? Math.min(startPage + (startPage === 1 ? 19 : 18), totalPages) : totalPages;
+    const pageNumbers = Array.from(
+      { length: Math.max(0, endPage - Math.max(startPage, 2) + 1) },
+      (_, index) => Math.max(startPage, 2) + index,
     );
+    const pagePayloads = [first.payload];
+    const offsets = pageNumbers.map((page) => (page - 1) * 20);
     for (let index = 0; index < offsets.length; index += 8) {
       const pages = await Promise.all(offsets.slice(index, index + 8).map((offset) => fetchPage(offset)));
       pagePayloads.push(...pages.map(({ payload }) => payload));
     }
 
     const rawJobs = pagePayloads.flatMap((payload) => payload.jobPostings ?? []);
+    const seenPageIdentities = new Set<string>();
+    let firstFailedPage: number | null = claimPageIdentities(
+      usableFirstJobs.map((job) => job.externalPath),
+      Math.min(20, total),
+      seenPageIdentities,
+    ) ? null : 1;
+    for (let index = 1; index < pagePayloads.length && firstFailedPage === null; index += 1) {
+      const pageNumber = pageNumbers[index - 1];
+      const expected = Math.min(20, Math.max(0, total - (pageNumber - 1) * 20));
+      if (!claimPageIdentities(
+        (pagePayloads[index].jobPostings ?? [])
+          .filter((job) => Boolean(job.title && job.externalPath))
+          .map((job) => job.externalPath),
+        expected,
+        seenPageIdentities,
+      )) firstFailedPage = pageNumber;
+    }
     const facets: CrawledFacet[] = (first.payload.facets ?? []).flatMap((facet) => facet.facetParameter && facet.descriptor ? [{
       key: facet.facetParameter,
       label: facet.descriptor,
@@ -4404,9 +4442,16 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
     return {
       status: "succeeded",
       responseStatus: first.status,
-      completeListing: total <= 2_000 && jobs.length === total,
+      completeListing: !isCheckpointed && firstFailedPage === null && total <= 2_000 && jobs.length === total,
       jobs,
       ...(facets.length > 0 ? { facets } : {}),
+      ...(isCheckpointed ? {
+        pagination: {
+          nextPage: firstFailedPage ?? (endPage === totalPages ? 1 : endPage),
+          cycleComplete: firstFailedPage === null && endPage === totalPages,
+          totalPages,
+        },
+      } : {}),
       error: null,
     };
   } catch (error) {
@@ -4439,6 +4484,9 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   if (sourcePage.hostname === "www.okta.com" && sourcePage.pathname.includes("/company/careers/job-listing")) return crawlOktaCareers(source, fetcher);
   if (sourcePage.hostname === "www.amazon.jobs" || sourcePage.hostname === "amazon.jobs") return crawlAmazonJobs(source, fetcher);
   if (source.id === "p5-0752-tiktok" || sourcePage.hostname === "lifeattiktok.com") return crawlTikTok(source, fetcher);
+  if (source.id === "p4-0245-cisco") {
+    return crawlWorkday(source, "https://cisco.wd5.myworkdayjobs.com/wday/cxs/cisco/Cisco_Careers/jobs", fetcher, now);
+  }
   if (source.id === "p4-0256-databricks") return crawlDatabricks(source, fetcher);
   if (["p5-0624-ibm", "p4-0295-ibm-consulting", "p4-0446-ibm-watsonx"].includes(source.id)) return crawlIbm(source, fetcher);
   if (sourcePage.hostname === "careers.servicenow.com") return crawlServiceNow(source, fetcher);
