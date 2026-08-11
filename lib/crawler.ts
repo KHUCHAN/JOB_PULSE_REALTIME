@@ -9,6 +9,7 @@ export type CrawlSource = {
   adapter: "greenhouse" | "lever" | "workday" | "ashby" | "icims" | "phenom" | "custom";
   crawlPageCursor?: number;
   crawlCycleStartedAt?: string | null;
+  crawlPreviousCycleStartedAt?: string | null;
 };
 
 export type CrawledJob = {
@@ -2658,7 +2659,7 @@ const crawlAmazonJobs = async (source: CrawlSource, fetcher: typeof fetch): Prom
       completeListing: false,
       jobs,
       pagination: {
-        nextPage: firstFailedPage ?? (endPage === totalPages ? 1 : endPage + 1),
+        nextPage: firstFailedPage ?? (endPage === totalPages ? 1 : endPage),
         cycleComplete: firstFailedPage === null && endPage === totalPages,
         totalPages,
       },
@@ -3052,7 +3053,7 @@ const crawlGoogleCareers = async (source: CrawlSource, fetcher: typeof fetch): P
       completeListing: false,
       jobs,
       pagination: {
-        nextPage: firstFailedPage ?? (endPage === boundedPages ? 1 : endPage + 1),
+        nextPage: firstFailedPage ?? (endPage === boundedPages ? 1 : endPage),
         cycleComplete: firstFailedPage === null && endPage === boundedPages,
         totalPages,
       },

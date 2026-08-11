@@ -12,6 +12,7 @@ export interface CrawlStore {
     sourceId: string,
     pagination: { nextPage: number; cycleComplete: boolean; totalPages: number },
     cycleStartedAt: string,
+    previousCycleStartedAt: string | null,
   ): Promise<{ closed: number }>;
   finishRun(runId: string, values: Record<string, unknown>): Promise<void>;
   scheduleNext(sourceId: string, nextCrawlAt: string): Promise<void>;
@@ -54,6 +55,7 @@ const runSource = async (
           source.id,
           crawl.pagination,
           source.crawlCycleStartedAt ?? scheduledFor,
+          source.crawlPreviousCycleStartedAt ?? null,
         );
         changes.closed += paged.closed;
       }

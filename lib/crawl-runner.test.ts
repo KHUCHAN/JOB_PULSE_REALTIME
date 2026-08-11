@@ -7,7 +7,7 @@ class MemoryStore implements CrawlStore {
 
   readonly runs: Array<Record<string, unknown>> = [];
   readonly synced: Array<{ sourceId: string; jobs: CrawledJob[]; completeListing: boolean }> = [];
-  readonly paged: Array<{ sourceId: string; nextPage: number; cycleComplete: boolean; cycleStartedAt: string }> = [];
+  readonly paged: Array<{ sourceId: string; nextPage: number; cycleComplete: boolean; cycleStartedAt: string; previousCycleStartedAt: string | null }> = [];
 
   async dueSources(): Promise<PersistedSource[]> {
     return this.sources;
@@ -29,9 +29,10 @@ class MemoryStore implements CrawlStore {
     sourceId: string,
     pagination: { nextPage: number; cycleComplete: boolean; totalPages: number },
     cycleStartedAt: string,
+    previousCycleStartedAt: string | null,
   ): Promise<{ closed: number }> {
-    this.paged.push({ sourceId, nextPage: pagination.nextPage, cycleComplete: pagination.cycleComplete, cycleStartedAt });
-    return { closed: pagination.cycleComplete ? 2 : 0 };
+    this.paged.push({ sourceId, nextPage: pagination.nextPage, cycleComplete: pagination.cycleComplete, cycleStartedAt, previousCycleStartedAt });
+    return { closed: pagination.cycleComplete && previousCycleStartedAt ? 2 : 0 };
   }
 
   async finishRun(runId: string, values: Record<string, unknown>): Promise<void> {
@@ -121,6 +122,7 @@ describe("runDueCrawls", () => {
       nextCrawlAt: null,
       crawlPageCursor: 21,
       crawlCycleStartedAt: "2026-08-08T08:00:00.000Z",
+      crawlPreviousCycleStartedAt: "2026-08-07T08:00:00.000Z",
     };
     const store = new MemoryStore([source]);
     const page = (start: number, count: number) => Array.from({ length: count }, (_, index) => {
@@ -141,6 +143,7 @@ describe("runDueCrawls", () => {
       nextPage: 1,
       cycleComplete: true,
       cycleStartedAt: "2026-08-08T08:00:00.000Z",
+      previousCycleStartedAt: "2026-08-07T08:00:00.000Z",
     }]);
   });
 

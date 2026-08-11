@@ -509,7 +509,11 @@ describe("D1CrawlStore source leasing", () => {
               adapter: "custom", next_crawl_at: "2026-08-09T12:10:00.000Z",
             }] : [{
               key: "crawl_page_checkpoint:p4-0285-google",
-              value: JSON.stringify({ nextPage: 41, cycleStartedAt: "2026-08-09T08:00:00.000Z" }),
+              value: JSON.stringify({
+                nextPage: 41,
+                cycleStartedAt: "2026-08-09T08:00:00.000Z",
+                previousCycleStartedAt: "2026-08-08T08:00:00.000Z",
+              }),
             }] }) };
           },
         };
@@ -520,11 +524,12 @@ describe("D1CrawlStore source leasing", () => {
       expect.objectContaining({
         crawlPageCursor: 41,
         crawlCycleStartedAt: "2026-08-09T08:00:00.000Z",
+        crawlPreviousCycleStartedAt: "2026-08-08T08:00:00.000Z",
       }),
     ]);
   });
 
-  it("persists the next page and closes stale Google rows only at cycle completion", async () => {
+  it("persists page cycles and closes stale rows only after two completed cycles", async () => {
     const calls: Array<{ sql: string; values: unknown[] }> = [];
     const db = {
       prepare(sql: string) {
@@ -540,13 +545,18 @@ describe("D1CrawlStore source leasing", () => {
 
     await expect(store.advancePagedCrawl("p4-0285-google", {
       nextPage: 41, cycleComplete: false, totalPages: 178,
-    }, "2026-08-09T08:00:00.000Z")).resolves.toEqual({ closed: 0 });
+    }, "2026-08-09T08:00:00.000Z", null)).resolves.toEqual({ closed: 0 });
     await expect(store.advancePagedCrawl("p4-0285-google", {
       nextPage: 1, cycleComplete: true, totalPages: 178,
-    }, "2026-08-09T08:00:00.000Z")).resolves.toEqual({ closed: 3 });
+    }, "2026-08-09T08:00:00.000Z", null)).resolves.toEqual({ closed: 0 });
+    await expect(store.advancePagedCrawl("p4-0285-google", {
+      nextPage: 1, cycleComplete: true, totalPages: 178,
+    }, "2026-08-10T08:00:00.000Z", "2026-08-09T08:00:00.000Z")).resolves.toEqual({ closed: 3 });
 
     expect(calls[0].sql).toContain("INSERT INTO catalog_state");
-    expect(calls[1].sql).toContain("last_seen_at < ?");
-    expect(calls[2].sql).toContain("DELETE FROM catalog_state");
+    expect(calls[1].sql).toContain("INSERT INTO catalog_state");
+    expect(calls[2].sql).toContain("last_seen_at < ?");
+    expect(calls[2].values[2]).toBe("2026-08-09T08:00:00.000Z");
+    expect(calls[3].sql).toContain("INSERT INTO catalog_state");
   });
 });

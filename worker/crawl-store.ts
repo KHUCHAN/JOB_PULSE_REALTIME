@@ -28,6 +28,7 @@ type ExistingJobRow = {
 type PagedCrawlState = {
   nextPage: number;
   cycleStartedAt: string;
+  previousCycleStartedAt?: string | null;
 };
 
 const pagedCrawlStateKey = (sourceId: string): string => `crawl_page_checkpoint:${sourceId}`;
@@ -209,6 +210,9 @@ export class D1CrawlStore implements CrawlStore {
         if (Number.isInteger(checkpoint.nextPage) && Number(checkpoint.nextPage) > 0 && typeof checkpoint.cycleStartedAt === "string") {
           source.crawlPageCursor = Number(checkpoint.nextPage);
           source.crawlCycleStartedAt = checkpoint.cycleStartedAt;
+          source.crawlPreviousCycleStartedAt = typeof checkpoint.previousCycleStartedAt === "string"
+            ? checkpoint.previousCycleStartedAt
+            : null;
         }
       } catch {
         // Ignore a malformed checkpoint and restart from page one safely.
@@ -236,6 +240,7 @@ export class D1CrawlStore implements CrawlStore {
     sourceId: string,
     pagination: { nextPage: number; cycleComplete: boolean; totalPages: number },
     cycleStartedAt: string,
+    previousCycleStartedAt: string | null,
   ): Promise<{ closed: number }> {
     const key = pagedCrawlStateKey(sourceId);
     if (!pagination.cycleComplete) {
@@ -243,22 +248,30 @@ export class D1CrawlStore implements CrawlStore {
         INSERT INTO catalog_state (key, value, updated_at)
         VALUES (?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-      `).bind(key, JSON.stringify({ nextPage: pagination.nextPage, cycleStartedAt })).run();
+      `).bind(key, JSON.stringify({ nextPage: pagination.nextPage, cycleStartedAt, previousCycleStartedAt })).run();
       return { closed: 0 };
     }
 
     const now = new Date().toISOString();
-    const closed = await this.db.prepare(`
-      UPDATE jobs
-      SET status = 'closed', closed_at = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE source_id = ? AND status = 'open' AND last_seen_at < ?
-    `).bind(now, sourceId, cycleStartedAt).run();
+    let closedCount = 0;
+    if (previousCycleStartedAt) {
+      const closed = await this.db.prepare(`
+        UPDATE jobs
+        SET status = 'closed', closed_at = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE source_id = ? AND status = 'open' AND last_seen_at < ?
+      `).bind(now, sourceId, previousCycleStartedAt).run();
+      closedCount = Number(closed.meta?.changes ?? 0);
+    }
     await this.db.prepare(`
-      DELETE FROM catalog_state
-      WHERE key = ?
-        AND (json_extract(value, '$.cycleStartedAt') = ? OR value IS NULL)
-    `).bind(key, cycleStartedAt).run();
-    return { closed: Number(closed.meta?.changes ?? 0) };
+      INSERT INTO catalog_state (key, value, updated_at)
+      VALUES (?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+    `).bind(key, JSON.stringify({
+      nextPage: 1,
+      cycleStartedAt: now,
+      previousCycleStartedAt: cycleStartedAt,
+    })).run();
+    return { closed: closedCount };
   }
 
   async syncJobs(sourceId: string, jobs: CrawledJob[], completeListing: boolean, facets?: CrawledFacet[]): Promise<{ created: number; updated: number; closed: number }> {
