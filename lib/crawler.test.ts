@@ -1092,7 +1092,7 @@ Wrong description.
       employmentType: "Internship",
       department: "AI Research; Internship - PhD",
       team: "Machine Learning; Research",
-      officialUrl: "https://www.metacareers.com/jobs/2916726525182155/",
+      officialUrl: "https://www.metacareers.com/profile/job_details/2916726525182155/",
     })]);
     expect(result.facets).toEqual(expect.arrayContaining([
       expect.objectContaining({ key: "department" }),
@@ -1133,6 +1133,149 @@ Wrong description.
 
     expect(result.status).toBe("succeeded");
     expect(result.jobs).toEqual([expect.objectContaining({ externalId: "meta-1" })]);
+  });
+
+  it("reads Databricks' complete official Gatsby Greenhouse catalog", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      expect(String(input)).toBe("https://www.databricks.com/careers-assets/page-data/company/careers/open-positions/page-data.json");
+      return Response.json({
+        result: { pageContext: { data: { allGreenhouseJob: { nodes: [{
+          id: "Greenhouse__Job__6918763002",
+          gh_Id: 6918763002,
+          internal_job_id: 555,
+          title: "Machine Learning Engineer Intern",
+          absolute_url: "https://databricks.com/company/careers/open-positions/job?gh_jid=6918763002",
+          updated_at: "2026-08-11T14:54:39-04:00",
+          content: "&lt;p&gt;Build production ML systems.&lt;/p&gt;",
+          location: { name: "San Francisco, California" },
+          offices: [{ name: "San Francisco" }],
+          departments: [{ name: "Engineering" }],
+          metadata: [{ value: ["Machine Learning"], filterDept: "Engineering" }],
+        }] } } } },
+      });
+    };
+
+    const result = await crawlSource({
+      id: "p4-0256-databricks", company: "Databricks",
+      postingUrl: "https://www.databricks.com/company/careers/open-positions", adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "6918763002",
+      title: "Machine Learning Engineer Intern",
+      employmentType: "Internship",
+      location: "San Francisco, California",
+      department: "Engineering",
+      office: "San Francisco",
+      description: "Build production ML systems.",
+      officialUrl: "https://databricks.com/company/careers/open-positions/job?gh_jid=6918763002",
+      publishedAt: "2026-08-11T18:54:39.000Z",
+    })]);
+  });
+
+  it("paginates IBM's official search API and retains searchable job facets", async () => {
+    const offsets: number[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      expect(String(input)).toBe("https://www-api.ibm.com/search/api/v2");
+      const body = JSON.parse(String(init?.body)) as { from?: number; size: number };
+      offsets.push(body.from ?? 0);
+      const count = (body.from ?? 0) === 30 ? 1 : 30;
+      return Response.json({
+        hits: {
+          total: { value: 31 },
+          hits: Array.from({ length: count }, (_, index) => {
+            const id = (body.from ?? 0) + index + 1;
+            return {
+              _id: `hash-${id}`,
+              _source: {
+                title: id === 1 ? "AI Developer Intern" : `IBM Role ${id}`,
+                url: `https://careers.ibm.com/careers/JobDetail?jobId=${id}&source=WEB_Search_NA`,
+                description: "Build hybrid cloud and AI products.",
+                field_keyword_08: "Software Engineering",
+                field_keyword_17: "Hybrid",
+                field_keyword_18: "Entry Level",
+                field_keyword_19: "SAN JOSE, US",
+              },
+            };
+          }),
+        },
+      });
+    };
+
+    const result = await crawlSource({
+      id: "p5-0624-ibm", company: "IBM",
+      postingUrl: "https://www.ibm.com/careers/search", adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(offsets).toEqual([0, 30]);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toHaveLength(31);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "hash-1",
+      title: "AI Developer Intern",
+      employmentType: "Internship",
+      location: "SAN JOSE, US",
+      arrangement: "hybrid",
+      department: "Software Engineering",
+      experienceLevel: "Entry Level",
+      officialUrl: "https://careers.ibm.com/en_US/careers/JobDetail?jobId=1",
+    }));
+  });
+
+  it("checkpoints IBM catalogs that exceed the Worker request budget", async () => {
+    const offsets: number[] = [];
+    const fetcher: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as { from?: number };
+      const from = body.from ?? 0;
+      offsets.push(from);
+      return Response.json({ hits: {
+        total: { value: 1_230 },
+        hits: Array.from({ length: 30 }, (_, index) => {
+          const id = from + index + 1;
+          return { _id: `hash-${id}`, _source: {
+            title: `IBM Role ${id}`,
+            url: `https://careers.ibm.com/careers/JobDetail?jobId=${id}`,
+          } };
+        }),
+      } });
+    };
+
+    const result = await crawlSource({
+      id: "p5-0624-ibm", company: "IBM",
+      postingUrl: "https://www.ibm.com/careers/search", adapter: "custom",
+      crawlPageCursor: 23,
+    }, fetcher, new Date());
+
+    expect(offsets).toEqual([0, ...Array.from({ length: 19 }, (_, index) => 660 + index * 30)]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 41 },
+    }));
+    expect(result.jobs).toHaveLength(600);
+  });
+
+  it("does not advance IBM when a full page partially overlaps or contains unusable jobs", async () => {
+    const fetcher: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as { from?: number };
+      const from = body.from ?? 0;
+      return Response.json({ hits: {
+        total: { value: 1_230 },
+        hits: Array.from({ length: 30 }, (_, index) => {
+          const id = from === 660 && index === 0 ? 1 : from + index + 1;
+          return { _id: `hash-${id}`, _source: {
+            title: from === 660 && index === 1 ? undefined : `IBM Role ${id}`,
+            url: `https://careers.ibm.com/careers/JobDetail?jobId=${id}`,
+          } };
+        }),
+      } });
+    };
+    const result = await crawlSource({
+      id: "p5-0624-ibm", company: "IBM",
+      postingUrl: "https://www.ibm.com/careers/search", adapter: "custom", crawlPageCursor: 23,
+    }, fetcher, new Date());
+    expect(result.pagination).toEqual({ nextPage: 23, cycleComplete: false, totalPages: 41 });
   });
 
   it("collects every EPAM page from its public Next.js job payload", async () => {
@@ -1979,6 +2122,101 @@ Wrong description.
     expect(result.jobs).toHaveLength(330);
   });
 
+  it("does not advance Amazon's checkpoint when the search endpoint repeats a page", async () => {
+    const jobs = Array.from({ length: 100 }, (_, index) => ({
+      id_icims: String(index + 1), title: `Amazon Role ${index + 1}`,
+      job_path: `/en/jobs/${index + 1}/amazon-role-${index + 1}`,
+    }));
+    const fetcher: typeof fetch = async () => Response.json({ hits: 2_230, jobs });
+    const result = await crawlSource({
+      id: "p4-0394-amazon", company: "Amazon / AWS",
+      postingUrl: "https://www.amazon.jobs/en/", adapter: "custom", crawlPageCursor: 21,
+    }, fetcher, new Date());
+    expect(result.pagination).toEqual({ nextPage: 21, cycleComplete: false, totalPages: 23 });
+    expect(result.jobs).toHaveLength(100);
+  });
+
+  it("checkpoints TikTok's official catalog and retains role, program, location, and apply fields", async () => {
+    const offsets: number[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      expect(url).toBe("https://api.lifeattiktok.com/api/v1/public/supplier/search/job/posts");
+      expect(init?.method).toBe("POST");
+      expect(new Headers(init?.headers).get("website-path")).toBe("tiktok");
+      const request = JSON.parse(String(init?.body)) as { offset: number };
+      offsets.push(request.offset);
+      const count = request.offset === 500 ? 30 : 100;
+      return Response.json({
+        code: 0,
+        data: {
+          count: 530,
+          job_post_list: Array.from({ length: count }, (_, index) => {
+            const id = String(request.offset + index + 1);
+            return {
+              id,
+              code: `A${id}`,
+              title: index === 0 ? "Machine Learning Engineer Intern" : `TikTok Role ${id}`,
+              description: "Build recommendation models.",
+              requirement: "Python and SQL.",
+              recruit_type: { en_name: index === 0 ? "Intern" : "Regular" },
+              job_category: { en_name: "R&D" },
+              city_info: {
+                en_name: "San Jose",
+                parent: { en_name: "California", parent: { code: "CN_6", en_name: "United States of America" } },
+              },
+              job_post_info: { min_salary: 35, max_salary: 45, currency: "USD" },
+            };
+          }),
+        },
+      });
+    };
+
+    const result = await crawlSource({
+      id: "p5-0752-tiktok",
+      company: "TikTok / ByteDance",
+      postingUrl: "https://lifeattiktok.com/search",
+      adapter: "custom",
+      crawlPageCursor: 4,
+    }, fetcher, new Date("2026-08-11T12:00:00Z"));
+
+    expect(offsets).toEqual([0, 300, 400, 500]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 6 },
+    }));
+    expect(result.jobs).toHaveLength(330);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "1",
+      title: "Machine Learning Engineer Intern",
+      employmentType: "Internship",
+      department: "R&D",
+      location: "San Jose, California, United States of America",
+      locationCity: "San Jose",
+      locationState: "California",
+      locationCountry: "United States of America",
+      salaryMin: 35,
+      salaryMax: 45,
+      salaryCurrency: "USD",
+      requisitionId: "A1",
+      applyUrl: "https://careers.tiktok.com/resume/1/apply",
+      officialUrl: "https://lifeattiktok.com/search/1",
+    }));
+  });
+
+  it("does not advance TikTok's checkpoint when its public API repeats a page", async () => {
+    const jobs = Array.from({ length: 100 }, (_, index) => ({
+      id: String(index + 1), code: `A${index + 1}`, title: `TikTok Role ${index + 1}`,
+    }));
+    const fetcher: typeof fetch = async () => Response.json({ code: 0, data: { count: 530, job_post_list: jobs } });
+    const result = await crawlSource({
+      id: "p5-0752-tiktok", company: "TikTok / ByteDance",
+      postingUrl: "https://lifeattiktok.com/search", adapter: "custom", crawlPageCursor: 4,
+    }, fetcher, new Date());
+    expect(result.pagination).toEqual({ nextPage: 4, cycleComplete: false, totalPages: 6 });
+    expect(result.jobs).toHaveLength(100);
+  });
+
   it("paginates ServiceNow reader pages when the request surface is blocked", async () => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input) => {
@@ -2641,6 +2879,79 @@ Wrong description.
     expect(maxActive).toBeLessThanOrEqual(10);
   });
 
+  it("checkpoints Phenom catalogs that exceed the Worker request budget", async () => {
+    const offsets: number[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const from = Number(new URL(String(input)).searchParams.get("from") ?? 0);
+      offsets.push(from);
+      const count = from === 540 ? 10 : 10;
+      const jobs = Array.from({ length: count }, (_, index) => ({
+        title: `Cisco Role ${from + index}`,
+        jobId: `R${from + index}`,
+        applyUrl: `https://jobs.example/R${from + index}`,
+      }));
+      return new Response(`<script>phApp.ddo = ${JSON.stringify({ eagerLoadRefineSearch: {
+        hits: jobs.length, totalHits: 550, data: { jobs },
+      } })};</script>`);
+    };
+
+    const result = await crawlSource({
+      id: "p4-0245-cisco",
+      company: "Cisco",
+      postingUrl: "https://careers.cisco.com/global/en/search-results",
+      adapter: "phenom",
+      crawlPageCursor: 41,
+    }, fetcher, new Date());
+
+    expect(offsets).toEqual([0, ...Array.from({ length: 15 }, (_, index) => 400 + index * 10)]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 55 },
+    }));
+    expect(result.jobs).toHaveLength(160);
+  });
+
+  it("does not advance a checkpointed Phenom cycle when the first or later page repeats", async () => {
+    const jobs = Array.from({ length: 10 }, (_, index) => ({
+      title: `Repeated Role ${index}`, jobId: `R${index}`, applyUrl: `https://jobs.example/R${index}`,
+    }));
+    const fetcher: typeof fetch = async () => new Response(
+      `<script>phApp.ddo = ${JSON.stringify({ eagerLoadRefineSearch: { hits: 10, totalHits: 550, data: { jobs } } })};</script>`,
+    );
+
+    const result = await crawlSource({
+      id: "p4-0245-cisco", company: "Cisco",
+      postingUrl: "https://careers.cisco.com/global/en/search-results", adapter: "phenom",
+      crawlPageCursor: 41,
+    }, fetcher, new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      completeListing: false,
+      pagination: { nextPage: 41, cycleComplete: false, totalPages: 55 },
+    }));
+    expect(result.jobs).toHaveLength(10);
+  });
+
+  it("keeps a checkpointed Phenom cycle at page one when the first page is malformed", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const from = Number(new URL(String(input)).searchParams.get("from") ?? 0);
+      const count = from === 0 ? 9 : 10;
+      const jobs = Array.from({ length: count }, (_, index) => ({
+        title: `Role ${from + index}`, jobId: `R${from + index}`, applyUrl: `https://jobs.example/R${from + index}`,
+      }));
+      return new Response(`<script>phApp.ddo = ${JSON.stringify({ eagerLoadRefineSearch: {
+        hits: 10, totalHits: 550, data: { jobs },
+      } })};</script>`);
+    };
+    const result = await crawlSource({
+      id: "p4-0245-cisco", company: "Cisco",
+      postingUrl: "https://careers.cisco.com/global/en/search-results", adapter: "phenom",
+      crawlPageCursor: 41,
+    }, fetcher, new Date());
+    expect(result.pagination).toEqual({ nextPage: 1, cycleComplete: false, totalPages: 55 });
+  });
+
   it("keeps Phenom listings incomplete when pagination repeats the same jobs", async () => {
     const jobs = [
       { title: "Role 1", jobId: "R1", applyUrl: "https://jobs.example/R1" },
@@ -2685,6 +2996,88 @@ Wrong description.
     expect(result.status).toBe("succeeded");
     expect(result.jobs.map((job) => job.externalId)).toEqual(["REQ-101"]);
     expect(requests.some((url) => url.includes("/api/apply/v2/jobs"))).toBe(true);
+  });
+
+  it("checkpoints large Eightfold tenants without exceeding the Worker request budget", async () => {
+    const starts: number[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      expect(url.pathname).toBe("/api/pcsx/search");
+      const start = Number(url.searchParams.get("start") ?? 0);
+      starts.push(start);
+      const count = start === 1_880 ? 4 : 10;
+      return Response.json({ data: {
+        count: 1_884,
+        positions: Array.from({ length: count }, (_, index) => ({
+          id: start + index + 1,
+          name: `Qualcomm Role ${start + index + 1}`,
+          location: "San Diego, California",
+          displayJobId: `REQ-${start + index + 1}`,
+          positionUrl: `/careers/job/${start + index + 1}`,
+        })),
+      } });
+    };
+
+    const result = await crawlSource({
+      id: "p5-0709-qualcomm",
+      company: "Qualcomm",
+      postingUrl: "https://careers.qualcomm.com/careers?domain=qualcomm.com",
+      adapter: "custom",
+      crawlPageCursor: 171,
+    }, fetcher, new Date());
+
+    expect(starts).toEqual([0, ...Array.from({ length: 19 }, (_, index) => 1_700 + index * 10)]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 189 },
+    }));
+    expect(result.jobs).toHaveLength(194);
+  });
+
+  it("does not advance a checkpointed Eightfold cycle when full pages repeat", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const start = Number(new URL(String(input)).searchParams.get("start") ?? 0);
+      return Response.json({ data: {
+        count: 410,
+        positions: Array.from({ length: 10 }, (_, index) => {
+          const id = start === 220 && index === 0 ? 1 : start + index + 1;
+          return { id, name: `Role ${id}`, positionUrl: `/careers/job/${id}` };
+        }),
+      } });
+    };
+
+    const result = await crawlSource({
+      id: "p5-0709-qualcomm", company: "Qualcomm",
+      postingUrl: "https://careers.qualcomm.com/careers?domain=qualcomm.com", adapter: "custom",
+      crawlPageCursor: 23,
+    }, fetcher, new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      completeListing: false,
+      pagination: { nextPage: 23, cycleComplete: false, totalPages: 41 },
+    }));
+    expect(result.jobs.length).toBeGreaterThan(10);
+  });
+
+  it("keeps a checkpointed Eightfold cycle at page one when its first page is malformed", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const start = Number(new URL(String(input)).searchParams.get("start") ?? 0);
+      return Response.json({ data: {
+        count: 410,
+        positions: Array.from({ length: 10 }, (_, index) => ({
+          id: start + index + 1,
+          name: start === 0 && index === 9 ? undefined : `Role ${start + index + 1}`,
+          positionUrl: `/careers/job/${start + index + 1}`,
+        })),
+      } });
+    };
+    const result = await crawlSource({
+      id: "p5-0709-qualcomm", company: "Qualcomm",
+      postingUrl: "https://careers.qualcomm.com/careers?domain=qualcomm.com", adapter: "custom",
+      crawlPageCursor: 23,
+    }, fetcher, new Date());
+    expect(result.pagination).toEqual({ nextPage: 1, cycleComplete: false, totalPages: 41 });
   });
 
   it("discovers a cross-domain public ATS feed through the reader when the corporate site is blocked", async () => {

@@ -1032,6 +1032,18 @@ const paylocityJobs = (html: string, source: CrawlSource): CrawledJob[] | null =
 
 type PhenomPage = SourceCrawlResult & { totalHits: number | null; pageHits: number | null };
 
+const claimPageIdentities = (
+  values: Array<string | null | undefined>,
+  expected: number,
+  seen: Set<string>,
+): boolean => {
+  if (values.length < expected || values.some((value) => !value)) return false;
+  const unique = new Set(values as string[]);
+  if (unique.size !== values.length || [...unique].some((value) => seen.has(value))) return false;
+  for (const value of unique) seen.add(value);
+  return true;
+};
+
 const phenomJobs = (html: string, source: CrawlSource): PhenomPage | null => {
   const payload = embeddedJsonObject(html, "phApp.ddo = ");
   const eager = payload?.eagerLoadRefineSearch;
@@ -1105,7 +1117,14 @@ const crawlPhenomPages = async (source: CrawlSource, first: PhenomPage, fetcher:
   if (first.pageHits === null) return first;
   const pageSize = first.pageHits;
   if (!first.totalHits || pageSize <= 0 || first.totalHits <= pageSize) return first;
-  const offsets = Array.from({ length: Math.ceil(Math.min(first.totalHits, 10_000) / pageSize) - 1 }, (_, index) => (index + 1) * pageSize);
+  const totalPages = Math.ceil(Math.min(first.totalHits, 10_000) / pageSize);
+  const isCheckpointed = totalPages > 40;
+  const startPage = isCheckpointed ? Math.min(Math.max(source.crawlPageCursor ?? 1, 1), totalPages) : 1;
+  const endPage = isCheckpointed ? Math.min(startPage + (startPage === 1 ? 19 : 18), totalPages) : totalPages;
+  const pagesToFetch = Array.from(
+    { length: Math.max(0, endPage - Math.max(startPage, 2) + 1) },
+    (_, index) => Math.max(startPage, 2) + index,
+  );
   const fetchPage = async (from: number): Promise<PhenomPage | null> => {
     try {
       const url = new URL(source.postingUrl);
@@ -1119,16 +1138,45 @@ const crawlPhenomPages = async (source: CrawlSource, first: PhenomPage, fetcher:
     }
   };
   const pages: Array<PhenomPage | null> = [];
-  for (let index = 0; index < offsets.length; index += 10) {
-    pages.push(...await Promise.all(offsets.slice(index, index + 10).map(fetchPage)));
+  for (let index = 0; index < pagesToFetch.length; index += 10) {
+    pages.push(...await Promise.all(pagesToFetch.slice(index, index + 10).map((page) => fetchPage((page - 1) * pageSize))));
   }
   const successfulPages = pages.filter((page): page is PhenomPage => page !== null);
   const jobs = [...new Map([first, ...successfulPages]
     .flatMap((page) => page.jobs).map((job) => [job.officialUrl, job])).values()];
+  const firstExpected = Math.min(pageSize, first.totalHits);
+  const seenIdentities = new Set<string>();
+  let firstFailedPage: number | null = claimPageIdentities(
+    first.jobs.map((job) => job.externalId ?? job.officialUrl), firstExpected, seenIdentities,
+  ) ? null : 1;
+  for (let index = 0; index < pages.length && firstFailedPage === null; index += 1) {
+    const page = pages[index];
+    const pageNumber = pagesToFetch[index];
+    const expected = Math.min(pageSize, Math.max(0, first.totalHits - (pageNumber - 1) * pageSize));
+    if (!page || !claimPageIdentities(
+      page.jobs.map((job) => job.externalId ?? job.officialUrl), expected, seenIdentities,
+    )) {
+      firstFailedPage = pageNumber;
+      break;
+    }
+  }
+  if (isCheckpointed) return {
+    status: "succeeded",
+    responseStatus: first.responseStatus,
+    completeListing: false,
+    jobs,
+    ...(first.facets?.length ? { facets: first.facets } : {}),
+    pagination: {
+      nextPage: firstFailedPage ?? (endPage === totalPages ? 1 : endPage),
+      cycleComplete: firstFailedPage === null && endPage === totalPages,
+      totalPages,
+    },
+    error: null,
+  };
   return {
     status: "succeeded",
     responseStatus: first.responseStatus,
-    completeListing: successfulPages.length === pages.length
+    completeListing: firstFailedPage === null && successfulPages.length === pages.length
       && jobs.length >= first.totalHits,
     jobs,
     ...(first.facets?.length ? { facets: first.facets } : {}),
@@ -2550,6 +2598,399 @@ type AmazonJob = {
 
 type AmazonSearchPayload = { hits?: number; jobs?: AmazonJob[] };
 
+type TikTokLocation = {
+  code?: string;
+  en_name?: string;
+  i18n_name?: string;
+  parent?: TikTokLocation | null;
+};
+
+type TikTokJob = {
+  id?: string;
+  code?: string;
+  title?: string;
+  description?: string;
+  requirement?: string;
+  recruit_type?: { en_name?: string; i18n_name?: string } | null;
+  job_category?: { en_name?: string; i18n_name?: string } | null;
+  city_info?: TikTokLocation | null;
+  job_subject?: { en_name?: string; i18n_name?: string } | null;
+  department_info?: { en_name?: string; i18n_name?: string } | null;
+  tag_list?: Array<{ en_name?: string; i18n_name?: string }> | null;
+  job_post_info?: {
+    min_salary?: number | null;
+    max_salary?: number | null;
+    currency?: string | null;
+    required_degree?: string | null;
+    experience?: string | null;
+  } | null;
+};
+
+type TikTokSearchPayload = {
+  code?: number;
+  data?: { count?: number; job_post_list?: TikTokJob[]; job_list?: TikTokJob[]; jobs?: TikTokJob[] };
+};
+
+type DatabricksJob = {
+  id?: string;
+  gh_Id?: string | number;
+  internal_job_id?: string | number;
+  title?: string;
+  absolute_url?: string;
+  updated_at?: string;
+  content?: string;
+  location?: { name?: string } | null;
+  offices?: Array<{ name?: string }>;
+  departments?: Array<{ name?: string }>;
+  metadata?: unknown[];
+};
+
+type IbmJob = {
+  _id?: string;
+  _source?: {
+    title?: string;
+    url?: string;
+    description?: string;
+    field_keyword_08?: string;
+    field_keyword_17?: string;
+    field_keyword_18?: string;
+    field_keyword_19?: string;
+  };
+};
+
+const crawlDatabricks = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const endpoint = "https://www.databricks.com/careers-assets/page-data/company/careers/open-positions/page-data.json";
+  try {
+    const response = await fetchWithTimeout(fetcher, endpoint, { headers: { accept: "application/json" } }, false);
+    if (!response.ok) return {
+      status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
+      responseStatus: response.status,
+      completeListing: false,
+      jobs: [],
+      error: `Databricks career catalog returned HTTP ${response.status}.`,
+    };
+    const payload = await response.json() as {
+      result?: { pageContext?: { data?: { allGreenhouseJob?: { nodes?: DatabricksJob[] } } } };
+    };
+    const nodes = payload.result?.pageContext?.data?.allGreenhouseJob?.nodes;
+    if (!Array.isArray(nodes) || nodes.length === 0) throw new Error("Databricks career catalog did not contain Greenhouse jobs.");
+    const jobs = nodes.flatMap((job): CrawledJob[] => {
+      const externalId = job.gh_Id != null ? String(job.gh_Id) : job.id?.replace(/^Greenhouse__Job__/, "") ?? null;
+      if (!externalId || !job.title || !job.absolute_url) return [];
+      const description = plainText(decodeHtmlAttribute(job.content ?? ""));
+      const location = job.location?.name ?? null;
+      const departments = (job.departments ?? []).map(({ name }) => name).filter((name): name is string => Boolean(name));
+      const offices = (job.offices ?? []).map(({ name }) => name).filter((name): name is string => Boolean(name));
+      const programs = classifyJobPrograms(job.title).keys;
+      const updatedAt = normalizedDate(job.updated_at);
+      return [{
+        externalId,
+        title: job.title,
+        company: source.company,
+        location,
+        arrangement: /\bremote\b/i.test(location ?? "") ? "remote" : /\bhybrid\b/i.test(location ?? "") ? "hybrid" : "unknown",
+        employmentType: programs.some((key) => key === "internship" || key === "coop") ? "Internship" : null,
+        summary: description,
+        description,
+        ...(departments.length ? { department: departments.join("; ") } : {}),
+        ...(offices.length ? { office: offices.join("; ") } : {}),
+        requisitionId: externalId,
+        ...(updatedAt ? { sourceUpdatedAt: updatedAt } : {}),
+        ...(job.metadata?.length ? { rawPayload: { metadata: job.metadata } } : {}),
+        officialUrl: job.absolute_url,
+        publishedAt: updatedAt,
+      }];
+    });
+    if (jobs.length !== nodes.length) throw new Error("Databricks career catalog contained malformed job records.");
+    return { status: "succeeded", responseStatus: response.status, completeListing: true, jobs: uniqueJobs(jobs), error: null };
+  } catch (error) {
+    return {
+      status: "failed",
+      responseStatus: null,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Databricks crawler error.",
+    };
+  }
+};
+
+const ibmSearchBody = (source: CrawlSource, from: number): Record<string, unknown> => {
+  const isWatsonx = /watsonx/i.test(source.company);
+  const query = isWatsonx ? {
+    bool: { must: [{ simple_query_string: {
+      query: "watsonx",
+      fields: ["keywords^1", "body^1", "url^2", "description^2", "h1s_content^2", "title^3", "field_text_01"],
+    } }] },
+  } : { bool: { must: [] } };
+  return {
+    appId: "careers",
+    scopes: ["careers2"],
+    query,
+    size: 30,
+    from,
+    ...(from > 0 ? { p: Math.floor(from / 30) + 1 } : {}),
+    sort: [{ _score: "desc" }, { pageviews: "desc" }],
+    lang: "zz",
+    localeSelector: {},
+    sm: { query: isWatsonx ? "watsonx" : "", lang: "zz" },
+    ...(/consulting/i.test(source.company) ? { post_filter: { term: { field_keyword_08: "Consulting" } } } : {}),
+    _source: [
+      "_id", "title", "url", "description", "language", "entitled",
+      "field_keyword_17", "field_keyword_08", "field_keyword_18", "field_keyword_19",
+    ],
+  };
+};
+
+const crawlIbm = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const endpoint = "https://www-api.ibm.com/search/api/v2";
+  let responseStatus: number | null = null;
+  const fetchPage = async (from: number): Promise<{ total: number; hits: IbmJob[] } | null> => {
+    try {
+      const response = await fetchWithTimeout(fetcher, endpoint, {
+        method: "POST",
+        headers: { accept: "application/json", "content-type": "application/json", referer: "https://www.ibm.com/" },
+        body: JSON.stringify(ibmSearchBody(source, from)),
+      }, false, { attempts: 1, timeoutMs: 20_000 });
+      responseStatus = response.status;
+      if (!response.ok) return null;
+      const payload = await response.json() as { hits?: { total?: { value?: number } | number; hits?: IbmJob[] } };
+      const total = typeof payload.hits?.total === "number" ? payload.hits.total : payload.hits?.total?.value;
+      if (!Number.isFinite(total)) return null;
+      return { total: Number(total), hits: payload.hits?.hits ?? [] };
+    } catch {
+      return null;
+    }
+  };
+  const first = await fetchPage(0);
+  if (!first) return {
+    status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+    responseStatus,
+    completeListing: false,
+    jobs: [],
+    error: "IBM careers search API did not return a usable first page.",
+  };
+  const pageSize = 30;
+  const totalPages = Math.ceil(Math.min(first.total, 10_000) / pageSize);
+  const isCheckpointed = totalPages > 40;
+  const startPage = isCheckpointed ? Math.min(Math.max(source.crawlPageCursor ?? 1, 1), totalPages) : 1;
+  const endPage = isCheckpointed ? Math.min(startPage + (startPage === 1 ? 19 : 18), totalPages) : totalPages;
+  const pagesToFetch = Array.from(
+    { length: Math.max(0, endPage - Math.max(startPage, 2) + 1) },
+    (_, index) => Math.max(startPage, 2) + index,
+  );
+  const offsets = pagesToFetch.map((page) => (page - 1) * pageSize);
+  const pages: Array<{ total: number; hits: IbmJob[] } | null> = [];
+  for (let index = 0; index < offsets.length; index += 6) {
+    pages.push(...await Promise.all(offsets.slice(index, index + 6).map(fetchPage)));
+  }
+  const firstExpected = Math.min(pageSize, first.total);
+  const usableIbmIds = (hits: IbmJob[]): string[] => hits.flatMap((hit) => (
+    hit._id && hit._source?.title && hit._source.url ? [hit._id] : []
+  ));
+  const seenIdentities = new Set<string>();
+  let firstFailedPage: number | null = claimPageIdentities(
+    usableIbmIds(first.hits), firstExpected, seenIdentities,
+  ) ? null : 1;
+  for (let index = 0; index < pages.length && firstFailedPage === null; index += 1) {
+    const page = pages[index];
+    const pageNumber = pagesToFetch[index];
+    const expected = Math.min(pageSize, Math.max(0, first.total - (pageNumber - 1) * pageSize));
+    if (!page || !claimPageIdentities(usableIbmIds(page.hits), expected, seenIdentities)) {
+      firstFailedPage = pageNumber;
+      break;
+    }
+  }
+  const raw = [first, ...pages.filter((page): page is NonNullable<typeof page> => page !== null)].flatMap((page) => page.hits);
+  const jobs = raw.flatMap((hit): CrawledJob[] => {
+    const value = hit._source;
+    if (!hit._id || !value?.title || !value.url) return [];
+    const parsed = new URL(value.url, "https://careers.ibm.com");
+    const jobId = parsed.searchParams.get("jobId");
+    const location = value.field_keyword_19 ?? null;
+    const arrangementText = value.field_keyword_17 ?? "";
+    const programs = classifyJobPrograms(value.title).keys;
+    return [{
+      externalId: hit._id,
+      title: value.title,
+      company: source.company,
+      location,
+      arrangement: /remote/i.test(arrangementText) ? "remote" : /hybrid/i.test(arrangementText) ? "hybrid" : /on.?site/i.test(arrangementText) ? "onsite" : "unknown",
+      employmentType: programs.some((key) => key === "internship" || key === "coop") ? "Internship" : null,
+      summary: plainText(value.description),
+      description: plainText(value.description),
+      ...(value.field_keyword_08 ? { department: value.field_keyword_08 } : {}),
+      ...(value.field_keyword_18 ? { experienceLevel: value.field_keyword_18 } : {}),
+      ...(jobId ? { requisitionId: jobId } : {}),
+      officialUrl: jobId
+        ? `https://careers.ibm.com/en_US/careers/JobDetail?jobId=${encodeURIComponent(jobId)}`
+        : parsed.href,
+      publishedAt: null,
+    }];
+  });
+  const unique = uniqueJobs(jobs);
+  if (isCheckpointed) return {
+    status: "succeeded",
+    responseStatus,
+    completeListing: false,
+    jobs: unique,
+    pagination: {
+      nextPage: firstFailedPage ?? (endPage === totalPages ? 1 : endPage),
+      cycleComplete: firstFailedPage === null && endPage === totalPages,
+      totalPages,
+    },
+    error: null,
+  };
+  return {
+    status: "succeeded",
+    responseStatus,
+    completeListing: first.total <= 10_000 && firstFailedPage === null && pages.every((page) => page !== null) && unique.length >= first.total,
+    jobs: unique,
+    error: null,
+  };
+};
+
+const tikTokLocation = (city: TikTokLocation | null | undefined): {
+  label: string | null;
+  city: string | null;
+  state: string | null;
+  country: string | null;
+} => {
+  const values: string[] = [];
+  let current = city;
+  while (current) {
+    const value = current.en_name ?? current.i18n_name;
+    if (value && !values.includes(value)) values.push(value);
+    current = current.parent;
+  }
+  return {
+    label: values.join(", ") || null,
+    city: values[0] ?? null,
+    state: values.length >= 3 ? values[1] : null,
+    country: values.at(-1) ?? null,
+  };
+};
+
+const tikTokJob = (source: CrawlSource, value: TikTokJob): CrawledJob | null => {
+  if (!value.id || !value.title) return null;
+  const location = tikTokLocation(value.city_info);
+  const recruitmentType = value.recruit_type?.en_name ?? value.recruit_type?.i18n_name ?? null;
+  const program = classifyJobPrograms(`${value.title} ${recruitmentType ?? ""}`).keys;
+  const isIntern = program.some((key) => key === "internship" || key === "coop");
+  const description = plainText(value.description);
+  const qualifications = plainText(value.requirement);
+  const department = value.job_category?.en_name ?? value.job_category?.i18n_name ?? null;
+  const team = value.department_info?.en_name ?? value.department_info?.i18n_name
+    ?? value.job_subject?.en_name ?? value.job_subject?.i18n_name ?? null;
+  const skills = (value.tag_list ?? [])
+    .map((tag) => tag.en_name ?? tag.i18n_name)
+    .filter((tag): tag is string => Boolean(tag));
+  return {
+    externalId: value.id,
+    title: value.title,
+    company: source.company,
+    location: location.label,
+    arrangement: /\bremote\b/i.test(location.label ?? "") ? "remote" : "unknown",
+    employmentType: isIntern ? "Internship" : recruitmentType,
+    summary: description,
+    description,
+    ...(qualifications ? { qualifications } : {}),
+    ...(skills.length ? { skills } : {}),
+    ...(department ? { department } : {}),
+    ...(team ? { team } : {}),
+    ...(location.city ? { locationCity: location.city } : {}),
+    ...(location.state ? { locationState: location.state } : {}),
+    ...(location.country ? { locationCountry: location.country } : {}),
+    ...(value.job_post_info?.min_salary != null ? { salaryMin: value.job_post_info.min_salary } : {}),
+    ...(value.job_post_info?.max_salary != null ? { salaryMax: value.job_post_info.max_salary } : {}),
+    ...(value.job_post_info?.currency ? { salaryCurrency: value.job_post_info.currency } : {}),
+    ...(value.job_post_info?.required_degree ? { educationRequirements: value.job_post_info.required_degree } : {}),
+    ...(value.job_post_info?.experience ? { experienceRequirements: value.job_post_info.experience } : {}),
+    requisitionId: value.code ?? value.id,
+    applyUrl: `https://careers.tiktok.com/resume/${encodeURIComponent(value.id)}/apply`,
+    officialUrl: `https://lifeattiktok.com/search/${encodeURIComponent(value.id)}`,
+    publishedAt: null,
+  };
+};
+
+const crawlTikTok = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const pageSize = 100;
+  const endpoint = "https://api.lifeattiktok.com/api/v1/public/supplier/search/job/posts";
+  const fetchPage = async (offset: number): Promise<{ status: number; total: number; jobs: CrawledJob[] } | null> => {
+    try {
+      const response = await fetchWithTimeout(fetcher, endpoint, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "accept-language": "en-US",
+          "content-type": "application/json",
+          origin: "https://lifeattiktok.com",
+          "website-path": "tiktok",
+        },
+        body: JSON.stringify({
+          job_category_id_list: [], recruitment_id_list: [], subject_id_list: [],
+          location_code_list: [], tag_id_list: [], keyword: "", limit: pageSize, offset,
+        }),
+      }, false, { attempts: 1, timeoutMs: 20_000 });
+      if (!response.ok) return null;
+      const payload = await response.json() as TikTokSearchPayload;
+      if (payload.code !== 0 || !payload.data) return null;
+      const rawJobs = payload.data.job_post_list ?? payload.data.job_list ?? payload.data.jobs ?? [];
+      return {
+        status: response.status,
+        total: Math.max(0, Number(payload.data.count ?? rawJobs.length)),
+        jobs: rawJobs.flatMap((job) => tikTokJob(source, job) ?? []),
+      };
+    } catch {
+      return null;
+    }
+  };
+
+  const first = await fetchPage(0);
+  if (!first) return { status: "failed", responseStatus: null, completeListing: false, jobs: [], error: "TikTok public jobs API did not return a usable first page." };
+  const totalPages = Math.ceil(Math.min(first.total, 10_000) / pageSize);
+  const isCheckpointed = totalPages > 4;
+  const startPage = isCheckpointed ? Math.min(Math.max(source.crawlPageCursor ?? 1, 1), totalPages) : 1;
+  const endPage = isCheckpointed ? Math.min(startPage + (startPage === 1 ? 3 : 2), totalPages) : totalPages;
+  const jobsByUrl = new Map(first.jobs.map((job) => [job.officialUrl, job]));
+  const seenIdentities = new Set<string>();
+  let firstFailedPage: number | null = claimPageIdentities(
+    first.jobs.map((job) => job.externalId ?? job.officialUrl),
+    Math.min(pageSize, first.total),
+    seenIdentities,
+  ) ? null : 1;
+  for (let page = Math.max(startPage, 2); page <= endPage; page += 1) {
+    const result = await fetchPage((page - 1) * pageSize);
+    const expected = Math.min(pageSize, Math.max(0, first.total - (page - 1) * pageSize));
+    if (!result || !claimPageIdentities(
+      result.jobs.map((job) => job.externalId ?? job.officialUrl), expected, seenIdentities,
+    )) {
+      firstFailedPage ??= page;
+      continue;
+    }
+    for (const job of result.jobs) jobsByUrl.set(job.officialUrl, job);
+  }
+  const jobs = [...jobsByUrl.values()];
+  if (isCheckpointed) return {
+    status: "succeeded",
+    responseStatus: first.status,
+    completeListing: false,
+    jobs,
+    pagination: {
+      nextPage: firstFailedPage ?? (endPage === totalPages ? 1 : endPage),
+      cycleComplete: firstFailedPage === null && endPage === totalPages,
+      totalPages,
+    },
+    error: null,
+  };
+  return {
+    status: "succeeded",
+    responseStatus: first.status,
+    completeListing: first.total <= 10_000 && firstFailedPage === null && jobs.length >= first.total,
+    jobs,
+    error: null,
+  };
+};
+
 const amazonPostedDate = (value: string | undefined): string | null => {
   if (!value) return null;
   const timestamp = Date.parse(`${value} UTC`);
@@ -2640,12 +3081,18 @@ const crawlAmazonJobs = async (source: CrawlSource, fetcher: typeof fetch): Prom
     ? Math.min(startPage + (startPage === 1 ? 3 : 2), totalPages)
     : totalPages;
   const jobsByUrl = new Map(first.jobs.map((job) => [job.officialUrl, job]));
-  let firstFailedPage: number | null = first.jobs.length < Math.min(pageSize, total) ? 1 : null;
-  if (first.jobs.length < Math.min(pageSize, total)) firstFailedPage = 1;
+  const seenIdentities = new Set<string>();
+  let firstFailedPage: number | null = claimPageIdentities(
+    first.jobs.map((job) => job.externalId ?? job.officialUrl),
+    Math.min(pageSize, total),
+    seenIdentities,
+  ) ? null : 1;
   for (let page = Math.max(startPage, 2); page <= endPage; page += 1) {
     const result = await fetchPage((page - 1) * pageSize);
     const expected = Math.min(pageSize, Math.max(0, total - (page - 1) * pageSize));
-    if (!result || result.jobs.length < expected) {
+    if (!result || !claimPageIdentities(
+      result.jobs.map((job) => job.externalId ?? job.officialUrl), expected, seenIdentities,
+    )) {
       firstFailedPage ??= page;
       continue;
     }
@@ -3293,8 +3740,8 @@ async function crawlEightfold(source: CrawlSource, fetcher: typeof fetch): Promi
       return { response, payload: raw.data ?? raw };
     };
 
-    const fetchPage = async (start: number, requirePositions = false): Promise<Payload> => {
-      for (let attempt = 0; attempt < 3; attempt += 1) {
+    const fetchPage = async (start: number, requirePositions = false, maxAttempts = 3): Promise<Payload> => {
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
         let result = await requestPage(start, apiMode);
         if (start === 0 && apiMode === "pcsx" && [400, 403, 404].includes(result.response.status)) {
           apiMode = "legacy";
@@ -3303,7 +3750,7 @@ async function crawlEightfold(source: CrawlSource, fetcher: typeof fetch): Promi
         if (!result.response.ok) throw new Error(`Eightfold returned HTTP ${result.response.status}.`);
         const payload = result.payload;
         if (start === 0) facets = normalizedFacets(payload.filterDef?.facets ?? payload.facets);
-        if (!requirePositions || (payload.positions?.length ?? 0) > 0 || attempt === 2) return payload;
+        if (!requirePositions || (payload.positions?.length ?? 0) > 0 || attempt === maxAttempts - 1) return payload;
         await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
       }
       return { positions: [] };
@@ -3312,23 +3759,52 @@ async function crawlEightfold(source: CrawlSource, fetcher: typeof fetch): Promi
     positions.push(...(first.positions ?? []));
     const total = first.count ?? positions.length;
     const pageSize = apiMode === "pcsx" ? 10 : Math.max(positions.length, 1);
-    const offsets = Array.from({ length: Math.max(0, Math.ceil((total - pageSize) / pageSize)) }, (_, index) => pageSize * (index + 1));
-    for (let index = 0; index < offsets.length; index += 8) {
-      const pages = await Promise.all(offsets.slice(index, index + 8).map((offset) => fetchPage(offset, true)));
-      positions.push(...pages.flatMap((page) => page.positions ?? []));
+    const totalPages = Math.ceil(Math.min(total, 10_000) / pageSize);
+    const isCheckpointed = totalPages > 40;
+    const startPage = isCheckpointed ? Math.min(Math.max(source.crawlPageCursor ?? 1, 1), totalPages) : 1;
+    const endPage = isCheckpointed ? Math.min(startPage + (startPage === 1 ? 19 : 18), totalPages) : totalPages;
+    const pagesToFetch = Array.from(
+      { length: Math.max(0, endPage - Math.max(startPage, 2) + 1) },
+      (_, index) => Math.max(startPage, 2) + index,
+    );
+    const pages: Array<Payload | null> = [];
+    for (let index = 0; index < pagesToFetch.length; index += 8) {
+      pages.push(...await Promise.all(pagesToFetch.slice(index, index + 8).map(async (page) => {
+        try {
+          return await fetchPage((page - 1) * pageSize, true, isCheckpointed ? 1 : 3);
+        } catch {
+          return null;
+        }
+      })));
     }
+    positions.push(...pages.flatMap((page) => page?.positions ?? []));
     const uniquePositions = [...new Map(positions.map((position) => [String(position.id), position])).values()];
-    return {
-      status: "succeeded",
-      responseStatus,
-      completeListing: uniquePositions.length >= total,
-      jobs: uniquePositions.flatMap((position) => position.id != null && position.name ? (() => {
-        const location = position.location ?? position.locations?.join("; ") ?? null;
-        const workLocation = position.work_location_option ?? position.workLocationOption ?? "";
-        const externalId = position.ats_job_id ?? position.atsJobId ?? position.displayJobId ?? String(position.id);
-        const description = position.job_description ?? position.jobDescription;
-        const publishedTimestamp = position.postedTs || position.creationTs || position.t_create;
-        return [{
+    const firstExpected = Math.min(pageSize, total);
+    const firstPositions = first.positions ?? [];
+    const usablePositionIds = (values: EightfoldPosition[]): string[] => values.flatMap((position) => (
+      position.id != null && position.name ? [String(position.id)] : []
+    ));
+    const seenIdentities = new Set<string>();
+    let firstFailedPage: number | null = claimPageIdentities(
+      usablePositionIds(firstPositions), firstExpected, seenIdentities,
+    ) ? null : 1;
+    for (let index = 0; index < pages.length && firstFailedPage === null; index += 1) {
+      const page = pages[index];
+      const pageNumber = pagesToFetch[index];
+      const expected = Math.min(pageSize, Math.max(0, total - (pageNumber - 1) * pageSize));
+      const pagePositions = page?.positions ?? [];
+      if (!page || !claimPageIdentities(usablePositionIds(pagePositions), expected, seenIdentities)) {
+        firstFailedPage = pageNumber;
+        break;
+      }
+    }
+    const normalizedJobs = uniquePositions.flatMap((position) => position.id != null && position.name ? (() => {
+      const location = position.location ?? position.locations?.join("; ") ?? null;
+      const workLocation = position.work_location_option ?? position.workLocationOption ?? "";
+      const externalId = position.ats_job_id ?? position.atsJobId ?? position.displayJobId ?? String(position.id);
+      const description = position.job_description ?? position.jobDescription;
+      const publishedTimestamp = position.postedTs || position.creationTs || position.t_create;
+      return [{
         externalId,
         title: position.name,
         company: source.company,
@@ -3343,7 +3819,25 @@ async function crawlEightfold(source: CrawlSource, fetcher: typeof fetch): Promi
         officialUrl: position.canonicalPositionUrl ?? (position.positionUrl ? new URL(position.positionUrl, origin).href : `${origin}/careers/job/${position.id}`),
         publishedAt: publishedTimestamp ? new Date(publishedTimestamp * 1000).toISOString() : null,
       }];
-      })() : []),
+    })() : []);
+    if (isCheckpointed) return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: false,
+      jobs: normalizedJobs,
+      ...(facets.length > 0 ? { facets } : {}),
+      pagination: {
+        nextPage: firstFailedPage ?? (endPage === totalPages ? 1 : endPage),
+        cycleComplete: firstFailedPage === null && endPage === totalPages,
+        totalPages,
+      },
+      error: null,
+    };
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: firstFailedPage === null && pages.every((page) => page !== null) && uniquePositions.length >= total,
+      jobs: normalizedJobs,
       ...(facets.length > 0 ? { facets } : {}),
       error: null,
     };
@@ -3682,7 +4176,7 @@ async function crawlMetaCareers(source: CrawlSource, fetcher: typeof fetch): Pro
         ...(subTeams.length > 0 ? { team: subTeams.join("; ") } : {}),
         ...(locations.length > 1 ? { secondaryLocations: locations.slice(1) } : {}),
         rawPayload: { teams, subTeams },
-        officialUrl: `https://www.metacareers.com/jobs/${job.id}/`,
+        officialUrl: `https://www.metacareers.com/profile/job_details/${job.id}/`,
         publishedAt: null,
       }];
     }));
@@ -3944,6 +4438,9 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   if (sourcePage.hostname === "www.atlassian.com" && sourcePage.pathname.includes("/company/careers")) return crawlAtlassian(source, fetcher);
   if (sourcePage.hostname === "www.okta.com" && sourcePage.pathname.includes("/company/careers/job-listing")) return crawlOktaCareers(source, fetcher);
   if (sourcePage.hostname === "www.amazon.jobs" || sourcePage.hostname === "amazon.jobs") return crawlAmazonJobs(source, fetcher);
+  if (source.id === "p5-0752-tiktok" || sourcePage.hostname === "lifeattiktok.com") return crawlTikTok(source, fetcher);
+  if (source.id === "p4-0256-databricks") return crawlDatabricks(source, fetcher);
+  if (["p5-0624-ibm", "p4-0295-ibm-consulting", "p4-0446-ibm-watsonx"].includes(source.id)) return crawlIbm(source, fetcher);
   if (sourcePage.hostname === "careers.servicenow.com") return crawlServiceNow(source, fetcher);
   if (sourcePage.hostname === "block.xyz" && sourcePage.pathname === "/careers/jobs") return crawlBlockCareers(source, fetcher);
   if (source.id === "p4-0285-google" || source.id === "p5-0610-google-deepmind") return crawlGoogleCareers(source, fetcher);
