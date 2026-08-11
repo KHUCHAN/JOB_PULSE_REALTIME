@@ -4247,23 +4247,6 @@ async function crawlMetaCareers(source: CrawlSource, fetcher: typeof fetch): Pro
       .join("; ");
     const html = await pageResponse.text();
     const lsd = html.match(/\["LSD",\[\],\{"token":"([^"]+)"/)?.[1];
-    const scriptUrls = [...new Set([...html.matchAll(/<script[^>]+src=["']([^"']+\.js(?:[^"']*)?)["']/gi)]
-      .map((match) => new URL(match[1].replaceAll("&amp;", "&"), source.postingUrl).href))];
-
-    let operationId: string | null = null;
-    const operationScripts = scriptUrls.slice(0, 2);
-    for (let start = 0; start < operationScripts.length && !operationId; start += 2) {
-      const scripts = await Promise.all(operationScripts.slice(start, start + 2).map(async (url) => {
-        try {
-          const response = await fetchWithTimeout(fetcher, url, undefined, false, { attempts: 1, timeoutMs: 10_000 });
-          return response.ok ? response.text() : "";
-        } catch {
-          return "";
-        }
-      }));
-      operationId = scripts.flatMap((script) => script.match(/CareersJobSearchResultsV\d+DataQuery_candidate_portalRelayOperation[\s\S]{0,320}?exports="(\d+)"/)?.[1] ?? []).at(0) ?? null;
-    }
-    operationId ??= fallbackOperationId;
     if (!lsd) return crawlMetaSitemapFallback(source, fetcher);
 
     const variables = {
@@ -4285,16 +4268,16 @@ async function crawlMetaCareers(source: CrawlSource, fetcher: typeof fetch): Pro
       viewasUserID: null,
       isLoggedIn: false,
     };
-    const requestOperation = async (operation: string): Promise<{ response: Response; payload: MetaCareerPayload | null }> => {
+    const requestOperation = async (endpoint: string): Promise<{ response: Response; payload: MetaCareerPayload | null }> => {
       const body = new URLSearchParams({
         lsd,
         fb_api_caller_class: "RelayModern",
         fb_api_req_friendly_name: "CareersJobSearchResultsV2DataQuery",
         server_timestamps: "true",
         variables: JSON.stringify(variables),
-        doc_id: operation,
+        doc_id: fallbackOperationId,
       });
-      const response = await fetchWithTimeout(fetcher, "https://www.metacareers.com/graphql", {
+      const response = await fetchWithTimeout(fetcher, endpoint, {
         method: "POST",
         headers: {
           accept: "*/*",
@@ -4316,16 +4299,21 @@ async function crawlMetaCareers(source: CrawlSource, fetcher: typeof fetch): Pro
         return { response, payload: null };
       }
     };
-    let search = await requestOperation(operationId);
-    let rawJobs = search.payload?.data?.job_search_with_featured_jobs_v2?.all_jobs;
     const isUsableCatalog = (value: MetaCareerJob[] | undefined): value is MetaCareerJob[] => (
       Array.isArray(value) && value.length > 0 && value.every((job) => Boolean(job.id && job.title))
     );
-    if (!isUsableCatalog(rawJobs) && operationId !== fallbackOperationId) {
-      search = await requestOperation(fallbackOperationId);
-      rawJobs = search.payload?.data?.job_search_with_featured_jobs_v2?.all_jobs;
+    let search: { response: Response; payload: MetaCareerPayload | null } | null = null;
+    let rawJobs: MetaCareerJob[] | undefined;
+    for (const endpoint of ["https://www.metacareers.com/api/graphql/", "https://www.metacareers.com/graphql/"]) {
+      try {
+        search = await requestOperation(endpoint);
+        rawJobs = search.payload?.data?.job_search_with_featured_jobs_v2?.all_jobs;
+        if (search.response.ok && isUsableCatalog(rawJobs)) break;
+      } catch {
+        continue;
+      }
     }
-    if (!search.response.ok || !isUsableCatalog(rawJobs)) return crawlMetaSitemapFallback(source, fetcher);
+    if (!search?.response.ok || !isUsableCatalog(rawJobs)) return crawlMetaSitemapFallback(source, fetcher);
     const jobs = uniqueJobs(rawJobs.flatMap((job): CrawledJob[] => {
       if (!job.id || !job.title) return [];
       const locations = [...new Set((job.locations ?? []).map((value) => value.trim()).filter(Boolean))];
