@@ -21,8 +21,14 @@ describe("resume digest reservation", () => {
       createD1ForSqlite(sqlite), "chanyoung-resume", "2026-08-10T12:00:00.000Z", 25,
     );
 
-    expect(planned.map((item) => item.jobCount)).toEqual([25, 25, 10, 25]);
-    expect(sqlite.prepare("SELECT count(*) AS total FROM notification_items").get()).toEqual({ total: 85 });
+    expect(planned.map((item) => item.jobCount)).toEqual([25, 25, 25, 25]);
+    expect(sqlite.prepare("SELECT count(*) AS total FROM notification_items").get()).toEqual({ total: 100 });
+    expect(sqlite.prepare(
+      "SELECT recipient, count(*) AS total FROM notifications GROUP BY recipient ORDER BY recipient",
+    ).all()).toEqual([
+      { recipient: "kimchany@usc.edu", total: 2 },
+      { recipient: "lupeter@usc.edu", total: 2 },
+    ]);
     expect(sqlite.prepare("SELECT next_digest_at FROM match_profiles").get()).toEqual({
       next_digest_at: "2026-08-10T12:00:00.000Z",
     });

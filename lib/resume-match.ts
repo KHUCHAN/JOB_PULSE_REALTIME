@@ -47,17 +47,20 @@ const normalize = (value: string): string => value
   .replace(/\s+/g, " ")
   .trim();
 
-const contains = (value: string, expression: RegExp): boolean => expression.test(` ${value} `);
-
 const NON_ROLE_TITLE = /(?:^|\s)(?:recruiting|recruiter|talent acquisition|human resources|campus recruiter)(?:\s|$)/;
 const NON_TECHNICAL_TITLE = /(?:^|\s)(?:marketing|sales|accounting|clinical|communications?|human resources|operations)(?:\s|$)/;
-const HIGH_SCHOOL_ONLY = /(?:^|\s)(?:high school|secondary school)(?:\s|$)/;
+const HIGH_SCHOOL = /(?:^|\s)(?:high school|secondary school)(?:\s|$)/;
 const PHD_ONLY = /(?:^|\s)(?:ph\.?d\.?|doctoral)(?:\s|$)/;
 const CITIZEN_ONLY = /(?:must|required to) (?:be )?(?:a )?(?:u\.?s\.?|united states) citizen|u\.?s\.? citizenship (?:is )?required/;
 const ACTIVE_CLEARANCE = /active (?:secret|top secret|ts\/?sci|security) clearance|(?:secret|top secret|ts\/?sci) clearance required/;
+const MASTER_OR_GRADUATE = /(?:master(?: s)?|graduate students?|graduate degree)/;
+const HIGHER_EDUCATION = /(?:bachelor(?: s)?|college|university|undergraduate|graduate|master(?: s)?|ph\.?d\.?|doctoral)/;
+const RELEVANT_DEGREE = /(?:bachelor(?: s)?|college|university|undergraduate|computer science|data science|engineering|information technology)/;
+const NON_PHD_ELIGIBLE_DEGREE = /(?:bachelor(?: s)?|college|university|undergraduate|master(?: s)?|graduate students?|graduate degree)/;
 
 const roleEvidence = (value: string): ResumeMatchEvidence | null => {
   const rules: Array<[RegExp, ResumeMatchEvidence]> = [
+    [/(?:applied scientist|research scientist)/, { code: "role:applied-science", label: "Applied or research scientist role", points: 35 }],
     [/(?:\bllm\b|large language model|natural language|\bnlp\b|retrieval augmented|\brag\b|knowledge graph|agentic|ai evaluation)/, { code: "role:llm-nlp", label: "LLM, NLP, RAG, or knowledge systems", points: 35 }],
     [/(?:machine learning|artificial intelligence|\bai\b|deep learning|applied ai)/, { code: "role:ai-ml", label: "AI or machine learning role", points: 35 }],
     [/(?:data engineer|analytics engineer|etl engineer|data platform)/, { code: "role:data-engineering", label: "Data engineering role", points: 35 }],
@@ -72,7 +75,6 @@ const roleEvidence = (value: string): ResumeMatchEvidence | null => {
 
 const skillEvidence = (input: ResumeMatchInput): ResumeMatchEvidence[] => {
   const haystack = normalize([
-    input.title,
     input.summary,
     input.description,
     input.responsibilities,
@@ -82,12 +84,12 @@ const skillEvidence = (input: ResumeMatchInput): ResumeMatchEvidence[] => {
     input.jobFunction,
   ].filter(Boolean).join(" "));
   const groups: Array<[RegExp, ResumeMatchEvidence]> = [
-    [/(?:^|\s)(?:python|pyspark|pandas)(?:\s|$)/, { code: "skill:python", label: "Python, PySpark, or Pandas", points: 8 }],
-    [/(?:^|\s)(?:sql|database|data warehouse|etl|hadoop|mongodb)(?:\s|$)/, { code: "skill:sql", label: "SQL and data systems", points: 8 }],
+    [/(?:^|\s)(?:python|pyspark|pandas)(?:\s|$)/, { code: "skill:python", label: "Python, PySpark, or Pandas", points: 10 }],
+    [/(?:^|\s)(?:sql|database|data warehouse|etl|hadoop|mongodb)(?:\s|$)/, { code: "skill:sql", label: "SQL and data systems", points: 10 }],
     [/(?:machine learning|deep learning|scikit|pytorch|tensorflow)/, { code: "skill:ml", label: "Machine-learning stack", points: 7 }],
-    [/(?:\bnlp\b|large language model|\bllm\b|\brag\b|neo4j|knowledge graph|model evaluation)/, { code: "skill:language-systems", label: "Language or knowledge systems", points: 8 }],
-    [/(?:javascript|typescript|java|c\+\+|react|node\.js|software (?:engineer|engineering|developer|development))/, { code: "skill:software", label: "Software development stack", points: 25 }],
-    [/(?:tableau|business intelligence|analytics|data scien|data analy)/, { code: "skill:analytics", label: "Analytics tooling", points: 5 }],
+    [/(?:\bnlp\b|large language model|\bllm\b|\brag\b|neo4j|knowledge graph|model evaluation)/, { code: "skill:language-systems", label: "Language or knowledge systems", points: 10 }],
+    [/(?:javascript|typescript|java|c\+\+|react|node\.js)/, { code: "skill:software", label: "Software development stack", points: 25 }],
+    [/(?:tableau|business intelligence|analytics)/, { code: "skill:analytics", label: "Analytics tooling", points: 5 }],
     [/(?:opencv|computer vision|image processing|\bocr\b|multimodal)/, { code: "skill:vision", label: "Computer vision or OCR stack", points: 8 }],
   ];
 
@@ -117,13 +119,28 @@ const educationEvidence = (input: ResumeMatchInput): ResumeMatchEvidence | null 
     input.qualifications,
     input.description?.slice(0, 12_000),
   ].filter(Boolean).join(" "));
-  if (/(?:master'?s|graduate students?|graduate degree)/.test(value)) {
+  if (MASTER_OR_GRADUATE.test(value)) {
     return { code: "education:masters-eligible", label: "Master's or graduate students eligible", points: 10 };
   }
-  if (/(?:bachelor'?s|computer science|data science|engineering|information technology)/.test(value)) {
+  if (RELEVANT_DEGREE.test(value)) {
     return { code: "education:relevant-degree", label: "Relevant technical degree", points: 8 };
   }
   return null;
+};
+
+const highSchoolOnly = (title: string, educationText: string): boolean => {
+  if (HIGH_SCHOOL.test(title) && /(?:students?|interns?|program)/.test(title)) return true;
+  if (!HIGH_SCHOOL.test(educationText)) return false;
+  const higherEducation = HIGHER_EDUCATION.test(educationText);
+  return !higherEducation || /(?:only|exclusively) (?:for )?(?:high school|secondary school)/.test(educationText);
+};
+
+const phdOnly = (title: string, educationText: string): boolean => {
+  const explicitlyPhdOnly = /(?:ph\.?d\.?|doctoral) (?:students?|candidates?) (?:only|required)/.test(educationText)
+    || /(?:only|exclusively) (?:for )?(?:ph\.?d\.?|doctoral)/.test(educationText);
+  if (explicitlyPhdOnly) return true;
+  if (!PHD_ONLY.test(title)) return false;
+  return !NON_PHD_ELIGIBLE_DEGREE.test(educationText);
 };
 
 export const evaluateResumeMatch = (input: ResumeMatchInput): ResumeMatchDecision => {
@@ -150,9 +167,9 @@ export const evaluateResumeMatch = (input: ResumeMatchInput): ResumeMatchDecisio
       ? "program:not-internship"
       : NON_ROLE_TITLE.test(title)
         ? "role:recruiting"
-        : HIGH_SCHOOL_ONLY.test(title) || contains(normalize(input.educationRequirements ?? ""), HIGH_SCHOOL_ONLY)
+        : highSchoolOnly(title, authorizationText)
           ? "education:high-school-only"
-          : PHD_ONLY.test(title) || /ph\.?d\.? (?:students?|candidates?) (?:only|required)/.test(authorizationText)
+          : phdOnly(title, authorizationText)
             ? "education:phd-only"
             : CITIZEN_ONLY.test(authorizationText)
               ? "authorization:citizen-only"
@@ -172,9 +189,9 @@ export const evaluateResumeMatch = (input: ResumeMatchInput): ResumeMatchDecisio
   const education = educationEvidence(input);
   if (education) evidence.push(education);
   if (input.recruitingYears.includes(2027)) {
-    evidence.push({ code: "year:2027", label: "2027 recruiting cycle", points: 7 });
+    evidence.push({ code: "year:2027", label: "2027 recruiting cycle", points: 5 });
   }
-  if (input.publishedAt) evidence.push({ code: "freshness:published", label: "ATS posting date available", points: 3 });
+  if (input.publishedAt) evidence.push({ code: "freshness:published", label: "ATS posting date available", points: 5 });
 
   const score = Math.min(100, evidence.reduce((sum, item) => sum + item.points, 0));
   return {

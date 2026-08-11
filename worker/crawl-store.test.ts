@@ -118,6 +118,26 @@ describe("D1CrawlStore enriched job persistence", () => {
     expect(insert?.sql).toContain("WHEN jobs.status = 'closed' THEN jobs.open_generation + 1");
   });
 
+  it("changes the resume evaluation hash when company or posting date changes", async () => {
+    const { db, calls } = fakeDb();
+    const store = new D1CrawlStore(db);
+    const common = {
+      externalId: "REQ-42", title: "Machine Learning Intern", location: "San Francisco, CA",
+      arrangement: "hybrid" as const, employmentType: "Internship", summary: "Build models.",
+    };
+    const jobs = [
+      { ...common, company: "Acme", officialUrl: "https://jobs.example/hash-a", publishedAt: null },
+      { ...common, company: "Acme Labs", officialUrl: "https://jobs.example/hash-b", publishedAt: null },
+      { ...common, company: "Acme", officialUrl: "https://jobs.example/hash-c", publishedAt: "2026-08-10T00:00:00.000Z" },
+    ] as CrawledJob[];
+
+    await store.syncJobs("source-1", jobs, false);
+
+    const insert = calls.find((call) => call.sql.includes("INSERT INTO jobs"));
+    const records = JSON.parse(String(insert?.values[0])) as Array<{ resumeMatchHash: string }>;
+    expect(new Set(records.map((record) => record.resumeMatchHash))).toHaveLength(3);
+  });
+
   it("upserts AI/data membership and clears stale membership for every processed job", async () => {
     const { db, calls } = fakeDb();
     const store = new D1CrawlStore(db);

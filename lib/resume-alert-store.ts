@@ -82,6 +82,8 @@ export const planResumeDigests = async (
         hasRemaining = true;
         break;
       }
+      const remainingRecipients = recipients.results.length - recipientIndex;
+      const fairMessageSlots = Math.max(1, Math.floor(remainingMessageSlots / remainingRecipients));
       const matches = await database.prepare(`
         SELECT jm.id
         FROM job_matches jm
@@ -95,9 +97,9 @@ export const planResumeDigests = async (
           )
         ORDER BY jm.score DESC, COALESCE(j.published_at, j.first_seen_at) DESC, jm.id
         LIMIT ?
-      `).bind(keywordId, recipient, boundedPageSize * remainingMessageSlots + 1).all<MatchRow>();
+      `).bind(keywordId, recipient, boundedPageSize * fairMessageSlots + 1).all<MatchRow>();
       if (matches.results.length === 0) continue;
-      const selected = matches.results.slice(0, boundedPageSize * remainingMessageSlots);
+      const selected = matches.results.slice(0, boundedPageSize * fairMessageSlots);
       if (matches.results.length > selected.length) hasRemaining = true;
       for (let index = 0; index < selected.length; index += boundedPageSize) {
         const part = selected.slice(index, index + boundedPageSize);

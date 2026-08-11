@@ -267,6 +267,7 @@ export class D1CrawlStore implements CrawlStore {
       if (descriptionValue) record.descriptionHash = await sha256(descriptionValue);
       record.resumeMatchHash = await sha256(JSON.stringify({
         title: record.title,
+        company: record.company,
         locationRegion: record.locationRegion,
         summary: record.summary,
         description: record.description,
@@ -278,6 +279,7 @@ export class D1CrawlStore implements CrawlStore {
         educationRequirements: record.educationRequirements,
         experienceRequirements: record.experienceRequirements,
         securityClearance: record.securityClearance,
+        publishedAt: record.publishedAt,
         programKeys: record.programKeys,
         recruitingYears: record.recruitingYears,
       }));

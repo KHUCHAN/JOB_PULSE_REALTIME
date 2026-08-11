@@ -109,4 +109,47 @@ describe("Chanyoung resume matcher", () => {
     expect(result.eligible).toBe(false);
     expect(result.score).toBeLessThan(60);
   });
+
+  it("does not double-count a software title as a software skill", () => {
+    const result = evaluateResumeMatch({
+      ...base,
+      title: "Software Engineering Intern",
+      skills: [],
+      recruitingYears: [],
+      publishedAt: null,
+    });
+
+    expect(result.eligible).toBe(false);
+    expect(result.evidence.map((item) => item.code)).not.toContain("skill:software");
+  });
+
+  it("does not treat a high-school prerequisite as high-school-only when a bachelor's is required", () => {
+    const result = evaluateResumeMatch({
+      ...base,
+      educationRequirements: "High school diploma required; currently pursuing a bachelor's degree in computer science.",
+    });
+
+    expect(result.exclusion).not.toBe("education:high-school-only");
+    expect(result.eligible).toBe(true);
+  });
+
+  it("allows PhD-titled internships when master's students are explicitly eligible", () => {
+    const result = evaluateResumeMatch({
+      ...base,
+      title: "PhD Research Scientist Intern",
+      educationRequirements: "Open to master's and PhD students in computer science.",
+    });
+
+    expect(result.exclusion).not.toBe("education:phd-only");
+    expect(result.eligible).toBe(true);
+  });
+
+  it.each(["Applied Scientist Intern", "Research Scientist Intern"])(
+    "recognizes direct scientist title %s",
+    (title) => {
+      const result = evaluateResumeMatch({ ...base, title });
+      expect(result.eligible).toBe(true);
+      expect(result.evidence.map((item) => item.code)).toContain("role:applied-science");
+    },
+  );
 });
