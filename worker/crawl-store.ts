@@ -194,22 +194,25 @@ export class D1CrawlStore implements CrawlStore {
       adapter: row.adapter,
       nextCrawlAt: row.next_crawl_at,
     }));
-    const google = sources.find((source) => source.id === "p4-0285-google");
-    if (!google) return sources;
-
+    if (sources.length === 0) return sources;
+    const checkpointKeys = sources.map((source) => pagedCrawlStateKey(source.id));
     const checkpointResult = await this.db.prepare(`
-      SELECT value FROM catalog_state WHERE key = ?
-    `).bind(pagedCrawlStateKey(google.id)).all<{ value: string }>();
-    const value = checkpointResult.results[0]?.value;
-    if (!value) return sources;
-    try {
-      const checkpoint = JSON.parse(value) as Partial<PagedCrawlState>;
-      if (Number.isInteger(checkpoint.nextPage) && Number(checkpoint.nextPage) > 0 && typeof checkpoint.cycleStartedAt === "string") {
-        google.crawlPageCursor = Number(checkpoint.nextPage);
-        google.crawlCycleStartedAt = checkpoint.cycleStartedAt;
+      SELECT key, value FROM catalog_state
+      WHERE key IN (SELECT value FROM json_each(?))
+    `).bind(JSON.stringify(checkpointKeys)).all<{ key: string; value: string }>();
+    const checkpoints = new Map(checkpointResult.results.map((row) => [row.key, row.value]));
+    for (const source of sources) {
+      const value = checkpoints.get(pagedCrawlStateKey(source.id));
+      if (!value) continue;
+      try {
+        const checkpoint = JSON.parse(value) as Partial<PagedCrawlState>;
+        if (Number.isInteger(checkpoint.nextPage) && Number(checkpoint.nextPage) > 0 && typeof checkpoint.cycleStartedAt === "string") {
+          source.crawlPageCursor = Number(checkpoint.nextPage);
+          source.crawlCycleStartedAt = checkpoint.cycleStartedAt;
+        }
+      } catch {
+        // Ignore a malformed checkpoint and restart from page one safely.
       }
-    } catch {
-      // Ignore a malformed checkpoint and restart from page one safely.
     }
     return sources;
   }

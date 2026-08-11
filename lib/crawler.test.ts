@@ -842,6 +842,34 @@ Wrong description.
     expect(result.jobs).toHaveLength(41);
   });
 
+  it("retries the first failed Google page instead of completing an incomplete crawl cycle", async () => {
+    const requests: number[] = [];
+    const page = (start: number) => Array.from({ length: 20 }, (_, index) => {
+      const id = start + index;
+      return `<a href="/about/careers/applications/jobs/results/${id}-role-${id}" aria-label="Learn more about Role ${id}"></a>`;
+    }).join("");
+    const fetcher: typeof fetch = async (input) => {
+      const pageNumber = Number(new URL(String(input)).searchParams.get("page") ?? 1);
+      requests.push(pageNumber);
+      if (pageNumber === 22) return new Response("temporary failure", { status: 503 });
+      return new Response(`<span class="SWhIm">421</span> jobs matched ${page(pageNumber * 100)}`, { status: 200 });
+    };
+
+    const result = await crawlSource({
+      id: "p4-0285-google",
+      company: "Google / Alphabet",
+      postingUrl: "https://www.google.com/about/careers/applications/jobs/results/",
+      adapter: "custom",
+      crawlPageCursor: 21,
+    }, fetcher, new Date());
+
+    expect(requests).toEqual([1, 21, 22, 22]);
+    expect(result).toEqual(expect.objectContaining({
+      completeListing: false,
+      pagination: { nextPage: 22, cycleComplete: false, totalPages: 22 },
+    }));
+  });
+
   it("keeps Google DeepMind's official company filter on every careers page", async () => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input) => {
@@ -1912,6 +1940,39 @@ Wrong description.
       officialUrl: "https://www.amazon.jobs/en/jobs/10100/machine-learning-intern",
       publishedAt: "2026-08-10T00:00:00.000Z",
     }));
+  });
+
+  it("checkpoints Amazon's large global catalog instead of retaining every rich page", async () => {
+    const offsets: number[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const offset = Number(new URL(String(input)).searchParams.get("offset") ?? 0);
+      offsets.push(offset);
+      const count = offset === 2_200 ? 30 : 100;
+      return Response.json({
+        hits: 2_230,
+        jobs: Array.from({ length: count }, (_, index) => ({
+          id_icims: String(offset + index),
+          title: `Amazon Role ${offset + index}`,
+          job_path: `/en/jobs/${offset + index}/amazon-role-${offset + index}`,
+        })),
+      });
+    };
+
+    const result = await crawlSource({
+      id: "p4-0394-amazon",
+      company: "Amazon / AWS",
+      postingUrl: "https://www.amazon.jobs/en/",
+      adapter: "custom",
+      crawlPageCursor: 21,
+    }, fetcher, new Date("2026-08-11T12:00:00Z"));
+
+    expect(offsets).toEqual([0, 2_000, 2_100, 2_200]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 23 },
+    }));
+    expect(result.jobs).toHaveLength(330);
   });
 
   it("paginates ServiceNow reader pages when the request surface is blocked", async () => {

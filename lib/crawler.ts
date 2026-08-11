@@ -2606,30 +2606,63 @@ const crawlAmazonJobs = async (source: CrawlSource, fetcher: typeof fetch): Prom
     endpoint.searchParams.set("base_query", query);
     return endpoint;
   };
-  const fetchPage = async (offset: number): Promise<{ status: number; payload: AmazonSearchPayload } | null> => {
+  const fetchPage = async (offset: number): Promise<{ status: number; total: number; jobs: CrawledJob[] } | null> => {
     try {
       const response = await fetchWithTimeout(fetcher, endpointFor(offset), { headers: { accept: "application/json" } });
       if (!response.ok) return null;
-      return { status: response.status, payload: await response.json() as AmazonSearchPayload };
+      const payload = await response.json() as AmazonSearchPayload;
+      return {
+        status: response.status,
+        total: Math.max(0, Number(payload.hits ?? payload.jobs?.length ?? 0)),
+        jobs: (payload.jobs ?? []).flatMap((job) => amazonJob(source, job) ?? []),
+      };
     } catch {
       return null;
     }
   };
   const first = await fetchPage(0);
   if (!first) return { status: "failed", responseStatus: null, completeListing: false, jobs: [], error: "Amazon search endpoint did not return a usable first page." };
-  const total = Math.max(0, Number(first.payload.hits ?? first.payload.jobs?.length ?? 0));
+  const total = first.total;
   const boundedTotal = Math.min(total, 10_000);
-  const offsets = Array.from({ length: Math.max(0, Math.ceil(boundedTotal / pageSize) - 1) }, (_, index) => (index + 1) * pageSize);
-  const pages: Array<{ status: number; payload: AmazonSearchPayload } | null> = [];
-  for (let index = 0; index < offsets.length; index += 8) {
-    pages.push(...await Promise.all(offsets.slice(index, index + 8).map(fetchPage)));
+  const totalPages = Math.ceil(boundedTotal / pageSize);
+  const isCheckpointedCatalog = source.id === "p4-0394-amazon" && totalPages > 4;
+  const startPage = isCheckpointedCatalog
+    ? Math.min(Math.max(source.crawlPageCursor ?? 1, 1), totalPages)
+    : 1;
+  const endPage = isCheckpointedCatalog
+    ? Math.min(startPage + (startPage === 1 ? 3 : 2), totalPages)
+    : totalPages;
+  const jobsByUrl = new Map(first.jobs.map((job) => [job.officialUrl, job]));
+  let firstFailedPage: number | null = first.jobs.length < Math.min(pageSize, total) ? 1 : null;
+  if (first.jobs.length < Math.min(pageSize, total)) firstFailedPage = 1;
+  for (let page = Math.max(startPage, 2); page <= endPage; page += 1) {
+    const result = await fetchPage((page - 1) * pageSize);
+    const expected = Math.min(pageSize, Math.max(0, total - (page - 1) * pageSize));
+    if (!result || result.jobs.length < expected) {
+      firstFailedPage ??= page;
+      continue;
+    }
+    for (const job of result.jobs) jobsByUrl.set(job.officialUrl, job);
   }
-  const successful = [first, ...pages.filter((page): page is { status: number; payload: AmazonSearchPayload } => page !== null)];
-  const jobs = uniqueJobs(successful.flatMap((page) => page.payload.jobs ?? []).flatMap((job) => amazonJob(source, job) ?? []));
+  const jobs = [...jobsByUrl.values()];
+  if (isCheckpointedCatalog) {
+    return {
+      status: "succeeded",
+      responseStatus: first.status,
+      completeListing: false,
+      jobs,
+      pagination: {
+        nextPage: firstFailedPage ?? (endPage === totalPages ? 1 : endPage + 1),
+        cycleComplete: firstFailedPage === null && endPage === totalPages,
+        totalPages,
+      },
+      error: null,
+    };
+  }
   return {
     status: "succeeded",
     responseStatus: first.status,
-    completeListing: total < 10_000 && pages.every(Boolean) && jobs.length >= total,
+    completeListing: total < 10_000 && firstFailedPage === null && jobs.length >= total,
     jobs,
     error: null,
   };
@@ -2976,10 +3009,11 @@ const crawlGoogleCareers = async (source: CrawlSource, fetcher: typeof fetch): P
     ? Math.min(Math.max(source.crawlPageCursor ?? 1, 1), boundedPages)
     : 1;
   const endPage = isCheckpointedCatalog
-    ? Math.min(startPage + 19, boundedPages)
+    ? Math.min(startPage + (startPage === 1 ? 19 : 18), boundedPages)
     : boundedPages;
   const firstRequestedPage = Math.max(startPage, 2);
   successfulPages = startPage === 1 ? 1 : 0;
+  let firstFailedPage: number | null = null;
   for (let page = firstRequestedPage; page <= endPage; page += pageConcurrency) {
     const pages = await Promise.all(
       Array.from(
@@ -2987,8 +3021,13 @@ const crawlGoogleCareers = async (source: CrawlSource, fetcher: typeof fetch): P
         (_, index) => fetchPage(page + index),
       ),
     );
-    for (const result of pages) {
-      if (!result) continue;
+    for (const [index, result] of pages.entries()) {
+      const requestedPage = page + index;
+      const expected = Math.min(pageSize, Math.max(0, total - (requestedPage - 1) * pageSize));
+      if (!result || result.jobs.length < expected) {
+        firstFailedPage ??= requestedPage;
+        continue;
+      }
       successfulPages += 1;
       for (const job of result.jobs) jobsByUrl.set(job.officialUrl, job);
     }
@@ -3001,8 +3040,8 @@ const crawlGoogleCareers = async (source: CrawlSource, fetcher: typeof fetch): P
       completeListing: false,
       jobs,
       pagination: {
-        nextPage: endPage === boundedPages ? 1 : endPage + 1,
-        cycleComplete: endPage === boundedPages,
+        nextPage: firstFailedPage ?? (endPage === boundedPages ? 1 : endPage + 1),
+        cycleComplete: firstFailedPage === null && endPage === boundedPages,
         totalPages,
       },
       error: null,

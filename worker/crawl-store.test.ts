@@ -507,7 +507,10 @@ describe("D1CrawlStore source leasing", () => {
               id: "p4-0285-google", company: "Google / Alphabet",
               posting_url: "https://www.google.com/about/careers/applications/jobs/results/",
               adapter: "custom", next_crawl_at: "2026-08-09T12:10:00.000Z",
-            }] : [{ value: JSON.stringify({ nextPage: 41, cycleStartedAt: "2026-08-09T08:00:00.000Z" }) }] }) };
+            }] : [{
+              key: "crawl_page_checkpoint:p4-0285-google",
+              value: JSON.stringify({ nextPage: 41, cycleStartedAt: "2026-08-09T08:00:00.000Z" }),
+            }] }) };
           },
         };
       },
