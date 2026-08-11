@@ -2,6 +2,24 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
+import { backfillResumeMatches, syncResumeMatches, type ResumeMatchCandidate } from "./resume-match-store";
+
+const createD1 = (sqlite: DatabaseSync): D1Database => ({
+  prepare(sql: string) {
+    const statement = sqlite.prepare(sql);
+    const bound = (values: unknown[]) => ({
+      all: async <T>() => ({ results: statement.all(...values as never[]) as T[] }),
+      first: async <T>() => statement.get(...values as never[]) as T | null,
+      run: async () => statement.run(...values as never[]),
+    });
+    return {
+      all: async <T>() => ({ results: statement.all() as T[] }),
+      first: async <T>() => statement.get() as T | null,
+      run: async () => statement.run(),
+      bind: (...values: unknown[]) => bound(values),
+    };
+  },
+}) as unknown as D1Database;
 
 const migratedSqlite = (): DatabaseSync => {
   const sqlite = new DatabaseSync(":memory:");
@@ -24,6 +42,18 @@ const migratedSqlite = (): DatabaseSync => {
       source_id text NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
       title text NOT NULL,
       company text NOT NULL,
+      location_region text,
+      summary text,
+      description text,
+      responsibilities text,
+      qualifications text,
+      skills text NOT NULL DEFAULT '[]',
+      job_family text,
+      job_function text,
+      education_requirements text,
+      experience_requirements text,
+      security_clearance text,
+      published_at text,
       official_url text NOT NULL,
       status text NOT NULL DEFAULT 'open',
       first_seen_at text NOT NULL,
@@ -31,6 +61,14 @@ const migratedSqlite = (): DatabaseSync => {
       created_at text NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at text NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(source_id, official_url)
+    );
+    CREATE TABLE job_topics (
+      job_id text NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+      topic_key text NOT NULL,
+      score integer NOT NULL DEFAULT 1,
+      evidence text NOT NULL DEFAULT '[]',
+      classified_at text NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY(job_id, topic_key)
     );
     CREATE TABLE job_matches (
       id text PRIMARY KEY,
@@ -79,5 +117,84 @@ describe("resume match persistence migration", () => {
     expect(() => sqlite.prepare(
       "INSERT INTO profile_recipients (profile_id, recipient, enabled) VALUES (?, ?, 1)",
     ).run("chanyoung-resume", "kimchany@usc.edu")).toThrow();
+  });
+
+  it("keeps baseline matches visible but notification-ineligible", async () => {
+    const sqlite = migratedSqlite();
+    sqlite.exec(`
+      INSERT INTO sources (id) VALUES ('source');
+      UPDATE match_profiles SET activation_watermark = '2026-08-10T12:00:00.000Z';
+      INSERT INTO jobs (
+        id, source_id, title, company, location_region, official_url, status, first_seen_at, last_seen_at
+      ) VALUES (
+        'old', 'source', 'Data Science Intern', 'Acme', 'us', 'https://example.com/old', 'open',
+        '2026-08-10T11:00:00.000Z', '2026-08-10T11:00:00.000Z'
+      );
+      INSERT INTO job_topics (job_id, topic_key) VALUES
+        ('old', 'program:internship'), ('old', 'year:2027');
+    `);
+
+    await backfillResumeMatches(createD1(sqlite), { afterId: null, limit: 100 });
+
+    expect(sqlite.prepare(
+      "SELECT is_active, notification_eligible FROM job_matches WHERE job_id = 'old'",
+    ).get()).toEqual({ is_active: 1, notification_eligible: 0 });
+  });
+
+  it("marks a post-watermark new match eligible exactly once", async () => {
+    const sqlite = migratedSqlite();
+    sqlite.exec(`
+      INSERT INTO sources (id) VALUES ('source');
+      UPDATE match_profiles SET enabled = 1, activation_watermark = '2026-08-10T12:00:00.000Z';
+      INSERT INTO jobs (
+        id, source_id, title, company, location_region, official_url, status, first_seen_at, last_seen_at
+      ) VALUES (
+        'new', 'source', 'Machine Learning Intern', 'Acme', 'us', 'https://example.com/new', 'open',
+        '2026-08-10T12:01:00.000Z', '2026-08-10T12:01:00.000Z'
+      );
+    `);
+    const candidate: ResumeMatchCandidate = {
+      id: "new", title: "Machine Learning Intern", company: "Acme", locationRegion: "us",
+      programKeys: ["internship"], summary: null, description: null, responsibilities: null,
+      qualifications: null, skills: ["Python", "SQL"], jobFamily: null, jobFunction: null,
+      educationRequirements: null, experienceRequirements: null, securityClearance: null,
+      recruitingYears: [2027], publishedAt: null, firstSeenAt: "2026-08-10T12:01:00.000Z",
+      openGeneration: 1,
+    };
+
+    await syncResumeMatches(createD1(sqlite), [candidate], "2026-08-10T12:01:00.000Z");
+    await syncResumeMatches(createD1(sqlite), [candidate], "2026-08-10T12:02:00.000Z");
+
+    expect(sqlite.prepare("SELECT count(*) AS total FROM job_matches WHERE job_id = 'new'").get()).toEqual({ total: 1 });
+    expect(sqlite.prepare(
+      "SELECT notification_eligible FROM job_matches WHERE job_id = 'new'",
+    ).get()).toEqual({ notification_eligible: 1 });
+  });
+
+  it("creates a new eligible match generation for a genuinely reopened job", async () => {
+    const sqlite = migratedSqlite();
+    sqlite.exec(`
+      INSERT INTO sources (id) VALUES ('source');
+      UPDATE match_profiles SET enabled = 1, activation_watermark = '2026-08-10T12:00:00.000Z';
+      INSERT INTO jobs (
+        id, source_id, title, company, location_region, official_url, status, first_seen_at, last_seen_at, open_generation
+      ) VALUES (
+        'reopened', 'source', 'Software Engineering Intern', 'Acme', 'us', 'https://example.com/reopened',
+        'open', '2026-08-01T00:00:00.000Z', '2026-08-10T13:00:00.000Z', 2
+      );
+    `);
+    const candidate: ResumeMatchCandidate = {
+      id: "reopened", title: "Software Engineering Intern", company: "Acme", locationRegion: "us",
+      programKeys: ["internship"], summary: null, description: null, responsibilities: null,
+      qualifications: null, skills: ["JavaScript"], jobFamily: null, jobFunction: null,
+      educationRequirements: null, experienceRequirements: null, securityClearance: null,
+      recruitingYears: [], publishedAt: null, firstSeenAt: "2026-08-01T00:00:00.000Z", openGeneration: 2,
+    };
+
+    await syncResumeMatches(createD1(sqlite), [candidate], "2026-08-10T13:00:00.000Z");
+
+    expect(sqlite.prepare(
+      "SELECT open_generation, notification_eligible FROM job_matches WHERE job_id = 'reopened'",
+    ).get()).toEqual({ open_generation: 2, notification_eligible: 1 });
   });
 });

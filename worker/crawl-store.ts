@@ -6,6 +6,7 @@ import { classifyAiDataJob } from "../lib/job-topic-classifier";
 import { classifyJobPrograms } from "../lib/job-program-classifier";
 import { classifyRecruitingYears } from "../lib/job-recruiting-year-classifier";
 import { normalizeEmploymentType } from "../lib/employment-type";
+import { loadResumeCandidatesForUrls, syncResumeMatches } from "../lib/resume-match-store";
 
 type SourceRow = {
   id: string;
@@ -272,7 +273,8 @@ export class D1CrawlStore implements CrawlStore {
           salary_currency, salary_interval, benefits, education_requirements, experience_requirements,
           experience_level, shift_schedule, travel_requirements, security_clearance, languages,
           requisition_id, apply_url, source_posted_text, source_updated_at, valid_through, raw_payload,
-          published_at, first_seen_at, last_seen_at, closed_at, topic_classified_at, area_classified_at
+          published_at, first_seen_at, last_seen_at, closed_at, topic_classified_at, area_classified_at,
+          open_generation
         )
         SELECT
           json_extract(value, '$.id'), json_extract(value, '$.sourceId'),
@@ -295,7 +297,7 @@ export class D1CrawlStore implements CrawlStore {
           json_extract(value, '$.applyUrl'), json_extract(value, '$.sourcePostedText'), json_extract(value, '$.sourceUpdatedAt'),
           json_extract(value, '$.validThrough'), json_extract(value, '$.rawPayload'), json_extract(value, '$.publishedAt'),
           json_extract(value, '$.firstSeenAt'), json_extract(value, '$.lastSeenAt'), NULL,
-          json_extract(value, '$.topicClassifiedAt'), json_extract(value, '$.areaClassifiedAt')
+          json_extract(value, '$.topicClassifiedAt'), json_extract(value, '$.areaClassifiedAt'), 1
         FROM json_each(?)
         WHERE true
         ON CONFLICT(source_id, official_url) DO UPDATE SET
@@ -345,6 +347,10 @@ export class D1CrawlStore implements CrawlStore {
           valid_through = COALESCE(excluded.valid_through, jobs.valid_through),
           raw_payload = COALESCE(excluded.raw_payload, jobs.raw_payload),
           description_hash = COALESCE(excluded.description_hash, jobs.description_hash),
+          open_generation = CASE
+            WHEN jobs.status = 'closed' THEN jobs.open_generation + 1
+            ELSE jobs.open_generation
+          END,
           status = 'open',
           published_at = COALESCE(excluded.published_at, jobs.published_at),
           last_seen_at = excluded.last_seen_at,
@@ -516,6 +522,13 @@ export class D1CrawlStore implements CrawlStore {
         `).bind(JSON.stringify(chunk)).run();
       }
     }
+
+    const resumeCandidates = await loadResumeCandidatesForUrls(
+      this.db,
+      sourceId,
+      [...visibleUrls],
+    );
+    await syncResumeMatches(this.db, resumeCandidates, now);
 
     const shouldReplaceFacets = completeListing || facets !== undefined;
     const effectiveFacets = completeListing ? mergedFacets(facets, jobs) : facets ?? [];

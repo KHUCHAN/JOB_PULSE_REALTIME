@@ -115,6 +115,7 @@ describe("D1CrawlStore enriched job persistence", () => {
     expect(insert?.sql).toContain("arrangement = CASE WHEN excluded.arrangement = 'unknown' THEN jobs.arrangement ELSE excluded.arrangement END");
     expect(insert?.sql).toContain("employment_type = COALESCE(excluded.employment_type, jobs.employment_type)");
     expect(insert?.sql).toContain("description_hash = COALESCE(excluded.description_hash, jobs.description_hash)");
+    expect(insert?.sql).toContain("WHEN jobs.status = 'closed' THEN jobs.open_generation + 1");
   });
 
   it("upserts AI/data membership and clears stale membership for every processed job", async () => {
