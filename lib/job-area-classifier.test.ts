@@ -81,6 +81,26 @@ describe("classifyJobAreas", () => {
       title: "Supply Chain Internship",
       description: "Data Analytics majors are preferred. Gather data for demand planning and process improvements.",
     },
+    {
+      title: "Product Designer, Internship - US Government",
+      description: "Pair qualitative methods with quantitative information, like product and usage metrics. Deliver designs with engineers.",
+    },
+    {
+      title: "Intern, Geology & Geophysics 2027",
+      description: "Geological focus with strong analytical and quantitative skills. Builds effective solutions based on available information.",
+    },
+    {
+      title: "Spring 2027 Business Operations Internship/Co-op",
+      qualifications: "Experience in corporate and business functions such as data analysis, finance, human resources, IT, legal, and supply chain.",
+    },
+    {
+      title: "Human Resources Intern",
+      description: "Assist with building learning content and internal communications for the team. The company network uses cutting-edge artificial intelligence technologies.",
+    },
+    {
+      title: "Human Resources Intern",
+      description: "Organizes and tracks multiple small tasks across two functional areas Shows curiosity about applying AI tools to everyday work.",
+    },
   ])("does not turn incidental body language into a job area: $title", (input) => {
     expect(classifyJobAreas(input)).toEqual([]);
   });

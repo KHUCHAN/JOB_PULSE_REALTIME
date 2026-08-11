@@ -20,7 +20,7 @@ export type JobAreaClassification = {
   evidence: string[];
 };
 
-export const JOB_AREA_CLASSIFICATION_VERSION = "v2";
+export const JOB_AREA_CLASSIFICATION_VERSION = "v3";
 
 export const jobAreaClassificationMarker = (timestamp = new Date().toISOString()): string =>
   `${JOB_AREA_CLASSIFICATION_VERSION}:${timestamp}`;
@@ -93,7 +93,7 @@ const normalize = (value: unknown): string => typeof value === "string"
 const matchingLabels = (value: string, signals: Signal[]): string[] =>
   signals.filter((signal) => signal.pattern.test(value)).map((signal) => signal.label);
 
-const explicitTrackContext = /\b(?:assignments?|disciplines?|tracks?|focus areas?|practice areas?|projects?|rotations?|gain(?:ing)? experience|experience within|work (?:directly )?(?:alongside|within|on|in)|contribut(?:e|ing) to|develop(?:ing)?|build(?:ing)?|research(?:ing)?|analy[sz](?:e|ing))\b/i;
+const explicitTrackLead = /\b(?:assignments?\s+(?:include|including|in|across|within|may include)|disciplines?\s+(?:such as|include|including|in)|tracks?\s*(?:include|including|such as|:|in)|(?:focus|practice) areas?\s*(?:include|including|such as|:|in)|rotations?\s+(?:include|including|through|across|in)|(?:gain(?:ing)?\s+)?experience within)\b[^.!?;]{0,220}$/i;
 const incidentalAiContext = /\b(?:responsible use|usage policy|candidate experience|recruit(?:ing|ment)|hiring decisions?|drafting assistance|content organization)\b/i;
 const bodyTrackSignals: Record<Exclude<JobAreaKey, "software-engineering">, Signal[]> = {
   "ai-ml": aiMlSignals,
@@ -107,12 +107,18 @@ const explicitBodyTrackLabels = (
   value: string,
   areaKey: Exclude<JobAreaKey, "software-engineering">,
 ): string[] => {
-  const segments = value.split(/[.!?;]|\s[-–—]\s/).map((segment) => segment.trim()).filter(Boolean);
   const labels = new Set<string>();
-  for (const segment of segments) {
-    if (!explicitTrackContext.test(segment)) continue;
-    if (areaKey === "ai-ml" && incidentalAiContext.test(segment)) continue;
-    for (const label of matchingLabels(segment, bodyTrackSignals[areaKey])) labels.add(label);
+  for (const signal of bodyTrackSignals[areaKey]) {
+    const flags = signal.pattern.flags.includes("g") ? signal.pattern.flags : `${signal.pattern.flags}g`;
+    const globalPattern = new RegExp(signal.pattern.source, flags);
+    for (const match of value.matchAll(globalPattern)) {
+      const index = match.index ?? 0;
+      const before = value.slice(Math.max(0, index - 260), index);
+      const localContext = value.slice(Math.max(0, index - 120), Math.min(value.length, index + 180));
+      if (!explicitTrackLead.test(before)) continue;
+      if (areaKey === "ai-ml" && incidentalAiContext.test(localContext)) continue;
+      labels.add(signal.label);
+    }
   }
   return [...labels];
 };

@@ -171,7 +171,7 @@ describe("D1CrawlStore enriched job persistence", () => {
     const records = JSON.parse(String(jobsInsert?.values[0]));
     expect(records[0]).toEqual(expect.objectContaining({
       locationRegion: "us",
-      areaClassifiedAt: expect.stringMatching(/^v2:/),
+      areaClassifiedAt: expect.stringMatching(/^v3:/),
       areaMemberships: [expect.objectContaining({ topicKey: "area:software-engineering" })],
     }));
     expect(records[1]).toEqual(expect.objectContaining({
