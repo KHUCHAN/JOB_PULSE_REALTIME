@@ -4059,6 +4059,137 @@ const metaFacet = (key: string, label: string, jobs: MetaCareerJob[], select: (j
   };
 };
 
+const metaSitemapEntries = (xml: string): Array<{ id: string; url: string }> => [...xml.matchAll(/<loc>\s*([^<]+?)\s*<\/loc>/gi)]
+  .flatMap((match) => {
+    try {
+      const url = new URL(decodeHtmlAttribute(match[1]));
+      const id = url.pathname.match(/^\/profile\/job_details\/(\d+)\/$/i)?.[1];
+      return url.origin === "https://www.metacareers.com"
+        && !url.username && !url.password && !url.search && !url.hash && id
+        ? [{ id, url: url.href }]
+        : [];
+    } catch {
+      return [];
+    }
+  });
+
+const metaStructuredJob = (html: string, entry: { id: string; url: string }, source: CrawlSource): CrawledJob | null => {
+  const node = jsonLdScripts(html).flatMap(jobPostingNodes).at(0);
+  if (!node) return null;
+  const identifier = node.identifier;
+  const claimedId = identifier && typeof identifier === "object"
+    ? asText((identifier as JsonLdValue).value) ?? asText((identifier as JsonLdValue)["@id"])
+    : asText(identifier);
+  if (claimedId && claimedId !== entry.id) return null;
+  const mainEntity = node.mainEntityOfPage;
+  const claimedUrl = asText(node.url)
+    ?? (mainEntity && typeof mainEntity === "object"
+      ? asText((mainEntity as JsonLdValue).url) ?? asText((mainEntity as JsonLdValue)["@id"])
+      : asText(mainEntity));
+  if (claimedUrl) {
+    try {
+      if (new URL(claimedUrl, entry.url).href !== entry.url) return null;
+    } catch {
+      return null;
+    }
+  }
+  const locations = Array.isArray(node.jobLocation) ? node.jobLocation : node.jobLocation ? [node.jobLocation] : [];
+  const job = jsonLdJob({
+    ...node,
+    url: entry.url,
+    identifier: { value: entry.id },
+    ...(locations[0] ? { jobLocation: locations[0] } : {}),
+  }, source);
+  if (!job) return null;
+  const secondaryLocations = locations.slice(1).flatMap((value) => {
+    if (!value || typeof value !== "object") return [];
+    return asText((value as JsonLdValue).name) ?? jobLocation(value) ?? [];
+  });
+  return {
+    ...job,
+    externalId: entry.id,
+    officialUrl: entry.url,
+    ...(secondaryLocations.length > 0 ? { secondaryLocations } : {}),
+  };
+};
+
+async function crawlMetaSitemapFallback(source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> {
+  const sitemapUrl = "https://www.metacareers.com/jobs/sitemap.xml";
+  try {
+    const sitemapResponse = await fetchWithTimeout(fetcher, sitemapUrl, {
+      headers: { accept: "application/xml,text/xml;q=0.9,*/*;q=0.7" },
+    }, false, { attempts: 1, timeoutMs: 20_000 });
+    if (!sitemapResponse.ok) return {
+      status: isBlockedHttpStatus(sitemapResponse.status) ? "blocked" : "failed",
+      responseStatus: sitemapResponse.status,
+      completeListing: false,
+      jobs: [],
+      error: `Meta careers sitemap returned HTTP ${sitemapResponse.status}.`,
+    };
+    const entries = [...new Map(metaSitemapEntries(await sitemapResponse.text()).map((entry) => [entry.id, entry])).values()]
+      .sort((left, right) => left.id.localeCompare(right.id, "en", { numeric: true }));
+    if (entries.length === 0) return {
+      status: "failed",
+      responseStatus: sitemapResponse.status,
+      completeListing: false,
+      jobs: [],
+      error: "Meta careers sitemap returned no official job URLs.",
+    };
+
+    const pageSize = 40;
+    const pageStride = pageSize - 1;
+    const totalPages = entries.length <= pageSize ? 1 : 1 + Math.ceil((entries.length - pageSize) / pageStride);
+    const page = Math.min(Math.max(source.crawlPageCursor ?? 1, 1), totalPages);
+    const pageStart = (page - 1) * pageStride;
+    const pageEntries = entries.slice(pageStart, pageStart + pageSize);
+    const jobs: CrawledJob[] = [];
+    let failedDetail = false;
+    for (let index = 0; index < pageEntries.length; index += 10) {
+      const details = await Promise.all(pageEntries.slice(index, index + 10).map(async (entry) => {
+        try {
+          const response = await fetchWithTimeout(fetcher, entry.url, {
+            headers: { accept: "text/html,application/xhtml+xml" },
+          }, false, { attempts: 1, timeoutMs: 20_000 });
+          if (!response.ok) return null;
+          if (response.url && response.url !== entry.url) return null;
+          return metaStructuredJob(await response.text(), entry, source);
+        } catch {
+          return null;
+        }
+      }));
+      if (details.some((job) => job === null)) failedDetail = true;
+      jobs.push(...details.filter((job): job is CrawledJob => job !== null));
+    }
+    if (failedDetail || jobs.length !== pageEntries.length) return {
+      status: "failed",
+      responseStatus: sitemapResponse.status,
+      completeListing: false,
+      jobs: [],
+      error: `Meta careers sitemap detail segment ${page} was incomplete.`,
+    };
+    return {
+      status: "succeeded",
+      responseStatus: sitemapResponse.status,
+      completeListing: false,
+      jobs,
+      pagination: {
+        nextPage: page === totalPages ? 1 : page + 1,
+        cycleComplete: page === totalPages,
+        totalPages,
+      },
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: "failed",
+      responseStatus: null,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Meta sitemap crawler error.",
+    };
+  }
+}
+
 async function crawlMetaCareers(source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> {
   const fallbackOperationId = "27129360303422352";
   let responseStatus: number | null = null;
@@ -4067,13 +4198,7 @@ async function crawlMetaCareers(source: CrawlSource, fetcher: typeof fetch): Pro
     // the public no-cookie document and GraphQL operation remain directly available.
     const pageResponse = await fetchWithTimeout(fetcher, source.postingUrl, undefined, false);
     responseStatus = pageResponse.status;
-    if (!pageResponse.ok) return {
-      status: isBlockedHttpStatus(pageResponse.status) ? "blocked" : "failed",
-      responseStatus,
-      completeListing: false,
-      jobs: [],
-      error: `Meta careers page returned HTTP ${pageResponse.status}.`,
-    };
+    if (!pageResponse.ok) return crawlMetaSitemapFallback(source, fetcher);
     const sessionCookie = [...(pageResponse.headers.get("set-cookie") ?? "")
       .matchAll(/(?:^|,\s*)([!#$%&'*+\-.^_`|~0-9A-Za-z]+)=([^;,\s]+)/g)]
       .map((match) => `${match[1]}=${match[2]}`)
@@ -4084,8 +4209,9 @@ async function crawlMetaCareers(source: CrawlSource, fetcher: typeof fetch): Pro
       .map((match) => new URL(match[1].replaceAll("&amp;", "&"), source.postingUrl).href))];
 
     let operationId: string | null = null;
-    for (let start = 0; start < scriptUrls.length && !operationId; start += 6) {
-      const scripts = await Promise.all(scriptUrls.slice(start, start + 6).map(async (url) => {
+    const operationScripts = scriptUrls.slice(0, 2);
+    for (let start = 0; start < operationScripts.length && !operationId; start += 2) {
+      const scripts = await Promise.all(operationScripts.slice(start, start + 2).map(async (url) => {
         try {
           const response = await fetchWithTimeout(fetcher, url, undefined, false, { attempts: 1, timeoutMs: 10_000 });
           return response.ok ? response.text() : "";
@@ -4096,13 +4222,7 @@ async function crawlMetaCareers(source: CrawlSource, fetcher: typeof fetch): Pro
       operationId = scripts.flatMap((script) => script.match(/CareersJobSearchResultsV\d+DataQuery_candidate_portalRelayOperation[\s\S]{0,320}?exports="(\d+)"/)?.[1] ?? []).at(0) ?? null;
     }
     operationId ??= fallbackOperationId;
-    if (!lsd) return {
-      status: "failed",
-      responseStatus,
-      completeListing: false,
-      jobs: [],
-      error: "Meta careers public search token could not be discovered.",
-    };
+    if (!lsd) return crawlMetaSitemapFallback(source, fetcher);
 
     const variables = {
       search_input: {
@@ -4163,20 +4283,7 @@ async function crawlMetaCareers(source: CrawlSource, fetcher: typeof fetch): Pro
       search = await requestOperation(fallbackOperationId);
       rawJobs = search.payload?.data?.job_search_with_featured_jobs_v2?.all_jobs;
     }
-    if (!search.response.ok) return {
-      status: isBlockedHttpStatus(search.response.status) ? "blocked" : "failed",
-      responseStatus,
-      completeListing: false,
-      jobs: [],
-      error: `Meta careers search returned HTTP ${search.response.status}.`,
-    };
-    if (!isUsableCatalog(rawJobs)) return {
-      status: "failed",
-      responseStatus,
-      completeListing: false,
-      jobs: [],
-      error: "Meta careers search returned an empty, malformed, or non-JSON payload.",
-    };
+    if (!search.response.ok || !isUsableCatalog(rawJobs)) return crawlMetaSitemapFallback(source, fetcher);
     const jobs = uniqueJobs(rawJobs.flatMap((job): CrawledJob[] => {
       if (!job.id || !job.title) return [];
       const locations = [...new Set((job.locations ?? []).map((value) => value.trim()).filter(Boolean))];
@@ -4215,12 +4322,10 @@ async function crawlMetaCareers(source: CrawlSource, fetcher: typeof fetch): Pro
       error: null,
     };
   } catch (error) {
-    return {
-      status: "failed",
-      responseStatus,
-      completeListing: false,
-      jobs: [],
-      error: error instanceof Error ? error.message : "Unknown Meta careers crawler error.",
+    const fallback = await crawlMetaSitemapFallback(source, fetcher);
+    return fallback.status === "succeeded" ? fallback : {
+      ...fallback,
+      error: error instanceof Error ? `${error.message}; ${fallback.error ?? "Meta sitemap fallback failed."}` : fallback.error,
     };
   }
 }

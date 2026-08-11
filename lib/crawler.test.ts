@@ -1180,6 +1180,7 @@ Wrong description.
         if (url === "https://static.xx.fbcdn.net/meta-careers.js") {
           return new Response('__d("CareersJobSearchResultsV2DataQuery_candidate_portalRelayOperation",[],function(){exports="99999999999999999"})');
         }
+        if (url === "https://www.metacareers.com/jobs/sitemap.xml") return new Response("temporary", { status: 503 });
         operationIds.push(new URLSearchParams(String(init?.body)).get("doc_id") ?? "");
         return Response.json({ data: { job_search_with_featured_jobs_v2: { all_jobs: allJobs } } });
       };
@@ -1191,6 +1192,114 @@ Wrong description.
       expect(operationIds).toEqual(["99999999999999999", "27129360303422352"]);
       expect(result).toEqual(expect.objectContaining({ status: "failed", completeListing: false, jobs: [] }));
     }
+  });
+
+  it("falls back to Meta's official sitemap and structured job pages when GraphQL is edge-blocked", async () => {
+    const requests: string[] = [];
+    const detail = (title: string) => `<script type="application/ld+json">${JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "JobPosting",
+      title,
+      description: "Build production machine learning systems.",
+      datePosted: "2026-08-11T09:00:00-07:00",
+      employmentType: "Full-time",
+      jobLocation: [{
+        "@type": "Place",
+        name: "Menlo Park, CA",
+        address: { "@type": "PostalAddress", addressLocality: "Menlo Park", addressRegion: "CA", addressCountry: "US" },
+      }],
+    })}</script>`;
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === "https://www.metacareers.com/jobsearch/") return new Response([
+        '<script src="https://static.xx.fbcdn.net/meta-careers.js"></script>',
+        '<script type="application/json">["LSD",[],{"token":"fresh-lsd-token"}]</script>',
+      ].join(""));
+      if (url === "https://static.xx.fbcdn.net/meta-careers.js") {
+        return new Response('__d("CareersJobSearchResultsV2DataQuery_candidate_portalRelayOperation",[],function(){exports="99999999999999999"})');
+      }
+      if (url === "https://www.metacareers.com/graphql") return new Response("<!DOCTYPE html><title>Blocked</title>");
+      if (url === "https://www.metacareers.com/jobs/sitemap.xml") return new Response([
+        '<?xml version="1.0"?><urlset>',
+        '<url><loc>https://www.metacareers.com/profile/job_details/101/</loc><lastmod>2026-08-11</lastmod></url>',
+        '<url><loc>https://www.metacareers.com/profile/job_details/101/</loc><lastmod>2026-08-11</lastmod></url>',
+        '<url><loc>https://www.metacareers.com/profile/job_details/102/</loc><lastmod>2026-08-11</lastmod></url>',
+        '<url><loc>http://www.metacareers.com/profile/job_details/103/</loc></url>',
+        '<url><loc>https://www.metacareers.com/profile/job_details/104/?source=test</loc></url>',
+        '<url><loc>https://www.metacareers.com:444/profile/job_details/105/</loc></url>',
+        '</urlset>',
+      ].join(""));
+      if (url.endsWith("/101/")) return new Response(detail("Machine Learning Engineer"));
+      if (url.endsWith("/102/")) return new Response(detail("Data Scientist"));
+      return new Response("missing", { status: 404 });
+    };
+
+    const result = await crawlSource({
+      id: "p4-0308-meta", company: "Meta", postingUrl: "https://www.metacareers.com/jobsearch/", adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests.filter((url) => url === "https://www.metacareers.com/graphql")).toHaveLength(2);
+    expect(requests).toContain("https://www.metacareers.com/jobs/sitemap.xml");
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 1 },
+    }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        externalId: "101", title: "Machine Learning Engineer", location: "Menlo Park, CA, US",
+        officialUrl: "https://www.metacareers.com/profile/job_details/101/",
+      }),
+      expect.objectContaining({ externalId: "102", title: "Data Scientist" }),
+    ]);
+  });
+
+  it("uses stable ordered overlapping segments for Meta's changing sitemap", async () => {
+    const detailRequests: string[] = [];
+    const urls = Array.from({ length: 81 }, (_, index) => 1_081 - index)
+      .map((id) => `<url><loc>https://www.metacareers.com/profile/job_details/${id}/</loc></url>`)
+      .join("");
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url === "https://www.metacareers.com/jobsearch/") return new Response("<main>no token</main>");
+      if (url === "https://www.metacareers.com/jobs/sitemap.xml") return new Response(`<urlset>${urls}</urlset>`);
+      detailRequests.push(url);
+      const id = url.match(/\/(\d+)\/$/)?.[1] ?? "";
+      return new Response(`<script type="application/ld+json">${JSON.stringify({
+        "@type": "JobPosting", title: `Role ${id}`, description: "Description", identifier: { value: id },
+      })}</script>`);
+    };
+
+    const result = await crawlSource({
+      id: "p4-0308-meta", company: "Meta", postingUrl: "https://www.metacareers.com/jobsearch/", adapter: "custom",
+      crawlPageCursor: 2,
+    }, fetcher, new Date());
+
+    expect(detailRequests).toHaveLength(40);
+    expect(detailRequests[0]).toBe("https://www.metacareers.com/profile/job_details/1040/");
+    expect(detailRequests.at(-1)).toBe("https://www.metacareers.com/profile/job_details/1079/");
+    expect(result.pagination).toEqual({ nextPage: 3, cycleComplete: false, totalPages: 3 });
+  });
+
+  it("rejects a Meta detail page whose structured identity conflicts with its sitemap URL", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url === "https://www.metacareers.com/jobsearch/") return new Response("<main>no token</main>");
+      if (url === "https://www.metacareers.com/jobs/sitemap.xml") {
+        return new Response('<urlset><url><loc>https://www.metacareers.com/profile/job_details/101/</loc></url></urlset>');
+      }
+      return new Response(`<script type="application/ld+json">${JSON.stringify({
+        "@type": "JobPosting", title: "Conflicting role", url: "https://www.metacareers.com/profile/job_details/999/",
+        identifier: { value: "999" },
+      })}</script>`);
+    };
+
+    const result = await crawlSource({
+      id: "p4-0308-meta", company: "Meta", postingUrl: "https://www.metacareers.com/jobsearch/", adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result).toEqual(expect.objectContaining({ status: "failed", completeListing: false, jobs: [] }));
   });
 
   it("reads Databricks' complete official Gatsby Greenhouse catalog", async () => {
