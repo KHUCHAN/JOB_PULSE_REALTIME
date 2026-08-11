@@ -102,7 +102,10 @@ describe("API repository", () => {
   });
 
   it("requests resume status and test delivery through pulse actions", async () => {
-    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json({ profileId: "chanyoung-resume" }));
+    const fetcher = vi.fn(async (...args: Parameters<typeof fetch>) => {
+      void args;
+      return Response.json({ profileId: "chanyoung-resume" });
+    });
     vi.stubGlobal("fetch", fetcher);
     const repository = createApiRepository();
 

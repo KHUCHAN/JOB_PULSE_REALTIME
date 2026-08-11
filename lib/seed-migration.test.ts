@@ -139,7 +139,7 @@ describe("tech job area and region migration", () => {
     const currentJournal = JSON.parse(readFileSync(resolve(drizzlePath, "meta/_journal.json"), "utf8"));
 
     expect(current.prevId).toBe(previous.id);
-    expect(currentJournal.entries.at(-1)).toMatchObject({
+    expect(currentJournal.entries.find((entry: { tag: string }) => entry.tag === "0045_tech_job_areas_regions")).toMatchObject({
       idx: 45,
       tag: "0045_tech_job_areas_regions",
     });

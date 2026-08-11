@@ -56,7 +56,7 @@ export function ResumeAlertCard({
 
       {status.lastError ? <div className="inline-error" role="alert">{status.lastError}</div> : null}
       <div className="resume-alert-actions">
-        <label className="resume-email-toggle">
+        <div className="resume-email-toggle">
           <span>Email digests</span>
           <button
             className={`toggle ${status.enabled ? "is-on" : ""}`}
@@ -67,7 +67,7 @@ export function ResumeAlertCard({
             disabled={busy || status.gmailState !== "connected"}
             onClick={() => void act(status.enabled ? "Email digests paused." : "Email digests enabled.", () => onToggle(!status.enabled))}
           ><span /></button>
-        </label>
+        </div>
         <button className="button secondary" type="button" disabled={busy || status.gmailState !== "connected"} onClick={() => void act("Test email sent to both recipients.", onTest)}>
           <Send size={15} /> Send test email
         </button>
