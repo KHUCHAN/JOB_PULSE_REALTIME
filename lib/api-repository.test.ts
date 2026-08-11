@@ -100,4 +100,18 @@ describe("API repository", () => {
 
     await expect(createApiRepository().listSources()).rejects.toThrow("No database");
   });
+
+  it("requests resume status and test delivery through pulse actions", async () => {
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json({ profileId: "chanyoung-resume" }));
+    vi.stubGlobal("fetch", fetcher);
+    const repository = createApiRepository();
+
+    await repository.getResumeAlertStatus();
+    await repository.sendResumeTestEmail();
+
+    expect(String(fetcher.mock.calls[0][0])).toContain("resource=resumeAlert");
+    expect(JSON.parse(String(fetcher.mock.calls[1][1]?.body))).toEqual({
+      action: "sendResumeTestEmail",
+    });
+  });
 });

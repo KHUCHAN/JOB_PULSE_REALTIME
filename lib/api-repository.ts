@@ -70,5 +70,9 @@ export function createApiRepository(): JobPulseRepository {
       kind: filters.kind,
     })),
     simulateCrawl: () => mutate("crawlBatch", { limit: 8 }),
+    getResumeAlertStatus: () => request(query("resumeAlert")),
+    setResumeAlertEnabled: (enabled: boolean) => mutate("setResumeAlertEnabled", { enabled }),
+    sendResumeTestEmail: () => mutate("sendResumeTestEmail", {}),
+    retryResumeAlert: () => mutate("retryResumeAlert", {}),
   };
 }

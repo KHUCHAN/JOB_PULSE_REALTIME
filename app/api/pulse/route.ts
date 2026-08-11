@@ -42,6 +42,17 @@ import {
   type JobViewRow,
 } from "../../../lib/pulse-mappers";
 import { D1CrawlStore } from "../../../worker/crawl-store";
+import { backfillResumeMatches } from "../../../lib/resume-match-store";
+import {
+  getResumeAlertStatus,
+  retryResumeAlerts,
+  setResumeAlertEnabled,
+} from "../../../lib/resume-alert-store";
+import {
+  processDueResumeAlerts,
+  sendResumeTestEmail,
+  type GmailRuntimeConfig,
+} from "../../../lib/resume-alert-service";
 
 export const dynamic = "force-dynamic";
 
@@ -51,6 +62,34 @@ const json = (value: unknown, status = 200): Response =>
 const db = (): D1Database => {
   if (!env.DB) throw new Error("D1 binding DB is unavailable.");
   return env.DB;
+};
+
+type GmailEnvironment = {
+  GMAIL_CLIENT_ID?: string;
+  GMAIL_CLIENT_SECRET?: string;
+  GMAIL_REFRESH_TOKEN?: string;
+  GMAIL_SENDER?: string;
+};
+
+const gmailRuntimeConfig = (): GmailRuntimeConfig | null => {
+  const values = env as typeof env & GmailEnvironment;
+  const clientId = values.GMAIL_CLIENT_ID?.trim();
+  const clientSecret = values.GMAIL_CLIENT_SECRET?.trim();
+  const refreshToken = values.GMAIL_REFRESH_TOKEN?.trim();
+  const sender = values.GMAIL_SENDER?.trim();
+  if (!clientId || !clientSecret || !refreshToken || !sender) return null;
+  return {
+    clientId,
+    clientSecret,
+    refreshToken,
+    sender,
+    siteUrl: "https://job-pulse-realtime.cksdud985.chatgpt.site/jobs?resumeMatch=chanyoung-resume",
+  };
+};
+
+const resumeStatus = async () => {
+  const config = gmailRuntimeConfig();
+  return getResumeAlertStatus(db(), "chanyoung-resume", Boolean(config), config?.sender ?? "");
 };
 
 const parseJsonArray = (value: string | null): string[] => {
@@ -281,6 +320,7 @@ export async function GET(request: Request): Promise<Response> {
       return json(events.filter((event) => (!severity || event.severity === severity) && (!kind || event.kind === kind)));
     }
     if (resource === "overview") return json(await overview());
+    if (resource === "resumeAlert") return json(await resumeStatus());
     return json({ error: "Unknown resource." }, 400);
   } catch (error) {
     if (error instanceof InvalidJobFilterError) return json({ error: error.message }, 400);
@@ -351,7 +391,48 @@ export async function POST(request: Request): Promise<Response> {
         });
         if (refreshed.refreshed) filterOptionsCache = null;
       }
-      return json(result);
+      let alerts: Awaited<ReturnType<typeof processDueResumeAlerts>> | { error: string };
+      try {
+        alerts = await processDueResumeAlerts(database, gmailRuntimeConfig(), new Date());
+      } catch {
+        alerts = { error: "Resume alert processing failed independently of the crawl." };
+      }
+      return json({ ...result, alerts });
+    }
+    if (body.action === "backfillResumeMatches") {
+      const requested = typeof body.limit === "number" ? body.limit : 500;
+      const limit = Math.max(1, Math.min(500, Math.trunc(requested)));
+      const afterId = typeof body.afterId === "string" && body.afterId.trim()
+        ? body.afterId.trim().slice(0, 200)
+        : null;
+      return json(await backfillResumeMatches(db(), { afterId, limit }));
+    }
+    if (body.action === "setResumeAlertEnabled") {
+      const config = gmailRuntimeConfig();
+      const enabled = body.enabled === true;
+      if (enabled && !config) return json({ error: "Gmail must be connected before alerts can be enabled." }, 409);
+      await setResumeAlertEnabled(db(), enabled, new Date().toISOString());
+      return json(await resumeStatus());
+    }
+    if (body.action === "sendResumeTestEmail") {
+      const config = gmailRuntimeConfig();
+      if (!config) return json({ error: "Gmail is not configured." }, 409);
+      const status = await resumeStatus();
+      const result = await sendResumeTestEmail(config, status.recipients);
+      await db().prepare(`
+        UPDATE match_profiles
+        SET gmail_state = ?, last_error = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = 'chanyoung-resume'
+      `).bind(
+        result.failed === 0 ? "connected" : "blocked",
+        result.failed === 0 ? null : "One or more Gmail connection tests failed.",
+      ).run();
+      return json(result, result.failed === 0 ? 200 : 502);
+    }
+    if (body.action === "retryResumeAlert") {
+      if (!gmailRuntimeConfig()) return json({ error: "Gmail is not configured." }, 409);
+      await retryResumeAlerts(db(), new Date().toISOString());
+      return json(await resumeStatus());
     }
     if (body.action === "backfillJobTopics") {
       const requested = typeof body.limit === "number" ? body.limit : undefined;

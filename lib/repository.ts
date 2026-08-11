@@ -9,6 +9,8 @@ import type {
   JobState,
   KeywordRule,
   OverviewSnapshot,
+  ResumeAlertStatus,
+  ResumeTestEmailResult,
   SourceRecord,
   TalentState,
   TalentTarget,
@@ -38,4 +40,8 @@ export interface JobPulseRepository {
   ): Promise<TalentTarget>;
   listActivity(filters?: Partial<ActivityFilters>): Promise<ActivityEvent[]>;
   simulateCrawl(): Promise<ActivityEvent>;
+  getResumeAlertStatus(): Promise<ResumeAlertStatus>;
+  setResumeAlertEnabled(enabled: boolean): Promise<ResumeAlertStatus>;
+  sendResumeTestEmail(): Promise<ResumeTestEmailResult>;
+  retryResumeAlert(): Promise<ResumeAlertStatus>;
 }

@@ -10,6 +10,7 @@ import { LoadingState } from "../../components/ui/loading-state";
 import type { KeywordRule } from "../../lib/domain";
 import { formatDateTime } from "../../lib/format";
 import { useRepositoryQuery } from "../../lib/use-repository-query";
+import { ResumeAlertCard } from "./resume-alert-card";
 
 const splitTerms = (value: string): string[] =>
   [...new Set(value.split(",").map((term) => term.trim()).filter(Boolean))];
@@ -24,6 +25,7 @@ export function AlertsScreen(): ReactElement {
   const [message, setMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const query = useRepositoryQuery(() => repository.listKeywords(), [revision]);
+  const resumeQuery = useRepositoryQuery(() => repository.getResumeAlertStatus(), [revision]);
   const keywords = query.data ?? [];
 
   const submitRule = async (event: FormEvent<HTMLFormElement>) => {
@@ -63,6 +65,15 @@ export function AlertsScreen(): ReactElement {
 
       {message ? <div className="inline-feedback" aria-live="polite"><Check size={15} aria-hidden="true" />{message}</div> : null}
       {errorMessage ? <div className="inline-error" role="alert">{errorMessage}</div> : null}
+
+      {resumeQuery.loading ? <LoadingState label="Loading resume email status" /> : null}
+      {resumeQuery.error ? <ErrorState retry={resumeQuery.retry} /> : null}
+      {resumeQuery.data ? <ResumeAlertCard
+        status={resumeQuery.data}
+        onToggle={(enabled) => mutate(() => repository.setResumeAlertEnabled(enabled))}
+        onTest={() => mutate(() => repository.sendResumeTestEmail())}
+        onRetry={() => mutate(() => repository.retryResumeAlert())}
+      /> : null}
 
       <div className="alerts-layout">
         <section className="surface rule-composer">

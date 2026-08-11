@@ -1,4 +1,5 @@
 import type { DigestJob } from "./gmail-message";
+import type { ResumeAlertStatus } from "./domain";
 
 export interface PlannedNotification {
   id: string;
@@ -9,18 +10,6 @@ export interface PlannedNotification {
 export interface ClaimedNotification extends PlannedNotification {
   attemptCount: number;
   jobs: DigestJob[];
-}
-
-export interface ResumeAlertStatus {
-  profileId: "chanyoung-resume";
-  enabled: boolean;
-  gmailState: "unconfigured" | "connected" | "blocked";
-  sender: string;
-  recipients: string[];
-  queuedJobs: number;
-  lastDigestAt: string | null;
-  nextDigestAt: string | null;
-  lastError: string | null;
 }
 
 type LeaseRow = { keyword_id: string };

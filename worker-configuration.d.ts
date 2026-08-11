@@ -3,6 +3,10 @@
 // Runtime types generated with workerd@1.20260515.1 2026-08-08 nodejs_compat
 interface __BaseEnv_Env {
 	DB: D1Database;
+	GMAIL_CLIENT_ID?: string;
+	GMAIL_CLIENT_SECRET?: string;
+	GMAIL_REFRESH_TOKEN?: string;
+	GMAIL_SENDER?: string;
 }
 declare namespace Cloudflare {
 	interface GlobalProps {

@@ -7,6 +7,7 @@ import type {
   JobPosting,
   JobState,
   KeywordRule,
+  ResumeAlertStatus,
   SourceRecord,
   TalentState,
 } from "./domain";
@@ -243,6 +244,17 @@ export function createFixtureRepository(): JobPulseRepository {
   let keywords = copy(fixtureKeywords);
   const talentTargets = copy(fixtureTalentTargets);
   let activity = copy(fixtureActivity);
+  let resumeAlert: ResumeAlertStatus = {
+    profileId: "chanyoung-resume" as const,
+    enabled: false,
+    gmailState: "connected" as const,
+    sender: "kimchany@usc.edu",
+    recipients: ["kimchany@usc.edu", "lupeter@usc.edu"],
+    queuedJobs: 0,
+    lastDigestAt: null,
+    nextDigestAt: null,
+    lastError: null,
+  };
 
   const requireRecord = <T extends { id: string }>(
     records: T[],
@@ -387,6 +399,28 @@ export function createFixtureRepository(): JobPulseRepository {
       };
       activity = [event, ...activity];
       return copy(event);
+    },
+
+    async getResumeAlertStatus() {
+      return copy(resumeAlert);
+    },
+
+    async setResumeAlertEnabled(enabled: boolean) {
+      resumeAlert = {
+        ...resumeAlert,
+        enabled,
+        nextDigestAt: enabled ? new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString() : resumeAlert.nextDigestAt,
+      };
+      return copy(resumeAlert);
+    },
+
+    async sendResumeTestEmail() {
+      return { sent: resumeAlert.recipients.length, failed: 0 };
+    },
+
+    async retryResumeAlert() {
+      resumeAlert = { ...resumeAlert, gmailState: "connected", lastError: null };
+      return copy(resumeAlert);
     },
   };
 }

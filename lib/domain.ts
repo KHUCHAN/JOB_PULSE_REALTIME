@@ -198,3 +198,20 @@ export interface CreateKeywordInput {
   locations: string[];
   mode: KeywordRule["mode"];
 }
+
+export interface ResumeAlertStatus {
+  profileId: "chanyoung-resume";
+  enabled: boolean;
+  gmailState: "unconfigured" | "connected" | "blocked";
+  sender: string;
+  recipients: string[];
+  queuedJobs: number;
+  lastDigestAt: string | null;
+  nextDigestAt: string | null;
+  lastError: string | null;
+}
+
+export interface ResumeTestEmailResult {
+  sent: number;
+  failed: number;
+}
