@@ -1137,6 +1137,62 @@ Wrong description.
     expect(result.jobs).toEqual([expect.objectContaining({ externalId: "meta-1" })]);
   });
 
+  it("retries Meta's last-known operation when a discovered operation returns HTML", async () => {
+    const operationIds: string[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      if (url === "https://www.metacareers.com/jobsearch/") return new Response([
+        '<script src="https://static.xx.fbcdn.net/meta-careers.js"></script>',
+        '<script type="application/json">["LSD",[],{"token":"fresh-lsd-token"}]</script>',
+      ].join(""));
+      if (url === "https://static.xx.fbcdn.net/meta-careers.js") {
+        return new Response('__d("CareersJobSearchResultsV2DataQuery_candidate_portalRelayOperation",[],function(){exports="99999999999999999"})');
+      }
+      const body = new URLSearchParams(String(init?.body));
+      operationIds.push(body.get("doc_id") ?? "");
+      if (operationIds.length === 1) return new Response("<!DOCTYPE html><title>Try again</title>", { status: 200 });
+      return Response.json({
+        data: {
+          job_search_with_featured_jobs_v2: {
+            all_jobs: [{ id: "meta-2", title: "Machine Learning Engineer", locations: ["New York, NY"] }],
+          },
+        },
+      });
+    };
+
+    const result = await crawlSource({
+      id: "meta", company: "Meta", postingUrl: "https://www.metacareers.com/jobsearch/", adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(operationIds).toEqual(["99999999999999999", "27129360303422352"]);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", jobs: [expect.objectContaining({ externalId: "meta-2" })] }));
+  });
+
+  it("never treats empty or malformed Meta GraphQL arrays as an authoritative catalog", async () => {
+    for (const allJobs of [[], [{ id: "meta-3" }]]) {
+      const operationIds: string[] = [];
+      const fetcher: typeof fetch = async (input, init) => {
+        const url = String(input);
+        if (url === "https://www.metacareers.com/jobsearch/") return new Response([
+          '<script src="https://static.xx.fbcdn.net/meta-careers.js"></script>',
+          '<script type="application/json">["LSD",[],{"token":"fresh-lsd-token"}]</script>',
+        ].join(""));
+        if (url === "https://static.xx.fbcdn.net/meta-careers.js") {
+          return new Response('__d("CareersJobSearchResultsV2DataQuery_candidate_portalRelayOperation",[],function(){exports="99999999999999999"})');
+        }
+        operationIds.push(new URLSearchParams(String(init?.body)).get("doc_id") ?? "");
+        return Response.json({ data: { job_search_with_featured_jobs_v2: { all_jobs: allJobs } } });
+      };
+
+      const result = await crawlSource({
+        id: "meta", company: "Meta", postingUrl: "https://www.metacareers.com/jobsearch/", adapter: "custom",
+      }, fetcher, new Date());
+
+      expect(operationIds).toEqual(["99999999999999999", "27129360303422352"]);
+      expect(result).toEqual(expect.objectContaining({ status: "failed", completeListing: false, jobs: [] }));
+    }
+  });
+
   it("reads Databricks' complete official Gatsby Greenhouse catalog", async () => {
     const fetcher: typeof fetch = async (input) => {
       expect(String(input)).toBe("https://www.databricks.com/careers-assets/page-data/company/careers/open-positions/page-data.json");

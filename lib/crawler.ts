@@ -4123,43 +4123,59 @@ async function crawlMetaCareers(source: CrawlSource, fetcher: typeof fetch): Pro
       viewasUserID: null,
       isLoggedIn: false,
     };
-    const body = new URLSearchParams({
-      lsd,
-      fb_api_caller_class: "RelayModern",
-      fb_api_req_friendly_name: "CareersJobSearchResultsV2DataQuery",
-      server_timestamps: "true",
-      variables: JSON.stringify(variables),
-      doc_id: operationId,
-    });
-    const response = await fetchWithTimeout(fetcher, "https://www.metacareers.com/graphql", {
-      method: "POST",
-      headers: {
-        accept: "*/*",
-        "content-type": "application/x-www-form-urlencoded",
-        origin: "https://www.metacareers.com",
-        referer: source.postingUrl,
-        "x-fb-friendly-name": "CareersJobSearchResultsV2DataQuery",
-        "x-fb-lsd": lsd,
-        ...(sessionCookie ? { cookie: sessionCookie } : {}),
-      },
-      body,
-    }, false, { attempts: 1, timeoutMs: 30_000 });
-    responseStatus = response.status;
-    if (!response.ok) return {
-      status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
+    const requestOperation = async (operation: string): Promise<{ response: Response; payload: MetaCareerPayload | null }> => {
+      const body = new URLSearchParams({
+        lsd,
+        fb_api_caller_class: "RelayModern",
+        fb_api_req_friendly_name: "CareersJobSearchResultsV2DataQuery",
+        server_timestamps: "true",
+        variables: JSON.stringify(variables),
+        doc_id: operation,
+      });
+      const response = await fetchWithTimeout(fetcher, "https://www.metacareers.com/graphql", {
+        method: "POST",
+        headers: {
+          accept: "*/*",
+          "content-type": "application/x-www-form-urlencoded",
+          origin: "https://www.metacareers.com",
+          referer: source.postingUrl,
+          "x-fb-friendly-name": "CareersJobSearchResultsV2DataQuery",
+          "x-fb-lsd": lsd,
+          ...(sessionCookie ? { cookie: sessionCookie } : {}),
+        },
+        body,
+      }, false, { attempts: 1, timeoutMs: 30_000 });
+      responseStatus = response.status;
+      if (!response.ok) return { response, payload: null };
+      const text = await response.text();
+      try {
+        return { response, payload: JSON.parse(text) as MetaCareerPayload };
+      } catch {
+        return { response, payload: null };
+      }
+    };
+    let search = await requestOperation(operationId);
+    let rawJobs = search.payload?.data?.job_search_with_featured_jobs_v2?.all_jobs;
+    const isUsableCatalog = (value: MetaCareerJob[] | undefined): value is MetaCareerJob[] => (
+      Array.isArray(value) && value.length > 0 && value.every((job) => Boolean(job.id && job.title))
+    );
+    if (!isUsableCatalog(rawJobs) && operationId !== fallbackOperationId) {
+      search = await requestOperation(fallbackOperationId);
+      rawJobs = search.payload?.data?.job_search_with_featured_jobs_v2?.all_jobs;
+    }
+    if (!search.response.ok) return {
+      status: isBlockedHttpStatus(search.response.status) ? "blocked" : "failed",
       responseStatus,
       completeListing: false,
       jobs: [],
-      error: `Meta careers search returned HTTP ${response.status}.`,
+      error: `Meta careers search returned HTTP ${search.response.status}.`,
     };
-    const payload = await response.json() as MetaCareerPayload;
-    const rawJobs = payload.data?.job_search_with_featured_jobs_v2?.all_jobs;
-    if (!Array.isArray(rawJobs)) return {
+    if (!isUsableCatalog(rawJobs)) return {
       status: "failed",
       responseStatus,
       completeListing: false,
       jobs: [],
-      error: "Meta careers search returned an unexpected payload.",
+      error: "Meta careers search returned an empty, malformed, or non-JSON payload.",
     };
     const jobs = uniqueJobs(rawJobs.flatMap((job): CrawledJob[] => {
       if (!job.id || !job.title) return [];
@@ -4193,7 +4209,7 @@ async function crawlMetaCareers(source: CrawlSource, fetcher: typeof fetch): Pro
     return {
       status: "succeeded",
       responseStatus,
-      completeListing: jobs.length === rawJobs.filter((job) => job.id && job.title).length,
+      completeListing: rawJobs.length > 0 && jobs.length === rawJobs.length,
       jobs,
       ...(facets.length > 0 ? { facets } : {}),
       error: null,
