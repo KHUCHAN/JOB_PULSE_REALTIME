@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeJobUrlRepairs } from "./job-url-repair";
+import { normalizeDeadJobUrls, normalizeJobUrlRepairs } from "./job-url-repair";
 
 describe("normalizeJobUrlRepairs", () => {
   it("accepts bounded same-origin Workday and Oracle canonical URL repairs", () => {
@@ -22,6 +22,20 @@ describe("normalizeJobUrlRepairs", () => {
       id: `job-${index}`,
       currentUrl: `https://a.example/job/${index}`,
       officialUrl: `https://a.example/jobs/${index}`,
+    })))).toHaveLength(100);
+  });
+});
+
+describe("normalizeDeadJobUrls", () => {
+  it("accepts only bounded HTTPS job identities", () => {
+    expect(normalizeDeadJobUrls([
+      { id: "job-1", currentUrl: "https://jobs.example/1" },
+      { id: "job-2", currentUrl: "http://jobs.example/2" },
+      { id: "", currentUrl: "https://jobs.example/3" },
+    ])).toEqual([{ id: "job-1", currentUrl: "https://jobs.example/1" }]);
+    expect(normalizeDeadJobUrls(Array.from({ length: 101 }, (_, index) => ({
+      id: `job-${index}`,
+      currentUrl: `https://jobs.example/${index}`,
     })))).toHaveLength(100);
   });
 });

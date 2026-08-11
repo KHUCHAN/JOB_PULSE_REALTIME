@@ -4,6 +4,25 @@ export type JobUrlRepair = {
   officialUrl: string;
 };
 
+export type DeadJobUrl = Pick<JobUrlRepair, "id" | "currentUrl">;
+
+export function normalizeDeadJobUrls(value: unknown): DeadJobUrl[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 100).flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const row = item as Record<string, unknown>;
+    const id = typeof row.id === "string" ? row.id.trim().slice(0, 200) : "";
+    const currentUrlText = typeof row.currentUrl === "string" ? row.currentUrl.trim() : "";
+    if (!id || !currentUrlText) return [];
+    try {
+      const currentUrl = new URL(currentUrlText);
+      return currentUrl.protocol === "https:" ? [{ id, currentUrl: currentUrl.href }] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
 export function normalizeJobUrlRepairs(value: unknown): JobUrlRepair[] {
   if (!Array.isArray(value)) return [];
   return value.slice(0, 100).flatMap((item) => {

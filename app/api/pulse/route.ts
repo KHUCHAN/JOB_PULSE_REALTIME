@@ -31,7 +31,7 @@ import {
   rotatingJobFilterOptionKeys,
 } from "../../../lib/job-filter-options";
 import { buildJobSearchPlan, jobDetailProjection } from "../../../lib/job-search-sql";
-import { normalizeJobUrlRepairs } from "../../../lib/job-url-repair";
+import { normalizeDeadJobUrls, normalizeJobUrlRepairs } from "../../../lib/job-url-repair";
 import { overviewCountsSql } from "../../../lib/overview-sql";
 import { backfillJobTopics } from "../../../lib/job-topic-backfill";
 import { backfillJobPrograms } from "../../../lib/job-program-backfill";
@@ -540,6 +540,32 @@ export async function POST(request: Request): Promise<Response> {
         RETURNING id
       `).bind(JSON.stringify(repairs)).all<{ id: string }>();
       return json({ requested: repairs.length, updated: result.results.length, ids: result.results.map((row) => row.id) });
+    }
+    if (body.action === "closeDeadJobUrls") {
+      const deadJobs = normalizeDeadJobUrls(body.jobs);
+      if (deadJobs.length === 0) return json({ error: "At least one valid dead job URL is required." }, 400);
+      const database = db();
+      const closed = await database.prepare(`
+        UPDATE jobs
+        SET status = 'closed', closed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        WHERE status = 'open'
+          AND id IN (SELECT json_extract(value, '$.id') FROM json_each(?1))
+          AND official_url = (
+            SELECT json_extract(value, '$.currentUrl')
+            FROM json_each(?1)
+            WHERE json_extract(value, '$.id') = jobs.id
+          )
+        RETURNING id
+      `).bind(JSON.stringify(deadJobs)).all<{ id: string }>();
+      if (closed.results.length > 0) {
+        await database.prepare(`
+          UPDATE job_matches
+          SET is_active = 0, updated_at = CURRENT_TIMESTAMP
+          WHERE job_id IN (SELECT value FROM json_each(?))
+        `).bind(JSON.stringify(closed.results.map((row) => row.id))).run();
+      }
+      filterOptionsCache = null;
+      return json({ requested: deadJobs.length, closed: closed.results.length, ids: closed.results.map((row) => row.id) });
     }
     return json({ error: "Unknown action." }, 400);
   } catch (error) {
