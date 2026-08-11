@@ -11,7 +11,7 @@ import type {
   SourceRecord,
   TalentTarget,
 } from "../../../lib/domain";
-import { runDueCrawls, type PersistedSource } from "../../../lib/crawl-runner";
+import { runDueCrawls, runSpecificCrawls, type PersistedSource } from "../../../lib/crawl-runner";
 import { jobsFromTeslaState, type CrawledFacet, type CrawledJob, type TeslaState } from "../../../lib/crawler";
 import { normalizeBrowserJobSnapshot } from "../../../lib/browser-crawl-ingest";
 import { ensureCatalogSeeded, type CatalogSeed } from "../../../lib/catalog-bootstrap";
@@ -110,6 +110,8 @@ type BrowserIngestSourceRow = {
   adapter: PersistedSource["adapter"];
   next_crawl_at: string | null;
 };
+
+type UrlRepairSourceRow = BrowserIngestSourceRow;
 
 async function browserIngestSource(database: D1Database, sourceId: string): Promise<PersistedSource | null> {
   const row = await database.prepare(`
@@ -468,6 +470,44 @@ export async function POST(request: Request): Promise<Response> {
         WHERE id IN (SELECT value FROM json_each(?))
       `).bind(JSON.stringify(sourceIds)).run();
       return json(await runDueCrawls(new D1CrawlStore(db()), fetch, new Date(), crawlBatchOptions(sourceIds.length)));
+    }
+    if (body.action === "repairBrokenJobUrls") {
+      const afterSourceId = typeof body.afterSourceId === "string"
+        ? body.afterSourceId.trim().slice(0, 200)
+        : "";
+      const database = db();
+      const selected = await database.prepare(`
+        SELECT s.id, s.company, s.posting_url, s.adapter, s.next_crawl_at
+        FROM sources s
+        WHERE s.enabled = 1
+          AND s.posting_url IS NOT NULL
+          AND s.id > ?
+          AND EXISTS (
+            SELECT 1 FROM jobs j
+            WHERE j.source_id = s.id AND j.status = 'open'
+              AND (
+                j.official_url GLOB 'https://*.myworkdayjobs.com/job/*'
+                OR j.official_url LIKE '%oraclecloud.com/en/sites/%/job/%/%'
+                OR instr(j.official_url, '//jobs/') > 8
+              )
+          )
+        ORDER BY s.id
+        LIMIT 4
+      `).bind(afterSourceId).all<UrlRepairSourceRow>();
+      const sources = selected.results.map((row) => ({
+        id: row.id,
+        company: row.company,
+        postingUrl: row.posting_url,
+        adapter: row.adapter,
+        nextCrawlAt: row.next_crawl_at,
+      }));
+      const result = await runSpecificCrawls(new D1CrawlStore(database), sources, fetch, new Date(), { concurrency: 2 });
+      filterOptionsCache = null;
+      return json({
+        ...result,
+        sourceIds: sources.map((source) => source.id),
+        nextAfterSourceId: sources.at(-1)?.id ?? null,
+      });
     }
     return json({ error: "Unknown action." }, 400);
   } catch (error) {

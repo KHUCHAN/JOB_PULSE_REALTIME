@@ -141,7 +141,7 @@ describe("crawlSource", () => {
     const fetcher: typeof fetch = async (input) => {
       const url = String(input);
       requests.push(url);
-      if (url === "https://careers.acme.example/jobs") {
+      if (url === "https://careers.acme.example/") {
         return new Response('<script src="https://app.jibecdn.com/prod/search/app.js"></script>', { status: 200 });
       }
       const page = Number(new URL(url).searchParams.get("page"));
@@ -155,7 +155,7 @@ describe("crawlSource", () => {
       }), { status: 200, headers: { "content-type": "application/json" } });
     };
 
-    const result = await crawlSource({ id: "acme", company: "Acme", postingUrl: "https://careers.acme.example/jobs", adapter: "custom" }, fetcher, new Date());
+    const result = await crawlSource({ id: "acme", company: "Acme", postingUrl: "https://careers.acme.example/", adapter: "custom" }, fetcher, new Date());
 
     expect(result.completeListing).toBe(true);
     expect(result.jobs[0]).toEqual(expect.objectContaining({
@@ -1273,6 +1273,7 @@ describe("crawlSource", () => {
     expect(result.jobs[0]).toEqual(expect.objectContaining({
       arrangement: "hybrid", employmentType: "Full time", description: "Investigate risk signals.",
       publishedAt: "2026-08-01T00:00:00.000Z",
+      officialUrl: "https://careers.acme.example/hcmUI/CandidateExperience/en/sites/CX_1001/job/42",
     }));
   });
 
@@ -1394,7 +1395,7 @@ describe("crawlSource", () => {
         department: "Engineering",
         sourcePostedText: "Posted 2 Days Ago",
         publishedAt: "2026-08-06T12:30:00.000Z",
-        officialUrl: "https://acme.wd5.myworkdayjobs.com/job/Austin-TX/Security-Engineer_JR-100",
+        officialUrl: "https://acme.wd5.myworkdayjobs.com/Careers/job/Austin-TX/Security-Engineer_JR-100",
       })],
       facets: [{ key: "jobFamilyGroup", label: "Job Category", values: [{ key: "eng", label: "Engineering", count: 1 }] }],
     }));
@@ -1504,7 +1505,7 @@ describe("crawlSource", () => {
       adapter: "custom",
     }, fetcher, new Date("2026-08-08T12:30:00Z"));
 
-    expect(result.jobs[0].officialUrl).toBe("https://acme.wd5.myworkdayjobs.com/job/New-York/Risk-Analyst_R-42");
+    expect(result.jobs[0].officialUrl).toBe("https://acme.wd5.myworkdayjobs.com/External/job/New-York/Risk-Analyst_R-42");
   });
 
   it("falls back to the original page when a discovered Workday link is stale", async () => {

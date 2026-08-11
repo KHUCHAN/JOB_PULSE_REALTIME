@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { runDueCrawls, type CrawlStore, type PersistedSource } from "./crawl-runner";
+import { runDueCrawls, runSpecificCrawls, type CrawlStore, type PersistedSource } from "./crawl-runner";
 import type { CrawledJob } from "./crawler";
 
 class MemoryStore implements CrawlStore {
@@ -84,6 +84,22 @@ describe("runDueCrawls", () => {
     });
     expect(store.runs).toEqual([expect.objectContaining({ status: "failed", error: "D1 unavailable" })]);
     expect(store.sources[0].nextCrawlAt).toBe("2026-08-08T14:00:00.000Z");
+  });
+
+  it("recrawls an explicit bounded source set without leasing unrelated due sources", async () => {
+    const source = {
+      id: "repair-me",
+      company: "Acme",
+      postingUrl: "https://job-boards.greenhouse.io/acme",
+      adapter: "greenhouse" as const,
+      nextCrawlAt: "2026-08-08T14:00:00.000Z",
+    };
+    const store = new MemoryStore([source]);
+    const fetcher: typeof fetch = async () => new Response(JSON.stringify({ jobs: [] }), { status: 200 });
+
+    await expect(runSpecificCrawls(store, [source], fetcher, new Date("2026-08-08T12:00:00Z"), { concurrency: 1 }))
+      .resolves.toEqual(expect.objectContaining({ attempted: 1, succeeded: 1 }));
+    expect(store.synced).toEqual([expect.objectContaining({ sourceId: "repair-me" })]);
   });
 
 });

@@ -230,7 +230,7 @@ const matchesFilters = (job: RichJobPosting, filters: JobFilters): boolean => {
 
 const deduplicate = (jobs: RichJobPosting[]): RichJobPosting[] => {
   const ordered = [...jobs].sort((left, right) =>
-    right.firstSeenAt.localeCompare(left.firstSeenAt)
+    (right.publishedAt ?? right.firstSeenAt).localeCompare(left.publishedAt ?? left.firstSeenAt)
     || left.company.localeCompare(right.company)
     || left.id.localeCompare(right.id),
   );

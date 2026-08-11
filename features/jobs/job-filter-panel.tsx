@@ -9,7 +9,6 @@ import { activeFilterCount } from "../../lib/job-filter-query";
 type FilterPatch = Partial<JobFilters>;
 
 const aiDataAreas: JobAreaKey[] = ["ai-ml", "data-analytics"];
-const techInternshipAreas: JobAreaKey[] = [...aiDataAreas, "software-engineering"];
 
 const optionValues = (options: JobFilterOption[] | undefined): string[] =>
   (options ?? []).map((option) => String(option.value));
@@ -88,9 +87,8 @@ export function JobFilterPanel({
   const areas = filters.areas ?? [];
   const regions = filters.regions ?? [];
   const aiDataSelected = areas.includes("ai-ml") && areas.includes("data-analytics");
-  const internshipPresetSelected = aiDataSelected
-    && areas.includes("software-engineering")
-    && filters.recruitingYears?.includes(2027) === true
+  const internshipPresetSelected = areas.length === 0
+    && (filters.recruitingYears?.length ?? 0) === 0
     && filters.programTypes?.includes("internship") === true
     && filters.programTypes?.includes("coop") === true;
   const resumePresetSelected = filters.resumeMatchProfile === "chanyoung-resume";
@@ -164,10 +162,10 @@ export function JobFilterPanel({
           type="button"
           aria-pressed={internshipPresetSelected}
           onClick={() => onChange(internshipPresetSelected
-            ? { areas: areas.filter((area) => !techInternshipAreas.includes(area)), recruitingYears: [], programTypes: [] }
-            : { areas: techInternshipAreas, recruitingYears: [2027], programTypes: ["internship", "coop"] })}
+            ? { programTypes: [] }
+            : { areas: [], recruitingYears: [], programTypes: ["internship", "coop"] })}
         >
-          2027 Tech Internships
+          Current Internships
         </button>
         <DatalistField id="job-company" label="Company" value={companies[0] ?? ""} options={options?.companies} placeholder="Any company" onChange={(value) => setTextArray("companies", value)} />
         <DatalistField id="job-location" label="Location" value={filters.location} options={options?.locations} placeholder="Any location" onChange={(location) => onChange({ location })} />

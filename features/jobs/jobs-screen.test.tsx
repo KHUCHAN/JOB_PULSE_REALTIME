@@ -65,19 +65,18 @@ describe("JobsScreen", () => {
     expect(preset).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("applies the one-click 2027 Tech internship preset", async () => {
+  it("applies the current Internship and Co-op preset without a recruiting-year gate", async () => {
     const user = userEvent.setup();
     render(<FixtureProvider><JobsScreen initialQuery="" /></FixtureProvider>);
-    const preset = screen.getByRole("button", { name: "2027 Tech Internships" });
+    const preset = screen.getByRole("button", { name: "Current Internships" });
 
     expect(preset).toHaveAttribute("aria-pressed", "false");
     await user.click(preset);
     await waitFor(() => expect(window.location.search)
-      .toBe("?area=ai-ml&area=data-analytics&area=software-engineering&year=2027&program=internship&program=coop"));
+      .toBe("?program=internship&program=coop"));
     expect(preset).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: "Remove Recruiting year: 2027" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove Recruiting year: 2027" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Remove Program type: Internship" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Remove Area: Software Engineering" })).toBeInTheDocument();
   });
 
   it("activates My Resume Match and explains the score", async () => {

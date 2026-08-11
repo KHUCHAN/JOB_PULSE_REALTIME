@@ -93,7 +93,7 @@ export function JobDetailDrawer({
             </section>
           ) : null}
 
-          <a className="official-link" href={job.applyUrl ?? job.officialUrl} target="_blank" rel="noreferrer">
+          <a className="official-link" href={job.officialUrl} target="_blank" rel="noreferrer">
             Open official job page <ExternalLink size={15} aria-hidden="true" />
           </a>
         </div>

@@ -102,7 +102,10 @@ const jobListProjection = (withResumeMatch: boolean): string => [
 ].join(",\n       ");
 
 export function buildJobSearchPlan(filters: JobFilters): JobSearchPlan {
-  const clauses = ["j.status = 'open'"];
+  const clauses = [
+    "j.status = 'open'",
+    "(j.valid_through IS NULL OR j.valid_through >= date('now'))",
+  ];
   const bindings: unknown[] = [];
   const fromBindings: unknown[] = [];
   const add = (clause: string, values: unknown[] = []) => {
@@ -236,7 +239,7 @@ JOIN job_matches resume_match
     pageSql: `SELECT ${jobListProjection(resumeMatchSelected)}
 ${fromSql}
 WHERE ${clauses.join(" AND ")}
-ORDER BY ${resumeMatchSelected ? "resume_match.score DESC, COALESCE(j.published_at, j.first_seen_at) DESC" : "j.first_seen_at DESC"}, j.company ASC, j.id ASC
+ORDER BY COALESCE(j.published_at, j.first_seen_at) DESC${resumeMatchSelected ? ", resume_match.score DESC" : ""}, j.company ASC, j.id ASC
 LIMIT ? OFFSET ?`,
     countSql: `SELECT count(*) AS total
 ${fromSql}

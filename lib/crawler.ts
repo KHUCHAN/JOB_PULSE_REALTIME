@@ -684,7 +684,10 @@ async function crawlDiscoveredFeed(source: CrawlSource, discovered: DiscoveredAt
           ...(data.longitude != null ? { longitude: data.longitude } : {}),
           ...(data.languages?.length ? { languages: data.languages } : {}),
           ...(data.req_id ? { requisitionId: data.req_id } : {}),
-          officialUrl: `${listing.origin}${prefix}/jobs/${encodeURIComponent(data.slug)}${data.language ? `?lang=${encodeURIComponent(data.language)}` : ""}`,
+          officialUrl: new URL(
+            `${prefix.replace(/\/$/, "")}/jobs/${encodeURIComponent(data.slug)}${data.language ? `?lang=${encodeURIComponent(data.language)}` : ""}`,
+            listing.origin,
+          ).href,
           publishedAt: normalizedDate(data.posted_date),
         }];
       });
@@ -794,7 +797,8 @@ const workdayFeed = (postingUrl: string): string | null => {
   const url = new URL(postingUrl);
   if (!url.hostname.includes(".myworkdayjobs.com")) return null;
   const tenant = url.hostname.split(".")[0];
-  const site = url.pathname.split("/").filter(Boolean).at(0);
+  const site = url.pathname.split("/").filter(Boolean)
+    .find((segment) => !/^[a-z]{2}-[A-Z]{2}$/i.test(segment));
   if (!tenant || !site) return null;
   return `${url.origin}/wday/cxs/${tenant}/${site}/jobs`;
 };
@@ -809,8 +813,7 @@ export const oracleCareerSite = (html: string, postingUrl: string): { apiOrigin:
 
 const oracleJobUrl = (sourceUrl: string, site: string, job: OracleJob): string => {
   const source = new URL(sourceUrl);
-  const slug = (job.Title ?? "job").replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "");
-  return `${source.origin}/en/sites/${site}/job/${encodeURIComponent(slug)}/${job.Id}`;
+  return `${source.origin}/hcmUI/CandidateExperience/en/sites/${encodeURIComponent(site)}/job/${encodeURIComponent(String(job.Id))}`;
 };
 
 async function crawlOracle(
@@ -2607,7 +2610,7 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
         summary: job.bulletFields?.join(" · ") ?? null,
         department: bulletFields.department,
         sourcePostedText: job.postedOn ?? null,
-        officialUrl: new URL(job.externalPath, endpointUrl.origin).href,
+        officialUrl: new URL(`/${encodeURIComponent(site ?? "Careers")}${job.externalPath}`, endpointUrl.origin).href,
         publishedAt: workdayPublishedAt(job.postedOn, now),
       }];
     }));
@@ -2657,14 +2660,16 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
           const selectedType = /^part/i.test(smallest.descriptor) ? "Part-time" : "Full-time";
           const complementType = selectedType === "Part-time" ? "Full-time" : "Part-time";
           for (const job of jobs) {
-            const path = new URL(job.officialUrl).pathname;
+            const pathname = new URL(job.officialUrl).pathname;
+            const path = pathname.slice(pathname.toLocaleLowerCase().indexOf("/job/"));
             addMembership(path, selected.has(path) ? selectedType : complementType);
           }
         }
       }
 
       jobs = jobs.map((job) => {
-        const values = membership.get(new URL(job.officialUrl).pathname) ?? [];
+        const pathname = new URL(job.officialUrl).pathname;
+        const values = membership.get(pathname.slice(pathname.toLocaleLowerCase().indexOf("/job/"))) ?? [];
         return {
           ...job,
           ...(values.length > 0 ? { employmentType: values.join("; ") } : {}),

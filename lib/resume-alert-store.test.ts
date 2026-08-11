@@ -43,6 +43,18 @@ describe("resume digest reservation", () => {
     expect(await claimDueNotifications(db, "chanyoung-resume", "2026-08-10T12:00:01.000Z", 4)).toEqual([]);
   });
 
+  it("uses the stable official posting URL in email digests", async () => {
+    const sqlite = alertDatabaseWithMatches(1);
+    sqlite.prepare("UPDATE jobs SET apply_url = 'https://example.com/1/apply-session'").run();
+    const db = createD1ForSqlite(sqlite);
+    await planResumeDigests(db, "chanyoung-resume", "2026-08-10T12:00:00.000Z", 25);
+
+    const claimed = await claimDueNotifications(db, "chanyoung-resume", "2026-08-10T12:00:01.000Z", 4);
+
+    expect(claimed).toHaveLength(2);
+    expect(claimed.every((notification) => notification.jobs[0]?.officialUrl === "https://example.com/1")).toBe(true);
+  });
+
   it("rolls back an interrupted envelope reservation and keeps the digest due", async () => {
     const sqlite = alertDatabaseWithMatches(2);
     const raw = createD1ForSqlite(sqlite);

@@ -60,11 +60,11 @@ const job: RichJobPosting = {
   resumeMatchEvidence: [],
 };
 
-it("opens the collected direct application URL when the ATS provides one", () => {
+it("opens the stable official posting URL when an ATS apply URL is also present", () => {
   render(<JobDetailDrawer job={job} onClose={vi.fn()} onChangeState={vi.fn()} />);
 
   expect(screen.getByRole("link", { name: /Open official job page/ }))
-    .toHaveAttribute("href", job.applyUrl);
+    .toHaveAttribute("href", job.officialUrl);
 });
 
 it("explains a personal resume match without exposing raw rule codes", () => {

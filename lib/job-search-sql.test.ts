@@ -30,7 +30,7 @@ const executePlan = (sql: string, bindings: unknown[], limit?: number, offset?: 
         source_updated_at TEXT, valid_through TEXT, published_at TEXT, raw_payload TEXT
       );`,
       "CREATE TABLE job_topics (job_id TEXT, topic_key TEXT, PRIMARY KEY(job_id, topic_key));",
-      "INSERT INTO jobs (id, company, official_url, status, first_seen_at) VALUES ('older-duplicate', 'Acme, Inc.', 'https://acme.example/jobs/1', 'open', '2026-08-01T00:00:00.000Z'), ('newer-duplicate', 'Acme, Inc.', 'https://acme.example/jobs/1', 'open', '2026-08-03T00:00:00.000Z'), ('second-page', 'Acme, Inc.', 'https://acme.example/jobs/2', 'open', '2026-08-02T00:00:00.000Z'), ('not-a-match', 'Acme', 'https://acme.example/jobs/3', 'open', '2026-08-04T00:00:00.000Z');",
+      "INSERT INTO jobs (id, company, official_url, status, first_seen_at, published_at, valid_through) VALUES ('older-duplicate', 'Acme, Inc.', 'https://acme.example/jobs/1', 'open', '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z', NULL), ('newer-duplicate', 'Acme, Inc.', 'https://acme.example/jobs/1', 'open', '2026-08-03T00:00:00.000Z', '2026-08-01T00:00:00.000Z', NULL), ('second-page', 'Acme, Inc.', 'https://acme.example/jobs/2', 'open', '2026-08-02T00:00:00.000Z', '2026-08-10T00:00:00.000Z', NULL), ('not-a-match', 'Acme', 'https://acme.example/jobs/3', 'open', '2026-08-04T00:00:00.000Z', '2026-08-04T00:00:00.000Z', NULL), ('expired', 'Acme, Inc.', 'https://acme.example/jobs/4', 'open', '2026-08-11T00:00:00.000Z', '2026-08-11T00:00:00.000Z', '2000-01-01');",
       ".parameter init",
       parameters,
       `${sql};`,
@@ -54,14 +54,15 @@ describe("parameterized job search SQL", () => {
       encoding: "utf8",
       input: [
         `CREATE TABLE jobs (
-          id TEXT PRIMARY KEY, company TEXT, title TEXT, official_url TEXT, status TEXT, first_seen_at TEXT
+          id TEXT PRIMARY KEY, company TEXT, title TEXT, official_url TEXT, status TEXT, first_seen_at TEXT,
+          valid_through TEXT
         );`,
         "CREATE TABLE job_topics (job_id TEXT, topic_key TEXT, PRIMARY KEY(job_id, topic_key));",
         "CREATE INDEX job_topics_topic_job_idx ON job_topics(topic_key, job_id);",
         `INSERT INTO jobs VALUES
-          ('ai-intern','Acme','2027 Machine Learning Intern','https://e/1','open','2026-01-03'),
-          ('finance-intern','Acme','2027 Finance Intern','https://e/2','open','2026-01-02'),
-          ('ai-regular','Acme','2026 Data Scientist','https://e/3','open','2026-01-01');`,
+          ('ai-intern','Acme','2027 Machine Learning Intern','https://e/1','open','2026-01-03',NULL),
+          ('finance-intern','Acme','2027 Finance Intern','https://e/2','open','2026-01-02',NULL),
+          ('ai-regular','Acme','2026 Data Scientist','https://e/3','open','2026-01-01',NULL);`,
         "INSERT INTO job_topics VALUES ('ai-intern','ai-data'),('ai-regular','ai-data'),('ai-intern','program:internship');",
         ".parameter init",
         parameters,
@@ -119,10 +120,10 @@ describe("parameterized job search SQL", () => {
     const output = execFileSync("sqlite3", ["-json", "-batch", ":memory:"], {
       encoding: "utf8",
       input: [
-        "CREATE TABLE jobs (id TEXT, company TEXT, title TEXT, official_url TEXT, status TEXT, first_seen_at TEXT);",
+        "CREATE TABLE jobs (id TEXT, company TEXT, title TEXT, official_url TEXT, status TEXT, first_seen_at TEXT, valid_through TEXT);",
         "CREATE TABLE job_topics (job_id TEXT, topic_key TEXT, PRIMARY KEY(job_id, topic_key));",
         "CREATE INDEX job_topics_topic_job_idx ON job_topics(topic_key, job_id);",
-        "INSERT INTO jobs VALUES ('motorola','Motorola Solutions','Supply Chain Applied AI Engineering Intern','https://e/R67461','open','2026-08-07');",
+        "INSERT INTO jobs VALUES ('motorola','Motorola Solutions','Supply Chain Applied AI Engineering Intern','https://e/R67461','open','2026-08-07',NULL);",
         "INSERT INTO job_topics VALUES ('motorola','program:internship'),('motorola','year:2027');",
         ".parameter init",
         ...plan.bindings.map((value, index) => `.parameter set ?${index + 1} ${sqliteLiteral(value)}`),
@@ -204,8 +205,8 @@ describe("parameterized job search SQL", () => {
     const output = execFileSync("sqlite3", ["-json", "-batch", ":memory:"], {
       encoding: "utf8",
       input: [
-        "CREATE TABLE jobs (id TEXT, company TEXT, official_url TEXT, status TEXT, first_seen_at TEXT);",
-        "INSERT INTO jobs VALUES ('old','Older Co','https://example.com/1','open','2026-01-01'),('new','Newer Co','https://example.com/1','open','2026-02-01');",
+        "CREATE TABLE jobs (id TEXT, company TEXT, official_url TEXT, status TEXT, first_seen_at TEXT, valid_through TEXT);",
+        "INSERT INTO jobs VALUES ('old','Older Co','https://example.com/1','open','2026-01-01',NULL),('new','Newer Co','https://example.com/1','open','2026-02-01',NULL);",
         ".parameter init",
         parameters,
         `${sql};`,
@@ -245,18 +246,18 @@ describe("parameterized job search SQL", () => {
       const output = execFileSync("sqlite3", ["-json", "-batch", ":memory:"], {
         encoding: "utf8",
         input: [
-          "CREATE TABLE jobs (id TEXT, company TEXT, title TEXT, official_url TEXT, status TEXT, first_seen_at TEXT);",
+          "CREATE TABLE jobs (id TEXT, company TEXT, title TEXT, official_url TEXT, status TEXT, first_seen_at TEXT, valid_through TEXT);",
           "CREATE TABLE job_topics (job_id TEXT, topic_key TEXT, PRIMARY KEY(job_id, topic_key));",
           "CREATE INDEX job_topics_topic_job_idx ON job_topics(topic_key, job_id);",
           `INSERT INTO jobs VALUES
-            ('intern','A','2027 Software Intern','https://e/1','open','2026-01-01'),
-            ('internship','A','2027 Product Internship','https://e/2','open','2026-01-01'),
-            ('internal','A','2027 Internal Audit','https://e/3','open','2026-01-01'),
-            ('international','A','2027 International Analyst','https://e/4','open','2026-01-01'),
-            ('hyphen','A','2027 Finance Co-op','https://e/5','open','2026-01-01'),
-            ('space','A','2027 Product Co Op','https://e/6','open','2026-01-01'),
-            ('joined','A','2027 Engineering Coop','https://e/7','open','2026-01-01'),
-            ('year-boundary','A','12027 Software Intern','https://e/8','open','2026-01-01');`,
+            ('intern','A','2027 Software Intern','https://e/1','open','2026-01-01',NULL),
+            ('internship','A','2027 Product Internship','https://e/2','open','2026-01-01',NULL),
+            ('internal','A','2027 Internal Audit','https://e/3','open','2026-01-01',NULL),
+            ('international','A','2027 International Analyst','https://e/4','open','2026-01-01',NULL),
+            ('hyphen','A','2027 Finance Co-op','https://e/5','open','2026-01-01',NULL),
+            ('space','A','2027 Product Co Op','https://e/6','open','2026-01-01',NULL),
+            ('joined','A','2027 Engineering Coop','https://e/7','open','2026-01-01',NULL),
+            ('year-boundary','A','12027 Software Intern','https://e/8','open','2026-01-01',NULL);`,
           `INSERT INTO job_topics VALUES
             ('intern','program:internship'),
             ('internship','program:internship'),
@@ -286,7 +287,7 @@ describe("parameterized job search SQL", () => {
     expect(plan.bindings).toEqual(["%100\\%\\_remote%"]);
   });
 
-  it("executes comma-containing company selections atomically across deduplicated pages", () => {
+  it("orders comma-containing company selections by posted date across deduplicated pages", () => {
     const filters = {
       ...defaultJobFilters,
       companies: ["Acme, Inc."],
@@ -299,10 +300,12 @@ describe("parameterized job search SQL", () => {
     });
 
     expect(executePlan(firstPage.pageSql, firstPage.bindings, firstPage.limit, firstPage.offset))
-      .toMatchObject([{ id: "newer-duplicate" }]);
-    expect(executePlan(secondPage.pageSql, secondPage.bindings, secondPage.limit, secondPage.offset))
       .toMatchObject([{ id: "second-page" }]);
+    expect(executePlan(secondPage.pageSql, secondPage.bindings, secondPage.limit, secondPage.offset))
+      .toMatchObject([{ id: "newer-duplicate" }]);
     expect(executePlan(firstPage.countSql, firstPage.bindings)).toEqual([{ total: 2 }]);
+    expect(firstPage.pageSql).toContain("j.status = 'open'");
+    expect(firstPage.pageSql).toContain("j.valid_through IS NULL OR j.valid_through >= date('now')");
   });
 
   it("matches free-text equality filters case-insensitively", () => {
@@ -315,7 +318,7 @@ describe("parameterized job search SQL", () => {
     expect(plan.pageSql).toContain("j.company = ? COLLATE NOCASE");
   });
 
-  it("filters active matches and orders by score before posting freshness", () => {
+  it("filters active matches and orders by posting freshness before score", () => {
     const plan = buildJobSearchPlan({
       ...defaultJobFilters,
       resumeMatchProfile: "chanyoung-resume",
@@ -325,7 +328,7 @@ describe("parameterized job search SQL", () => {
 
     expect(plan.pageSql).toContain("resume_match.is_active = 1");
     expect(plan.pageSql).toContain("resume_match.open_generation = j.open_generation");
-    expect(plan.pageSql).toContain("ORDER BY resume_match.score DESC");
+    expect(plan.pageSql).toContain("ORDER BY COALESCE(j.published_at, j.first_seen_at) DESC, resume_match.score DESC");
     expect(plan.pageSql).toContain("resume_match.score AS resume_match_score");
     expect(plan.bindings).toContain("chanyoung-resume");
   });

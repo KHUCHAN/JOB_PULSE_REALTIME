@@ -58,7 +58,11 @@ describe("chunksByJsonBytes", () => {
 });
 
 describe("D1CrawlStore enriched job persistence", () => {
-  const fakeDb = (options: { duplicateFacetConstraint?: boolean; failFacetInsert?: boolean } = {}) => {
+  const fakeDb = (options: {
+    duplicateFacetConstraint?: boolean;
+    failFacetInsert?: boolean;
+    existingJobs?: Array<{ id: string; external_id: string | null; official_url: string; status: string; resume_match_hash: string | null }>;
+  } = {}) => {
     const calls: Array<{ sql: string; values: unknown[] }> = [];
     const db = {
       prepare(sql: string) {
@@ -66,7 +70,11 @@ describe("D1CrawlStore enriched job persistence", () => {
           bind(...values: unknown[]) {
             calls.push({ sql, values });
             return {
-              all: async () => ({ results: [] }),
+              all: async () => ({
+                results: sql.includes("SELECT id, external_id, official_url, status, resume_match_hash")
+                  ? options.existingJobs ?? []
+                  : [],
+              }),
               run: async () => {
                 if (options.failFacetInsert && sql.includes("INSERT INTO source_facets")) {
                   throw new Error("injected facet insert failure");
@@ -116,6 +124,38 @@ describe("D1CrawlStore enriched job persistence", () => {
     expect(insert?.sql).toContain("employment_type = COALESCE(excluded.employment_type, jobs.employment_type)");
     expect(insert?.sql).toContain("description_hash = COALESCE(excluded.description_hash, jobs.description_hash)");
     expect(insert?.sql).toContain("WHEN jobs.status = 'closed' THEN jobs.open_generation + 1");
+  });
+
+  it("repairs a changed canonical URL in place when the ATS external ID is stable", async () => {
+    const { db, calls } = fakeDb({
+      existingJobs: [{
+        id: "job-42",
+        external_id: "REQ-42",
+        official_url: "https://acme.wd5.myworkdayjobs.com/job/Role_REQ-42",
+        status: "open",
+        resume_match_hash: null,
+      }],
+    });
+    const store = new D1CrawlStore(db);
+
+    await store.syncJobs("source-1", [{
+      externalId: "REQ-42",
+      title: "Role",
+      company: "Acme",
+      location: null,
+      arrangement: "unknown",
+      employmentType: null,
+      summary: null,
+      officialUrl: "https://acme.wd5.myworkdayjobs.com/Careers/job/Role_REQ-42",
+      publishedAt: null,
+    }], false);
+
+    const repair = calls.find((call) => call.sql.includes("UPDATE jobs") && call.sql.includes("officialUrl") && call.sql.includes("json_each"));
+    expect(repair).toBeDefined();
+    expect(JSON.parse(String(repair?.values[0]))).toEqual([{
+      id: "job-42",
+      officialUrl: "https://acme.wd5.myworkdayjobs.com/Careers/job/Role_REQ-42",
+    }]);
   });
 
   it("changes the resume evaluation hash when company or posting date changes", async () => {

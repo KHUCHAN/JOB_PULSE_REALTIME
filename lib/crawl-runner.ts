@@ -86,6 +86,16 @@ export async function runDueCrawls(
   options: { concurrency?: number; limit?: number } = {},
 ): Promise<CrawlBatchResult> {
   const sources = await store.dueSources(now.toISOString(), options.limit ?? 500);
+  return runSpecificCrawls(store, sources, fetcher, now, options);
+}
+
+export async function runSpecificCrawls(
+  store: CrawlStore,
+  sources: PersistedSource[],
+  fetcher: typeof fetch,
+  now: Date,
+  options: { concurrency?: number } = {},
+): Promise<CrawlBatchResult> {
   const result = emptyResult();
   let cursor = 0;
   const workerCount = Math.max(1, Math.min(options.concurrency ?? 8, sources.length));

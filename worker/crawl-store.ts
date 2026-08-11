@@ -17,6 +17,8 @@ type SourceRow = {
 };
 
 type ExistingJobRow = {
+  id: string;
+  external_id: string | null;
   official_url: string;
   status: "open" | "closed";
   resume_match_hash: string | null;
@@ -198,9 +200,12 @@ export class D1CrawlStore implements CrawlStore {
   async syncJobs(sourceId: string, jobs: CrawledJob[], completeListing: boolean, facets?: CrawledFacet[]): Promise<{ created: number; updated: number; closed: number }> {
     const now = new Date().toISOString();
     const existingResult = await this.db.prepare(`
-      SELECT official_url, status, resume_match_hash FROM jobs WHERE source_id = ?
+      SELECT id, external_id, official_url, status, resume_match_hash FROM jobs WHERE source_id = ?
     `).bind(sourceId).all<ExistingJobRow>();
     const existingByUrl = new Map(existingResult.results.map((row) => [row.official_url, row]));
+    const existingByExternalId = new Map(existingResult.results.flatMap((row) =>
+      row.external_id ? [[row.external_id, row] as const] : [],
+    ));
     const existingUrls = new Set(existingResult.results
       .filter((row) => row.status === "open")
       .map((row) => row.official_url));
@@ -290,6 +295,34 @@ export class D1CrawlStore implements CrawlStore {
     // jobs per query to stay inside the free-tier 50-query invocation budget.
     for (const jobsChunk of chunksOf(jobs, 2_500)) {
       const records = await Promise.all(jobsChunk.map(recordFor));
+      const urlRepairs = records.flatMap((record) => {
+        const externalId = typeof record.externalId === "string" ? record.externalId : null;
+        const officialUrl = String(record.officialUrl);
+        const existing = externalId ? existingByExternalId.get(externalId) : null;
+        return existing && existing.official_url !== officialUrl && !existingByUrl.has(officialUrl)
+          ? [{ id: existing.id, officialUrl }]
+          : [];
+      });
+      for (const repairChunk of chunksByJsonBytes(urlRepairs, 1_500_000)) {
+        await this.db.prepare(`
+          UPDATE jobs
+          SET official_url = (
+                SELECT json_extract(value, '$.officialUrl')
+                FROM json_each(?1)
+                WHERE json_extract(value, '$.id') = jobs.id
+              ),
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id IN (SELECT json_extract(value, '$.id') FROM json_each(?1))
+        `).bind(JSON.stringify(repairChunk)).run();
+        for (const repair of repairChunk) {
+          const existing = existingResult.results.find((row) => row.id === repair.id);
+          if (!existing) continue;
+          existingByUrl.delete(existing.official_url);
+          if (existingUrls.delete(existing.official_url)) existingUrls.add(repair.officialUrl);
+          existing.official_url = repair.officialUrl;
+          existingByUrl.set(repair.officialUrl, existing);
+        }
+      }
       for (const record of records) {
         const officialUrl = String(record.officialUrl);
         const previous = existingByUrl.get(officialUrl);

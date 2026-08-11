@@ -23,7 +23,6 @@ type DigestRow = {
   title: string;
   location: string | null;
   official_url: string;
-  apply_url: string | null;
   published_at: string | null;
   first_seen_at: string;
   score: number;
@@ -176,7 +175,7 @@ export const claimDueNotifications = async (
   if (claimed.results.length === 0) return [];
   const ids = claimed.results.map((row) => row.id);
   const jobs = await database.prepare(`
-    SELECT ni.notification_id, j.company, j.title, j.location, j.official_url, j.apply_url,
+    SELECT ni.notification_id, j.company, j.title, j.location, j.official_url,
            j.published_at, j.first_seen_at, jm.score, jm.matched_terms
     FROM notification_items ni
     JOIN job_matches jm ON jm.id = ni.job_match_id
@@ -194,7 +193,7 @@ export const claimDueNotifications = async (
       timing: row.published_at ? `Posted ${row.published_at.slice(0, 10)}` : `First seen ${row.first_seen_at.slice(0, 10)}`,
       score: row.score,
       reasons: evidenceLabels(row.matched_terms),
-      officialUrl: row.apply_url || row.official_url,
+      officialUrl: row.official_url,
     });
     grouped.set(row.notification_id, list);
   }
