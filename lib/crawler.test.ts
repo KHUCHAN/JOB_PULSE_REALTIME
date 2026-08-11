@@ -12,6 +12,41 @@ describe("large catalog content", () => {
 });
 
 describe("crawlSource", () => {
+  it("reads every server-rendered Okta job with its location and stable requisition id", async () => {
+    const html = `
+      <div class="views-row even"><div class="views-field views-field-title"><span class="field-content">
+        <a href="/company/careers/engineering/software-engineer-ai-8007071/" hreflang="en">Software Engineer &amp; AI</a>
+      </span></div><div class="views-field views-field-field-job-location"><div class="field-content">Bellevue, Washington; San Francisco, California</div></div></div>
+      <div class="views-row odd"><div class="views-field views-field-title"><span class="field-content">
+        <a href="/company/careers/engineering/summer-intern-8100000/" hreflang="en">Summer Intern</a>
+      </span></div><div class="views-field views-field-field-job-location"><div class="field-content">US Remote</div></div></div>`;
+    const fetcher: typeof fetch = async () => new Response(html, { status: 200, headers: { "content-type": "text/html" } });
+
+    const result = await crawlSource({
+      id: "p4-0469-okta",
+      company: "Okta",
+      postingUrl: "https://www.okta.com/company/careers/job-listing/",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-11T21:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true, responseStatus: 200 }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        externalId: "8007071",
+        title: "Software Engineer & AI",
+        location: "Bellevue, Washington; San Francisco, California",
+        officialUrl: "https://www.okta.com/company/careers/engineering/software-engineer-ai-8007071/",
+      }),
+      expect.objectContaining({
+        externalId: "8100000",
+        title: "Summer Intern",
+        location: "US Remote",
+        locationCountry: "US",
+        employmentType: "Internship",
+      }),
+    ]);
+  });
+
   it("crawls Citadel jobs from its public career sitemap when the listing page is edge-blocked", async () => {
     const jobUrl = "https://www.citadel.com/careers/details/sector-data-scientist-2027-intern-us/";
     const sitemapUrls = [jobUrl, ...Array.from({ length: 9 }, (_, index) => `https://www.citadel.com/careers/details/example-role-${index + 1}/`)];
@@ -232,6 +267,16 @@ Wrong description.
     expect(oracleCareerSite(html, "https://egcu.fa.us6.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/")).toEqual({
       apiOrigin: "https://egcu.fa.us6.oraclecloud.com",
       site: "CX",
+    });
+  });
+
+  it("uses a branded Oracle Candidate Experience host as its own API origin", () => {
+    expect(oracleCareerSite(
+      "<title>Dell Careers</title>",
+      "https://enterpriseplatform.dell.com/hcmUI/CandidateExperience/en/sites/careers/jobs",
+    )).toEqual({
+      apiOrigin: "https://enterpriseplatform.dell.com",
+      site: "careers",
     });
   });
 
@@ -597,6 +642,227 @@ Wrong description.
     expect(requests).toContain("https://acme.eightfold.ai/api/pcsx/search?domain=acme.com&query=&location=&start=10");
   });
 
+  it("routes PayPal's corporate careers home to its official Eightfold job feed", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.toString());
+      return Response.json({ data: {
+        count: 1,
+        positions: [{
+          id: 42,
+          name: "Software Engineering Intern",
+          locations: ["San Jose, CA"],
+          atsJobId: "R0123456",
+          positionUrl: "/careers/job/42",
+          creationTs: 1785888000,
+          type: "Internship",
+        }],
+      } });
+    };
+
+    const result = await crawlSource({
+      id: "p4-0327-paypal",
+      company: "PayPal",
+      postingUrl: "https://careers.pypl.com/home/",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests[0]).toBe("https://paypal.eightfold.ai/api/pcsx/search?domain=paypal.com&query=&location=&start=0");
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      jobs: [expect.objectContaining({
+        externalId: "R0123456",
+        title: "Software Engineering Intern",
+        officialUrl: "https://paypal.eightfold.ai/careers/job/42",
+      })],
+    }));
+  });
+
+  it("collects Walmart jobs through the official hybrid search API instead of navigation links", async () => {
+    const requests: Array<{ url: string; body: unknown }> = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = new URL(String(input));
+      requests.push({ url: url.href, body: JSON.parse(String(init?.body ?? "null")) });
+      const body = JSON.parse(String(init?.body ?? "null")) as { query?: string };
+      if (body.query !== "*") return Response.json({ totalJobs: 0, jobSearchSucceeded: true, jobs: [] });
+      return Response.json({
+        totalJobs: 2,
+        jobSearchSucceeded: true,
+        jobs: [{
+          id: "R-100-External",
+          text: "Job Posting Description: Build reliable systems.",
+          metadata: {
+            jobId: "R-100",
+            title: "Software Engineering Intern",
+            primaryLocationCity: "BENTONVILLE",
+            primaryLocationState: "AR",
+            primaryLocationCountry: "US",
+            jobPostingStartDate: 1785888000000,
+            employmentTypes: ["Full time"],
+            categories: ["Software Engineering and Architecture"],
+            brand: "Walmart",
+            minPay: 30,
+            maxPay: 40,
+            currencyCode: "USD",
+            payFrequency: "Hourly",
+          },
+        }, {
+          id: "R-101-External",
+          text: "Job Posting Description: Analyze business performance.",
+          metadata: { jobId: "R-101", title: "Data Analyst", primaryLocationCountry: "US" },
+        }],
+      });
+    };
+
+    const result = await crawlSource({
+      id: "p5-0763-walmart",
+      company: "Walmart (Global Tech)",
+      postingUrl: "https://careers.walmart.com/us/en/home",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests[0]).toEqual({ url: "https://careers.walmart.com/api/ai/search-ai/api/v1/combined/hybrid-search?page=0&size=1000&locale=en_US", body: {
+      query: "*", basicSearch: true, filter: "", locale: "en_US",
+    } });
+    expect(requests.map(({ body }) => (body as { query: string }).query)).toEqual(["*", "intern", "co-op", "coop", "co op"]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      jobs: [expect.objectContaining({
+        externalId: "R-100",
+        title: "Software Engineering Intern",
+        location: "BENTONVILLE, AR, US",
+        employmentType: "Internship",
+        department: "Software Engineering and Architecture",
+        salaryMin: 30,
+        salaryMax: 40,
+        salaryCurrency: "USD",
+        salaryInterval: "Hourly",
+        officialUrl: "https://careers.walmart.com/us/en/jobs/R-100",
+        publishedAt: "2026-08-05T00:00:00.000Z",
+      }), expect.objectContaining({ externalId: "R-101", title: "Data Analyst" })],
+    }));
+  });
+
+  it("paginates Google's public job results instead of indexing careers navigation", async () => {
+    const requests: string[] = [];
+    const page = (start: number, count: number) => Array.from({ length: count }, (_, index) => {
+      const id = start + index;
+      return `<a href="/about/careers/applications/jobs/results/${id}-role-${id}" aria-label="Learn more about Role ${id}"></a>`;
+    }).join("");
+    const fetcher: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.href);
+      const number = Number(url.searchParams.get("page") ?? 1);
+      return new Response(number === 1
+        ? `<span class="SWhIm">21</span> jobs matched ${page(100, 20)}<a href="?page=2" aria-label="Go to next page"></a>`
+        : `<span class="SWhIm">21</span> jobs matched ${page(120, 1)}`, { status: 200 });
+    };
+
+    const result = await crawlSource({
+      id: "p4-0285-google",
+      company: "Google / Alphabet",
+      postingUrl: "https://www.google.com/about/careers/applications/",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests).toEqual([
+      "https://www.google.com/about/careers/applications/jobs/results/",
+      "https://www.google.com/about/careers/applications/jobs/results/?page=2",
+    ]);
+    expect(result.status).toBe("succeeded");
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs).toHaveLength(21);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "100",
+      title: "Role 100",
+      officialUrl: "https://www.google.com/about/careers/applications/jobs/results/100-role-100",
+    }));
+  });
+
+  it("keeps Google DeepMind's official company filter on every careers page", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.href);
+      return new Response(`<span class="SWhIm">1</span> jobs matched
+        <a href="/about/careers/applications/jobs/results/123-research-engineer" aria-label="Learn more about Research Engineer"></a>`, { status: 200 });
+    };
+
+    const result = await crawlSource({
+      id: "p5-0610-google-deepmind",
+      company: "Google DeepMind",
+      postingUrl: "https://www.google.com/about/careers/applications/jobs/results?company=DeepMind&utm_source=deepmind",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests).toEqual([
+      "https://www.google.com/about/careers/applications/jobs/results/?company=DeepMind",
+    ]);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toEqual([expect.objectContaining({ company: "Google DeepMind", title: "Research Engineer" })]);
+  });
+
+  it("extracts Block's complete embedded job catalog instead of the first rendered slice", async () => {
+    const fetcher: typeof fetch = async () => new Response(`
+      <script>data:{jobs:{currentPage:[
+        {id:5225220008,internalId:4477122008,requisitionId:"R0006497",title:"Compliance Technology Program Lead",bu:"block",employeeType:"Regular",jobFunction:"Analytics & Data Science",isRemote:true,location:"New York, NY, US",publicationDate:"2026-08-10"},
+        {id:5243440008,internalId:4485001008,requisitionId:"R0006600",title:"Senior Machine Learning Engineer, Applied AI Quality",bu:"block",employeeType:"Regular",jobFunction:"Artificial Intelligence",isRemote:true,location:"Bay Area, CA, US",publicationDate:null}
+      ],total:2}}</script>
+    `, { status: 200 });
+
+    const result = await crawlSource({
+      id: "p2-0028-block", company: "Block",
+      postingUrl: "https://block.xyz/careers/jobs", adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result.status).toBe("succeeded");
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        externalId: "5225220008", requisitionId: "R0006497",
+        title: "Compliance Technology Program Lead", department: "Analytics & Data Science",
+        businessUnit: "block", arrangement: "remote", location: "New York, NY, US",
+        officialUrl: "https://block.xyz/careers/jobs/5225220008",
+        publishedAt: "2026-08-10T00:00:00.000Z",
+      }),
+      expect.objectContaining({ externalId: "5243440008", title: "Senior Machine Learning Engineer, Applied AI Quality" }),
+    ]);
+  });
+
+  it("loads the remaining Block catalog pages from the same official API", async () => {
+    const requests: string[] = [];
+    const embedded = Array.from({ length: 50 }, (_, index) =>
+      `{id:${1000 + index},internalId:${2000 + index},requisitionId:"R${index}",title:"Role ${index}",bu:"block",employeeType:"Regular",jobFunction:"Engineering",isRemote:false,location:"City ${index}, US",publicationDate:null}`
+    ).join(",");
+    const fetcher: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.href);
+      if (url.pathname === "/api/careers/jobs") return Response.json({
+        currentPage: [{
+          id: 1050, internalId: 2050, requisitionId: "R50", title: "Role 50", bu: "block",
+          employeeType: "Regular", jobFunction: "Engineering", isRemote: false, location: "City 50, US", publicationDate: null,
+        }],
+        total: 51,
+      });
+      return new Response(`<script>jobs:{currentPage:[${embedded}],total:51}</script>`);
+    };
+
+    const result = await crawlSource({
+      id: "p2-0028-block", company: "Block",
+      postingUrl: "https://block.xyz/careers/jobs", adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests).toEqual([
+      "https://block.xyz/careers/jobs",
+      "https://block.xyz/api/careers/jobs?page=2&pageLimit=50",
+    ]);
+    expect(result.jobs).toHaveLength(51);
+    expect(result.completeListing).toBe(true);
+  });
+
   it("falls back to Eightfold's legacy public API when the PCSX search route is unavailable", async () => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input) => {
@@ -614,6 +880,43 @@ Wrong description.
     expect(result.status).toBe("succeeded");
     expect(result.jobs.map((job) => job.externalId)).toEqual(["REQ-101"]);
     expect(requests.some((url) => url.includes("/api/apply/v2/jobs"))).toBe(true);
+  });
+
+  it("bootstraps Eightfold session cookies before retrying a rate-limited public feed", async () => {
+    const requests: Array<{ url: string; cookie: string | null }> = [];
+    let apiCalls = 0;
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = new URL(String(input));
+      const cookie = new Headers(init?.headers).get("cookie");
+      requests.push({ url: url.href, cookie });
+      if (url.pathname === "/careers") {
+        const headers = new Headers({ "content-type": "text/html" });
+        headers.append("set-cookie", "_vs=session-one; Path=/; Secure; HttpOnly");
+        headers.append("set-cookie", "_vscid=1; Path=/; Secure; HttpOnly");
+        return new Response("<main>Microsoft Careers</main>", { status: 200, headers });
+      }
+      apiCalls += 1;
+      if (apiCalls === 1) return new Response("Please try again later", { status: 429 });
+      expect(cookie).toContain("_vs=session-one");
+      expect(cookie).toContain("_vscid=1");
+      return Response.json({ data: {
+        count: 1,
+        positions: [{ id: 99, name: "Data Science Intern", atsJobId: "200099", positionUrl: "/careers/job/99" }],
+      } });
+    };
+
+    const result = await crawlSource({
+      id: "p4-0309-microsoft",
+      company: "Microsoft",
+      postingUrl: "https://apply.careers.microsoft.com/careers?domain=microsoft.com",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result.status).toBe("succeeded");
+    expect(result.jobs[0]).toEqual(expect.objectContaining({ externalId: "200099", title: "Data Science Intern" }));
+    expect(requests.map(({ url }) => new URL(url).pathname)).toEqual([
+      "/api/pcsx/search", "/careers", "/api/pcsx/search",
+    ]);
   });
 
   it("collects every MediaTek page through its public jobs API", async () => {
@@ -1419,6 +1722,288 @@ Wrong description.
     }));
   });
 
+  it("uses Atlassian's complete public listings endpoint instead of navigation links", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url !== "https://www.atlassian.com/endpoint/careers/listings") {
+        return new Response("unexpected", { status: 500 });
+      }
+      return new Response(JSON.stringify([
+        {
+          id: 26357,
+          title: "Senior Manager, Agentic AI Integrations",
+          locations: ["Mountain View or Remote"],
+          category: "Engineering",
+          overview: "<p>Build integrations.</p>",
+          responsibilities: "<p>Lead delivery.</p>",
+          qualifications: "<p>AI experience.</p>",
+          applyUrl: "https://globalcareers-atlassian.icims.com/jobs/26357/job?mode=apply",
+          portalJobPost: {
+            portalUrl: "https://globalcareers-atlassian.icims.com/jobs/26357/senior-manager-agentic-ai-integrations/job",
+            updatedDate: "2026-08-10 11:37 PM",
+          },
+        },
+        {
+          id: 26265,
+          title: "Software Engineer",
+          locations: ["San Francisco or Remote"],
+          category: "Engineering",
+          portalJobPost: {
+            portalUrl: "https://globalcareers-atlassian.icims.com/jobs/26265/software-engineer/job",
+          },
+        },
+      ]), { status: 200, headers: { "content-type": "application/json" } });
+    };
+
+    const result = await crawlSource({
+      id: "atlassian",
+      company: "Atlassian",
+      postingUrl: "https://www.atlassian.com/company/careers/all-jobs",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-11T12:00:00Z"));
+
+    expect(requests).toEqual(["https://www.atlassian.com/endpoint/careers/listings"]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      jobs: [
+        expect.objectContaining({
+          externalId: "26357",
+          title: "Senior Manager, Agentic AI Integrations",
+          location: "Mountain View or Remote",
+          department: "Engineering",
+          description: "Build integrations.",
+          responsibilities: "Lead delivery.",
+          qualifications: "AI experience.",
+          applyUrl: "https://globalcareers-atlassian.icims.com/jobs/26357/job?mode=apply",
+          officialUrl: "https://globalcareers-atlassian.icims.com/jobs/26357/senior-manager-agentic-ai-integrations/job",
+          publishedAt: "2026-08-10T23:37:00.000Z",
+        }),
+        expect.objectContaining({ externalId: "26265", title: "Software Engineer" }),
+      ],
+    }));
+  });
+
+  it("paginates Amazon's public search JSON and retains structured posting fields", async () => {
+    const requests: string[] = [];
+    const firstJobs = Array.from({ length: 100 }, (_, index) => ({
+      id_icims: String(10_000 + index),
+      title: `Engineer ${index}`,
+      job_path: `/en/jobs/${10_000 + index}/engineer-${index}`,
+      location: "US, WA, Seattle",
+      normalized_location: "Seattle, Washington, USA",
+      city: "Seattle",
+      state: "WA",
+      country_code: "USA",
+      job_schedule_type: "full-time",
+      job_category: "Software Development",
+      description: "<p>Build systems.</p>",
+      basic_qualifications: "<p>Programming experience.</p>",
+      url_next_step: `https://account.amazon.jobs/jobs/${10_000 + index}/apply`,
+      posted_date: "August 11, 2026",
+    }));
+    const finalJob = {
+      id_icims: "10100",
+      title: "Machine Learning Intern",
+      job_path: "/en/jobs/10100/machine-learning-intern",
+      location: "US, CA, East Palo Alto",
+      normalized_location: "East Palo Alto, California, USA",
+      city: "East Palo Alto",
+      state: "CA",
+      country_code: "USA",
+      job_schedule_type: "full-time",
+      job_category: "Machine Learning Science",
+      is_intern: true,
+      description_short: "Train models.",
+      posted_date: "August 10, 2026",
+    };
+    const fetcher: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.href);
+      const offset = Number(url.searchParams.get("offset") ?? 0);
+      return new Response(JSON.stringify({ hits: 101, jobs: offset === 0 ? firstJobs : [finalJob] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+
+    const result = await crawlSource({
+      id: "amazon-ml",
+      company: "Amazon",
+      postingUrl: "https://www.amazon.jobs/en/teams/machine-learning",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-11T12:00:00Z"));
+
+    expect(requests).toHaveLength(2);
+    expect(requests.every((url) => url.startsWith("https://www.amazon.jobs/en/search.json?"))).toBe(true);
+    expect(requests.every((url) => new URL(url).searchParams.get("base_query") === "machine learning")).toBe(true);
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs).toHaveLength(101);
+    expect(result.jobs.at(-1)).toEqual(expect.objectContaining({
+      externalId: "10100",
+      title: "Machine Learning Intern",
+      employmentType: "Internship",
+      department: "Machine Learning Science",
+      locationCity: "East Palo Alto",
+      locationState: "CA",
+      locationCountry: "USA",
+      officialUrl: "https://www.amazon.jobs/en/jobs/10100/machine-learning-intern",
+      publishedAt: "2026-08-10T00:00:00.000Z",
+    }));
+  });
+
+  it("paginates ServiceNow reader pages when the request surface is blocked", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === "https://careers.servicenow.com/sitemap.xml") return new Response("missing", { status: 404 });
+      if (url === "https://careers.servicenow.com/jobs/") return new Response("blocked", { status: 403 });
+      if (url === "https://r.jina.ai/https://careers.servicenow.com/jobs/") return new Response(`
+        [Senior Software Engineer](https://careers.servicenow.com/jobs/744000142970949/senior-software-engineer/)
+        [Data Scientist](https://careers.servicenow.com/jobs/744000142970950/data-scientist/)
+        [2](https://careers.servicenow.com/jobs/?page=2#results)
+      `, { status: 200 });
+      if (url === "https://r.jina.ai/https://careers.servicenow.com/jobs/?page=2") return new Response(`
+        [Machine Learning Engineer](https://careers.servicenow.com/jobs/744000142970951/machine-learning-engineer/)
+      `, { status: 200 });
+      return new Response("unexpected", { status: 500 });
+    };
+
+    const result = await crawlSource({
+      id: "servicenow",
+      company: "ServiceNow",
+      postingUrl: "https://careers.servicenow.com/",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-11T12:00:00Z"));
+
+    expect(requests).toEqual([
+      "https://careers.servicenow.com/sitemap.xml",
+      "https://careers.servicenow.com/jobs/",
+      "https://r.jina.ai/https://careers.servicenow.com/jobs/",
+      "https://r.jina.ai/https://careers.servicenow.com/jobs/?page=2",
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+    }));
+    expect(result.jobs.map((job) => job.title)).toEqual([
+      "Senior Software Engineer",
+      "Data Scientist",
+      "Machine Learning Engineer",
+    ]);
+  });
+
+  it("uses ServiceNow's complete public sitemap before its Cloudflare-protected page", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      requests.push(String(input));
+      return new Response(`<?xml version="1.0"?><urlset>
+        <url><loc>https://careers.servicenow.com/jobs/744000137509420/forward-deployed-solution-engineer-applied-ai-fde/</loc><lastmod>2026-08-10T07:17:06.149Z</lastmod></url>
+        <url><loc>https://careers.servicenow.com/jobs/744000136060020/solution-architect-ai-data/</loc><lastmod>2026-08-09T07:17:06.149Z</lastmod></url>
+      </urlset>`, { status: 200, headers: { "content-type": "application/xml" } });
+    };
+
+    const result = await crawlSource({
+      id: "servicenow",
+      company: "ServiceNow",
+      postingUrl: "https://careers.servicenow.com/",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-11T12:00:00Z"));
+
+    expect(requests).toEqual(["https://careers.servicenow.com/sitemap.xml"]);
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        externalId: "744000137509420",
+        title: "Forward Deployed Solution Engineer Applied AI FDE",
+        officialUrl: "https://careers.servicenow.com/jobs/744000137509420/forward-deployed-solution-engineer-applied-ai-fde/",
+        publishedAt: "2026-08-10T07:17:06.149Z",
+      }),
+      expect.objectContaining({ externalId: "744000136060020", title: "Solution Architect AI Data" }),
+    ]);
+  });
+
+  it("uses Verizon's public job sitemap instead of its Cloudflare-protected page", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      requests.push(String(input));
+      return new Response(`<?xml version="1.0"?><urlset>
+        <url><loc>https://mycareer.verizon.com/jobs/r-1097588/business-sales-account-manager/</loc><lastModified>2026-08-10T07:17:06.149Z</lastModified></url>
+        <url><loc>https://mycareer.verizon.com/jobs/r-1083830/software-engineering-intern/</loc><lastModified>2026-08-11T07:17:06.050Z</lastModified></url>
+      </urlset>`, { status: 200, headers: { "content-type": "application/xml" } });
+    };
+
+    const result = await crawlSource({
+      id: "verizon",
+      company: "Verizon",
+      postingUrl: "https://mycareer.verizon.com/jobs/",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-11T12:00:00Z"));
+
+    expect(requests).toEqual(["https://mycareer.verizon.com/en/jobs/sitemap.xml"]);
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs).toEqual([
+      expect.objectContaining({ externalId: "r-1097588", title: "Business Sales Account Manager" }),
+      expect.objectContaining({
+        externalId: "r-1083830",
+        title: "Software Engineering Intern",
+        employmentType: "Internship",
+        publishedAt: "2026-08-11T07:17:06.050Z",
+      }),
+    ]);
+  });
+
+  it("redirects a Phenom talent-community source to its public search results", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      requests.push(String(input));
+      return new Response(`<script>phApp.ddo = ${JSON.stringify({
+        eagerLoadRefineSearch: {
+          hits: 1,
+          totalHits: 1,
+          data: { jobs: [{ jobId: "123", title: "Data Science Intern", applyUrl: "https://jobs.cvshealth.com/us/en/job/123/data-science-intern" }] },
+        },
+      })};</script>`, { status: 200 });
+    };
+
+    const result = await crawlSource({
+      id: "cvs",
+      company: "Aetna / CVS Health",
+      postingUrl: "https://jobs.cvshealth.com/us/en/jointalentcommunity",
+      adapter: "phenom",
+    }, fetcher, new Date("2026-08-11T12:00:00Z"));
+
+    expect(requests).toEqual(["https://jobs.cvshealth.com/us/en/search-results"]);
+    expect(result.jobs.map((job) => job.title)).toEqual(["Data Science Intern"]);
+  });
+
+  it("redirects a Phenom careers root to its public search results", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      requests.push(String(input));
+      return new Response(`<script>phApp.ddo = ${JSON.stringify({
+        eagerLoadRefineSearch: {
+          hits: 1,
+          totalHits: 1,
+          data: { jobs: [{ jobId: "snow-1", title: "Data Engineer", applyUrl: "https://careers.snowflake.com/us/en/job/snow-1/data-engineer" }] },
+        },
+      })};</script>`, { status: 200 });
+    };
+
+    const result = await crawlSource({
+      id: "snowflake",
+      company: "Snowflake",
+      postingUrl: "https://careers.snowflake.com/us/en",
+      adapter: "phenom",
+    }, fetcher, new Date("2026-08-11T12:00:00Z"));
+
+    expect(requests).toEqual(["https://careers.snowflake.com/us/en/search-results"]);
+    expect(result.jobs.map((job) => job.title)).toEqual(["Data Engineer"]);
+  });
+
   it("extracts a public embedded JOB_ITEMS collection", async () => {
     const fetcher: typeof fetch = async () => new Response(`
       <script>const JOB_ITEMS = [{
@@ -1636,6 +2221,33 @@ Wrong description.
       })],
       facets: [{ key: "jobFamilyGroup", label: "Job Category", values: [{ key: "eng", label: "Engineering", count: 1 }] }],
     }));
+  });
+
+  it("bounds the Aetna source to Aetna matches instead of crawling every CVS retail role", async () => {
+    const bodies: string[] = [];
+    const fetcher: typeof fetch = async (_input, init) => {
+      bodies.push(String(init?.body));
+      return new Response(JSON.stringify({
+        total: 1,
+        jobPostings: [{
+          title: "Data Science Analyst, Aetna",
+          externalPath: "/job/Hartford-CT/Data-Science-Analyst_R100",
+          locationsText: "Hartford, CT",
+          postedOn: "Posted Today",
+        }],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+
+    const result = await crawlSource({
+      id: "p5-0532-aetna",
+      company: "Aetna / CVS Health",
+      postingUrl: "https://cvshealth.wd1.myworkdayjobs.com/CVS_Health_Careers",
+      adapter: "workday",
+    }, fetcher, new Date("2026-08-11T21:00:00Z"));
+
+    expect(bodies).toEqual([JSON.stringify({ appliedFacets: {}, limit: 20, offset: 0, searchText: "Aetna" })]);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs[0]).toEqual(expect.objectContaining({ title: "Data Science Analyst, Aetna" }));
   });
 
   it("does not mistake Workday requisition IDs for employment types", async () => {

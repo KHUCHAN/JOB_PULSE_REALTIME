@@ -57,6 +57,17 @@ describe("jobsFromBrowserAnchors", () => {
     ], { ...source, postingUrl: "https://jobs.acme.com" })).toEqual([]);
   });
 
+  it("rejects deep navigation, self anchors, and ATS document links that masquerade as jobs", () => {
+    expect(jobsFromBrowserAnchors([
+      { href: "#main-content", text: "Skip to main content" },
+      { href: "/company/careers/resources/interviewing/recruitment-fraud", text: "here" },
+      { href: "https://cdn.phenompeople.com/resources/eeo-statement.pdf", text: "Know Your Rights" },
+    ], {
+      ...source,
+      postingUrl: "https://acme.com/company/careers/all-jobs",
+    })).toEqual([]);
+  });
+
   it("keeps a corporate career detail whose slug carries a requisition id", () => {
     const jobs = jobsFromBrowserAnchors([
       { href: "https://acme.com/company/careers/engineering/staff-engineer-8487325002", text: "Staff Engineer" },

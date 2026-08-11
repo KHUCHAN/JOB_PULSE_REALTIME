@@ -61,7 +61,7 @@ describe("D1CrawlStore enriched job persistence", () => {
   const fakeDb = (options: {
     duplicateFacetConstraint?: boolean;
     failFacetInsert?: boolean;
-    existingJobs?: Array<{ id: string; external_id: string | null; official_url: string; status: string; resume_match_hash: string | null }>;
+    existingJobs?: Array<{ id: string; external_id: string | null; title: string; official_url: string; status: string; resume_match_hash: string | null }>;
   } = {}) => {
     const calls: Array<{ sql: string; values: unknown[] }> = [];
     const db = {
@@ -71,7 +71,7 @@ describe("D1CrawlStore enriched job persistence", () => {
             calls.push({ sql, values });
             return {
               all: async () => ({
-                results: sql.includes("SELECT id, external_id, official_url, status, resume_match_hash")
+                results: sql.includes("SELECT id, external_id, title, official_url, status, resume_match_hash")
                   ? options.existingJobs ?? []
                   : [],
               }),
@@ -131,6 +131,7 @@ describe("D1CrawlStore enriched job persistence", () => {
       existingJobs: [{
         id: "job-42",
         external_id: "REQ-42",
+        title: "Role",
         official_url: "https://acme.wd5.myworkdayjobs.com/job/Role_REQ-42",
         status: "open",
         resume_match_hash: null,
@@ -374,6 +375,31 @@ describe("D1CrawlStore enriched job persistence", () => {
 
     expect(calls.some((call) => call.sql.includes("INSERT INTO source_facets"))).toBe(false);
     expect(calls.some((call) => call.sql.includes("DELETE FROM source_facets"))).toBe(false);
+  });
+
+  it("closes known navigation artifacts even when the replacement listing is incomplete", async () => {
+    const { db, calls } = fakeDb({
+      existingJobs: [{
+        id: "fake-home", external_id: null, title: "Home",
+        official_url: "https://careers.example/home", status: "open", resume_match_hash: null,
+      }, {
+        id: "fake-saved", external_id: null, title: "Saved Jobs 0",
+        official_url: "https://careers.example/saved-jobs", status: "open", resume_match_hash: null,
+      }, {
+        id: "real", external_id: "REQ-1", title: "Home Lending Advisor",
+        official_url: "https://careers.example/jobs/REQ-1", status: "open", resume_match_hash: null,
+      }],
+    });
+    const store = new D1CrawlStore(db);
+
+    const result = await store.syncJobs("source-1", [], false);
+
+    const close = calls.find((call) => call.sql.includes("SET status = 'closed'"));
+    expect(JSON.parse(String(close?.values[2]))).toEqual([
+      "https://careers.example/home",
+      "https://careers.example/saved-jobs",
+    ]);
+    expect(result.closed).toBe(2);
   });
 
   it("keeps the previous facet snapshot when replacement inserts fail", async () => {

@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:08b565b3d951e6852f31cdded4097d4168c207c3c3516972f5481aa0613f202f",
+  "version": "v2:sha256:90accc2ff02bed658d4b092fb941b21a669cc8a463546a4e194f67b1efd23f3e",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -3606,7 +3606,7 @@
       "id": "p2-0041-jpmorgan-chase",
       "masterRow": 458,
       "company": "JPMorgan Chase",
-      "postingUrl": "https://www.jpmorganchase.com/careers",
+      "postingUrl": "https://jpmc.fa.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/jobs",
       "talentUrl": "https://jpmc.fa.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/join-talent-community",
       "channel": "공식 Talent Community/후보 프로필",
       "adapter": "custom",
@@ -3614,7 +3614,7 @@
       "confidence": "high",
       "resumeUpload": "available",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-08",
+      "checkedAt": "2026-08-11",
       "enabled": true
     },
     {
@@ -6156,7 +6156,7 @@
       "id": "p5-0610-google-deepmind",
       "masterRow": 1503,
       "company": "Google DeepMind",
-      "postingUrl": "https://deepmind.google/careers/",
+      "postingUrl": "https://www.google.com/about/careers/applications/jobs/results?company=DeepMind",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
       "adapter": "custom",
@@ -6164,7 +6164,7 @@
       "confidence": "high",
       "resumeUpload": "job_only",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-08",
+      "checkedAt": "2026-08-11",
       "enabled": true
     },
     {
@@ -10491,15 +10491,15 @@
       "id": "p5-0878-dell-technologies",
       "masterRow": 2489,
       "company": "Dell Technologies",
-      "postingUrl": "https://jobs.dell.com/en/sites/careers/jobs",
-      "talentUrl": "https://dell.wd1.myworkdayjobs.com/",
+      "postingUrl": "https://enterpriseplatform.dell.com/hcmUI/CandidateExperience/en/sites/careers/jobs",
+      "talentUrl": "https://enterpriseplatform.dell.com/hcmUI/CandidateExperience/en/sites/careers/join-talent-community",
       "channel": "공식 채용공고 검색·지원",
-      "adapter": "workday",
+      "adapter": "custom",
       "verification": "not_audited",
       "confidence": "medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-11",
       "enabled": true
     },
     {
@@ -12576,7 +12576,7 @@
       "id": "p4-0314-netflix",
       "masterRow": 2654,
       "company": "Netflix",
-      "postingUrl": "https://jobs.netflix.com/",
+      "postingUrl": "https://explore.jobs.netflix.net/careers?domain=netflix.com",
       "talentUrl": "https://jobs.netflix.com/",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -12584,7 +12584,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-11",
       "enabled": true
     },
     {
@@ -12966,7 +12966,7 @@
       "id": "p5-0630-infinity-ward",
       "masterRow": 2697,
       "company": "Infinity Ward (Activision)",
-      "postingUrl": "https://careers.activision.com/",
+      "postingUrl": "https://careers.activision.com/search-results",
       "talentUrl": "https://careers.activision.com/",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -12974,7 +12974,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-11",
       "enabled": true
     },
     {
@@ -19626,7 +19626,7 @@
       "id": "p4-0285-google",
       "masterRow": 3220,
       "company": "Google / Alphabet",
-      "postingUrl": "https://www.google.com/about/careers/applications/",
+      "postingUrl": "https://www.google.com/about/careers/applications/jobs/results/",
       "talentUrl": "https://www.google.com/about/careers/applications/",
       "channel": "Google Careers Applications Profile",
       "adapter": "custom",
@@ -19634,7 +19634,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-11",
       "enabled": true
     },
     {
@@ -19731,7 +19731,7 @@
       "id": "p4-0309-microsoft",
       "masterRow": 3230,
       "company": "Microsoft",
-      "postingUrl": "https://apply.careers.microsoft.com/candidate/register",
+      "postingUrl": "https://apply.careers.microsoft.com/careers?domain=microsoft.com",
       "talentUrl": "https://apply.careers.microsoft.com/candidate/register",
       "channel": "Eightfold Candidate Profile",
       "adapter": "custom",
@@ -19739,7 +19739,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-11",
       "enabled": true
     },
     {
@@ -19821,7 +19821,7 @@
       "id": "p4-0327-paypal",
       "masterRow": 3238,
       "company": "PayPal",
-      "postingUrl": "https://careers.pypl.com/home/",
+      "postingUrl": "https://paypal.eightfold.ai/careers?domain=paypal.com",
       "talentUrl": "https://paypal.eightfold.ai/candidate/login?domain=paypal.com",
       "channel": "Eightfold Candidate Profile",
       "adapter": "custom",
@@ -19829,7 +19829,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-08",
+      "checkedAt": "2026-08-11",
       "enabled": true
     },
     {
@@ -19851,7 +19851,7 @@
       "id": "p4-0347-servicenow",
       "masterRow": 3243,
       "company": "ServiceNow",
-      "postingUrl": "https://careers.servicenow.com/",
+      "postingUrl": "https://careers.servicenow.com/jobs/",
       "talentUrl": "https://careers.servicenow.com/",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -19859,7 +19859,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-11",
       "enabled": true
     },
     {
@@ -20526,7 +20526,7 @@
       "id": "p4-0469-okta",
       "masterRow": 3303,
       "company": "Okta",
-      "postingUrl": "https://talent.okta.com/",
+      "postingUrl": "https://www.okta.com/company/careers/job-listing/",
       "talentUrl": "https://talent.okta.com/",
       "channel": "Okta Talent Community",
       "adapter": "custom",
@@ -20534,7 +20534,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-11",
       "enabled": true
     },
     {
@@ -20931,15 +20931,15 @@
       "id": "p5-0532-aetna",
       "masterRow": 3338,
       "company": "Aetna / CVS Health",
-      "postingUrl": "https://jobs.cvshealth.com/us/en/jointalentcommunity",
+      "postingUrl": "https://cvshealth.wd1.myworkdayjobs.com/CVS_Health_Careers",
       "talentUrl": "https://jobs.cvshealth.com/us/en/jointalentcommunity",
       "channel": "CVS Health / Aetna Talent Community",
-      "adapter": "phenom",
+      "adapter": "workday",
       "verification": "valid_job_alert_form",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-11",
       "enabled": true
     },
     {
@@ -22139,7 +22139,7 @@
       "officialUrl": "https://jpmc.fa.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/join-talent-community",
       "resumeUpload": "available",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-08"
+      "checkedAt": "2026-08-11"
     },
     {
       "id": "talent-p2-0043-lazard",
@@ -24736,10 +24736,10 @@
     {
       "id": "talent-p5-0878-dell-technologies",
       "sourceId": "p5-0878-dell-technologies",
-      "officialUrl": "https://dell.wd1.myworkdayjobs.com/",
+      "officialUrl": "https://enterpriseplatform.dell.com/hcmUI/CandidateExperience/en/sites/careers/join-talent-community",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-11"
     },
     {
       "id": "talent-p5-0879-delta-dental",
@@ -25795,7 +25795,7 @@
       "officialUrl": "https://jobs.netflix.com/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-11"
     },
     {
       "id": "talent-p4-0360-t-rowe-price",
@@ -26003,7 +26003,7 @@
       "officialUrl": "https://careers.activision.com/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-11"
     },
     {
       "id": "talent-p5-0714-relativity-space",
@@ -29555,7 +29555,7 @@
       "officialUrl": "https://www.google.com/about/careers/applications/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-11"
     },
     {
       "id": "talent-p4-0287-gurucul",
@@ -29611,7 +29611,7 @@
       "officialUrl": "https://apply.careers.microsoft.com/candidate/register",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-11"
     },
     {
       "id": "talent-p4-0311-moody-s-analytics",
@@ -29659,7 +29659,7 @@
       "officialUrl": "https://paypal.eightfold.ai/candidate/login?domain=paypal.com",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-08"
+      "checkedAt": "2026-08-11"
     },
     {
       "id": "talent-p4-0329-point-b",
@@ -29675,7 +29675,7 @@
       "officialUrl": "https://careers.servicenow.com/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-11"
     },
     {
       "id": "talent-p4-0348-silent-eight",
@@ -30035,7 +30035,7 @@
       "officialUrl": "https://talent.okta.com/",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-11"
     },
     {
       "id": "talent-p4-0471-palo-alto-networks",
@@ -30251,7 +30251,7 @@
       "officialUrl": "https://jobs.cvshealth.com/us/en/jointalentcommunity",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-11"
     },
     {
       "id": "talent-p5-0536-alignment-healthcare",

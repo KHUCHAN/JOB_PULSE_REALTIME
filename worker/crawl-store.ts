@@ -19,9 +19,16 @@ type SourceRow = {
 type ExistingJobRow = {
   id: string;
   external_id: string | null;
+  title: string;
   official_url: string;
   status: "open" | "closed";
   resume_match_hash: string | null;
+};
+
+const isNavigationArtifact = (job: ExistingJobRow): boolean => {
+  const title = job.title.replace(/\s+/g, " ").trim();
+  if (/\.(?:pdf|docx?)(?:[?#]|$)/i.test(job.official_url)) return true;
+  return /^(?:home|sites|university|university overview|recruitment fraud|saved jobs(?:\s*0)?|go to saved jobs(?:\s*0)?|know your rights|job listing|students and graduates)$/i.test(title);
 };
 
 export const chunksOf = <T>(values: T[], size: number): T[][] => {
@@ -200,7 +207,7 @@ export class D1CrawlStore implements CrawlStore {
   async syncJobs(sourceId: string, jobs: CrawledJob[], completeListing: boolean, facets?: CrawledFacet[]): Promise<{ created: number; updated: number; closed: number }> {
     const now = new Date().toISOString();
     const existingResult = await this.db.prepare(`
-      SELECT id, external_id, official_url, status, resume_match_hash FROM jobs WHERE source_id = ?
+      SELECT id, external_id, title, official_url, status, resume_match_hash FROM jobs WHERE source_id = ?
     `).bind(sourceId).all<ExistingJobRow>();
     const existingByUrl = new Map(existingResult.results.map((row) => [row.official_url, row]));
     const existingByExternalId = new Map(existingResult.results.flatMap((row) =>
@@ -641,9 +648,12 @@ export class D1CrawlStore implements CrawlStore {
       `).bind(sourceId, now, sourceId, facetGeneration).run();
     }
 
-    const closedUrls = completeListing
+    const artifactUrls = existingResult.results
+      .filter((row) => row.status === "open" && isNavigationArtifact(row) && !visibleUrls.has(row.official_url))
+      .map((row) => row.official_url);
+    const closedUrls = [...new Set(completeListing
       ? [...existingUrls].filter((url) => !visibleUrls.has(url))
-      : [];
+      : artifactUrls)];
     for (const urlsChunk of chunksByJsonBytes(closedUrls, 1_500_000)) {
       await this.db.prepare(`
         UPDATE jobs
