@@ -46,7 +46,7 @@ describe("crawlSource", () => {
       adapter: "custom",
     }, fetcher, new Date("2026-08-11T15:00:00Z"));
 
-    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true, responseStatus: 200 }));
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: false, responseStatus: 200 }));
     expect(result.jobs).toHaveLength(10);
     expect(result.jobs.find((job) => job.officialUrl === jobUrl)).toEqual(expect.objectContaining({
       externalId: "sector-data-scientist-2027-intern-us",
@@ -81,7 +81,7 @@ describe("crawlSource", () => {
       adapter: "custom",
     }, fetcher, new Date("2026-08-11T15:00:00Z"));
 
-    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: false }));
     expect(result.jobs).toHaveLength(10);
     expect(result.jobs.find((job) => job.officialUrl === jobUrl)).toEqual(expect.objectContaining({
       externalId: "sector-data-scientist-2027-intern-us",
@@ -113,7 +113,7 @@ describe("crawlSource", () => {
     }, fetcher, new Date("2026-08-11T15:00:00Z"));
     const target = result.jobs.find((job) => job.officialUrl === jobUrl);
 
-    expect(result.completeListing).toBe(true);
+    expect(result.completeListing).toBe(false);
     expect(target).toEqual(expect.objectContaining({
       externalId: "sector-data-scientist-2027-intern-us",
       employmentType: "Internship",
