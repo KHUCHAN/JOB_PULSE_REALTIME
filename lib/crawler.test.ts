@@ -12,6 +12,90 @@ describe("large catalog content", () => {
 });
 
 describe("crawlSource", () => {
+  it("crawls Citadel jobs from its public career sitemap when the listing page is edge-blocked", async () => {
+    const jobUrl = "https://www.citadel.com/careers/details/sector-data-scientist-2027-intern-us/";
+    const requests: Array<{ url: string; returnFormat: string | null }> = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      const headers = new Headers(init?.headers);
+      requests.push({ url, returnFormat: headers.get("x-return-format") });
+      if (url === "https://www.citadel.com/career-sitemap.xml") {
+        return new Response(`<?xml version="1.0"?><urlset>
+          <url><loc>${jobUrl}</loc><lastmod>2026-08-11T14:14:26+00:00</lastmod></url>
+        </urlset>`, { status: 200, headers: { "content-type": "application/xml" } });
+      }
+      if (url === "https://r.jina.ai/http://www.citadel.com/careers/details/sector-data-scientist-2027-intern-us/") {
+        return new Response(`<script type="application/ld+json">{
+          "@context":"https://schema.org", "@type":"JobPosting",
+          "title":"Sector Data Scientist - 2027 Intern (US)",
+          "description":"Analyze large, unstructured data sets with Python and SQL.",
+          "datePosted":"2026-08-11", "employmentType":"internship",
+          "identifier":{"value":"sector-data-scientist-2027-intern-us"},
+          "mainEntityOfPage":{"@type":"WebPage","url":"${jobUrl}"},
+          "jobLocation":{"@type":"Place","address":{"@type":"PostalAddress","addressLocality":"New York","addressRegion":"NY","addressCountry":"US"}}
+        }</script>`, { status: 200, headers: { "content-type": "text/html" } });
+      }
+      return new Response("blocked", { status: 403 });
+    };
+
+    const result = await crawlSource({
+      id: "p5-0575-citadel",
+      company: "Citadel / Citadel Securities",
+      postingUrl: "https://www.citadel.com/careers/open-opportunities/",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-11T15:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      responseStatus: 200,
+      jobs: [expect.objectContaining({
+        externalId: "sector-data-scientist-2027-intern-us",
+        title: "Sector Data Scientist - 2027 Intern (US)",
+        employmentType: "Internship",
+        location: "New York, NY, US",
+        locationCity: "New York",
+        locationState: "NY",
+        locationCountry: "US",
+        officialUrl: jobUrl,
+        publishedAt: "2026-08-11T00:00:00.000Z",
+      })],
+    }));
+    expect(requests).toEqual([
+      { url: "https://www.citadel.com/career-sitemap.xml", returnFormat: null },
+      { url: "https://r.jina.ai/http://www.citadel.com/careers/details/sector-data-scientist-2027-intern-us/", returnFormat: "html" },
+    ]);
+  });
+
+  it("still detects every Citadel sitemap job when a detail reader receives a challenge page", async () => {
+    const jobUrl = "https://www.citadel.com/careers/details/sector-data-scientist-2027-intern-us/";
+    const fetcher: typeof fetch = async (input) => String(input).endsWith("career-sitemap.xml")
+      ? new Response(`<urlset><url><loc>${jobUrl}</loc><lastmod>2026-08-11T14:14:26+00:00</lastmod></url></urlset>`, { status: 200 })
+      : new Response("<html><title>Just a moment...</title></html>", { status: 200 });
+
+    const result = await crawlSource({
+      id: "p5-0575-citadel",
+      company: "Citadel / Citadel Securities",
+      postingUrl: "https://www.citadel.com/careers/open-opportunities/",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-11T15:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      jobs: [expect.objectContaining({
+        externalId: "sector-data-scientist-2027-intern-us",
+        title: "Sector Data Scientist - 2027 Intern (US)",
+        employmentType: "Internship",
+        location: "United States",
+        locationCountry: "US",
+        officialUrl: jobUrl,
+        publishedAt: null,
+        sourceUpdatedAt: "2026-08-11T14:14:26.000Z",
+      })],
+    }));
+  });
+
   it("discovers the Oracle API tenant behind a vanity careers domain", () => {
     const html = '<script src="https://eluq.fa.us2.oraclecloud.com:443/hcmUI/CandExpStatic/app.js"></script>';
     expect(oracleCareerSite(html, "https://www.krogerfamilycareers.com/en/sites/CX_2001/jobs")).toEqual({

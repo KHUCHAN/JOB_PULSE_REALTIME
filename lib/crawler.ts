@@ -1907,12 +1907,22 @@ const salaryFields = (value: unknown): Pick<CrawledJob, "salaryMin" | "salaryMax
 
 const jsonLdJob = (value: JsonLdValue, source: CrawlSource): CrawledJob | null => {
   const title = asText(value.title);
-  const officialUrl = asText(value.url);
+  const mainEntityOfPage = value.mainEntityOfPage;
+  const officialUrl = asText(value.url)
+    ?? (mainEntityOfPage && typeof mainEntityOfPage === "object"
+      ? asText((mainEntityOfPage as JsonLdValue).url) ?? asText((mainEntityOfPage as JsonLdValue)["@id"])
+      : asText(mainEntityOfPage));
   if (!title || !officialUrl) return null;
+  let careerDetailId: string | null = null;
+  try {
+    careerDetailId = new URL(officialUrl).pathname.match(/\/careers\/details\/([^/]+)/i)?.[1] ?? null;
+  } catch {
+    // Keep otherwise valid structured data even when a publisher emits a relative URL.
+  }
   const identifier = value.identifier;
   const externalId = typeof identifier === "object" && identifier
     ? asText((identifier as JsonLdValue).value) ?? asText((identifier as JsonLdValue)["@id"])
-    : asText(identifier);
+    : asText(identifier) ?? careerDetailId;
   const description = asText(value.description);
   const address = jobLocationAddress(value.jobLocation);
   const skills = textList(value.skills);
@@ -1940,6 +1950,146 @@ const jsonLdJob = (value: JsonLdValue, source: CrawlSource): CrawledJob | null =
     officialUrl,
     publishedAt: normalizedDate(value.datePosted),
   };
+};
+
+type CitadelSitemapEntry = { url: string; lastModified: string | null };
+
+const citadelSitemapEntries = (xml: string): CitadelSitemapEntry[] => {
+  const entries = [...xml.matchAll(/<url>([\s\S]*?)<\/url>/gi)].flatMap((match) => {
+    const location = match[1].match(/<loc>\s*([\s\S]*?)\s*<\/loc>/i)?.[1];
+    if (!location) return [];
+    let url: URL;
+    try {
+      url = new URL(decodeHtmlAttribute(location.trim()));
+    } catch {
+      return [];
+    }
+    if (url.hostname !== "www.citadel.com" || !url.pathname.startsWith("/careers/details/")) return [];
+    const lastModified = match[1].match(/<lastmod>\s*([\s\S]*?)\s*<\/lastmod>/i)?.[1]?.trim() ?? null;
+    return [{ url: url.href, lastModified }];
+  });
+  return [...new Map(entries.map((entry) => [entry.url, entry])).values()];
+};
+
+const citadelTitleToken = (token: string): string => {
+  const acronym = new Map([
+    ["ai", "AI"], ["bs", "BS"], ["gqs", "GQS"], ["ml", "ML"], ["ms", "MS"], ["phd", "PhD"], ["us", "US"],
+  ]).get(token.toLocaleLowerCase());
+  return acronym ?? token.charAt(0).toLocaleUpperCase() + token.slice(1).toLocaleLowerCase();
+};
+
+const citadelJobFromSitemap = (source: CrawlSource, entry: CitadelSitemapEntry): CrawledJob => {
+  const slug = new URL(entry.url).pathname.match(/\/careers\/details\/([^/]+)/i)?.[1] ?? entry.url;
+  const tokens = slug.split("-").filter(Boolean);
+  const regionToken = /^(?:us|asia|europe)$/i.test(tokens.at(-1) ?? "") ? tokens.pop()?.toLocaleLowerCase() : null;
+  const titleTokens = tokens.map(citadelTitleToken);
+  const yearIndex = titleTokens.findIndex((token) => /^20\d{2}$/.test(token));
+  const title = `${yearIndex > 0
+    ? `${titleTokens.slice(0, yearIndex).join(" ")} - ${titleTokens.slice(yearIndex).join(" ")}`
+    : titleTokens.join(" ")}${regionToken ? ` (${regionToken.toLocaleUpperCase()})` : ""}`;
+  const programs = classifyJobPrograms(title);
+  const location = regionToken === "us" ? "United States" : regionToken ? citadelTitleToken(regionToken) : null;
+  return {
+    externalId: slug,
+    title,
+    company: source.company,
+    location,
+    arrangement: "unknown",
+    employmentType: programs.keys.some((key) => key === "internship" || key === "coop") ? "Internship" : null,
+    summary: null,
+    ...(regionToken === "us" ? { locationCountry: "US" } : {}),
+    ...(entry.lastModified ? { sourceUpdatedAt: normalizedDate(entry.lastModified) } : {}),
+    officialUrl: entry.url,
+    publishedAt: null,
+  };
+};
+
+const citadelDetailPriority = (entry: CitadelSitemapEntry): number => {
+  const value = entry.url.toLocaleLowerCase();
+  return (/(?:-|\/)2027(?:-|\/)/.test(value) ? 100 : 0)
+    + (/(?:intern|co-?op)/.test(value) ? 50 : 0)
+    + (/(?:data|software|machine-learning|quantitative)/.test(value) ? 25 : 0);
+};
+
+const crawlCitadel = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const sitemapUrl = "https://www.citadel.com/career-sitemap.xml";
+  try {
+    const sitemapResponse = await fetchWithTimeout(fetcher, sitemapUrl, {
+      headers: { accept: "application/xml,text/xml;q=0.9,*/*;q=0.8" },
+    });
+    if (!sitemapResponse.ok) return {
+      status: isBlockedHttpStatus(sitemapResponse.status) ? "blocked" : "failed",
+      responseStatus: sitemapResponse.status,
+      completeListing: false,
+      jobs: [],
+      error: `Citadel career sitemap returned HTTP ${sitemapResponse.status}.`,
+    };
+    const entries = citadelSitemapEntries(await sitemapResponse.text());
+    if (entries.length === 0) return {
+      status: "failed",
+      responseStatus: sitemapResponse.status,
+      completeListing: false,
+      jobs: [],
+      error: "Citadel career sitemap contained no job detail URLs.",
+    };
+
+    const jobsByUrl = new Map(entries.map((entry) => [entry.url, citadelJobFromSitemap(source, entry)]));
+    const fetchDetail = async (entry: CitadelSitemapEntry): Promise<void> => {
+      try {
+        const readerTarget = new URL(entry.url);
+        readerTarget.protocol = "http:";
+        const response = await fetchWithTimeout(fetcher, `https://r.jina.ai/${readerTarget.href}`, {
+          headers: {
+            accept: "text/html",
+            "x-return-format": "html",
+          },
+        }, false, { attempts: 2, timeoutMs: 30_000 });
+        if (!response.ok) return;
+        const extracted = extractJobsFromHtml(await response.text(), source).jobs;
+        const job = extracted.find((candidate) => {
+          try {
+            return new URL(candidate.officialUrl).pathname === new URL(entry.url).pathname;
+          } catch {
+            return false;
+          }
+        }) ?? (extracted.length === 1 ? extracted[0] : null);
+        if (!job) return;
+        const externalId = job.externalId
+          ?? new URL(entry.url).pathname.match(/\/careers\/details\/([^/]+)/i)?.[1]
+          ?? null;
+        jobsByUrl.set(entry.url, {
+          ...job,
+          externalId,
+          officialUrl: entry.url,
+          ...(entry.lastModified ? { sourceUpdatedAt: normalizedDate(entry.lastModified) } : {}),
+        });
+      } catch {
+        // The authoritative sitemap record remains usable when optional enrichment fails.
+      }
+    };
+    const detailEntries = [...entries]
+      .sort((left, right) => citadelDetailPriority(right) - citadelDetailPriority(left) || left.url.localeCompare(right.url))
+      .slice(0, 8);
+    for (let index = 0; index < detailEntries.length; index += 2) {
+      await Promise.all(detailEntries.slice(index, index + 2).map(fetchDetail));
+    }
+    const unique = uniqueJobs([...jobsByUrl.values()]);
+    return {
+      status: "succeeded",
+      responseStatus: sitemapResponse.status,
+      completeListing: unique.length === entries.length,
+      jobs: unique,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: "failed",
+      responseStatus: null,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Citadel crawler error.",
+    };
+  }
 };
 
 async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
@@ -2700,6 +2850,7 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
 }
 
 async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
+  if (new URL(source.postingUrl).hostname === "www.citadel.com") return crawlCitadel(source, fetcher);
   if (source.id === "p5-1077-tesla" || source.company === "Tesla") return crawlTesla(source, fetcher);
   if (new URL(source.postingUrl).hostname === "www.metacareers.com") return crawlMetaCareers(source, fetcher);
   if (new URL(source.postingUrl).hostname === "careers.epam.com") return crawlEpam(source, fetcher);
