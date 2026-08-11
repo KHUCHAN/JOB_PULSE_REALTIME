@@ -278,6 +278,33 @@ export const markNotificationFailed = async (
   `).bind(kind, message.slice(0, 500), notification.id).run();
 };
 
+export const clearResumeAlertBacklog = async (
+  database: D1Database,
+  profileId: "chanyoung-resume",
+): Promise<void> => {
+  await database.batch([
+    database.prepare(`
+      DELETE FROM notification_items
+      WHERE notification_id IN (
+        SELECT id FROM notifications
+        WHERE keyword_id = (SELECT keyword_id FROM match_profiles WHERE id = ?)
+          AND status <> 'sent'
+      )
+    `).bind(profileId),
+    database.prepare(`
+      DELETE FROM notifications
+      WHERE keyword_id = (SELECT keyword_id FROM match_profiles WHERE id = ?)
+        AND status <> 'sent'
+    `).bind(profileId),
+    database.prepare(`
+      UPDATE job_matches
+      SET notification_eligible = 0
+      WHERE keyword_id = (SELECT keyword_id FROM match_profiles WHERE id = ?)
+        AND notified_at IS NULL
+    `).bind(profileId),
+  ]);
+};
+
 export const getResumeAlertStatus = async (
   database: D1Database,
   profileId: "chanyoung-resume",

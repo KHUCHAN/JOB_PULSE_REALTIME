@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { claimDueNotifications, planResumeDigests } from "./resume-alert-store";
+import { claimDueNotifications, clearResumeAlertBacklog, planResumeDigests } from "./resume-alert-store";
 import { alertDatabaseWithMatches, createD1ForSqlite } from "./resume-alert-test-helper";
 
 describe("resume digest reservation", () => {
@@ -53,6 +53,18 @@ describe("resume digest reservation", () => {
 
     expect(claimed).toHaveLength(2);
     expect(claimed.every((notification) => notification.jobs[0]?.officialUrl === "https://example.com/1")).toBe(true);
+  });
+
+  it("clears unsent backlog before switching to insert-only notifications", async () => {
+    const sqlite = alertDatabaseWithMatches(1);
+    const db = createD1ForSqlite(sqlite);
+    await planResumeDigests(db, "chanyoung-resume", "2026-08-10T12:00:00.000Z", 25);
+
+    await clearResumeAlertBacklog(db, "chanyoung-resume");
+
+    expect(sqlite.prepare("SELECT count(*) AS total FROM notifications").get()).toEqual({ total: 0 });
+    expect(sqlite.prepare("SELECT count(*) AS total FROM notification_items").get()).toEqual({ total: 0 });
+    expect(sqlite.prepare("SELECT notification_eligible FROM job_matches").get()).toEqual({ notification_eligible: 0 });
   });
 
   it("rolls back an interrupted envelope reservation and keeps the digest due", async () => {

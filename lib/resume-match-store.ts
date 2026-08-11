@@ -42,11 +42,14 @@ type CandidateRow = {
   security_clearance: string | null;
   published_at: string | null;
   first_seen_at: string;
+  official_url: string;
   open_generation: number;
   reopened_at: string | null;
   program_keys: string | null;
   recruiting_years: string | null;
 };
+
+type LoadedResumeMatchCandidate = ResumeMatchCandidate & { officialUrl: string };
 
 const parseStringArray = (value: string | null): string[] => {
   if (!value) return [];
@@ -62,7 +65,7 @@ const parseNumberArray = (value: string | null): number[] => parseStringArray(va
   .map(Number)
   .filter(Number.isFinite);
 
-const asCandidate = (row: CandidateRow): ResumeMatchCandidate => ({
+const asCandidate = (row: CandidateRow): LoadedResumeMatchCandidate => ({
   id: row.id,
   title: row.title,
   company: row.company,
@@ -81,6 +84,7 @@ const asCandidate = (row: CandidateRow): ResumeMatchCandidate => ({
   recruitingYears: parseNumberArray(row.recruiting_years),
   publishedAt: row.published_at,
   firstSeenAt: row.first_seen_at,
+  officialUrl: row.official_url,
   openGeneration: row.open_generation,
   reopenedAt: row.reopened_at,
 });
@@ -118,24 +122,26 @@ const jsonChunks = <T>(values: T[], maxBytes = 1_500_000): T[][] => {
 const persistDecisions = async (
   database: D1Database,
   profileRow: ProfileRow,
-  values: Array<{ candidate: ResumeMatchCandidate; decision: ResumeMatchDecision }>,
+  values: Array<{ candidate: ResumeMatchCandidate; decision: ResumeMatchDecision; notificationEligible?: boolean }>,
   now: string,
   baseline: boolean,
 ): Promise<{ matched: number; deactivated: number }> => {
-  const active = values.filter(({ decision }) => decision.eligible).map(({ candidate, decision }) => ({
+  const active = values.filter(({ decision }) => decision.eligible).map(({ candidate, decision, notificationEligible }) => ({
     id: crypto.randomUUID(),
     jobId: candidate.id,
     keywordId: profileRow.keyword_id,
     score: decision.score,
     matchedTerms: decision.evidence.map((item) => `${item.code}|${item.label}|${item.points}`),
     openGeneration: candidate.openGeneration,
-    notificationEligible: baseline ? 0 : Number(Boolean(
-      profileRow.activation_watermark
-      && (candidate.firstSeenAt > profileRow.activation_watermark
-        || (candidate.openGeneration > 1
-          && candidate.reopenedAt !== null
-          && candidate.reopenedAt > profileRow.activation_watermark)),
-    )),
+    notificationEligible: baseline ? 0 : typeof notificationEligible === "boolean"
+      ? Number(notificationEligible)
+      : Number(Boolean(
+        profileRow.activation_watermark
+        && (candidate.firstSeenAt > profileRow.activation_watermark
+          || (candidate.openGeneration > 1
+            && candidate.reopenedAt !== null
+            && candidate.reopenedAt > profileRow.activation_watermark)),
+      )),
   }));
   for (const chunk of jsonChunks(active)) {
     await database.prepare(`
@@ -196,7 +202,7 @@ export const loadResumeCandidatesForUrls = async (
   database: D1Database,
   sourceId: string,
   officialUrls: string[],
-): Promise<ResumeMatchCandidate[]> => {
+): Promise<LoadedResumeMatchCandidate[]> => {
   if (officialUrls.length === 0) return [];
   const rows: CandidateRow[] = [];
   for (const chunk of jsonChunks(officialUrls)) {
@@ -204,7 +210,7 @@ export const loadResumeCandidatesForUrls = async (
       SELECT j.id, j.title, j.company, j.location_region, j.summary, j.description,
              j.responsibilities, j.qualifications, j.skills, j.job_family, j.job_function,
              j.education_requirements, j.experience_requirements, j.security_clearance,
-             j.published_at, j.first_seen_at, j.open_generation, j.reopened_at,
+             j.published_at, j.first_seen_at, j.official_url, j.open_generation, j.reopened_at,
              COALESCE((SELECT json_group_array(substr(t.topic_key, 9)) FROM job_topics t
                WHERE t.job_id = j.id AND t.topic_key LIKE 'program:%'), '[]') AS program_keys,
              COALESCE((SELECT json_group_array(substr(t.topic_key, 6)) FROM job_topics t
@@ -224,11 +230,13 @@ export const syncResumeMatchesForUrls = async (
   sourceId: string,
   officialUrls: string[],
   now: string,
+  notificationEligibleUrls: string[] = [],
 ): Promise<{ matched: number; deactivated: number }> => {
   if (officialUrls.length === 0) return { matched: 0, deactivated: 0 };
   const profileRow = await profile(database);
   if (!profileRow || profileRow.enabled !== 1) return { matched: 0, deactivated: 0 };
   const totals = { matched: 0, deactivated: 0 };
+  const eligibleUrls = new Set(notificationEligibleUrls);
   for (let index = 0; index < officialUrls.length; index += 1_000) {
     const candidates = await loadResumeCandidatesForUrls(
       database,
@@ -238,6 +246,7 @@ export const syncResumeMatchesForUrls = async (
     const persisted = await persistDecisions(database, profileRow, candidates.map((candidate) => ({
       candidate,
       decision: evaluateResumeMatch(candidate),
+      notificationEligible: eligibleUrls.has(candidate.officialUrl),
     })), now, false);
     totals.matched += persisted.matched;
     totals.deactivated += persisted.deactivated;
@@ -256,7 +265,7 @@ export const backfillResumeMatches = async (
     SELECT j.id, j.title, j.company, j.location_region, j.summary, j.description,
            j.responsibilities, j.qualifications, j.skills, j.job_family, j.job_function,
            j.education_requirements, j.experience_requirements, j.security_clearance,
-           j.published_at, j.first_seen_at, j.open_generation, j.reopened_at,
+           j.published_at, j.first_seen_at, j.official_url, j.open_generation, j.reopened_at,
            COALESCE((SELECT json_group_array(substr(t.topic_key, 9)) FROM job_topics t
              WHERE t.job_id = j.id AND t.topic_key LIKE 'program:%'), '[]') AS program_keys,
            COALESCE((SELECT json_group_array(substr(t.topic_key, 6)) FROM job_topics t

@@ -177,6 +177,43 @@ describe("resume match persistence migration", () => {
     ).get()).toEqual({ notification_eligible: 1 });
   });
 
+  it("does not notify a post-watermark job unless the current crawl inserted it", async () => {
+    const sqlite = migratedSqlite();
+    sqlite.exec(`
+      INSERT INTO sources (id) VALUES ('source');
+      UPDATE match_profiles SET enabled = 1, activation_watermark = '2026-08-10T12:00:00.000Z';
+      INSERT INTO jobs (
+        id, source_id, title, company, location_region, skills, official_url, status, first_seen_at, last_seen_at
+      ) VALUES
+      (
+        'updated', 'source', 'Machine Learning Intern', 'Acme', 'us', '["Python","SQL"]',
+        'https://example.com/updated', 'open', '2026-08-10T12:01:00.000Z', '2026-08-10T13:00:00.000Z'
+      ),
+      (
+        'inserted', 'source', 'Data Science Intern', 'Acme', 'us', '["Python","SQL"]',
+        'https://example.com/inserted', 'open', '2026-08-10T12:02:00.000Z', '2026-08-10T13:00:00.000Z'
+      );
+      INSERT INTO job_topics (job_id, topic_key) VALUES
+        ('updated', 'program:internship'), ('updated', 'year:2027'),
+        ('inserted', 'program:internship'), ('inserted', 'year:2027');
+    `);
+
+    await syncResumeMatchesForUrls(
+      createD1(sqlite),
+      "source",
+      ["https://example.com/updated", "https://example.com/inserted"],
+      "2026-08-10T13:00:00.000Z",
+      ["https://example.com/inserted"],
+    );
+
+    expect(sqlite.prepare(
+      "SELECT job_id, is_active, notification_eligible FROM job_matches ORDER BY job_id",
+    ).all()).toEqual([
+      { job_id: "inserted", is_active: 1, notification_eligible: 1 },
+      { job_id: "updated", is_active: 1, notification_eligible: 0 },
+    ]);
+  });
+
   it("creates a new eligible match generation for a genuinely reopened job", async () => {
     const sqlite = migratedSqlite();
     sqlite.exec(`

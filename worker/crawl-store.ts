@@ -211,6 +211,7 @@ export class D1CrawlStore implements CrawlStore {
       .map((row) => row.official_url));
     const visibleUrls = new Set(jobs.map((job) => job.officialUrl));
     const resumeTouchedUrls = new Set<string>();
+    const notificationEligibleUrls = new Set<string>();
     const recordFor = async (job: CrawledJob): Promise<Record<string, unknown>> => {
       const aiData = classifyAiDataJob(job);
       const areaMemberships = classifyJobAreas(job).map((area) => ({
@@ -326,6 +327,7 @@ export class D1CrawlStore implements CrawlStore {
       for (const record of records) {
         const officialUrl = String(record.officialUrl);
         const previous = existingByUrl.get(officialUrl);
+        if (!previous) notificationEligibleUrls.add(officialUrl);
         if (!previous || previous.status === "closed" || previous.resume_match_hash !== record.resumeMatchHash) {
           resumeTouchedUrls.add(officialUrl);
         }
@@ -597,7 +599,13 @@ export class D1CrawlStore implements CrawlStore {
       }
     }
 
-    await syncResumeMatchesForUrls(this.db, sourceId, [...resumeTouchedUrls], now);
+    await syncResumeMatchesForUrls(
+      this.db,
+      sourceId,
+      [...resumeTouchedUrls],
+      now,
+      [...notificationEligibleUrls],
+    );
 
     const shouldReplaceFacets = completeListing || facets !== undefined;
     const effectiveFacets = completeListing ? mergedFacets(facets, jobs) : facets ?? [];

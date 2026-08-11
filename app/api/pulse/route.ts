@@ -45,6 +45,7 @@ import {
 import { D1CrawlStore } from "../../../worker/crawl-store";
 import { backfillResumeMatches } from "../../../lib/resume-match-store";
 import {
+  clearResumeAlertBacklog,
   getResumeAlertStatus,
   retryResumeAlerts,
   setResumeAlertEnabled,
@@ -415,6 +416,10 @@ export async function POST(request: Request): Promise<Response> {
       const enabled = body.enabled === true;
       if (enabled && !config) return json({ error: "Gmail must be connected before alerts can be enabled." }, 409);
       await setResumeAlertEnabled(db(), enabled, new Date().toISOString());
+      return json(await resumeStatus());
+    }
+    if (body.action === "clearResumeAlertBacklog") {
+      await clearResumeAlertBacklog(db(), "chanyoung-resume");
       return json(await resumeStatus());
     }
     if (body.action === "sendResumeTestEmail") {
