@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:ad1f9b34fb76725fe0bd1891bf9ca1abe51a9abab7227d0b80898f6704b53677",
+  "version": "v2:sha256:6a522230b07990270f8c0c352b38359fb38e8e0f60b791133cc35127e94c590a",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -20136,10 +20136,10 @@
       "id": "p4-0399-asana",
       "masterRow": 3266,
       "company": "Asana",
-      "postingUrl": "https://asana.com/jobs",
+      "postingUrl": "https://job-boards.greenhouse.io/asana",
       "talentUrl": "https://www.gem.com/form?formID=fbcdec8c-3442-43b9-9b45-d2b5f4ea25db",
       "channel": "Gem Talent Community",
-      "adapter": "custom",
+      "adapter": "greenhouse",
       "verification": "valid_direct_talent_form",
       "confidence": "high",
       "resumeUpload": "unknown",
@@ -20241,10 +20241,10 @@
       "id": "p4-0420-datadog",
       "masterRow": 3280,
       "company": "Datadog",
-      "postingUrl": "https://careers.datadoghq.com/all-jobs/",
+      "postingUrl": "https://job-boards.greenhouse.io/datadog",
       "talentUrl": "https://www.gem.com/form?formID=c216b75f-106b-48ff-bbcc-35dd54e618b6",
       "channel": "Gem Talent Community",
-      "adapter": "custom",
+      "adapter": "greenhouse",
       "verification": "valid_direct_talent_form",
       "confidence": "high",
       "resumeUpload": "unknown",

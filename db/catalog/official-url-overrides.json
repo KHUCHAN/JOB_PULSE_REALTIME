@@ -290,9 +290,9 @@
     "p5-0759-unilever": { "url": "https://careers.unilever.com/search-jobs", "adapter": "custom" },
     "p2-0027-bank-of-america": { "url": "https://careers.bankofamerica.com/en-us/job-search", "adapter": "custom" },
     "p5-0774-10x-genomics": { "url": "https://careers.kula.ai/10xgenomics?domain=10xgenomics.com", "adapter": "custom" },
-    "p4-0399-asana": { "url": "https://asana.com/jobs", "adapter": "custom" },
+    "p4-0399-asana": { "url": "https://job-boards.greenhouse.io/asana", "adapter": "greenhouse" },
     "p4-0404-box": { "url": "https://job-boards.greenhouse.io/boxinc", "adapter": "greenhouse" },
-    "p4-0420-datadog": { "url": "https://careers.datadoghq.com/all-jobs/", "adapter": "custom" },
+    "p4-0420-datadog": { "url": "https://job-boards.greenhouse.io/datadog", "adapter": "greenhouse" },
     "p5-0545-anduril-industries": { "url": "https://job-boards.greenhouse.io/andurilindustries", "adapter": "greenhouse" },
     "p5-0649-labelbox": { "url": "https://job-boards.greenhouse.io/labelbox", "adapter": "greenhouse" }
   },
