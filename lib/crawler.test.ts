@@ -710,6 +710,36 @@ Wrong description.
     ]);
   });
 
+  it("uses Meta's last-known public search operation when its static script is blocked", async () => {
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      if (url === "https://www.metacareers.com/jobsearch/") {
+        return new Response([
+          '<script src="https://static.xx.fbcdn.net/meta-careers.js"></script>',
+          '<script type="application/json">["LSD",[],{"token":"fresh-lsd-token"}]</script>',
+        ].join(""));
+      }
+      if (url === "https://static.xx.fbcdn.net/meta-careers.js") return new Response("blocked", { status: 403 });
+      expect(url).toBe("https://www.metacareers.com/graphql");
+      const body = new URLSearchParams(String(init?.body));
+      expect(body.get("doc_id")).toBe("27129360303422352");
+      return Response.json({
+        data: {
+          job_search_with_featured_jobs_v2: {
+            all_jobs: [{ id: "meta-1", title: "Software Engineer", locations: ["Menlo Park, CA"] }],
+          },
+        },
+      });
+    };
+
+    const result = await crawlSource({
+      id: "meta", company: "Meta", postingUrl: "https://www.metacareers.com/jobsearch/", adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result.status).toBe("succeeded");
+    expect(result.jobs).toEqual([expect.objectContaining({ externalId: "meta-1" })]);
+  });
+
   it("collects every EPAM page from its public Next.js job payload", async () => {
     const calls: string[] = [];
     const html = (jobs: unknown[], total = 3) => `<script id="__NEXT_DATA__" type="application/json">${JSON.stringify({

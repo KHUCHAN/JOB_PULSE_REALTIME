@@ -283,7 +283,7 @@
     "p2-0108-fnf": { "url": "https://fntg.wd5.myworkdayjobs.com/FNF-Careers", "adapter": "workday" },
     "p5-0902-faire": { "url": "https://job-boards.greenhouse.io/faire", "adapter": "greenhouse" },
     "p4-0439-graylog": { "url": "https://jobs.lever.co/graylog", "adapter": "lever" },
-    "p4-0441-guidewire": { "url": "https://www.guidewire.com/about/careers/jobs", "adapter": "custom" },
+    "p4-0441-guidewire": { "url": "https://wd5.myworkdaysite.com/recruiting/guidewire/external", "adapter": "workday" },
     "p5-0675-molina-healthcare": { "url": "https://careers.molinahealthcare.com/search-jobs", "adapter": "custom" },
     "p4-0499-sophos": { "url": "https://jobs.lever.co/sophos", "adapter": "lever" },
     "legacy-row-866": { "url": "https://sbdinc.wd1.myworkdayjobs.com/Stanley_Black_Decker_Career_Site", "adapter": "workday" },

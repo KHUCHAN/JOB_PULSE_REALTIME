@@ -2708,6 +2708,7 @@ const metaFacet = (key: string, label: string, jobs: MetaCareerJob[], select: (j
 };
 
 async function crawlMetaCareers(source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> {
+  const fallbackOperationId = "27129360303422352";
   let responseStatus: number | null = null;
   try {
     // Meta's edge rejects a fabricated browser User-Agent from server runtimes, while
@@ -2736,14 +2737,15 @@ async function crawlMetaCareers(source: CrawlSource, fetcher: typeof fetch): Pro
           return "";
         }
       }));
-      operationId = scripts.flatMap((script) => script.match(/CareersJobSearchResultsV2DataQuery_candidate_portalRelayOperation[\s\S]{0,240}?exports="(\d+)"/)?.[1] ?? []).at(0) ?? null;
+      operationId = scripts.flatMap((script) => script.match(/CareersJobSearchResultsV\d+DataQuery_candidate_portalRelayOperation[\s\S]{0,320}?exports="(\d+)"/)?.[1] ?? []).at(0) ?? null;
     }
-    if (!lsd || !operationId) return {
+    operationId ??= fallbackOperationId;
+    if (!lsd) return {
       status: "failed",
       responseStatus,
       completeListing: false,
       jobs: [],
-      error: "Meta careers public search operation could not be discovered.",
+      error: "Meta careers public search token could not be discovered.",
     };
 
     const variables = {

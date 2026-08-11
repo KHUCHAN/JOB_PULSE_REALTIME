@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:6a522230b07990270f8c0c352b38359fb38e8e0f60b791133cc35127e94c590a",
+  "version": "v2:sha256:08b565b3d951e6852f31cdded4097d4168c207c3c3516972f5481aa0613f202f",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -17796,10 +17796,10 @@
       "id": "p4-0441-guidewire",
       "masterRow": 3030,
       "company": "Guidewire",
-      "postingUrl": "https://www.guidewire.com/about/careers/jobs",
+      "postingUrl": "https://wd5.myworkdaysite.com/recruiting/guidewire/external",
       "talentUrl": "https://www.guidewire.com/careers",
       "channel": "공식 Career Portal",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "career_page_only",
       "confidence": "high",
       "resumeUpload": "unknown",
