@@ -23,6 +23,8 @@ describe("Gmail digest MIME", () => {
     }));
 
     expect(raw).toContain("Content-Type: multipart/alternative");
+    expect(raw).toContain("Content-Language: en");
+    expect(raw).toContain('<html lang="en">');
     expect(raw).toContain("Machine Learning Intern");
     expect(raw).toContain("&amp;");
     expect(raw).not.toContain("(213) 598-7426");

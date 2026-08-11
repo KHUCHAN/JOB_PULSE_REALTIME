@@ -73,7 +73,7 @@ const renderPlainText = (input: ReturnType<typeof validated>): string => [
 ].join("\r\n");
 
 const renderHtml = (input: ReturnType<typeof validated>): string => `<!doctype html>
-<html><body style="font-family:Arial,sans-serif;color:#0f172a;line-height:1.5">
+<html lang="en"><body style="font-family:Arial,sans-serif;color:#0f172a;line-height:1.5">
 <h1 style="font-size:20px">${escapeHtml(input.testOnly ? "Job Pulse Gmail connection test" : `${input.jobs.length} new resume match${input.jobs.length === 1 ? "" : "es"}`)}</h1>
 ${input.jobs.map((job) => `<article style="border:1px solid #dbeafe;border-radius:12px;padding:14px;margin:12px 0">
 <strong>${escapeHtml(job.company)} — ${escapeHtml(job.title)}</strong>
@@ -92,6 +92,7 @@ export const buildGmailRawMessage = (rawInput: GmailMessageInput): string => {
     `To: ${input.to}`,
     `Subject: ${encodeHeader(input.subject)}`,
     "MIME-Version: 1.0",
+    "Content-Language: en",
     `Content-Type: multipart/alternative; boundary="${boundary}"`,
   ];
   const mime = [
