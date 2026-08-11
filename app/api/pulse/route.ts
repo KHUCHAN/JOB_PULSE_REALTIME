@@ -560,7 +560,7 @@ export async function POST(request: Request): Promise<Response> {
       if (closed.results.length > 0) {
         await database.prepare(`
           UPDATE job_matches
-          SET is_active = 0, updated_at = CURRENT_TIMESTAMP
+          SET is_active = 0
           WHERE job_id IN (SELECT value FROM json_each(?))
         `).bind(JSON.stringify(closed.results.map((row) => row.id))).run();
       }
