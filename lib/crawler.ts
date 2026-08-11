@@ -2023,6 +2023,15 @@ const citadelJobFromMarkdown = (
   source: CrawlSource,
   entry: CitadelSitemapEntry,
 ): CrawledJob | null => {
+  const sourceValue = markdown.match(/^URL Source:\s*(\S+)\s*$/mi)?.[1];
+  if (!sourceValue) return null;
+  try {
+    const sourceUrl = new URL(sourceValue);
+    const expectedUrl = new URL(entry.url);
+    if (sourceUrl.hostname !== expectedUrl.hostname || sourceUrl.pathname !== expectedUrl.pathname) return null;
+  } catch {
+    return null;
+  }
   const heading = markdown.match(/^#\s+(.+?)\s*$/m);
   const description = markdown.match(/^##\s+Job Description\s*$([\s\S]*?)(?=^##\s+)/m)?.[1];
   if (!heading || !description) return null;
@@ -2078,26 +2087,36 @@ const crawlCitadel = async (source: CrawlSource, fetcher: typeof fetch): Promise
         const readerTarget = new URL(entry.url);
         readerTarget.protocol = "http:";
         const readerEndpoint = `https://r.jina.ai/${readerTarget.href}`;
-        const response = await fetchWithTimeout(fetcher, readerEndpoint, {
-          headers: {
-            accept: "text/html",
-            "x-return-format": "html",
-          },
-        }, false, { attempts: 2, timeoutMs: 30_000 });
-        if (!response.ok) return;
-        const extracted = extractJobsFromHtml(await response.text(), source).jobs;
-        let job = extracted.find((candidate) => {
-          try {
-            return new URL(candidate.officialUrl).pathname === new URL(entry.url).pathname;
-          } catch {
-            return false;
+        let job: CrawledJob | null = null;
+        try {
+          const response = await fetchWithTimeout(fetcher, readerEndpoint, {
+            headers: {
+              accept: "text/html",
+              "x-return-format": "html",
+            },
+          }, false, { attempts: 2, timeoutMs: 30_000 });
+          if (response.ok) {
+            const extracted = extractJobsFromHtml(await response.text(), source).jobs;
+            job = extracted.find((candidate) => {
+              try {
+                return new URL(candidate.officialUrl).pathname === new URL(entry.url).pathname;
+              } catch {
+                return false;
+              }
+            }) ?? (extracted.length === 1 ? extracted[0] : null);
           }
-        }) ?? (extracted.length === 1 ? extracted[0] : null);
+        } catch {
+          // HTML is optional; the text reader below can still provide the detail.
+        }
         if (!job) {
-          const markdownResponse = await fetchWithTimeout(fetcher, readerEndpoint, {
-            headers: { accept: "text/plain" },
-          }, false, { attempts: 1, timeoutMs: 30_000 });
-          if (markdownResponse.ok) job = citadelJobFromMarkdown(await markdownResponse.text(), source, entry);
+          try {
+            const markdownResponse = await fetchWithTimeout(fetcher, readerEndpoint, {
+              headers: { accept: "text/plain" },
+            }, false, { attempts: 1, timeoutMs: 30_000 });
+            if (markdownResponse.ok) job = citadelJobFromMarkdown(await markdownResponse.text(), source, entry);
+          } catch {
+            // Keep the sitemap record when both optional detail paths fail.
+          }
         }
         if (!job) return;
         const externalId = job.externalId

@@ -132,8 +132,10 @@ describe("crawlSource", () => {
       }
       if (!url.includes("sector-data-scientist-2027-intern-us")) return new Response("challenge", { status: 403 });
       const headers = new Headers(init?.headers);
-      if (headers.get("x-return-format") === "html") return new Response("<html><title>Just a moment...</title></html>", { status: 200 });
+      if (headers.get("x-return-format") === "html") return new Response("blocked", { status: 403 });
       return new Response(`Title: Sector Data Scientist - 2027 Intern (US) - Citadel
+
+URL Source: http://www.citadel.com/careers/details/sector-data-scientist-2027-intern-us/
 
 # Sector Data Scientist – 2027 Intern (US)
 
@@ -160,6 +162,40 @@ Analyze large unstructured data sets. Experience with Python, SQL, and Excel. Pu
       employmentType: "Internship",
       summary: "Analyze large unstructured data sets. Experience with Python, SQL, and Excel. Pursuing a bachelor's in computer science.",
       description: "Analyze large unstructured data sets. Experience with Python, SQL, and Excel. Pursuing a bachelor's in computer science.",
+    }));
+  });
+
+  it("rejects Citadel reader markdown sourced from a different job URL", async () => {
+    const jobUrl = "https://www.citadel.com/careers/details/sector-data-scientist-2027-intern-us/";
+    const sitemapUrls = [jobUrl, ...Array.from({ length: 9 }, (_, index) => `https://www.citadel.com/careers/details/example-role-${index + 1}/`)];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("career-sitemap.xml")) {
+        return new Response(`<urlset>${sitemapUrls.map((sitemapUrl) => `<url><loc>${sitemapUrl}</loc></url>`).join("")}</urlset>`, { status: 200 });
+      }
+      if (!url.includes("sector-data-scientist-2027-intern-us")) return new Response("challenge", { status: 403 });
+      const headers = new Headers(init?.headers);
+      if (headers.get("x-return-format") === "html") return new Response("challenge", { status: 200 });
+      return new Response(`Title: Wrong Role - Citadel
+URL Source: http://www.citadel.com/careers/details/different-role/
+# Wrong Role
+London
+## Job Description
+Wrong description.
+## About Citadel`, { status: 200 });
+    };
+
+    const result = await crawlSource({
+      id: "p5-0575-citadel", company: "Citadel / Citadel Securities",
+      postingUrl: "https://www.citadel.com/careers/open-opportunities/", adapter: "custom",
+    }, fetcher, new Date("2026-08-11T15:00:00Z"));
+    const target = result.jobs.find((job) => job.officialUrl === jobUrl);
+
+    expect(target).toEqual(expect.objectContaining({
+      title: "Sector Data Scientist - 2027 Intern (US)",
+      location: "United States",
+      employmentType: "Internship",
+      summary: null,
     }));
   });
 
