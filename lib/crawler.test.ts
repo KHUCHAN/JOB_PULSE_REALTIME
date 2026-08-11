@@ -785,7 +785,7 @@ Wrong description.
   it("streams Google result bodies instead of materializing every full HTML page", async () => {
     const encoder = new TextEncoder();
     const html = `<span class="SWhIm">1</span> jobs matched
-      <a href="/about/careers/applications/jobs/results/100-streamed-role" aria-label="Learn more about Streamed Role"></a>`;
+      <a href="jobs/results/100-streamed-role?page=1" aria-label="Learn more about Streamed Role"></a>`;
     const fetcher: typeof fetch = async () => {
       const response = new Response(new ReadableStream({
         start(controller) {
@@ -808,7 +808,11 @@ Wrong description.
     expect(result).toEqual(expect.objectContaining({
       status: "succeeded",
       completeListing: true,
-      jobs: [expect.objectContaining({ externalId: "100", title: "Streamed Role" })],
+      jobs: [expect.objectContaining({
+        externalId: "100",
+        title: "Streamed Role",
+        officialUrl: "https://www.google.com/about/careers/applications/jobs/results/100-streamed-role",
+      })],
     }));
   });
 

@@ -1,6 +1,7 @@
 {
   "overrides": {
     "p5-0523-abb-us": { "url": "https://abb.wd3.myworkdayjobs.com/External_Career_Page", "adapter": "workday" },
+    "p5-0528-activision": { "url": "https://careers.activision.com/search-results", "adapter": "custom" },
     "p2-0092-comerica": { "url": null, "adapter": "custom", "verification": "NO_ACTIVE_CAREERS" },
     "p4-0273-fifth-third-bank": { "url": "https://fifththird.wd5.myworkdayjobs.com/53careers", "adapter": "workday" },
     "p5-0529-adept-ai": { "url": null, "adapter": "custom", "verification": "NO_ACTIVE_CAREERS" },

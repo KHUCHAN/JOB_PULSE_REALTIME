@@ -2903,7 +2903,12 @@ const googleJobsFromHtml = (html: string, source: CrawlSource): CrawledJob[] => 
     const href = tag.match(/\bhref=["']([^"']+)["']/i)?.[1];
     const label = tag.match(/\baria-label=["']([^"']+)["']/i)?.[1];
     if (!href || !label || !/\bjobs\/results\/\d+-/i.test(href)) continue;
-    const officialUrl = new URL(decodeHtmlAttribute(href), "https://www.google.com").href;
+    const official = new URL(
+      decodeHtmlAttribute(href),
+      "https://www.google.com/about/careers/applications/",
+    );
+    official.searchParams.delete("page");
+    const officialUrl = official.href;
     const externalId = new URL(officialUrl).pathname.match(/\/jobs\/results\/(\d+)-/i)?.[1];
     const title = decodeHtmlAttribute(label).replace(/^Learn more about\s+/i, "").trim();
     if (!externalId || !title) continue;

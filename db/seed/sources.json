@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:90accc2ff02bed658d4b092fb941b21a669cc8a463546a4e194f67b1efd23f3e",
+  "version": "v2:sha256:54eb2a8ec3015db5089a3f7d5cd3016548231c7a43eddd2d3db1ad6ff627a234",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -20901,7 +20901,7 @@
       "id": "p5-0528-activision",
       "masterRow": 3336,
       "company": "Activision (Microsoft)",
-      "postingUrl": "https://careers.activision.com/",
+      "postingUrl": "https://careers.activision.com/search-results",
       "talentUrl": "https://careers.activision.com/",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -20909,7 +20909,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-11",
       "enabled": true
     },
     {
@@ -30235,7 +30235,7 @@
       "officialUrl": "https://careers.activision.com/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-11"
     },
     {
       "id": "talent-p5-0530-aerojet-rocketdyne",
