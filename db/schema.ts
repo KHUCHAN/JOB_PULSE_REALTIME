@@ -85,6 +85,7 @@ export const jobs = sqliteTable("jobs", {
   descriptionHash: text("description_hash"),
   officialUrl: text("official_url").notNull(),
   status: text("status", { enum: ["open", "closed"] }).notNull().default("open"),
+  openGeneration: integer("open_generation").notNull().default(1),
   reviewState: text("review_state", { enum: ["new", "saved", "hidden", "applied"] }).notNull().default("new"),
   publishedAt: text("published_at"),
   firstSeenAt: text("first_seen_at").notNull(),
@@ -178,6 +179,40 @@ export const keywords = sqliteTable("keywords", {
   updatedAt: updatedAt(),
 });
 
+export const matchProfiles = sqliteTable("match_profiles", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  keywordId: text("keyword_id").notNull().references(() => keywords.id, { onDelete: "cascade" }),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
+  ruleVersion: text("rule_version").notNull(),
+  rulesJson: text("rules_json", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+  minScore: integer("min_score").notNull().default(60),
+  activationWatermark: text("activation_watermark"),
+  nextDigestAt: text("next_digest_at"),
+  evaluationLeaseOwner: text("evaluation_lease_owner"),
+  evaluationLeaseExpiresAt: text("evaluation_lease_expires_at"),
+  dispatchLeaseOwner: text("dispatch_lease_owner"),
+  dispatchLeaseExpiresAt: text("dispatch_lease_expires_at"),
+  gmailState: text("gmail_state", { enum: ["unconfigured", "connected", "blocked"] }).notNull().default("unconfigured"),
+  lastDigestAt: text("last_digest_at"),
+  lastError: text("last_error"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (table) => [
+  uniqueIndex("match_profiles_keyword_unique").on(table.keywordId),
+  index("match_profiles_enabled_digest_idx").on(table.enabled, table.nextDigestAt),
+]);
+
+export const profileRecipients = sqliteTable("profile_recipients", {
+  profileId: text("profile_id").notNull().references(() => matchProfiles.id, { onDelete: "cascade" }),
+  recipient: text("recipient").notNull(),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (table) => [
+  primaryKey({ columns: [table.profileId, table.recipient] }),
+]);
+
 export const crawlRuns = sqliteTable("crawl_runs", {
   id: text("id").primaryKey(),
   sourceId: text("source_id").notNull().references(() => sources.id, { onDelete: "cascade" }),
@@ -204,11 +239,15 @@ export const jobMatches = sqliteTable("job_matches", {
   keywordId: text("keyword_id").notNull().references(() => keywords.id, { onDelete: "cascade" }),
   score: integer("score").notNull(),
   matchedTerms: text("matched_terms", { mode: "json" }).$type<string[]>().notNull(),
+  openGeneration: integer("open_generation").notNull().default(1),
+  isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+  notificationEligible: integer("notification_eligible", { mode: "boolean" }).notNull().default(false),
   createdAt: createdAt(),
   notifiedAt: text("notified_at"),
 }, (table) => [
-  uniqueIndex("job_matches_job_keyword_unique").on(table.jobId, table.keywordId),
+  uniqueIndex("job_matches_job_keyword_generation_unique").on(table.jobId, table.keywordId, table.openGeneration),
   index("job_matches_keyword_created_idx").on(table.keywordId, table.createdAt),
+  index("job_matches_keyword_active_score_idx").on(table.keywordId, table.isActive, table.score),
 ]);
 
 export const notifications = sqliteTable("notifications", {
@@ -216,15 +255,31 @@ export const notifications = sqliteTable("notifications", {
   keywordId: text("keyword_id").references(() => keywords.id, { onDelete: "set null" }),
   channel: text("channel", { enum: ["email", "webhook"] }).notNull(),
   recipient: text("recipient").notNull(),
-  status: text("status", { enum: ["queued", "sent", "failed"] }).notNull(),
+  status: text("status", { enum: ["queued", "sending", "sent", "retryable", "auth_blocked", "failed"] }).notNull(),
   jobCount: integer("job_count").notNull().default(0),
   providerMessageId: text("provider_message_id"),
   scheduledAt: text("scheduled_at").notNull(),
   sentAt: text("sent_at"),
   error: text("error"),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  nextRetryAt: text("next_retry_at"),
+  leaseOwner: text("lease_owner"),
+  leaseExpiresAt: text("lease_expires_at"),
   createdAt: createdAt(),
 }, (table) => [
   index("notifications_status_scheduled_idx").on(table.status, table.scheduledAt),
+  index("notifications_retry_lease_idx").on(table.status, table.nextRetryAt, table.leaseExpiresAt),
+]);
+
+export const notificationItems = sqliteTable("notification_items", {
+  id: text("id").primaryKey(),
+  notificationId: text("notification_id").notNull().references(() => notifications.id, { onDelete: "cascade" }),
+  jobMatchId: text("job_match_id").notNull().references(() => jobMatches.id, { onDelete: "cascade" }),
+  recipient: text("recipient").notNull(),
+  createdAt: createdAt(),
+}, (table) => [
+  uniqueIndex("notification_items_match_recipient_unique").on(table.jobMatchId, table.recipient),
+  index("notification_items_notification_idx").on(table.notificationId),
 ]);
 
 export const talentTargets = sqliteTable("talent_targets", {
