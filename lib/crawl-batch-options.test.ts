@@ -36,10 +36,10 @@ describe("job topic backfill limits", () => {
 });
 
 describe("job area and region backfill limits", () => {
-  it("uses integer batches capped at 500 jobs", () => {
-    expect(jobAreaRegionBackfillLimit(undefined)).toBe(500);
+  it("uses integer batches capped at the D1-safe 800 jobs", () => {
+    expect(jobAreaRegionBackfillLimit(undefined)).toBe(800);
     expect(jobAreaRegionBackfillLimit(0)).toBe(1);
     expect(jobAreaRegionBackfillLimit(42.9)).toBe(42);
-    expect(jobAreaRegionBackfillLimit(5_000)).toBe(500);
+    expect(jobAreaRegionBackfillLimit(5_000)).toBe(800);
   });
 });

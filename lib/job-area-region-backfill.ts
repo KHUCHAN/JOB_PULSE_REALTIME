@@ -85,7 +85,7 @@ export async function backfillJobAreasAndRegions(
   requestedLimit: number,
   afterId: string | null = null,
 ): Promise<JobAreaRegionBackfillResult> {
-  const limit = Math.max(1, Math.min(500, Math.trunc(requestedLimit)));
+  const limit = Math.max(1, Math.min(800, Math.trunc(requestedLimit)));
   const selectedStatement = db.prepare(`
     SELECT id, title, skills, department, team, business_unit, job_family, job_function,
            location, location_city, location_state, location_country, secondary_locations,
@@ -108,7 +108,7 @@ export async function backfillJobAreasAndRegions(
     .filter((job) => !hasCurrentJobAreaClassification(job.area_classified_at))
     .map((job) => job.id);
   const bodies: PendingJobBodyRow[] = [];
-  for (const idChunk of chunksOf(areaPendingIds, 25)) {
+  for (const idChunk of chunksOf(areaPendingIds, 50)) {
     const result = await db.prepare(`
       SELECT id,
              substr(summary, 1, 10000) AS summary,
@@ -145,7 +145,7 @@ export async function backfillJobAreasAndRegions(
     return { job, areas, locationRegion };
   });
 
-  for (const idChunk of chunksOf(areaPendingIds, 100)) {
+  for (const idChunk of chunksOf(areaPendingIds, 200)) {
     await db.prepare(`
       DELETE FROM job_topics
       WHERE topic_key LIKE 'area:%' AND job_id IN (SELECT value FROM json_each(?))
@@ -159,7 +159,7 @@ export async function backfillJobAreasAndRegions(
     evidence: area.evidence,
     classifiedAt,
   })));
-  for (const membershipChunk of chunksOf(memberships, 100)) {
+  for (const membershipChunk of chunksOf(memberships, 200)) {
     await db.prepare(`
       INSERT INTO job_topics (job_id, topic_key, score, evidence, classified_at)
       SELECT json_extract(value, '$.jobId'), 'area:' || json_extract(value, '$.areaKey'),
@@ -181,7 +181,7 @@ export async function backfillJobAreasAndRegions(
       ? job.area_classified_at
       : areaClassifiedAt,
   }));
-  for (const updateChunk of chunksOf(updates, 100)) {
+  for (const updateChunk of chunksOf(updates, 200)) {
     await db.prepare(`
       UPDATE jobs
       SET location_region = json_extract(value, '$.locationRegion'),

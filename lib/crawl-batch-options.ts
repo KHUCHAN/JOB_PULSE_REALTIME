@@ -13,8 +13,8 @@ export function jobProgramBackfillLimit(requested: number | undefined): number {
 }
 
 export function jobAreaRegionBackfillLimit(requested: number | undefined): number {
-  const value = Number.isFinite(requested) ? Math.trunc(requested!) : 500;
-  return Math.max(1, Math.min(500, value));
+  const value = Number.isFinite(requested) ? Math.trunc(requested!) : 800;
+  return Math.max(1, Math.min(800, value));
 }
 
 export function recrawlSourceIds(value: unknown): string[] {
