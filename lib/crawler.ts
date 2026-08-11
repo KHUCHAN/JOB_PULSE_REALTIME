@@ -4268,7 +4268,7 @@ async function crawlMetaCareers(source: CrawlSource, fetcher: typeof fetch): Pro
       viewasUserID: null,
       isLoggedIn: false,
     };
-    const requestOperation = async (endpoint: string): Promise<{ response: Response; payload: MetaCareerPayload | null }> => {
+    const requestOperation = async (endpoint: string, browserMetadata: boolean): Promise<{ response: Response; payload: MetaCareerPayload | null }> => {
       const body = new URLSearchParams({
         lsd,
         fb_api_caller_class: "RelayModern",
@@ -4287,6 +4287,13 @@ async function crawlMetaCareers(source: CrawlSource, fetcher: typeof fetch): Pro
           "x-fb-friendly-name": "CareersJobSearchResultsV2DataQuery",
           "x-fb-lsd": lsd,
           ...(sessionCookie ? { cookie: sessionCookie } : {}),
+          ...(browserMetadata ? {
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+            "accept-language": "en-US,en;q=0.9",
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-origin",
+          } : {}),
         },
         body,
       }, false, { attempts: 1, timeoutMs: 30_000 });
@@ -4304,16 +4311,31 @@ async function crawlMetaCareers(source: CrawlSource, fetcher: typeof fetch): Pro
     );
     let search: { response: Response; payload: MetaCareerPayload | null } | null = null;
     let rawJobs: MetaCareerJob[] | undefined;
-    for (const endpoint of ["https://www.metacareers.com/api/graphql/", "https://www.metacareers.com/graphql/"]) {
+    const graphFailures: string[] = [];
+    const graphEndpoints = ["https://www.metacareers.com/api/graphql/", "https://www.metacareers.com/graphql/"];
+    const graphAttempts = [
+      ...graphEndpoints.map((endpoint) => ({ endpoint, browserMetadata: false })),
+      ...graphEndpoints.map((endpoint) => ({ endpoint, browserMetadata: true })),
+    ];
+    for (const { endpoint, browserMetadata } of graphAttempts) {
+      const label = `${new URL(endpoint).pathname}${browserMetadata ? " browser" : " minimal"}`;
       try {
-        search = await requestOperation(endpoint);
+        search = await requestOperation(endpoint, browserMetadata);
         rawJobs = search.payload?.data?.job_search_with_featured_jobs_v2?.all_jobs;
         if (search.response.ok && isUsableCatalog(rawJobs)) break;
+        graphFailures.push(`${label}: ${search.response.ok ? "non-JSON or invalid catalog" : `HTTP ${search.response.status}`}`);
       } catch {
+        graphFailures.push(`${label}: request failed`);
         continue;
       }
     }
-    if (!search?.response.ok || !isUsableCatalog(rawJobs)) return crawlMetaSitemapFallback(source, fetcher);
+    if (!search?.response.ok || !isUsableCatalog(rawJobs)) {
+      const fallback = await crawlMetaSitemapFallback(source, fetcher);
+      return fallback.status === "succeeded" ? fallback : {
+        ...fallback,
+        error: `Meta GraphQL endpoints failed (${graphFailures.join("; ")}); ${fallback.error ?? "Meta sitemap fallback failed."}`,
+      };
+    }
     const jobs = uniqueJobs(rawJobs.flatMap((job): CrawledJob[] => {
       if (!job.id || !job.title) return [];
       const locations = [...new Set((job.locations ?? []).map((value) => value.trim()).filter(Boolean))];

@@ -1166,6 +1166,40 @@ Wrong description.
     expect(result).toEqual(expect.objectContaining({ status: "succeeded", jobs: [expect.objectContaining({ externalId: "meta-2" })] }));
   });
 
+  it("retries Meta's official GraphQL paths with browser request metadata after edge HTML", async () => {
+    const attempts: Array<{ url: string; userAgent: string | null }> = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      if (url === "https://www.metacareers.com/jobsearch/") {
+        return new Response('<script type="application/json">["LSD",[],{"token":"fresh-lsd-token"}]</script>');
+      }
+      const userAgent = new Headers(init?.headers).get("user-agent");
+      attempts.push({ url, userAgent });
+      if (!userAgent || url === "https://www.metacareers.com/graphql/") {
+        return new Response("<!DOCTYPE html><title>Edge response</title>");
+      }
+      return Response.json({
+        data: {
+          job_search_with_featured_jobs_v2: {
+            all_jobs: [{ id: "meta-ua-1", title: "Data Engineer", locations: ["Menlo Park, CA"] }],
+          },
+        },
+      });
+    };
+
+    const result = await crawlSource({
+      id: "meta", company: "Meta", postingUrl: "https://www.metacareers.com/jobsearch/", adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(attempts.map(({ url }) => url)).toEqual([
+      "https://www.metacareers.com/api/graphql/",
+      "https://www.metacareers.com/graphql/",
+      "https://www.metacareers.com/api/graphql/",
+    ]);
+    expect(attempts[2]?.userAgent).toContain("Mozilla/5.0");
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", jobs: [expect.objectContaining({ externalId: "meta-ua-1" })] }));
+  });
+
   it("never treats empty or malformed Meta GraphQL arrays as an authoritative catalog", async () => {
     for (const allJobs of [[], [{ id: "meta-3" }]]) {
       const operationIds: string[] = [];
@@ -1184,7 +1218,7 @@ Wrong description.
         id: "meta", company: "Meta", postingUrl: "https://www.metacareers.com/jobsearch/", adapter: "custom",
       }, fetcher, new Date());
 
-      expect(operationIds).toEqual(["27129360303422352", "27129360303422352"]);
+      expect(operationIds).toEqual(Array(4).fill("27129360303422352"));
       expect(result).toEqual(expect.objectContaining({ status: "failed", completeListing: false, jobs: [] }));
     }
   });
@@ -1233,8 +1267,8 @@ Wrong description.
       id: "p4-0308-meta", company: "Meta", postingUrl: "https://www.metacareers.com/jobsearch/", adapter: "custom",
     }, fetcher, new Date());
 
-    expect(requests.filter((url) => url === "https://www.metacareers.com/api/graphql/")).toHaveLength(1);
-    expect(requests.filter((url) => url === "https://www.metacareers.com/graphql/")).toHaveLength(1);
+    expect(requests.filter((url) => url === "https://www.metacareers.com/api/graphql/")).toHaveLength(2);
+    expect(requests.filter((url) => url === "https://www.metacareers.com/graphql/")).toHaveLength(2);
     expect(requests).toContain("https://www.metacareers.com/jobs/sitemap.xml");
     expect(result).toEqual(expect.objectContaining({
       status: "succeeded",
