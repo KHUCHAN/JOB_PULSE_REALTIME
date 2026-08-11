@@ -40,7 +40,8 @@ describe("backfillJobAreasAndRegions", () => {
         ('b', 'Intern, Information Technology 2027', 'open', NULL, 'Assignments include Artificial Intelligence and Data & Analytics.', NULL, NULL, '[]', NULL, NULL, NULL, NULL, NULL, 'Toronto, Ontario, Canada', NULL, NULL, 'Canada', '[]', NULL, NULL, CURRENT_TIMESTAMP),
         ('c', 'Leadership Development Program Intern', 'open', NULL, NULL, NULL, NULL, '[]', NULL, NULL, NULL, NULL, NULL, 'Remote', NULL, NULL, NULL, '[]', NULL, NULL, CURRENT_TIMESTAMP),
         ('d', 'Data Scientist Intern', 'closed', NULL, NULL, NULL, NULL, '[]', NULL, NULL, NULL, NULL, NULL, 'New York, NY', NULL, NULL, 'US', '[]', NULL, NULL, CURRENT_TIMESTAMP),
-        ('e', 'Business Intern', 'open', NULL, NULL, NULL, NULL, '[]', NULL, NULL, NULL, NULL, NULL, 'Chicago, IL', NULL, NULL, NULL, '[]', NULL, '2026-08-10', CURRENT_TIMESTAMP);
+        ('e', 'Business Intern', 'open', NULL, NULL, NULL, NULL, '[]', NULL, NULL, NULL, NULL, NULL, 'Chicago, IL', NULL, NULL, NULL, '[]', NULL, 'v2:2026-08-10T00:00:00.000Z', CURRENT_TIMESTAMP),
+        ('f', 'Human Resources Intern', 'open', NULL, 'Use AI tools for drafting. We embrace responsible artificial intelligence in recruiting.', NULL, NULL, '[]', NULL, NULL, NULL, NULL, NULL, 'Boston, MA', NULL, NULL, 'US', '[]', NULL, '2026-08-10', CURRENT_TIMESTAMP);
       INSERT INTO job_topics VALUES
         ('c', 'area:software-engineering', 99, '["stale"]', '2026-08-09'),
         ('c', 'program:internship', 1, '["keep"]', '2026-08-09'),
@@ -49,9 +50,9 @@ describe("backfillJobAreasAndRegions", () => {
 
     const db = createD1(sqlite);
     expect(await backfillJobAreasAndRegions(db, 500)).toEqual({
-      processed: 4,
+      processed: 5,
       areaMatched: 2,
-      regionResolved: 3,
+      regionResolved: 4,
       remaining: 0,
     });
     expect(sqlite.prepare("SELECT id, location_region FROM jobs WHERE status = 'open' ORDER BY id").all()).toEqual([
@@ -59,6 +60,7 @@ describe("backfillJobAreasAndRegions", () => {
       { id: "b", location_region: "non_us" },
       { id: "c", location_region: "unknown" },
       { id: "e", location_region: "us" },
+      { id: "f", location_region: "us" },
     ]);
     expect(sqlite.prepare("SELECT job_id, topic_key FROM job_topics ORDER BY job_id, topic_key").all()).toEqual([
       { job_id: "a", topic_key: "area:software-engineering" },
@@ -67,6 +69,9 @@ describe("backfillJobAreasAndRegions", () => {
       { job_id: "c", topic_key: "program:internship" },
       { job_id: "e", topic_key: "area:data-analytics" },
     ]);
+    expect(sqlite.prepare("SELECT area_classified_at FROM jobs WHERE id = 'f'").get()).toEqual({
+      area_classified_at: expect.stringMatching(/^v2:/),
+    });
     expect(await backfillJobAreasAndRegions(db, 500)).toEqual({
       processed: 0,
       areaMatched: 0,

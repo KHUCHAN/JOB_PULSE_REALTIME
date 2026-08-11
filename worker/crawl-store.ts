@@ -1,6 +1,6 @@
 import type { CrawlStore, PersistedSource } from "../lib/crawl-runner";
 import type { CrawledFacet, CrawledJob } from "../lib/crawler";
-import { classifyJobAreas } from "../lib/job-area-classifier";
+import { classifyJobAreas, jobAreaClassificationMarker } from "../lib/job-area-classifier";
 import { classifyJobRegion } from "../lib/job-region-classifier";
 import { classifyAiDataJob } from "../lib/job-topic-classifier";
 import { classifyJobPrograms } from "../lib/job-program-classifier";
@@ -245,7 +245,7 @@ export class D1CrawlStore implements CrawlStore {
         officialUrl: job.officialUrl, publishedAt: job.publishedAt, firstSeenAt: now, lastSeenAt: now,
         topicClassifiedAt: now, aiDataMatched: aiData.matched, aiDataScore: aiData.score,
         aiDataEvidence: aiData.evidence,
-        areaClassifiedAt: now, areaMemberships,
+        areaClassifiedAt: jobAreaClassificationMarker(now), areaMemberships,
         programKeys, programEvidence,
         recruitingYears: recruitingYears.years,
         recruitingYearEvidence: recruitingYears.evidence,

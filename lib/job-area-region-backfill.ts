@@ -1,4 +1,8 @@
-import { classifyJobAreas } from "./job-area-classifier";
+import {
+  classifyJobAreas,
+  hasCurrentJobAreaClassification,
+  jobAreaClassificationMarker,
+} from "./job-area-classifier";
 import { classifyJobRegion } from "./job-region-classifier";
 
 type PendingJobRow = {
@@ -85,7 +89,8 @@ export async function backfillJobAreasAndRegions(
            location, location_city, location_state, location_country, secondary_locations,
            location_region, area_classified_at
     FROM jobs
-    WHERE status = 'open' AND (area_classified_at IS NULL OR location_region IS NULL)
+    WHERE status = 'open'
+      AND (area_classified_at IS NULL OR area_classified_at NOT LIKE 'v2:%' OR location_region IS NULL)
     ORDER BY id
     LIMIT ?
   `).bind(limit).all<PendingJobRow>();
@@ -94,7 +99,7 @@ export async function backfillJobAreasAndRegions(
   }
 
   const areaPendingIds = selected.results
-    .filter((job) => job.area_classified_at === null)
+    .filter((job) => !hasCurrentJobAreaClassification(job.area_classified_at))
     .map((job) => job.id);
   const bodies: PendingJobBodyRow[] = [];
   for (const idChunk of chunksOf(areaPendingIds, 25)) {
@@ -119,8 +124,9 @@ export async function backfillJobAreasAndRegions(
 
   const bodyById = new Map(bodies.map((body) => [body.id, body]));
   const classifiedAt = new Date().toISOString();
+  const areaClassifiedAt = jobAreaClassificationMarker(classifiedAt);
   const records = selected.results.map((job) => {
-    const areas = job.area_classified_at === null
+    const areas = !hasCurrentJobAreaClassification(job.area_classified_at)
       ? classifyJobAreas(classificationInput(job, bodyById.get(job.id)))
       : [];
     const locationRegion = classifyJobRegion({
@@ -165,7 +171,9 @@ export async function backfillJobAreasAndRegions(
   const updates = records.map(({ job, locationRegion }) => ({
     id: job.id,
     locationRegion,
-    areaClassifiedAt: job.area_classified_at ?? classifiedAt,
+    areaClassifiedAt: hasCurrentJobAreaClassification(job.area_classified_at)
+      ? job.area_classified_at
+      : areaClassifiedAt,
   }));
   for (const updateChunk of chunksOf(updates, 100)) {
     await db.prepare(`
@@ -181,11 +189,12 @@ export async function backfillJobAreasAndRegions(
   const remaining = await db.prepare(`
     SELECT count(*) AS count
     FROM jobs
-    WHERE status = 'open' AND (area_classified_at IS NULL OR location_region IS NULL)
+    WHERE status = 'open'
+      AND (area_classified_at IS NULL OR area_classified_at NOT LIKE 'v2:%' OR location_region IS NULL)
   `).first<{ count: number }>();
   return {
     processed: records.length,
-    areaMatched: records.filter(({ job, areas }) => job.area_classified_at === null && areas.length > 0).length,
+    areaMatched: records.filter(({ job, areas }) => !hasCurrentJobAreaClassification(job.area_classified_at) && areas.length > 0).length,
     regionResolved: records.filter(({ locationRegion }) => locationRegion !== "unknown").length,
     remaining: Number(remaining?.count ?? 0),
   };

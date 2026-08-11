@@ -20,6 +20,14 @@ export type JobAreaClassification = {
   evidence: string[];
 };
 
+export const JOB_AREA_CLASSIFICATION_VERSION = "v2";
+
+export const jobAreaClassificationMarker = (timestamp = new Date().toISOString()): string =>
+  `${JOB_AREA_CLASSIFICATION_VERSION}:${timestamp}`;
+
+export const hasCurrentJobAreaClassification = (value: string | null | undefined): boolean =>
+  typeof value === "string" && value.startsWith(`${JOB_AREA_CLASSIFICATION_VERSION}:`);
+
 type Signal = { label: string; pattern: RegExp };
 
 const aiMlSignals: Signal[] = [
@@ -57,6 +65,7 @@ const dataAnalyticsSignals: Signal[] = [
 
 const softwareEngineeringSignals: Signal[] = [
   { label: "software engineering", pattern: /\bsoftware engineer(?:ing|s)?\b/i },
+  { label: "software intern", pattern: /\bsoftware (?:engineering )?(?:interns?|internships?|co[ -]?ops?)\b/i },
   { label: "software developer", pattern: /\bsoftware developers?\b/i },
   { label: "software development", pattern: /\bsoftware development\b/i },
   { label: "application developer", pattern: /\bapplications? developers?\b/i },
@@ -84,12 +93,41 @@ const normalize = (value: unknown): string => typeof value === "string"
 const matchingLabels = (value: string, signals: Signal[]): string[] =>
   signals.filter((signal) => signal.pattern.test(value)).map((signal) => signal.label);
 
+const explicitTrackContext = /\b(?:assignments?|disciplines?|tracks?|focus areas?|practice areas?|projects?|rotations?|gain(?:ing)? experience|experience within|work (?:directly )?(?:alongside|within|on|in)|contribut(?:e|ing) to|develop(?:ing)?|build(?:ing)?|research(?:ing)?|analy[sz](?:e|ing))\b/i;
+const incidentalAiContext = /\b(?:responsible use|usage policy|candidate experience|recruit(?:ing|ment)|hiring decisions?|drafting assistance|content organization)\b/i;
+const bodyTrackSignals: Record<Exclude<JobAreaKey, "software-engineering">, Signal[]> = {
+  "ai-ml": aiMlSignals,
+  "data-analytics": [
+    ...dataAnalyticsSignals,
+    { label: "data track", pattern: /(^|[^a-z0-9])data([^a-z0-9]|$)/i },
+  ],
+};
+
+const explicitBodyTrackLabels = (
+  value: string,
+  areaKey: Exclude<JobAreaKey, "software-engineering">,
+): string[] => {
+  const segments = value.split(/[.!?;]|\s[-–—]\s/).map((segment) => segment.trim()).filter(Boolean);
+  const labels = new Set<string>();
+  for (const segment of segments) {
+    if (!explicitTrackContext.test(segment)) continue;
+    if (areaKey === "ai-ml" && incidentalAiContext.test(segment)) continue;
+    for (const label of matchingLabels(segment, bodyTrackSignals[areaKey])) labels.add(label);
+  }
+  return [...labels];
+};
+
 export function classifyJobAreas(input: JobAreaInput): JobAreaClassification[] {
   const structuralFields: Array<[string, unknown]> = [
     ["title", input.title],
     ["department", input.department],
     ["team", input.team],
     ["businessUnit", input.businessUnit],
+    ["jobFamily", input.jobFamily],
+    ["jobFunction", input.jobFunction],
+  ];
+  const directSoftwareFields: Array<[string, unknown]> = [
+    ["title", input.title],
     ["jobFamily", input.jobFamily],
     ["jobFunction", input.jobFunction],
   ];
@@ -106,17 +144,25 @@ export function classifyJobAreas(input: JobAreaInput): JobAreaClassification[] {
   for (const [source, raw] of structuralFields) {
     const value = normalize(raw);
     if (!value) continue;
-    for (const areaKey of areaOrder) {
+    for (const areaKey of areaOrder.filter((key) => key !== "software-engineering")) {
       for (const label of matchingLabels(value, signalsByArea[areaKey])) {
         structural.get(areaKey)!.add(`${source}:${label}`);
       }
     }
   }
 
+  for (const [source, raw] of directSoftwareFields) {
+    const value = normalize(raw);
+    if (!value) continue;
+    for (const label of matchingLabels(value, softwareEngineeringSignals)) {
+      structural.get("software-engineering")!.add(`${source}:${label}`);
+    }
+  }
+
   for (const raw of input.skills ?? []) {
     const value = normalize(raw);
     if (!value) continue;
-    for (const areaKey of areaOrder) {
+    for (const areaKey of areaOrder.filter((key) => key !== "software-engineering")) {
       for (const label of matchingLabels(value, signalsByArea[areaKey])) {
         skill.get(areaKey)!.add(`skill:${label}`);
       }
@@ -126,19 +172,18 @@ export function classifyJobAreas(input: JobAreaInput): JobAreaClassification[] {
   for (const [, raw] of bodyFields) {
     const value = normalize(raw);
     if (!value) continue;
-    for (const areaKey of areaOrder) {
-      for (const label of matchingLabels(value, signalsByArea[areaKey])) {
-        body.get(areaKey)!.add(`body:${label}`);
+    for (const areaKey of ["ai-ml", "data-analytics"] as const) {
+      for (const label of explicitBodyTrackLabels(value, areaKey)) {
+        body.get(areaKey)!.add(`body-track:${label}`);
       }
     }
   }
 
-  const bodyAreaCount = areaOrder.filter((areaKey) => body.get(areaKey)!.size > 0).length;
   return areaOrder.flatMap((areaKey) => {
     const structuralEvidence = structural.get(areaKey)!;
     const skillEvidence = skill.get(areaKey)!;
     const bodyEvidence = body.get(areaKey)!;
-    const bodyMatched = bodyEvidence.size >= 2 || (bodyEvidence.size >= 1 && bodyAreaCount >= 2);
+    const bodyMatched = bodyEvidence.size > 0;
     if (structuralEvidence.size === 0 && skillEvidence.size === 0 && !bodyMatched) return [];
     const evidence = [...structuralEvidence, ...skillEvidence, ...(bodyMatched ? bodyEvidence : [])].sort();
     return [{

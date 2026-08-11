@@ -23,6 +23,7 @@ describe("classifyJobAreas", () => {
 
   it.each([
     "Spring 2027 Software Engineering Internship/Co-op",
+    "Software Intern (High School) - Summer 2027 Onsite",
     "Backend Developer Intern",
     "Full-Stack Engineer Internship",
     "iOS Software Developer Intern",
@@ -52,11 +53,49 @@ describe("classifyJobAreas", () => {
     }).map((area) => area.areaKey)).toEqual(["ai-ml", "data-analytics"]);
   });
 
+  it("classifies explicit AI and data tracks without treating them as direct software roles", () => {
+    expect(classifyJobAreas({
+      title: "2027 Technology, Data, and Operations Internship",
+      description: "Participants will gain experience within Software Development, Cybersecurity, AI & Data.",
+      skills: ["AI", "software development"],
+    }).map((area) => area.areaKey)).toEqual(["ai-ml", "data-analytics"]);
+  });
+
   it("does not classify an incidental corporate AI policy mention", () => {
     expect(classifyJobAreas({
       title: "Human Resources Intern",
       description: "Candidates must follow the corporate artificial intelligence usage policy.",
     })).toEqual([]);
+  });
+
+  it.each([
+    {
+      title: "Human Resources Intern",
+      description: "Use AI tools for drafting assistance. We embrace the responsible use of artificial intelligence in recruiting.",
+    },
+    {
+      title: "Intern, Process Management - Summer 2027",
+      description: "We embrace the responsible use of artificial intelligence (AI) to enhance the candidate experience.",
+    },
+    {
+      title: "Supply Chain Internship",
+      description: "Data Analytics majors are preferred. Gather data for demand planning and process improvements.",
+    },
+  ])("does not turn incidental body language into a job area: $title", (input) => {
+    expect(classifyJobAreas(input)).toEqual([]);
+  });
+
+  it.each([
+    {
+      title: "Electrical Engineering Coop (Summer/Fall 2027)",
+      skills: ["software engineering collaboration", "test engineering support"],
+    },
+    {
+      title: "Systems Engineering Intern IV, Summer 2027",
+      description: "Collaborate with software engineering teams and data analytics stakeholders.",
+    },
+  ])("requires a direct software role rather than adjacent software mentions: $title", (input) => {
+    expect(classifyJobAreas(input)).toEqual([]);
   });
 
   it("uses direct skill evidence for a generic title", () => {
