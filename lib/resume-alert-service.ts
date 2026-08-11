@@ -4,6 +4,7 @@ import {
   markNotificationFailed,
   markNotificationSent,
   planResumeDigests,
+  releaseClaimedNotifications,
 } from "./resume-alert-store";
 
 export interface GmailRuntimeConfig {
@@ -26,6 +27,9 @@ export interface ResumeDispatchResult {
 export interface TestEmailResult {
   sent: number;
   failed: number;
+  authBlocked: number;
+  retryable: number;
+  permanent: number;
 }
 
 const emptyResult = (skipped = false): ResumeDispatchResult => ({
@@ -47,9 +51,9 @@ export const processDueResumeAlerts = async (
   }
   const nowIso = now.toISOString();
   const planned = await planResumeDigests(database, "chanyoung-resume", nowIso, 25);
-  const claimed = await claimDueNotifications(database, nowIso, 4);
+  const claimed = await claimDueNotifications(database, "chanyoung-resume", nowIso, 4);
   const result = { ...emptyResult(), planned: planned.length };
-  for (const notification of claimed) {
+  for (const [index, notification] of claimed.entries()) {
     try {
       const sent = await sendGmailMessage({
         clientId: config.clientId,
@@ -69,7 +73,11 @@ export const processDueResumeAlerts = async (
         ? error
         : new GmailDeliveryError("retryable", "Gmail delivery failed unexpectedly.", null);
       await markNotificationFailed(database, notification, delivery.kind, nowIso, delivery.message);
-      if (delivery.kind === "auth") result.authBlocked += 1;
+      if (delivery.kind === "auth") {
+        result.authBlocked += 1;
+        await releaseClaimedNotifications(database, claimed.slice(index + 1).map((item) => item.id), nowIso);
+        break;
+      }
       else if (delivery.kind === "retryable") result.retryable += 1;
       else result.failed += 1;
     }
@@ -82,7 +90,7 @@ export const sendResumeTestEmail = async (
   recipients: string[],
   fetcher: typeof fetch = fetch,
 ): Promise<TestEmailResult> => {
-  const result = { sent: 0, failed: 0 };
+  const result = { sent: 0, failed: 0, authBlocked: 0, retryable: 0, permanent: 0 };
   for (const recipient of recipients) {
     try {
       await sendGmailMessage({
@@ -98,8 +106,17 @@ export const sendResumeTestEmail = async (
         testOnly: true,
       }, fetcher);
       result.sent += 1;
-    } catch {
+    } catch (error) {
       result.failed += 1;
+      const delivery = error instanceof GmailDeliveryError
+        ? error
+        : new GmailDeliveryError("retryable", "Gmail delivery failed unexpectedly.", null);
+      if (delivery.kind === "auth") {
+        result.authBlocked += 1;
+        break;
+      }
+      if (delivery.kind === "retryable") result.retryable += 1;
+      else result.permanent += 1;
     }
   }
   return result;

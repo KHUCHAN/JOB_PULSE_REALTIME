@@ -73,4 +73,40 @@ describe("Chanyoung resume matcher", () => {
     expect(result.eligible).toBe(true);
     expect(result.evidence.map((item) => item.code)).not.toContain("year:2027");
   });
+
+  it("trusts the indexed internship program for summer analyst titles", () => {
+    const result = evaluateResumeMatch({
+      ...base,
+      title: "2027 Summer Analyst - Data & Analytics",
+      programKeys: ["internship"],
+      skills: ["Python", "SQL"],
+    });
+
+    expect(result.eligible).toBe(true);
+    expect(result.exclusion).toBeNull();
+  });
+
+  it("uses bounded description evidence for broad IT internship titles", () => {
+    const result = evaluateResumeMatch({
+      ...base,
+      title: "Intern, Information Technology 2027",
+      description: "Assignments include Artificial Intelligence, Data & Analytics, cloud engineering, and emerging digital technologies. Candidates pursue a bachelor's degree in computer science.",
+      skills: ["Python", "SQL"],
+    });
+
+    expect(result.eligible).toBe(true);
+    expect(result.evidence.map((item) => item.code)).toContain("role:ai-ml");
+  });
+
+  it("does not approve a direct role from gate points alone", () => {
+    const result = evaluateResumeMatch({
+      ...base,
+      skills: [],
+      recruitingYears: [],
+      publishedAt: null,
+    });
+
+    expect(result.eligible).toBe(false);
+    expect(result.score).toBeLessThan(60);
+  });
 });

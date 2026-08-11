@@ -2,7 +2,12 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { backfillResumeMatches, syncResumeMatches, type ResumeMatchCandidate } from "./resume-match-store";
+import {
+  backfillResumeMatches,
+  syncResumeMatches,
+  syncResumeMatchesForUrls,
+  type ResumeMatchCandidate,
+} from "./resume-match-store";
 
 const createD1 = (sqlite: DatabaseSync): D1Database => ({
   prepare(sql: string) {
@@ -97,6 +102,7 @@ const migratedSqlite = (): DatabaseSync => {
     CREATE INDEX notifications_status_scheduled_idx ON notifications(status, scheduled_at);
   `);
   sqlite.exec(readFileSync(resolve(process.cwd(), "drizzle/0046_resume_match_gmail_alerts.sql"), "utf8"));
+  sqlite.exec(readFileSync(resolve(process.cwd(), "drizzle/0047_resume_alert_correctness.sql"), "utf8"));
   return sqlite;
 };
 
@@ -125,9 +131,9 @@ describe("resume match persistence migration", () => {
       INSERT INTO sources (id) VALUES ('source');
       UPDATE match_profiles SET activation_watermark = '2026-08-10T12:00:00.000Z';
       INSERT INTO jobs (
-        id, source_id, title, company, location_region, official_url, status, first_seen_at, last_seen_at
+        id, source_id, title, company, location_region, skills, official_url, status, first_seen_at, last_seen_at
       ) VALUES (
-        'old', 'source', 'Data Science Intern', 'Acme', 'us', 'https://example.com/old', 'open',
+        'old', 'source', 'Data Science Intern', 'Acme', 'us', '["Python","SQL"]', 'https://example.com/old', 'open',
         '2026-08-10T11:00:00.000Z', '2026-08-10T11:00:00.000Z'
       );
       INSERT INTO job_topics (job_id, topic_key) VALUES
@@ -159,7 +165,7 @@ describe("resume match persistence migration", () => {
       qualifications: null, skills: ["Python", "SQL"], jobFamily: null, jobFunction: null,
       educationRequirements: null, experienceRequirements: null, securityClearance: null,
       recruitingYears: [2027], publishedAt: null, firstSeenAt: "2026-08-10T12:01:00.000Z",
-      openGeneration: 1,
+      reopenedAt: null, openGeneration: 1,
     };
 
     await syncResumeMatches(createD1(sqlite), [candidate], "2026-08-10T12:01:00.000Z");
@@ -177,10 +183,12 @@ describe("resume match persistence migration", () => {
       INSERT INTO sources (id) VALUES ('source');
       UPDATE match_profiles SET enabled = 1, activation_watermark = '2026-08-10T12:00:00.000Z';
       INSERT INTO jobs (
-        id, source_id, title, company, location_region, official_url, status, first_seen_at, last_seen_at, open_generation
+        id, source_id, title, company, location_region, official_url, status, first_seen_at, last_seen_at, open_generation,
+        reopened_at
       ) VALUES (
         'reopened', 'source', 'Software Engineering Intern', 'Acme', 'us', 'https://example.com/reopened',
-        'open', '2026-08-01T00:00:00.000Z', '2026-08-10T13:00:00.000Z', 2
+        'open', '2026-08-01T00:00:00.000Z', '2026-08-10T13:00:00.000Z', 2,
+        '2026-08-10T13:00:00.000Z'
       );
     `);
     const candidate: ResumeMatchCandidate = {
@@ -188,7 +196,8 @@ describe("resume match persistence migration", () => {
       programKeys: ["internship"], summary: null, description: null, responsibilities: null,
       qualifications: null, skills: ["JavaScript"], jobFamily: null, jobFunction: null,
       educationRequirements: null, experienceRequirements: null, securityClearance: null,
-      recruitingYears: [], publishedAt: null, firstSeenAt: "2026-08-01T00:00:00.000Z", openGeneration: 2,
+      recruitingYears: [], publishedAt: null, firstSeenAt: "2026-08-01T00:00:00.000Z",
+      reopenedAt: "2026-08-10T13:00:00.000Z", openGeneration: 2,
     };
 
     await syncResumeMatches(createD1(sqlite), [candidate], "2026-08-10T13:00:00.000Z");
@@ -196,5 +205,104 @@ describe("resume match persistence migration", () => {
     expect(sqlite.prepare(
       "SELECT open_generation, notification_eligible FROM job_matches WHERE job_id = 'reopened'",
     ).get()).toEqual({ open_generation: 2, notification_eligible: 1 });
+  });
+
+  it("does not notify a reopen that happened before activation", async () => {
+    const sqlite = migratedSqlite();
+    sqlite.exec(`
+      INSERT INTO sources (id) VALUES ('source');
+      UPDATE match_profiles SET enabled = 1, activation_watermark = '2026-08-10T12:00:00.000Z';
+      INSERT INTO jobs (
+        id, source_id, title, company, location_region, official_url, status, first_seen_at,
+        last_seen_at, open_generation, reopened_at
+      ) VALUES (
+        'old-reopen', 'source', 'Software Engineering Intern', 'Acme', 'us',
+        'https://example.com/old-reopen', 'open', '2026-08-01T00:00:00.000Z',
+        '2026-08-10T13:00:00.000Z', 2, '2026-08-10T11:00:00.000Z'
+      );
+    `);
+    const candidate: ResumeMatchCandidate = {
+      id: "old-reopen", title: "Software Engineering Intern", company: "Acme", locationRegion: "us",
+      programKeys: ["internship"], summary: null, description: null, responsibilities: null,
+      qualifications: null, skills: ["JavaScript"], jobFamily: null, jobFunction: null,
+      educationRequirements: null, experienceRequirements: null, securityClearance: null,
+      recruitingYears: [2027], publishedAt: null, firstSeenAt: "2026-08-01T00:00:00.000Z",
+      reopenedAt: "2026-08-10T11:00:00.000Z", openGeneration: 2,
+    };
+
+    await syncResumeMatches(createD1(sqlite), [candidate], "2026-08-10T13:00:00.000Z");
+
+    expect(sqlite.prepare(
+      "SELECT notification_eligible FROM job_matches WHERE job_id = 'old-reopen'",
+    ).get()).toEqual({ notification_eligible: 0 });
+  });
+
+  it("uses the same smallest company/id canonical tie breaker as Jobs search", async () => {
+    const sqlite = migratedSqlite();
+    sqlite.exec(`
+      INSERT INTO sources (id) VALUES ('source-a'), ('source-b');
+      INSERT INTO jobs (
+        id, source_id, title, company, location_region, skills, official_url, status, first_seen_at, last_seen_at
+      ) VALUES
+        ('a-small', 'source-a', 'Machine Learning Intern', 'Alpha', 'us', '["Python","SQL"]', 'https://example.com/shared', 'open',
+          '2026-08-10T11:00:00.000Z', '2026-08-10T11:00:00.000Z'),
+        ('z-large', 'source-b', 'Machine Learning Intern', 'Zulu', 'us', '["Python","SQL"]', 'https://example.com/shared', 'open',
+          '2026-08-10T11:00:00.000Z', '2026-08-10T11:00:00.000Z');
+      INSERT INTO job_topics (job_id, topic_key) VALUES
+        ('a-small', 'program:internship'), ('a-small', 'year:2027'),
+        ('z-large', 'program:internship'), ('z-large', 'year:2027');
+    `);
+
+    await backfillResumeMatches(createD1(sqlite), { afterId: null, limit: 100 });
+
+    expect(sqlite.prepare("SELECT job_id FROM job_matches").all()).toEqual([{ job_id: "a-small" }]);
+  });
+
+  it("checks the profile before loading rich job rows", async () => {
+    const sqlite = migratedSqlite();
+    const raw = createD1(sqlite);
+    const statements: string[] = [];
+    const db = {
+      ...raw,
+      prepare(sql: string) {
+        statements.push(sql);
+        return raw.prepare(sql);
+      },
+    } as D1Database;
+
+    expect(await syncResumeMatchesForUrls(
+      db, "source", ["https://example.com/job"], "2026-08-10T12:00:00.000Z",
+    )).toEqual({ matched: 0, deactivated: 0 });
+    expect(statements).toHaveLength(1);
+    expect(statements[0]).toContain("FROM match_profiles");
+  });
+
+  it("loads a 10k changed-job set in bounded candidate pages", async () => {
+    const statements: string[] = [];
+    const db = {
+      prepare(sql: string) {
+        statements.push(sql);
+        return {
+          bind() {
+            return {
+              all: async () => ({
+                results: sql.includes("FROM match_profiles")
+                  ? [{
+                    id: "chanyoung-resume", keyword_id: "resume-keyword-chanyoung",
+                    enabled: 1, activation_watermark: "2026-08-10T12:00:00.000Z",
+                  }]
+                  : [],
+              }),
+            };
+          },
+        };
+      },
+    } as unknown as D1Database;
+    const urls = Array.from({ length: 10_000 }, (_, index) => `https://example.com/${index}`);
+
+    expect(await syncResumeMatchesForUrls(
+      db, "source", urls, "2026-08-10T13:00:00.000Z",
+    )).toEqual({ matched: 0, deactivated: 0 });
+    expect(statements).toHaveLength(11);
   });
 });

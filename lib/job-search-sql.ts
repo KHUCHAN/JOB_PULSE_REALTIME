@@ -1,4 +1,5 @@
 import type { JobFilters } from "./domain";
+import { canonicalOpenJobNotExists } from "./job-canonical";
 import { ftsQuery } from "./job-search";
 import { titleTokensSql } from "./job-title-tokens";
 
@@ -227,16 +228,7 @@ JOIN job_matches resume_match
   addAnyEquals("j.security_clearance", filters.securityClearances);
   addJsonMembership("j.languages", filters.languages);
 
-  clauses.splice(1, 0, `NOT EXISTS (
-    SELECT 1 FROM jobs newer
-    WHERE newer.status = 'open'
-      AND newer.official_url = j.official_url
-      AND (
-        newer.first_seen_at > j.first_seen_at
-        OR (newer.first_seen_at = j.first_seen_at AND newer.company < j.company)
-        OR (newer.first_seen_at = j.first_seen_at AND newer.company = j.company AND newer.id < j.id)
-      )
-  )`);
+  clauses.splice(1, 0, canonicalOpenJobNotExists("j"));
   const limit = validPageSize(filters.pageSize);
   const offset = (validPage(filters.page) - 1) * limit;
 

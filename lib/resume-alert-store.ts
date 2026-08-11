@@ -1,5 +1,6 @@
 import type { DigestJob } from "./gmail-message";
 import type { ResumeAlertStatus } from "./domain";
+import { canonicalOpenJobNotExists } from "./job-canonical";
 
 export interface PlannedNotification {
   id: string;
@@ -48,6 +49,7 @@ export const planResumeDigests = async (
   profileId: string,
   now: string,
   pageSize = 25,
+  maxMessages = 4,
 ): Promise<PlannedNotification[]> => {
   const owner = crypto.randomUUID();
   const leaseUntil = plusMinutes(now, 5);
@@ -55,6 +57,7 @@ export const planResumeDigests = async (
     UPDATE match_profiles
     SET dispatch_lease_owner = ?, dispatch_lease_expires_at = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ? AND enabled = 1
+      AND gmail_state = 'connected'
       AND (next_digest_at IS NULL OR next_digest_at <= ?)
       AND (dispatch_lease_expires_at IS NULL OR dispatch_lease_expires_at <= ?)
     RETURNING keyword_id
@@ -63,6 +66,8 @@ export const planResumeDigests = async (
   if (!keywordId) return [];
 
   const planned: PlannedNotification[] = [];
+  let completed = false;
+  let hasRemaining = false;
   try {
     const recipients = await database.prepare(`
       SELECT recipient FROM profile_recipients
@@ -70,52 +75,83 @@ export const planResumeDigests = async (
       ORDER BY recipient
     `).bind(profileId).all<RecipientRow>();
     const boundedPageSize = Math.max(1, Math.min(25, Math.trunc(pageSize)));
-    for (const { recipient } of recipients.results) {
+    const boundedMessageLimit = Math.max(1, Math.min(4, Math.trunc(maxMessages)));
+    for (const [recipientIndex, { recipient }] of recipients.results.entries()) {
+      const remainingMessageSlots = boundedMessageLimit - planned.length;
+      if (remainingMessageSlots <= 0) {
+        hasRemaining = true;
+        break;
+      }
       const matches = await database.prepare(`
         SELECT jm.id
         FROM job_matches jm
         JOIN jobs j ON j.id = jm.job_id
         WHERE jm.keyword_id = ? AND jm.is_active = 1 AND jm.notification_eligible = 1
           AND jm.open_generation = j.open_generation AND j.status = 'open'
+          AND ${canonicalOpenJobNotExists("j")}
           AND NOT EXISTS (
             SELECT 1 FROM notification_items ni
             WHERE ni.job_match_id = jm.id AND ni.recipient = ?
           )
         ORDER BY jm.score DESC, COALESCE(j.published_at, j.first_seen_at) DESC, jm.id
         LIMIT ?
-      `).bind(keywordId, recipient, boundedPageSize).all<MatchRow>();
+      `).bind(keywordId, recipient, boundedPageSize * remainingMessageSlots + 1).all<MatchRow>();
       if (matches.results.length === 0) continue;
-      const notificationId = crypto.randomUUID();
-      await database.prepare(`
-        INSERT INTO notifications (
-          id, keyword_id, channel, recipient, status, job_count, scheduled_at,
-          attempt_count, created_at
-        ) VALUES (?, ?, 'email', ?, 'queued', ?, ?, 0, ?)
-      `).bind(notificationId, keywordId, recipient, matches.results.length, now, now).run();
-      const items = matches.results.map((match) => ({
-        id: crypto.randomUUID(), notificationId, jobMatchId: match.id, recipient,
-      }));
-      await database.prepare(`
-        INSERT OR IGNORE INTO notification_items (id, notification_id, job_match_id, recipient)
-        SELECT json_extract(value, '$.id'), json_extract(value, '$.notificationId'),
-               json_extract(value, '$.jobMatchId'), json_extract(value, '$.recipient')
-        FROM json_each(?)
-      `).bind(JSON.stringify(items)).run();
-      planned.push({ id: notificationId, recipient, jobCount: matches.results.length });
+      const selected = matches.results.slice(0, boundedPageSize * remainingMessageSlots);
+      if (matches.results.length > selected.length) hasRemaining = true;
+      for (let index = 0; index < selected.length; index += boundedPageSize) {
+        const part = selected.slice(index, index + boundedPageSize);
+        const notificationId = crypto.randomUUID();
+        const items = part.map((match) => ({
+          id: crypto.randomUUID(), notificationId, jobMatchId: match.id, recipient,
+        }));
+        await database.batch([
+          database.prepare(`
+            INSERT INTO notifications (
+              id, keyword_id, channel, recipient, status, job_count, scheduled_at,
+              attempt_count, created_at
+            ) VALUES (?, ?, 'email', ?, 'queued', ?, ?, 0, ?)
+          `).bind(notificationId, keywordId, recipient, part.length, now, now),
+          database.prepare(`
+            INSERT OR IGNORE INTO notification_items (id, notification_id, job_match_id, recipient)
+            SELECT json_extract(value, '$.id'), json_extract(value, '$.notificationId'),
+                   json_extract(value, '$.jobMatchId'), json_extract(value, '$.recipient')
+            FROM json_each(?)
+          `).bind(JSON.stringify(items)),
+          database.prepare(`
+            UPDATE notifications
+            SET job_count = (SELECT count(*) FROM notification_items WHERE notification_id = ?)
+            WHERE id = ?
+          `).bind(notificationId, notificationId),
+          database.prepare(`
+            DELETE FROM notifications
+            WHERE id = ? AND NOT EXISTS (
+              SELECT 1 FROM notification_items WHERE notification_id = ?
+            )
+          `).bind(notificationId, notificationId),
+        ]);
+        planned.push({ id: notificationId, recipient, jobCount: part.length });
+      }
+      if (planned.length >= boundedMessageLimit && recipientIndex < recipients.results.length - 1) {
+        hasRemaining = true;
+      }
     }
+    completed = true;
     return planned;
   } finally {
     await database.prepare(`
       UPDATE match_profiles
       SET dispatch_lease_owner = NULL, dispatch_lease_expires_at = NULL,
-          next_digest_at = ?, updated_at = CURRENT_TIMESTAMP
+          next_digest_at = CASE WHEN ? = 1 THEN ? ELSE next_digest_at END,
+          updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND dispatch_lease_owner = ?
-    `).bind(plusMinutes(now, 120), profileId, owner).run();
+    `).bind(Number(completed), hasRemaining ? now : plusMinutes(now, 120), profileId, owner).run();
   }
 };
 
 export const claimDueNotifications = async (
   database: D1Database,
+  profileId: string,
   now: string,
   limit = 4,
 ): Promise<ClaimedNotification[]> => {
@@ -125,15 +161,16 @@ export const claimDueNotifications = async (
     SET status = 'sending', lease_owner = ?, lease_expires_at = ?,
         attempt_count = attempt_count + 1, error = NULL
     WHERE id IN (
-      SELECT id FROM notifications
-      WHERE channel = 'email'
+      SELECT n.id FROM notifications n
+      JOIN match_profiles mp ON mp.keyword_id = n.keyword_id
+      WHERE n.channel = 'email' AND mp.id = ? AND mp.enabled = 1 AND mp.gmail_state = 'connected'
         AND (status = 'queued' OR (status = 'retryable' AND next_retry_at <= ?)
           OR (status = 'sending' AND lease_expires_at <= ?))
-      ORDER BY scheduled_at, id
+      ORDER BY scheduled_at, n.id
       LIMIT ?
     )
     RETURNING id, recipient, job_count, attempt_count
-  `).bind(owner, plusMinutes(now, 5), now, now, Math.max(1, Math.min(4, limit))).all<ClaimedRow>();
+  `).bind(owner, plusMinutes(now, 5), profileId, now, now, Math.max(1, Math.min(4, limit))).all<ClaimedRow>();
   if (claimed.results.length === 0) return [];
   const ids = claimed.results.map((row) => row.id);
   const jobs = await database.prepare(`
@@ -166,6 +203,21 @@ export const claimDueNotifications = async (
     attemptCount: row.attempt_count,
     jobs: grouped.get(row.id) ?? [],
   }));
+};
+
+export const releaseClaimedNotifications = async (
+  database: D1Database,
+  notificationIds: string[],
+  now: string,
+): Promise<void> => {
+  if (notificationIds.length === 0) return;
+  await database.prepare(`
+    UPDATE notifications
+    SET status = 'queued', lease_owner = NULL, lease_expires_at = NULL,
+        next_retry_at = ?, error = NULL,
+        attempt_count = CASE WHEN attempt_count > 0 THEN attempt_count - 1 ELSE 0 END
+    WHERE status = 'sending' AND id IN (SELECT value FROM json_each(?))
+  `).bind(now, JSON.stringify(notificationIds)).run();
 };
 
 export const markNotificationSent = async (
@@ -285,6 +337,7 @@ export const retryResumeAlerts = async (database: D1Database, now: string): Prom
   await database.prepare(`
     UPDATE notifications SET status = 'retryable', next_retry_at = ?, error = NULL
     WHERE status IN ('auth_blocked', 'failed') AND channel = 'email'
+      AND keyword_id = (SELECT keyword_id FROM match_profiles WHERE id = 'chanyoung-resume')
   `).bind(now).run();
   await database.prepare(`
     UPDATE match_profiles SET gmail_state = 'connected', last_error = NULL, next_digest_at = ?, updated_at = CURRENT_TIMESTAMP

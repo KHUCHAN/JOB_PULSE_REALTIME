@@ -7,8 +7,22 @@ export const createD1ForSqlite = (sqlite: DatabaseSync): D1Database => ({
       all: async <T>() => ({ results: statement.all(...values as never[]) as T[] }),
       first: async <T>() => statement.get(...values as never[]) as T | null,
       run: async () => statement.run(...values as never[]),
+      __runSync: () => statement.run(...values as never[]),
     });
     return { ...api([]), bind: (...values: unknown[]) => api(values) };
+  },
+  async batch(statements: D1PreparedStatement[]) {
+    sqlite.exec("BEGIN");
+    try {
+      const results = statements.map((statement) => (
+        statement as D1PreparedStatement & { __runSync: () => unknown }
+      ).__runSync());
+      sqlite.exec("COMMIT");
+      return results;
+    } catch (error) {
+      sqlite.exec("ROLLBACK");
+      throw error;
+    }
   },
 }) as unknown as D1Database;
 

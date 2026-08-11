@@ -4,9 +4,11 @@ import {
   type ResumeMatchDecision,
   type ResumeMatchInput,
 } from "./resume-match";
+import { canonicalOpenJobNotExists } from "./job-canonical";
 
 export interface ResumeMatchCandidate extends ResumeMatchInput {
   openGeneration: number;
+  reopenedAt: string | null;
 }
 
 export interface ResumeBackfillResult {
@@ -41,6 +43,7 @@ type CandidateRow = {
   published_at: string | null;
   first_seen_at: string;
   open_generation: number;
+  reopened_at: string | null;
   program_keys: string | null;
   recruiting_years: string | null;
 };
@@ -79,6 +82,7 @@ const asCandidate = (row: CandidateRow): ResumeMatchCandidate => ({
   publishedAt: row.published_at,
   firstSeenAt: row.first_seen_at,
   openGeneration: row.open_generation,
+  reopenedAt: row.reopened_at,
 });
 
 const profile = async (database: D1Database): Promise<ProfileRow | null> => {
@@ -128,7 +132,9 @@ const persistDecisions = async (
     notificationEligible: baseline ? 0 : Number(Boolean(
       profileRow.activation_watermark
       && (candidate.firstSeenAt > profileRow.activation_watermark
-        || (candidate.openGeneration > 1 && now > profileRow.activation_watermark)),
+        || (candidate.openGeneration > 1
+          && candidate.reopenedAt !== null
+          && candidate.reopenedAt > profileRow.activation_watermark)),
     )),
   }));
   for (const chunk of jsonChunks(active)) {
@@ -198,7 +204,7 @@ export const loadResumeCandidatesForUrls = async (
       SELECT j.id, j.title, j.company, j.location_region, j.summary, j.description,
              j.responsibilities, j.qualifications, j.skills, j.job_family, j.job_function,
              j.education_requirements, j.experience_requirements, j.security_clearance,
-             j.published_at, j.first_seen_at, j.open_generation,
+             j.published_at, j.first_seen_at, j.open_generation, j.reopened_at,
              COALESCE((SELECT json_group_array(substr(t.topic_key, 9)) FROM job_topics t
                WHERE t.job_id = j.id AND t.topic_key LIKE 'program:%'), '[]') AS program_keys,
              COALESCE((SELECT json_group_array(substr(t.topic_key, 6)) FROM job_topics t
@@ -206,10 +212,37 @@ export const loadResumeCandidatesForUrls = async (
       FROM jobs j
       WHERE j.source_id = ? AND j.status = 'open'
         AND j.official_url IN (SELECT value FROM json_each(?))
+        AND ${canonicalOpenJobNotExists("j")}
     `).bind(sourceId, JSON.stringify(chunk)).all<CandidateRow>();
     rows.push(...result.results);
   }
   return rows.map(asCandidate);
+};
+
+export const syncResumeMatchesForUrls = async (
+  database: D1Database,
+  sourceId: string,
+  officialUrls: string[],
+  now: string,
+): Promise<{ matched: number; deactivated: number }> => {
+  if (officialUrls.length === 0) return { matched: 0, deactivated: 0 };
+  const profileRow = await profile(database);
+  if (!profileRow || profileRow.enabled !== 1) return { matched: 0, deactivated: 0 };
+  const totals = { matched: 0, deactivated: 0 };
+  for (let index = 0; index < officialUrls.length; index += 1_000) {
+    const candidates = await loadResumeCandidatesForUrls(
+      database,
+      sourceId,
+      officialUrls.slice(index, index + 1_000),
+    );
+    const persisted = await persistDecisions(database, profileRow, candidates.map((candidate) => ({
+      candidate,
+      decision: evaluateResumeMatch(candidate),
+    })), now, false);
+    totals.matched += persisted.matched;
+    totals.deactivated += persisted.deactivated;
+  }
+  return totals;
 };
 
 export const backfillResumeMatches = async (
@@ -223,19 +256,14 @@ export const backfillResumeMatches = async (
     SELECT j.id, j.title, j.company, j.location_region, j.summary, j.description,
            j.responsibilities, j.qualifications, j.skills, j.job_family, j.job_function,
            j.education_requirements, j.experience_requirements, j.security_clearance,
-           j.published_at, j.first_seen_at, j.open_generation,
+           j.published_at, j.first_seen_at, j.open_generation, j.reopened_at,
            COALESCE((SELECT json_group_array(substr(t.topic_key, 9)) FROM job_topics t
              WHERE t.job_id = j.id AND t.topic_key LIKE 'program:%'), '[]') AS program_keys,
            COALESCE((SELECT json_group_array(substr(t.topic_key, 6)) FROM job_topics t
              WHERE t.job_id = j.id AND t.topic_key LIKE 'year:%'), '[]') AS recruiting_years
     FROM jobs j
     WHERE j.status = 'open' AND j.id > ?
-      AND NOT EXISTS (
-        SELECT 1 FROM jobs newer
-        WHERE newer.status = 'open' AND newer.official_url = j.official_url
-          AND (newer.first_seen_at > j.first_seen_at
-            OR (newer.first_seen_at = j.first_seen_at AND newer.id > j.id))
-      )
+      AND ${canonicalOpenJobNotExists("j")}
     ORDER BY j.id
     LIMIT ?
   `).bind(options.afterId ?? "", limit + 1).all<CandidateRow>();

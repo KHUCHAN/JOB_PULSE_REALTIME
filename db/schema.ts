@@ -86,6 +86,8 @@ export const jobs = sqliteTable("jobs", {
   officialUrl: text("official_url").notNull(),
   status: text("status", { enum: ["open", "closed"] }).notNull().default("open"),
   openGeneration: integer("open_generation").notNull().default(1),
+  reopenedAt: text("reopened_at"),
+  resumeMatchHash: text("resume_match_hash"),
   reviewState: text("review_state", { enum: ["new", "saved", "hidden", "applied"] }).notNull().default("new"),
   publishedAt: text("published_at"),
   firstSeenAt: text("first_seen_at").notNull(),

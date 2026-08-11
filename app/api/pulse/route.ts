@@ -424,8 +424,10 @@ export async function POST(request: Request): Promise<Response> {
         SET gmail_state = ?, last_error = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = 'chanyoung-resume'
       `).bind(
-        result.failed === 0 ? "connected" : "blocked",
-        result.failed === 0 ? null : "One or more Gmail connection tests failed.",
+        result.authBlocked > 0 ? "blocked" : "connected",
+        result.failed === 0 ? null : result.authBlocked > 0
+          ? "Gmail authorization is blocked."
+          : "One or more Gmail connection tests failed temporarily.",
       ).run();
       return json(result, result.failed === 0 ? 200 : 502);
     }

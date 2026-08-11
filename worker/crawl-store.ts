@@ -6,7 +6,7 @@ import { classifyAiDataJob } from "../lib/job-topic-classifier";
 import { classifyJobPrograms } from "../lib/job-program-classifier";
 import { classifyRecruitingYears } from "../lib/job-recruiting-year-classifier";
 import { normalizeEmploymentType } from "../lib/employment-type";
-import { loadResumeCandidatesForUrls, syncResumeMatches } from "../lib/resume-match-store";
+import { syncResumeMatchesForUrls } from "../lib/resume-match-store";
 
 type SourceRow = {
   id: string;
@@ -14,6 +14,12 @@ type SourceRow = {
   posting_url: string;
   adapter: PersistedSource["adapter"];
   next_crawl_at: string | null;
+};
+
+type ExistingJobRow = {
+  official_url: string;
+  status: "open" | "closed";
+  resume_match_hash: string | null;
 };
 
 export const chunksOf = <T>(values: T[], size: number): T[][] => {
@@ -192,10 +198,14 @@ export class D1CrawlStore implements CrawlStore {
   async syncJobs(sourceId: string, jobs: CrawledJob[], completeListing: boolean, facets?: CrawledFacet[]): Promise<{ created: number; updated: number; closed: number }> {
     const now = new Date().toISOString();
     const existingResult = await this.db.prepare(`
-      SELECT official_url FROM jobs WHERE source_id = ? AND status = 'open'
-    `).bind(sourceId).all<{ official_url: string }>();
-    const existingUrls = new Set(existingResult.results.map((row) => row.official_url));
+      SELECT official_url, status, resume_match_hash FROM jobs WHERE source_id = ?
+    `).bind(sourceId).all<ExistingJobRow>();
+    const existingByUrl = new Map(existingResult.results.map((row) => [row.official_url, row]));
+    const existingUrls = new Set(existingResult.results
+      .filter((row) => row.status === "open")
+      .map((row) => row.official_url));
     const visibleUrls = new Set(jobs.map((job) => job.officialUrl));
+    const resumeTouchedUrls = new Set<string>();
     const recordFor = async (job: CrawledJob): Promise<Record<string, unknown>> => {
       const aiData = classifyAiDataJob(job);
       const areaMemberships = classifyJobAreas(job).map((area) => ({
@@ -255,6 +265,22 @@ export class D1CrawlStore implements CrawlStore {
         ? record.description
         : typeof record.summary === "string" ? record.summary : null;
       if (descriptionValue) record.descriptionHash = await sha256(descriptionValue);
+      record.resumeMatchHash = await sha256(JSON.stringify({
+        title: record.title,
+        locationRegion: record.locationRegion,
+        summary: record.summary,
+        description: record.description,
+        responsibilities: record.responsibilities,
+        qualifications: record.qualifications,
+        skills: record.skills,
+        jobFamily: record.jobFamily,
+        jobFunction: record.jobFunction,
+        educationRequirements: record.educationRequirements,
+        experienceRequirements: record.experienceRequirements,
+        securityClearance: record.securityClearance,
+        programKeys: record.programKeys,
+        recruitingYears: record.recruitingYears,
+      }));
       return record;
     };
 
@@ -262,6 +288,13 @@ export class D1CrawlStore implements CrawlStore {
     // jobs per query to stay inside the free-tier 50-query invocation budget.
     for (const jobsChunk of chunksOf(jobs, 2_500)) {
       const records = await Promise.all(jobsChunk.map(recordFor));
+      for (const record of records) {
+        const officialUrl = String(record.officialUrl);
+        const previous = existingByUrl.get(officialUrl);
+        if (!previous || previous.status === "closed" || previous.resume_match_hash !== record.resumeMatchHash) {
+          resumeTouchedUrls.add(officialUrl);
+        }
+      }
       for (const recordsChunk of chunksByJsonBytes(records, 1_500_000)) {
         await this.db.prepare(`
         INSERT INTO jobs (
@@ -274,7 +307,7 @@ export class D1CrawlStore implements CrawlStore {
           experience_level, shift_schedule, travel_requirements, security_clearance, languages,
           requisition_id, apply_url, source_posted_text, source_updated_at, valid_through, raw_payload,
           published_at, first_seen_at, last_seen_at, closed_at, topic_classified_at, area_classified_at,
-          open_generation
+          open_generation, reopened_at, resume_match_hash
         )
         SELECT
           json_extract(value, '$.id'), json_extract(value, '$.sourceId'),
@@ -297,7 +330,8 @@ export class D1CrawlStore implements CrawlStore {
           json_extract(value, '$.applyUrl'), json_extract(value, '$.sourcePostedText'), json_extract(value, '$.sourceUpdatedAt'),
           json_extract(value, '$.validThrough'), json_extract(value, '$.rawPayload'), json_extract(value, '$.publishedAt'),
           json_extract(value, '$.firstSeenAt'), json_extract(value, '$.lastSeenAt'), NULL,
-          json_extract(value, '$.topicClassifiedAt'), json_extract(value, '$.areaClassifiedAt'), 1
+          json_extract(value, '$.topicClassifiedAt'), json_extract(value, '$.areaClassifiedAt'), 1, NULL,
+          json_extract(value, '$.resumeMatchHash')
         FROM json_each(?)
         WHERE true
         ON CONFLICT(source_id, official_url) DO UPDATE SET
@@ -351,6 +385,11 @@ export class D1CrawlStore implements CrawlStore {
             WHEN jobs.status = 'closed' THEN jobs.open_generation + 1
             ELSE jobs.open_generation
           END,
+          reopened_at = CASE
+            WHEN jobs.status = 'closed' THEN excluded.last_seen_at
+            ELSE jobs.reopened_at
+          END,
+          resume_match_hash = excluded.resume_match_hash,
           status = 'open',
           published_at = COALESCE(excluded.published_at, jobs.published_at),
           last_seen_at = excluded.last_seen_at,
@@ -523,12 +562,7 @@ export class D1CrawlStore implements CrawlStore {
       }
     }
 
-    const resumeCandidates = await loadResumeCandidatesForUrls(
-      this.db,
-      sourceId,
-      [...visibleUrls],
-    );
-    await syncResumeMatches(this.db, resumeCandidates, now);
+    await syncResumeMatchesForUrls(this.db, sourceId, [...resumeTouchedUrls], now);
 
     const shouldReplaceFacets = completeListing || facets !== undefined;
     const effectiveFacets = completeListing ? mergedFacets(facets, jobs) : facets ?? [];
@@ -575,7 +609,7 @@ export class D1CrawlStore implements CrawlStore {
       `).bind(now, sourceId, JSON.stringify(urlsChunk)).run();
     }
 
-    const created = jobs.filter((job) => !existingUrls.has(job.officialUrl)).length;
+    const created = jobs.filter((job) => !existingByUrl.has(job.officialUrl)).length;
     return { created, updated: jobs.length - created, closed: closedUrls.length };
   }
 
