@@ -186,16 +186,12 @@ export async function backfillJobAreasAndRegions(
     `).bind(JSON.stringify(updateChunk)).run();
   }
 
-  const remaining = await db.prepare(`
-    SELECT count(*) AS count
-    FROM jobs
-    WHERE status = 'open'
-      AND (area_classified_at IS NULL OR area_classified_at NOT LIKE 'v2:%' OR location_region IS NULL)
-  `).first<{ count: number }>();
   return {
     processed: records.length,
     areaMatched: records.filter(({ job, areas }) => !hasCurrentJobAreaClassification(job.area_classified_at) && areas.length > 0).length,
     regionResolved: records.filter(({ locationRegion }) => locationRegion !== "unknown").length,
-    remaining: Number(remaining?.count ?? 0),
+    // A full checkpoint deliberately avoids a global COUNT over the jobs table.
+    // The caller continues until the first short/empty checkpoint proves completion.
+    remaining: records.length < limit ? 0 : -1,
   };
 }

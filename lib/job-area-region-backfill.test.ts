@@ -19,6 +19,35 @@ const createD1 = (sqlite: DatabaseSync): D1Database => ({
 }) as unknown as D1Database;
 
 describe("backfillJobAreasAndRegions", () => {
+  it("does not scan the full pending set after a full checkpoint", async () => {
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec(`
+      CREATE TABLE jobs (
+        id TEXT PRIMARY KEY, title TEXT NOT NULL, status TEXT NOT NULL,
+        summary TEXT, description TEXT, responsibilities TEXT, qualifications TEXT, skills TEXT,
+        department TEXT, team TEXT, business_unit TEXT, job_family TEXT, job_function TEXT,
+        location TEXT, location_city TEXT, location_state TEXT, location_country TEXT,
+        secondary_locations TEXT, location_region TEXT, area_classified_at TEXT,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE job_topics (
+        job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+        topic_key TEXT NOT NULL, score INTEGER NOT NULL, evidence TEXT NOT NULL, classified_at TEXT NOT NULL,
+        PRIMARY KEY (job_id, topic_key)
+      );
+      INSERT INTO jobs (id, title, status, skills, secondary_locations) VALUES
+        ('a', 'Data Scientist Intern', 'open', '[]', '[]'),
+        ('b', 'Software Engineer Intern', 'open', '[]', '[]');
+    `);
+
+    expect(await backfillJobAreasAndRegions(createD1(sqlite), 1)).toEqual({
+      processed: 1,
+      areaMatched: 1,
+      regionResolved: 0,
+      remaining: -1,
+    });
+  });
+
   it("classifies pending open jobs and replaces only managed area topics", async () => {
     const sqlite = new DatabaseSync(":memory:");
     sqlite.exec(`
