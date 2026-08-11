@@ -1888,4 +1888,260 @@ Wrong description.
     expect(result.jobs).toHaveLength(2);
     expect(result.completeListing).toBe(false);
   });
+
+  it("falls back to Eightfold's legacy API when PCSX is forbidden for the public tenant", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.toString());
+      if (url.pathname === "/api/pcsx/search") {
+        return Response.json({ message: "PCSX is not enabled for this user." }, { status: 403 });
+      }
+      return Response.json({
+        count: 1,
+        positions: [{
+          id: 101,
+          name: "Data Science Intern",
+          ats_job_id: "REQ-101",
+          canonicalPositionUrl: "https://acme.eightfold.ai/careers/job/101",
+        }],
+      });
+    };
+
+    const result = await crawlSource({
+      id: "legacy-forbidden-eightfold",
+      company: "Acme",
+      postingUrl: "https://acme.eightfold.ai/careers",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result.status).toBe("succeeded");
+    expect(result.jobs.map((job) => job.externalId)).toEqual(["REQ-101"]);
+    expect(requests.some((url) => url.includes("/api/apply/v2/jobs"))).toBe(true);
+  });
+
+  it("discovers a cross-domain public ATS feed through the reader when the corporate site is blocked", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === "https://careers.acme.example/jobs") return new Response("blocked", { status: 403 });
+      if (url.startsWith("https://r.jina.ai/")) {
+        return new Response("[View every opening](https://jobs.lever.co/acme)", { status: 200 });
+      }
+      if (url === "https://api.lever.co/v0/postings/acme?mode=json") {
+        return Response.json([{
+          id: "lever-101",
+          text: "Software Engineering Intern",
+          hostedUrl: "https://jobs.lever.co/acme/lever-101",
+        }]);
+      }
+      return new Response("missing", { status: 404 });
+    };
+
+    const result = await crawlSource({
+      id: "reader-ats",
+      company: "Acme",
+      postingUrl: "https://careers.acme.example/jobs",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result.status).toBe("succeeded");
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs.map((job) => job.title)).toEqual(["Software Engineering Intern"]);
+    expect(requests).toContain("https://api.lever.co/v0/postings/acme?mode=json");
+  });
+
+  it("routes a direct SmartRecruiters careers URL to its authoritative public API", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      return Response.json({
+        totalFound: 1,
+        content: [{ id: "sr-101", name: "Machine Learning Intern" }],
+      });
+    };
+
+    const result = await crawlSource({
+      id: "smartrecruiters-direct",
+      company: "Acme",
+      postingUrl: "https://careers.smartrecruiters.com/Acme",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests[0]).toBe("https://api.smartrecruiters.com/v1/companies/Acme/postings");
+    expect(result.status).toBe("succeeded");
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs.map((job) => job.title)).toEqual(["Machine Learning Intern"]);
+  });
+
+  it("supports Workday recruiting URLs hosted on myworkdaysite.com", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      return Response.json({
+        total: 1,
+        jobPostings: [{
+          title: "Applied AI Intern",
+          externalPath: "/job/Chicago/Applied-AI-Intern_R-101",
+          postedOn: "Posted Today",
+        }],
+      });
+    };
+
+    const result = await crawlSource({
+      id: "workday-site-direct",
+      company: "Acme",
+      postingUrl: "https://wd1.myworkdaysite.com/recruiting/acme/External",
+      adapter: "workday",
+    }, fetcher, new Date("2026-08-11T12:00:00Z"));
+
+    expect(requests[0]).toBe("https://wd1.myworkdaysite.com/wday/cxs/acme/External/jobs");
+    expect(result.status).toBe("succeeded");
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs.map((job) => job.title)).toEqual(["Applied AI Intern"]);
+  });
+
+  it("reports an unsupported generic careers landing page instead of hiding it as healthy with zero jobs", async () => {
+    const fetcher: typeof fetch = async () => new Response(
+      "<html><title>Careers</title><main>Build your future with us.</main></html>",
+      { status: 200 },
+    );
+
+    const result = await crawlSource({
+      id: "unsupported-careers-page",
+      company: "Acme",
+      postingUrl: "https://www.acme.example/careers",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed",
+      responseStatus: 200,
+      completeListing: false,
+      jobs: [],
+      error: expect.stringMatching(/supported feed|job listings/i),
+    }));
+  });
+
+  it("retries a rate-limited Talemetry reader feed before marking the source blocked", async () => {
+    let readerFeedAttempts = 0;
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url === "https://careers.acme.example/search/jobs") return new Response("blocked", { status: 403 });
+      if (url === "https://careers.acme.example/search/jobs.json?per_page=100&page=1") {
+        return new Response("blocked", { status: 403 });
+      }
+      if (url === "https://r.jina.ai/https://careers.acme.example/search/jobs.json?per_page=100&page=1") {
+        readerFeedAttempts += 1;
+        if (readerFeedAttempts === 1) return new Response("rate limited", { status: 429, headers: { "retry-after": "0" } });
+        return new Response(JSON.stringify({
+          current_page: 1,
+          per_page: 100,
+          total_entries: 1,
+          entries: [{ id: "101", talemetry_job_id: "101", permalink: "data-intern", title: "Data Intern" }],
+        }), { status: 200 });
+      }
+      return new Response("challenge", { status: 200 });
+    };
+
+    const result = await crawlSource({
+      id: "talemetry-rate-limited",
+      company: "Acme",
+      postingUrl: "https://careers.acme.example/search/jobs",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(readerFeedAttempts).toBe(2);
+    expect(result.status).toBe("succeeded");
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs.map((job) => job.title)).toEqual(["Data Intern"]);
+  });
+
+  it("uses the reader to discover a rendered ATS link after a generic careers page returns 200", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === "https://www.acme.example/careers") return new Response("<main>Explore careers</main>", { status: 200 });
+      if (url === "https://r.jina.ai/https://www.acme.example/careers") {
+        return new Response("[Search current openings](https://job-boards.greenhouse.io/acme)", { status: 200 });
+      }
+      if (url === "https://boards-api.greenhouse.io/v1/boards/acme/jobs?content=true") {
+        return Response.json({ jobs: [{ id: 101, title: "AI Intern", absolute_url: "https://job-boards.greenhouse.io/acme/jobs/101" }] });
+      }
+      return new Response("missing", { status: 404 });
+    };
+
+    const result = await crawlSource({
+      id: "rendered-ats",
+      company: "Acme",
+      postingUrl: "https://www.acme.example/careers",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result.status).toBe("succeeded");
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs.map((job) => job.title)).toEqual(["AI Intern"]);
+    expect(requests).toContain("https://boards-api.greenhouse.io/v1/boards/acme/jobs?content=true");
+  });
+
+  it("routes an Eightfold custom careers domain through its public API", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.toString());
+      expect(url.pathname).toBe("/api/pcsx/search");
+      expect(url.searchParams.get("domain")).toBe("acme.com");
+      return Response.json({ data: { count: 1, positions: [{ id: 101, name: "Software Intern" }] } });
+    };
+
+    const result = await crawlSource({
+      id: "eightfold-custom-domain",
+      company: "Acme",
+      postingUrl: "https://careers.acme.com/careers?domain=acme.com",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests[0]).toContain("/api/pcsx/search?");
+    expect(result.status).toBe("succeeded");
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs.map((job) => job.title)).toEqual(["Software Intern"]);
+  });
+
+  it("extracts the complete server-rendered Kula job catalog", async () => {
+    const flight = `0:{"jobs":[{"id":47740,"title":"Applied AI Intern","listed":true,"ats_job":{"workplace":"hybrid","employment_type":"internship","ats_department":{"name":"Engineering"},"offices":[{"location":"Pleasanton, California, United States","country":"United States","state":"California","city":"Pleasanton","workplace":"hybrid"}],"compensation":{"base_salary":{"currency":"USD","interval":"hourly","min_amount":"35","max_amount":"45"}}}}]}`;
+    const fetcher: typeof fetch = async () => new Response(
+      `<script>self.__next_f.push(${JSON.stringify([1, flight])})</script>`,
+      { status: 200, headers: { "content-type": "text/html" } },
+    );
+
+    const result = await crawlSource({
+      id: "kula-acme",
+      company: "Acme",
+      postingUrl: "https://careers.kula.ai/acme?domain=acme.com",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result.status).toBe("succeeded");
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "47740",
+      title: "Applied AI Intern",
+      employmentType: "Internship",
+      arrangement: "hybrid",
+      department: "Engineering",
+      location: "Pleasanton, California, United States",
+      locationCity: "Pleasanton",
+      locationState: "California",
+      locationCountry: "United States",
+      salaryMin: 35,
+      salaryMax: 45,
+      salaryCurrency: "USD",
+      salaryInterval: "hourly",
+      officialUrl: "https://careers.kula.ai/acme/47740/?domain=acme.com",
+    })]);
+  });
 });

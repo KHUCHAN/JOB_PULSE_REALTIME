@@ -96,4 +96,26 @@ describe("normalizeAuditRecord", () => {
 
     expect(normalized.adapter).toBe("custom");
   });
+
+  it("does not confuse a company name ending in lever with the Lever ATS hostname", () => {
+    const normalized = normalizeAuditRecord({
+      masterRow: 902,
+      Company: "Unilever",
+      "Ledger ID": "p5-0759-unilever",
+      postingUrl: "https://careers.unilever.com/search-jobs",
+      talentPoolUrl: null,
+      channel: "official careers",
+      resumeUpload: "미확인",
+      jobAlerts: "미확인",
+      verification: "CAREER_ONLY",
+      confidence: "HIGH",
+      recommendedAction: "CAREER_ONLY",
+      evidenceUrl: "https://careers.unilever.com/search-jobs",
+      evidenceNote: "verified",
+      checkedAt: "2026-08-11",
+      adapter: "custom",
+    });
+
+    expect(normalized.adapter).toBe("custom");
+  });
 });

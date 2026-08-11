@@ -40,13 +40,18 @@ function normalizedUrl(value: string | null): string | null {
 }
 
 function detectAdapter(...urls: Array<string | null>): NormalizedSourceRecord["adapter"] {
-  const value = urls.filter(Boolean).join(" ").toLowerCase();
-  if (value.includes("greenhouse") || value.includes("gh_jid")) return "greenhouse";
-  if (value.includes("lever.co")) return "lever";
-  if (value.includes("myworkdayjobs") || value.includes("workday")) return "workday";
-  if (value.includes("ashbyhq.com")) return "ashby";
-  if (value.includes("icims")) return "icims";
-  if (value.includes("phenom") || value.includes("jointalentcommunity")) return "phenom";
+  for (const rawUrl of urls) {
+    if (!rawUrl) continue;
+    const url = new URL(rawUrl);
+    const hostname = url.hostname.toLocaleLowerCase();
+    const href = url.href.toLocaleLowerCase();
+    if (hostname.endsWith("greenhouse.io") || url.searchParams.has("gh_jid")) return "greenhouse";
+    if (hostname === "jobs.lever.co" || hostname.endsWith(".lever.co")) return "lever";
+    if (hostname.includes("myworkdayjobs") || hostname.includes("myworkdaysite") || hostname.startsWith("workday")) return "workday";
+    if (hostname.endsWith("ashbyhq.com")) return "ashby";
+    if (hostname.includes("icims")) return "icims";
+    if (hostname.includes("phenom") || href.includes("jointalentcommunity")) return "phenom";
+  }
   return "custom";
 }
 

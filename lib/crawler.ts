@@ -519,11 +519,18 @@ const greenhouseBoard = (postingUrl: string): string | null => {
   return board || null;
 };
 
+const smartRecruitersFeed = (postingUrl: string): string | null => {
+  const url = new URL(postingUrl);
+  if (!/^(?:jobs|careers)\.smartrecruiters\.com$/i.test(url.hostname)) return null;
+  const company = url.pathname.split("/").filter(Boolean)[0];
+  return company ? `https://api.smartrecruiters.com/v1/companies/${company}/postings` : null;
+};
+
 export function discoverAts(html: string, _pageUrl: string): DiscoveredAts | null {
   const greenhouse = html.match(/https?:\/\/(?:job-boards|boards)\.greenhouse\.io\/([a-z0-9-]+)/i);
   if (greenhouse) return { kind: "greenhouse", endpoint: `https://boards-api.greenhouse.io/v1/boards/${greenhouse[1]}/jobs?content=true` };
 
-  const workday = html.match(/https?:\/\/[^\s"'<>]+\.myworkdayjobs\.com\/[^\s"'<>?#]+/i);
+  const workday = html.match(/https?:\/\/[^\s"'<>]+\.(?:myworkdayjobs|myworkdaysite)\.com\/[^\s"'<>?#]+/i);
   const workdayEndpoint = workday ? workdayFeed(workday[0]) : null;
   if (workdayEndpoint) return { kind: "workday", endpoint: workdayEndpoint };
 
@@ -533,7 +540,7 @@ export function discoverAts(html: string, _pageUrl: string): DiscoveredAts | nul
   const ashby = html.match(/https?:\/\/jobs\.ashbyhq\.com\/([^\s"'<>/?#]+)/i);
   if (ashby) return { kind: "ashby", endpoint: `https://api.ashbyhq.com/posting-api/job-board/${ashby[1]}` };
 
-  const smartRecruiters = html.match(/https?:\/\/jobs\.smartrecruiters\.com\/([a-z0-9-]+)/i);
+  const smartRecruiters = html.match(/https?:\/\/(?:jobs|careers)\.smartrecruiters\.com\/([a-z0-9-]+)/i);
   if (smartRecruiters) return { kind: "smartrecruiters", endpoint: `https://api.smartrecruiters.com/v1/companies/${smartRecruiters[1]}/postings` };
 
   const smartRecruitersWidget = html.match(/["']company_code["']\s*:\s*["']([a-z0-9-]+)["']/i);
@@ -795,10 +802,14 @@ async function crawlDiscoveredFeed(source: CrawlSource, discovered: DiscoveredAt
 
 const workdayFeed = (postingUrl: string): string | null => {
   const url = new URL(postingUrl);
-  if (!url.hostname.includes(".myworkdayjobs.com")) return null;
-  const tenant = url.hostname.split(".")[0];
-  const site = url.pathname.split("/").filter(Boolean)
-    .find((segment) => !/^[a-z]{2}-[A-Z]{2}$/i.test(segment));
+  const segments = url.pathname.split("/").filter(Boolean);
+  const isWorkdayJobs = url.hostname.includes(".myworkdayjobs.com");
+  const isWorkdaySite = url.hostname.endsWith(".myworkdaysite.com") && segments[0]?.toLocaleLowerCase() === "recruiting";
+  if (!isWorkdayJobs && !isWorkdaySite) return null;
+  const tenant = isWorkdaySite ? segments[1] : url.hostname.split(".")[0];
+  const site = isWorkdaySite
+    ? segments[2]
+    : segments.find((segment) => !/^[a-z]{2}-[A-Z]{2}$/i.test(segment));
   if (!tenant || !site) return null;
   return `${url.origin}/wday/cxs/${tenant}/${site}/jobs`;
 };
@@ -1180,6 +1191,7 @@ const markdownStaticJobs = (markdown: string, source: CrawlSource): CrawledJob[]
 const crawlReaderFallback = async (
   source: CrawlSource,
   fetcher: typeof fetch,
+  now: Date,
 ): Promise<SourceCrawlResult | null> => {
   try {
     const endpoint = `https://r.jina.ai/${source.postingUrl}`;
@@ -1188,27 +1200,37 @@ const crawlReaderFallback = async (
       "x-retain-links": "all",
       "x-with-links-summary": "all",
     };
-    const jobsFromMarkdown = (markdown: string): CrawledJob[] => uniqueJobs([
-      ...jobsFromBrowserAnchors(markdownJobAnchors(markdown, source), source),
-      ...markdownStaticJobs(markdown, source),
-    ]);
+    const resultFromMarkdown = async (markdown: string): Promise<SourceCrawlResult | null> => {
+      const discovered = discoverAts(markdown, source.postingUrl);
+      if (discovered) {
+        const result = discovered.kind === "workday"
+          ? await crawlWorkday(source, discovered.endpoint, fetcher, now)
+          : await crawlDiscoveredFeed(source, discovered, fetcher);
+        if (result.status === "succeeded") return result;
+      }
+      const jobs = uniqueJobs([
+        ...jobsFromBrowserAnchors(markdownJobAnchors(markdown, source), source),
+        ...markdownStaticJobs(markdown, source),
+      ]);
+      return jobs.length > 0 ? {
+        status: "succeeded",
+        responseStatus: 200,
+        completeListing: false,
+        jobs,
+        error: null,
+      } : null;
+    };
     const response = await fetchWithTimeout(fetcher, endpoint, { headers: baseHeaders }, false);
     if (!response.ok) return null;
-    let jobs = jobsFromMarkdown(await response.text());
-    if (jobs.length === 0) {
+    let result = await resultFromMarkdown(await response.text());
+    if (!result) {
       const freshResponse = await fetchWithTimeout(fetcher, endpoint, {
         headers: { ...baseHeaders, "x-no-cache": "true" },
       }, false, { attempts: 1, timeoutMs: 30_000 });
       if (!freshResponse.ok) return null;
-      jobs = jobsFromMarkdown(await freshResponse.text());
+      result = await resultFromMarkdown(await freshResponse.text());
     }
-    return jobs.length > 0 ? {
-      status: "succeeded",
-      responseStatus: response.status,
-      completeListing: false,
-      jobs,
-      error: null,
-    } : null;
+    return result;
   } catch {
     return null;
   }
@@ -1252,7 +1274,7 @@ const crawlTalemetryJson = async (
     try {
       const reader = await fetchWithTimeout(fetcher, `https://r.jina.ai/${endpoint.href}`, {
         headers: { accept: "text/plain" },
-      }, false, { attempts: 1, timeoutMs: 30_000 });
+      }, false, { attempts: 3, timeoutMs: 30_000 });
       return reader.ok ? parseTalemetryPayload(await reader.text()) : null;
     } catch {
       return null;
@@ -2170,6 +2192,111 @@ const crawlCitadel = async (source: CrawlSource, fetcher: typeof fetch): Promise
   }
 };
 
+type KulaJob = {
+  id?: string | number;
+  title?: string;
+  listed?: boolean;
+  ats_job?: {
+    workplace?: string | null;
+    employment_type?: string | null;
+    ats_department?: { name?: string | null } | null;
+    offices?: Array<{
+      location?: string | null;
+      country?: string | null;
+      state?: string | null;
+      city?: string | null;
+      workplace?: string | null;
+    }>;
+    compensation?: {
+      base_salary?: {
+        currency?: string | null;
+        interval?: string | null;
+        min_amount?: string | number | null;
+        max_amount?: string | number | null;
+      } | null;
+    } | null;
+  } | null;
+};
+
+const jsonArrayAt = (text: string, start: number): string | null => {
+  let depth = 0;
+  let quoted = false;
+  let escaped = false;
+  for (let index = start; index < text.length; index += 1) {
+    const character = text[index];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') quoted = false;
+      continue;
+    }
+    if (character === '"') quoted = true;
+    else if (character === "[") depth += 1;
+    else if (character === "]" && --depth === 0) return text.slice(start, index + 1);
+  }
+  return null;
+};
+
+const kulaJobs = (html: string, source: CrawlSource): CrawledJob[] | null => {
+  const page = new URL(source.postingUrl);
+  if (!page.hostname.endsWith("kula.ai")) return null;
+  const chunks: string[] = [];
+  for (const match of html.matchAll(/<script>self\.__next_f\.push\((\[[\s\S]*?\])\)<\/script>/g)) {
+    try {
+      const payload = JSON.parse(match[1]) as unknown[];
+      if (typeof payload[1] === "string") chunks.push(payload[1]);
+    } catch {
+      // Ignore unrelated or malformed React Flight chunks.
+    }
+  }
+  const flight = chunks.join("");
+  const jobsKey = flight.indexOf('"jobs":[');
+  if (jobsKey < 0) return null;
+  const arrayStart = flight.indexOf("[", jobsKey);
+  const serialized = jsonArrayAt(flight, arrayStart);
+  if (!serialized) return null;
+  let rawJobs: KulaJob[];
+  try {
+    rawJobs = JSON.parse(serialized) as KulaJob[];
+  } catch {
+    return null;
+  }
+  const accountName = page.pathname.split("/").filter(Boolean)[0];
+  if (!accountName) return null;
+  return rawJobs.flatMap((job): CrawledJob[] => {
+    if (job.listed === false || job.id == null || !job.title) return [];
+    const offices = job.ats_job?.offices ?? [];
+    const primaryOffice = offices[0];
+    const workplace = job.ats_job?.workplace ?? primaryOffice?.workplace ?? "";
+    const salary = job.ats_job?.compensation?.base_salary;
+    const salaryMin = salary?.min_amount == null ? null : Number(salary.min_amount);
+    const salaryMax = salary?.max_amount == null ? null : Number(salary.max_amount);
+    const detail = new URL(`/${encodeURIComponent(accountName)}/${encodeURIComponent(String(job.id))}/`, page.origin);
+    const domain = page.searchParams.get("domain");
+    if (domain) detail.searchParams.set("domain", domain);
+    return [{
+      externalId: String(job.id),
+      title: job.title,
+      company: source.company,
+      location: primaryOffice?.location ?? null,
+      arrangement: /remote/i.test(workplace) ? "remote" : /hybrid/i.test(workplace) ? "hybrid" : /office|on.?site/i.test(workplace) ? "onsite" : "unknown",
+      employmentType: normalizeEmploymentType(job.ats_job?.employment_type),
+      summary: null,
+      ...(job.ats_job?.ats_department?.name ? { department: job.ats_job.ats_department.name } : {}),
+      ...(offices.length > 1 ? { secondaryLocations: offices.slice(1).flatMap((office) => office.location ?? []) } : {}),
+      ...(primaryOffice?.city ? { locationCity: primaryOffice.city } : {}),
+      ...(primaryOffice?.state ? { locationState: primaryOffice.state } : {}),
+      ...(primaryOffice?.country ? { locationCountry: primaryOffice.country } : {}),
+      ...(Number.isFinite(salaryMin) ? { salaryMin } : {}),
+      ...(Number.isFinite(salaryMax) ? { salaryMax } : {}),
+      ...(salary?.currency ? { salaryCurrency: salary.currency } : {}),
+      ...(salary?.interval ? { salaryInterval: salary.interval } : {}),
+      officialUrl: detail.href,
+      publishedAt: null,
+    }];
+  });
+};
+
 async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
   try {
     const response = await fetchWithTimeout(fetcher, source.postingUrl);
@@ -2177,7 +2304,7 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
       if (isBlockedHttpStatus(response.status)) {
         const talemetry = await crawlTalemetryJson(source, fetcher);
         if (talemetry) return talemetry;
-        const fallback = await crawlReaderFallback(source, fetcher);
+        const fallback = await crawlReaderFallback(source, fetcher, now);
         if (fallback) return fallback;
       }
       return {
@@ -2189,6 +2316,14 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
       };
     }
     const html = await response.text();
+    const kula = kulaJobs(html, source);
+    if (kula) return {
+      status: "succeeded",
+      responseStatus: response.status,
+      completeListing: true,
+      jobs: kula,
+      error: null,
+    };
     const oracle = oracleCareerSite(html, source.postingUrl);
     if (oracle) return crawlOracle(source, oracle, fetcher);
     const radancy = await crawlRadancyPages(source, html, fetcher);
@@ -2224,15 +2359,17 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
       jobs: linked,
       error: null,
     };
+    const fallback = await crawlReaderFallback(source, fetcher, now);
+    if (fallback) return fallback;
     return {
-      status: "succeeded",
+      status: "failed",
       responseStatus: response.status,
       completeListing: false,
       jobs: [],
-      error: null,
+      error: "No supported public job feed or job listings were discovered.",
     };
   } catch (error) {
-    const fallback = await crawlReaderFallback(source, fetcher);
+    const fallback = await crawlReaderFallback(source, fetcher, now);
     if (fallback) return fallback;
     return {
       status: "failed",
@@ -2301,7 +2438,7 @@ async function crawlEightfold(source: CrawlSource, fetcher: typeof fetch): Promi
     const fetchPage = async (start: number, requirePositions = false): Promise<Payload> => {
       for (let attempt = 0; attempt < 3; attempt += 1) {
         let result = await requestPage(start, apiMode);
-        if (start === 0 && apiMode === "pcsx" && [400, 404].includes(result.response.status)) {
+        if (start === 0 && apiMode === "pcsx" && [400, 403, 404].includes(result.response.status)) {
           apiMode = "legacy";
           result = await requestPage(start, apiMode);
         }
@@ -2822,6 +2959,10 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
       values: (facet.values ?? []).flatMap((value) => value.id && value.descriptor ? [{ key: value.id, label: value.descriptor, count: value.count ?? null }] : []),
     }] : []);
 
+    const sourceUrl = new URL(source.postingUrl);
+    const workdaySitePrefix = sourceUrl.hostname.endsWith(".myworkdaysite.com")
+      ? sourceUrl.pathname.replace(/\/$/, "")
+      : `/${encodeURIComponent(site ?? "Careers")}`;
     let jobs = uniqueJobs(rawJobs.flatMap((job) => {
       // Workday tenants occasionally include non-job cards alongside postings.
       // Skip those records and keep the listing incomplete so stale jobs cannot close.
@@ -2838,7 +2979,7 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
         summary: job.bulletFields?.join(" · ") ?? null,
         department: bulletFields.department,
         sourcePostedText: job.postedOn ?? null,
-        officialUrl: new URL(`/${encodeURIComponent(site ?? "Careers")}${job.externalPath}`, endpointUrl.origin).href,
+        officialUrl: new URL(`${workdaySitePrefix}${job.externalPath}`, endpointUrl.origin).href,
         publishedAt: workdayPublishedAt(job.postedOn, now),
       }];
     }));
@@ -2928,15 +3069,21 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
 }
 
 async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
-  if (new URL(source.postingUrl).hostname === "www.citadel.com") return crawlCitadel(source, fetcher);
+  const sourcePage = new URL(source.postingUrl);
+  if (sourcePage.hostname === "www.citadel.com") return crawlCitadel(source, fetcher);
   if (source.id === "p5-1077-tesla" || source.company === "Tesla") return crawlTesla(source, fetcher);
   if (new URL(source.postingUrl).hostname === "www.metacareers.com") return crawlMetaCareers(source, fetcher);
   if (new URL(source.postingUrl).hostname === "careers.epam.com") return crawlEpam(source, fetcher);
   if (new URL(source.postingUrl).hostname.endsWith("mediatek.com")) return crawlMediaTek(source, fetcher);
   if (new URL(source.postingUrl).hostname.endsWith("mckinsey.com") && new URL(source.postingUrl).pathname.includes("/careers/search-jobs")) return crawlMcKinsey(source, fetcher);
-  if (new URL(source.postingUrl).hostname.endsWith("eightfold.ai")) return crawlEightfold(source, fetcher);
+  if (sourcePage.hostname.endsWith("eightfold.ai")
+    || (sourcePage.pathname.replace(/\/$/, "") === "/careers" && sourcePage.searchParams.has("domain"))) {
+    return crawlEightfold(source, fetcher);
+  }
   if (new URL(source.postingUrl).hostname === "myjobs.adp.com") return crawlAdpMyJobs(source, fetcher);
   if (new URL(source.postingUrl).hostname === "workforcenow.adp.com") return crawlAdpWorkforceNow(source, fetcher);
+  const smartRecruiters = smartRecruitersFeed(source.postingUrl);
+  if (smartRecruiters) return crawlDiscoveredFeed(source, { kind: "smartrecruiters", endpoint: smartRecruiters }, fetcher);
   const board = source.adapter === "greenhouse" ? greenhouseBoard(source.postingUrl) : null;
   const workday = source.adapter === "workday" ? workdayFeed(source.postingUrl) : null;
   if (workday) return crawlWorkday(source, workday, fetcher, now);

@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:300a61ca7e2eebcfd1123a3d0bb9f204dbff4ec2ea2ddeb112489a94ff83ba89",
+  "version": "v2:sha256:ad1f9b34fb76725fe0bd1891bf9ca1abe51a9abab7227d0b80898f6704b53677",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -696,7 +696,7 @@
       "id": "p5-0692-openai",
       "masterRow": 247,
       "company": "OpenAI",
-      "postingUrl": "https://openai.com/careers",
+      "postingUrl": "https://openai.com/careers/search/?action=apply",
       "talentUrl": "https://jobs.ashbyhq.com/openai/form/openai-emt-talent-community",
       "channel": "공식 Talent Community/후보자 등록",
       "adapter": "custom",
@@ -4431,7 +4431,7 @@
       "id": "p2-0027-bank-of-america",
       "masterRow": 1206,
       "company": "Bank of America",
-      "postingUrl": "https://careers.bankofamerica.com/en-us",
+      "postingUrl": "https://careers.bankofamerica.com/en-us/job-search",
       "talentUrl": "https://careers.bankofamerica.com/en-us/join-talent-community",
       "channel": "공식 Talent Community/후보 프로필",
       "adapter": "custom",
@@ -5301,7 +5301,7 @@
       "id": "p4-0231-bny-mellon",
       "masterRow": 1314,
       "company": "BNY Mellon",
-      "postingUrl": "https://www.bnymellon.com/us/en/careers.html",
+      "postingUrl": "https://eofe.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/BNY-Careers/jobs",
       "talentUrl": "https://us.bny.talentnet.community/auth",
       "channel": "공식 Talent Community/후보자 프로필",
       "adapter": "custom",
@@ -5841,10 +5841,10 @@
       "id": "p5-0545-anduril-industries",
       "masterRow": 1456,
       "company": "Anduril Industries",
-      "postingUrl": "https://www.anduril.com/careers",
+      "postingUrl": "https://job-boards.greenhouse.io/andurilindustries",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
-      "adapter": "custom",
+      "adapter": "greenhouse",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
@@ -5901,7 +5901,7 @@
       "id": "p5-0554-bd",
       "masterRow": 1463,
       "company": "BD (Becton Dickinson)",
-      "postingUrl": "https://www.bd.com/careers",
+      "postingUrl": "https://jobs.bd.com/en/search-jobs",
       "talentUrl": "https://pages.hireez.com/cielo-becton-dickinson-global/bef39ffc?source=website_EN",
       "channel": "공식 Talent Community/후보자 프로필",
       "adapter": "custom",
@@ -6261,7 +6261,7 @@
       "id": "p5-0649-labelbox",
       "masterRow": 1521,
       "company": "Labelbox",
-      "postingUrl": "https://labelbox.com/company/careers/",
+      "postingUrl": "https://job-boards.greenhouse.io/labelbox",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
       "adapter": "greenhouse",
@@ -6411,7 +6411,7 @@
       "id": "p5-0675-molina-healthcare",
       "masterRow": 1537,
       "company": "Molina Healthcare",
-      "postingUrl": "https://molinahealthcare.com/careers/",
+      "postingUrl": "https://careers.molinahealthcare.com/search-jobs",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
       "adapter": "custom",
@@ -9021,7 +9021,7 @@
       "id": "p5-0774-10x-genomics",
       "masterRow": 2385,
       "company": "10x Genomics",
-      "postingUrl": "https://careers.10xgenomics.com/",
+      "postingUrl": "https://careers.kula.ai/10xgenomics?domain=10xgenomics.com",
       "talentUrl": "https://www.10xgenomics.com/careers",
       "channel": "공식 채용공고 검색·지원",
       "adapter": "custom",
@@ -9029,7 +9029,7 @@
       "confidence": "medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -10821,15 +10821,15 @@
       "id": "p5-0902-faire",
       "masterRow": 2513,
       "company": "Faire",
-      "postingUrl": "https://www.faire.com/careers/openings",
+      "postingUrl": "https://job-boards.greenhouse.io/faire",
       "talentUrl": "https://www.faire.com/careers",
       "channel": "공식 채용공고 검색·지원",
-      "adapter": "custom",
+      "adapter": "greenhouse",
       "verification": "not_audited",
       "confidence": "medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -13311,15 +13311,15 @@
       "id": "p5-0759-unilever",
       "masterRow": 2720,
       "company": "Unilever",
-      "postingUrl": "https://www.unilever.com/working-at-unilever/",
+      "postingUrl": "https://careers.unilever.com/search-jobs",
       "talentUrl": "https://www.unilever.com/careers",
       "channel": "공식 Career Portal",
-      "adapter": "lever",
+      "adapter": "custom",
       "verification": "career_page_only",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -15501,15 +15501,15 @@
       "id": "legacy-row-866",
       "masterRow": 2866,
       "company": "Stanley Black & Decker",
-      "postingUrl": "https://www.stanleyblackanddecker.com/careers",
+      "postingUrl": "https://sbdinc.wd1.myworkdayjobs.com/Stanley_Black_Decker_Career_Site",
       "talentUrl": "https://www.stanleyblackanddecker.com/careers",
       "channel": "공식 Career Portal",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "career_page_only",
       "confidence": "medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -17781,7 +17781,7 @@
       "id": "p4-0439-graylog",
       "masterRow": 3029,
       "company": "Graylog",
-      "postingUrl": "https://graylog.org/careers/",
+      "postingUrl": "https://jobs.lever.co/graylog",
       "talentUrl": "https://www.graylog.org/careers",
       "channel": "공식 Career Portal",
       "adapter": "lever",
@@ -17796,7 +17796,7 @@
       "id": "p4-0441-guidewire",
       "masterRow": 3030,
       "company": "Guidewire",
-      "postingUrl": "https://www.guidewire.com/careers",
+      "postingUrl": "https://www.guidewire.com/about/careers/jobs",
       "talentUrl": "https://www.guidewire.com/careers",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -17804,7 +17804,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -18036,15 +18036,15 @@
       "id": "p4-0499-sophos",
       "masterRow": 3046,
       "company": "Sophos",
-      "postingUrl": "https://www.sophos.com/en-us/company/careers",
+      "postingUrl": "https://jobs.lever.co/sophos",
       "talentUrl": "https://www.sophos.com/en-us/company/careers",
       "channel": "공식 Career Portal",
-      "adapter": "custom",
+      "adapter": "lever",
       "verification": "career_page_only",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -18801,15 +18801,15 @@
       "id": "p2-0091-cna-financial",
       "masterRow": 3129,
       "company": "CNA Financial",
-      "postingUrl": "https://www.cna.com/careers",
+      "postingUrl": "https://cna.wd1.myworkdayjobs.com/CNA_Careers",
       "talentUrl": "https://www.cna.com/careers",
       "channel": "공식 Career Portal",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "career_page_only",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -18861,15 +18861,15 @@
       "id": "p2-0108-fnf",
       "masterRow": 3136,
       "company": "FNF (Fidelity National Financial)",
-      "postingUrl": "https://www.fnf.com/careers",
+      "postingUrl": "https://fntg.wd5.myworkdayjobs.com/FNF-Careers",
       "talentUrl": "https://www.fnf.com/careers",
       "channel": "공식 Career Portal",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "career_page_only",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -20136,7 +20136,7 @@
       "id": "p4-0399-asana",
       "masterRow": 3266,
       "company": "Asana",
-      "postingUrl": "https://www.gem.com/form?formID=fbcdec8c-3442-43b9-9b45-d2b5f4ea25db",
+      "postingUrl": "https://asana.com/jobs",
       "talentUrl": "https://www.gem.com/form?formID=fbcdec8c-3442-43b9-9b45-d2b5f4ea25db",
       "channel": "Gem Talent Community",
       "adapter": "custom",
@@ -20144,7 +20144,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -20166,15 +20166,15 @@
       "id": "p4-0404-box",
       "masterRow": 3270,
       "company": "Box",
-      "postingUrl": "https://crm.findemtalent.com/community/signup/66ec7545f2934751e0da2059",
+      "postingUrl": "https://job-boards.greenhouse.io/boxinc",
       "talentUrl": "https://crm.findemtalent.com/community/signup/66ec7545f2934751e0da2059",
       "channel": "Findem Talent Community",
-      "adapter": "custom",
+      "adapter": "greenhouse",
       "verification": "valid_direct_talent_form",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -20241,7 +20241,7 @@
       "id": "p4-0420-datadog",
       "masterRow": 3280,
       "company": "Datadog",
-      "postingUrl": "https://www.gem.com/form?formID=c216b75f-106b-48ff-bbcc-35dd54e618b6",
+      "postingUrl": "https://careers.datadoghq.com/all-jobs/",
       "talentUrl": "https://www.gem.com/form?formID=c216b75f-106b-48ff-bbcc-35dd54e618b6",
       "channel": "Gem Talent Community",
       "adapter": "custom",
@@ -20249,7 +20249,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-08",
       "enabled": true
     },
     {
@@ -23955,7 +23955,7 @@
       "officialUrl": "https://www.10xgenomics.com/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p5-0776-3m",
@@ -24915,7 +24915,7 @@
       "officialUrl": "https://www.faire.com/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p5-0903-figure-ai",
@@ -26187,7 +26187,7 @@
       "officialUrl": "https://www.unilever.com/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p5-0760-veeva-systems",
@@ -27355,7 +27355,7 @@
       "officialUrl": "https://www.stanleyblackanddecker.com/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-legacy-row-867",
@@ -28579,7 +28579,7 @@
       "officialUrl": "https://www.guidewire.com/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p4-0444-hugging-face",
@@ -28707,7 +28707,7 @@
       "officialUrl": "https://www.sophos.com/en-us/company/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p4-0504-tenstorrent",
@@ -29115,7 +29115,7 @@
       "officialUrl": "https://www.cna.com/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p2-0098-discover",
@@ -29147,7 +29147,7 @@
       "officialUrl": "https://www.fnf.com/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p2-0109-forter",
@@ -29827,7 +29827,7 @@
       "officialUrl": "https://www.gem.com/form?formID=fbcdec8c-3442-43b9-9b45-d2b5f4ea25db",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p4-0401-axonius",
@@ -29843,7 +29843,7 @@
       "officialUrl": "https://crm.findemtalent.com/community/signup/66ec7545f2934751e0da2059",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p4-0406-cargurus",
@@ -29883,7 +29883,7 @@
       "officialUrl": "https://www.gem.com/form?formID=c216b75f-106b-48ff-bbcc-35dd54e618b6",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-08"
     },
     {
       "id": "talent-p4-0426-exabeam",

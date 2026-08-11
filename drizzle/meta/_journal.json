@@ -337,6 +337,27 @@
       "when": 1786431600000,
       "tag": "0047_resume_alert_correctness",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "6",
+      "when": 1786472330472,
+      "tag": "0048_refresh_sources_20260811181850",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "6",
+      "when": 1786472387311,
+      "tag": "0049_refresh_sources_20260811181947",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "6",
+      "when": 1786473248903,
+      "tag": "0050_refresh_sources_20260811183408",
+      "breakpoints": true
     }
   ]
 }

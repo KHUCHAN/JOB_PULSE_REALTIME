@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { runCoverageAudit } from "./audit-crawler-coverage";
 
 describe("runCoverageAudit", () => {
-  it("reports every source and distinguishes extracted jobs from an empty but reachable page", async () => {
+  it("reports every source and exposes a reachable page with no supported listing as failed", async () => {
     const sources = [
       { id: "api", company: "API Co", postingUrl: "https://job-boards.greenhouse.io/acme", adapter: "greenhouse" as const },
       { id: "empty", company: "Empty Co", postingUrl: "https://empty.example/careers", adapter: "custom" as const },
@@ -15,10 +15,15 @@ describe("runCoverageAudit", () => {
 
     expect(report).toEqual({
       total: 2,
-      byStatus: { succeeded: 2, failed: 0, blocked: 0 },
+      byStatus: { succeeded: 1, failed: 1, blocked: 0 },
       sources: [
         expect.objectContaining({ id: "api", status: "succeeded", jobsExtracted: 1 }),
-        expect.objectContaining({ id: "empty", status: "succeeded", jobsExtracted: 0 }),
+        expect.objectContaining({
+          id: "empty",
+          status: "failed",
+          jobsExtracted: 0,
+          error: expect.stringMatching(/supported public job feed/i),
+        }),
       ],
     });
   });
