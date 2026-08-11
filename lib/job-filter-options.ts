@@ -10,6 +10,25 @@ export const jobFilterOptionKeys = [
   "languages",
 ] as const satisfies ReadonlyArray<keyof JobFilterOptions>;
 
+type JobFilterOptionKey = typeof jobFilterOptionKeys[number];
+const jobFilterOptionKeySet = new Set<string>(jobFilterOptionKeys);
+const filterOptionRefreshBatchSize = 4;
+
+export function jobFilterOptionRefreshKeys(value: unknown): JobFilterOptionKey[] {
+  const requested = Array.isArray(value) ? value : jobFilterOptionKeys;
+  return [...new Set(requested.filter((item): item is JobFilterOptionKey =>
+    typeof item === "string" && jobFilterOptionKeySet.has(item),
+  ))].slice(0, filterOptionRefreshBatchSize);
+}
+
+export function rotatingJobFilterOptionKeys(now = new Date()): JobFilterOptionKey[] {
+  const slot = Math.floor(now.getTime() / (2 * 60 * 60 * 1000));
+  const start = (slot * filterOptionRefreshBatchSize) % jobFilterOptionKeys.length;
+  return Array.from({ length: filterOptionRefreshBatchSize }, (_, offset) =>
+    jobFilterOptionKeys[(start + offset) % jobFilterOptionKeys.length],
+  );
+}
+
 export const emptyJobFilterOptions = (): JobFilterOptions => Object.fromEntries(
   jobFilterOptionKeys.map((key) => [key, []]),
 ) as unknown as JobFilterOptions;
@@ -190,8 +209,15 @@ const rowsToOptions = (rows: FilterOptionCountRow[]): JobFilterOptions => {
 };
 
 export async function queryJobFilterOptions(database: D1Database): Promise<JobFilterOptions> {
+  return queryJobFilterOptionKeys(database, jobFilterOptionKeys);
+}
+
+async function queryJobFilterOptionKeys(
+  database: D1Database,
+  keys: readonly JobFilterOptionKey[],
+): Promise<JobFilterOptions> {
   const rows: FilterOptionCountRow[] = [];
-  for (const key of jobFilterOptionKeys) {
+  for (const key of keys) {
     const result = await database.prepare(filterOptionSql(key)).all<FilterOptionCountRow>();
     rows.push(...result.results);
   }
@@ -205,7 +231,7 @@ export async function queryCachedJobFilterOptions(database: D1Database): Promise
 
 export async function refreshJobFilterOptions(
   database: D1Database,
-  options: { force?: boolean; maxAgeMs?: number; now?: Date } = {},
+  options: { force?: boolean; maxAgeMs?: number; now?: Date; filterKeys?: readonly JobFilterOptionKey[] } = {},
 ): Promise<JobFilterOptionsRefreshResult> {
   const latest = await database.prepare(`
     SELECT max(refreshed_at) AS refreshed_at, count(*) AS option_count
@@ -224,8 +250,11 @@ export async function refreshJobFilterOptions(
     };
   }
 
-  const computed = await queryJobFilterOptions(database);
-  const computedRows: FilterOptionCountRow[] = jobFilterOptionKeys.flatMap((filterKey) =>
+  const filterKeys = options.filterKeys?.length
+    ? jobFilterOptionRefreshKeys(options.filterKeys)
+    : [...jobFilterOptionKeys];
+  const computed = await queryJobFilterOptionKeys(database, filterKeys);
+  const computedRows: FilterOptionCountRow[] = filterKeys.flatMap((filterKey) =>
     computed[filterKey].map(({ value, count }) => ({
       filter_key: filterKey,
       value_label: String(value),
@@ -234,7 +263,10 @@ export async function refreshJobFilterOptions(
   );
   const refreshedAt = now.toISOString();
   await database.batch([
-    database.prepare("DELETE FROM job_filter_options_cache"),
+    database.prepare(`
+      DELETE FROM job_filter_options_cache
+      WHERE filter_key IN (SELECT value FROM json_each(?))
+    `).bind(JSON.stringify(filterKeys)),
     database.prepare(insertCachedFilterOptionsSql).bind(refreshedAt, JSON.stringify(computedRows)),
   ]);
   return {

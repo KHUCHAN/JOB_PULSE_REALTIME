@@ -1,9 +1,11 @@
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import {
+  jobFilterOptionRefreshKeys,
   queryCachedJobFilterOptions,
   queryJobFilterOptions,
   refreshJobFilterOptions,
+  rotatingJobFilterOptionKeys,
 } from "./job-filter-options";
 
 const schema = `
@@ -242,7 +244,10 @@ describe("queryJobFilterOptions", () => {
     `);
     const d1 = createD1(sqlite, false, 1);
 
-    await expect(refreshJobFilterOptions(d1, { force: true })).resolves.toEqual(
+    await expect(refreshJobFilterOptions(d1, {
+      force: true,
+      filterKeys: ["companies", "recruitingYears", "programTypes", "skills"],
+    })).resolves.toEqual(
       expect.objectContaining({ refreshed: true }),
     );
     const cached = await queryCachedJobFilterOptions(d1);
@@ -250,6 +255,23 @@ describe("queryJobFilterOptions", () => {
     expect(cached?.recruitingYears).toEqual([{ value: 2027, count: 1 }]);
     expect(cached?.programTypes).toEqual([{ value: "internship", count: 1 }]);
     expect(cached?.skills).toEqual([{ value: "TypeScript", count: 1 }]);
+    expect(cached?.languages).toEqual([]);
     sqlite.close();
+  });
+
+  it("bounds requested and automatic refreshes to four unique facet keys", () => {
+    expect(jobFilterOptionRefreshKeys([
+      "regions", "companies", "regions", "skills", "languages", "not-a-filter",
+    ])).toEqual(["regions", "companies", "skills", "languages"]);
+    expect(jobFilterOptionRefreshKeys(undefined)).toEqual([
+      "companies", "locations", "cities", "states",
+    ]);
+
+    const first = rotatingJobFilterOptionKeys(new Date("2026-08-10T00:00:00.000Z"));
+    const next = rotatingJobFilterOptionKeys(new Date("2026-08-10T02:00:00.000Z"));
+    expect(first).toHaveLength(4);
+    expect(next).toHaveLength(4);
+    expect(next).not.toEqual(first);
+    expect(new Set([...first, ...next]).size).toBe(8);
   });
 });

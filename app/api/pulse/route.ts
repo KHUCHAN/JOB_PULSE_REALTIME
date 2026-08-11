@@ -24,9 +24,11 @@ import {
 } from "../../../lib/job-filter-validation";
 import { bindJobSearchStatements } from "../../../lib/job-search-execution";
 import {
+  jobFilterOptionRefreshKeys,
   queryCachedJobFilterOptions,
   queryJobFilterOptions,
   refreshJobFilterOptions,
+  rotatingJobFilterOptionKeys,
 } from "../../../lib/job-filter-options";
 import { buildJobSearchPlan, jobDetailProjection } from "../../../lib/job-search-sql";
 import { overviewCountsSql } from "../../../lib/overview-sql";
@@ -343,7 +345,10 @@ export async function POST(request: Request): Promise<Response> {
       const database = db();
       const result = await runDueCrawls(new D1CrawlStore(database), fetch, new Date(), crawlBatchOptions(requested));
       if (result.attempted === 0) {
-        const refreshed = await refreshJobFilterOptions(database);
+        const refreshed = await refreshJobFilterOptions(database, {
+          force: true,
+          filterKeys: rotatingJobFilterOptionKeys(new Date()),
+        });
         if (refreshed.refreshed) filterOptionsCache = null;
       }
       return json(result);
@@ -361,7 +366,10 @@ export async function POST(request: Request): Promise<Response> {
       return json(await backfillJobAreasAndRegions(db(), jobAreaRegionBackfillLimit(requested)));
     }
     if (body.action === "refreshJobFilterOptions") {
-      const result = await refreshJobFilterOptions(db(), { force: true });
+      const result = await refreshJobFilterOptions(db(), {
+        force: true,
+        filterKeys: jobFilterOptionRefreshKeys(body.filterKeys),
+      });
       filterOptionsCache = null;
       return json(result);
     }
