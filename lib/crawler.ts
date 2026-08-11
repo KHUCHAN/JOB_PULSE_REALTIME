@@ -2012,6 +2012,44 @@ const citadelDetailPriority = (entry: CitadelSitemapEntry): number => {
     + (/(?:data|software|machine-learning|quantitative)/.test(value) ? 25 : 0);
 };
 
+const citadelMarkdownText = (value: string): string => value
+  .replace(/\[([^\]]+)]\([^)]+\)/g, "$1")
+  .replace(/[*_#`]/g, " ")
+  .replace(/\s+/g, " ")
+  .trim();
+
+const citadelJobFromMarkdown = (
+  markdown: string,
+  source: CrawlSource,
+  entry: CitadelSitemapEntry,
+): CrawledJob | null => {
+  const heading = markdown.match(/^#\s+(.+?)\s*$/m);
+  const description = markdown.match(/^##\s+Job Description\s*$([\s\S]*?)(?=^##\s+)/m)?.[1];
+  if (!heading || !description) return null;
+  const title = citadelMarkdownText(heading[1]);
+  const location = markdown.slice((heading.index ?? 0) + heading[0].length)
+    .split(/\r?\n/).map((line) => citadelMarkdownText(line)).find(Boolean) ?? null;
+  const normalizedDescription = citadelMarkdownText(description);
+  if (!title || !normalizedDescription) return null;
+  const slug = new URL(entry.url).pathname.match(/\/careers\/details\/([^/]+)/i)?.[1] ?? null;
+  const programs = classifyJobPrograms(title);
+  const isUs = /\(US\)\s*$/i.test(title);
+  return {
+    externalId: slug,
+    title,
+    company: source.company,
+    location,
+    arrangement: "unknown",
+    employmentType: programs.keys.some((key) => key === "internship" || key === "coop") ? "Internship" : null,
+    summary: normalizedDescription,
+    description: normalizedDescription,
+    ...(location ? { locationCity: location } : {}),
+    ...(isUs ? { locationCountry: "US" } : {}),
+    officialUrl: entry.url,
+    publishedAt: null,
+  };
+};
+
 const crawlCitadel = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
   const sitemapUrl = "https://www.citadel.com/career-sitemap.xml";
   try {
@@ -2039,7 +2077,8 @@ const crawlCitadel = async (source: CrawlSource, fetcher: typeof fetch): Promise
       try {
         const readerTarget = new URL(entry.url);
         readerTarget.protocol = "http:";
-        const response = await fetchWithTimeout(fetcher, `https://r.jina.ai/${readerTarget.href}`, {
+        const readerEndpoint = `https://r.jina.ai/${readerTarget.href}`;
+        const response = await fetchWithTimeout(fetcher, readerEndpoint, {
           headers: {
             accept: "text/html",
             "x-return-format": "html",
@@ -2047,13 +2086,19 @@ const crawlCitadel = async (source: CrawlSource, fetcher: typeof fetch): Promise
         }, false, { attempts: 2, timeoutMs: 30_000 });
         if (!response.ok) return;
         const extracted = extractJobsFromHtml(await response.text(), source).jobs;
-        const job = extracted.find((candidate) => {
+        let job = extracted.find((candidate) => {
           try {
             return new URL(candidate.officialUrl).pathname === new URL(entry.url).pathname;
           } catch {
             return false;
           }
         }) ?? (extracted.length === 1 ? extracted[0] : null);
+        if (!job) {
+          const markdownResponse = await fetchWithTimeout(fetcher, readerEndpoint, {
+            headers: { accept: "text/plain" },
+          }, false, { attempts: 1, timeoutMs: 30_000 });
+          if (markdownResponse.ok) job = citadelJobFromMarkdown(await markdownResponse.text(), source, entry);
+        }
         if (!job) return;
         const externalId = job.externalId
           ?? new URL(entry.url).pathname.match(/\/careers\/details\/([^/]+)/i)?.[1]
