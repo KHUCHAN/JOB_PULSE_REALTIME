@@ -28,119 +28,135 @@ export type JobFilterOptionsRefreshResult = {
 
 const titleTokens = titleTokensSql("j.title");
 
-export const filterOptionsSql = `
-  WITH RECURSIVE
-  years(year) AS (
-    VALUES (2000)
-    UNION ALL SELECT year + 1 FROM years WHERE year < 2100
-  ),
-  seasons(season) AS (VALUES ('spring'), ('summer'), ('fall'), ('winter')),
-  ranked AS (
-    SELECT
-      j.id, j.official_url, j.company, j.title, j.location, j.location_city,
-      j.location_state, j.location_country, j.location_region, j.arrangement, j.employment_type,
-      j.department, j.team, j.business_unit, j.job_family, j.job_function,
-      j.industry, j.office, j.skills, j.experience_level, j.salary_currency,
-      j.salary_interval, j.education_requirements, j.shift_schedule,
-      j.travel_requirements, j.security_clearance, j.languages,
-      ${titleTokens} AS title_tokens,
-      row_number() OVER (
-        PARTITION BY j.official_url
-        ORDER BY j.first_seen_at DESC, j.company ASC, j.id ASC
-      ) AS dedupe_rank
+const scalarFilterColumns: Partial<Record<keyof JobFilterOptions, string>> = {
+  companies: "j.company",
+  locations: "j.location",
+  cities: "j.location_city",
+  states: "j.location_state",
+  countries: "j.location_country",
+  regions: "j.location_region",
+  arrangements: "j.arrangement",
+  employmentTypes: "j.employment_type",
+  departments: "j.department",
+  teams: "j.team",
+  businessUnits: "j.business_unit",
+  jobFamilies: "j.job_family",
+  jobFunctions: "j.job_function",
+  industries: "j.industry",
+  offices: "j.office",
+  experienceLevels: "j.experience_level",
+  salaryCurrencies: "j.salary_currency",
+  salaryIntervals: "j.salary_interval",
+  educationRequirements: "j.education_requirements",
+  shiftSchedules: "j.shift_schedule",
+  travelRequirements: "j.travel_requirements",
+  securityClearances: "j.security_clearance",
+};
+
+const canonicalJobsCte = (projection: string): string => `canonical AS (
+    SELECT j.id, j.official_url, ${projection}
     FROM jobs j
     WHERE j.status = 'open'
-  ),
-  deduped AS (
-    SELECT * FROM ranked WHERE dedupe_rank = 1
-  ),
-  program_arrays AS (
-    SELECT d.official_url, d.title_tokens,
-      coalesce((
-        SELECT json_group_array(substr(jp.topic_key, length('program:') + 1))
-        FROM job_topics jp
-        WHERE jp.job_id = d.id AND jp.topic_key LIKE 'program:%'
-      ), '[]') AS program_keys
-    FROM deduped d
-  ),
-  facet_values(official_url, filter_key, value) AS (
-    SELECT d.official_url, scalar.key, scalar.value
-    FROM deduped d, json_each(json_object(
-      'companies', d.company,
-      'locations', d.location,
-      'cities', d.location_city,
-      'states', d.location_state,
-      'countries', d.location_country,
-      'regions', d.location_region,
-      'arrangements', d.arrangement,
-      'employmentTypes', d.employment_type,
-      'departments', d.department,
-      'teams', d.team,
-      'businessUnits', d.business_unit,
-      'jobFamilies', d.job_family,
-      'jobFunctions', d.job_function,
-      'industries', d.industry,
-      'offices', d.office,
-      'experienceLevels', d.experience_level,
-      'salaryCurrencies', d.salary_currency,
-      'salaryIntervals', d.salary_interval,
-      'educationRequirements', d.education_requirements,
-      'shiftSchedules', d.shift_schedule,
-      'travelRequirements', d.travel_requirements,
-      'securityClearances', d.security_clearance
-    )) scalar
-    UNION ALL SELECT d.official_url, 'recruitingYears', CAST(y.year AS TEXT)
-      FROM deduped d JOIN years y ON d.title_tokens LIKE '% ' || CAST(y.year AS TEXT) || ' %'
-        OR EXISTS (
-          SELECT 1 FROM job_topics jy
-          WHERE jy.job_id = d.id AND jy.topic_key = 'year:' || CAST(y.year AS TEXT)
-        )
-    UNION ALL SELECT p.official_url, 'programTypes', program.value
-      FROM program_arrays p,
-        json_each(CASE WHEN p.title_tokens LIKE '% regular %'
-          THEN json_insert(p.program_keys, '$[#]', 'regular')
-          ELSE p.program_keys END) program
-    UNION ALL SELECT d.official_url, 'seasons', s.season
-      FROM deduped d JOIN seasons s ON d.title_tokens LIKE '% ' || s.season || ' %'
-    UNION ALL SELECT d.official_url, arrays.key, CAST(item.value AS TEXT)
-      FROM deduped d,
-        json_each(json_object(
-          'skills', json(CASE WHEN json_valid(d.skills) THEN d.skills ELSE '[]' END),
-          'languages', json(CASE WHEN json_valid(d.languages) THEN d.languages ELSE '[]' END)
-        )) arrays,
-        json_each(arrays.value) item
-      WHERE arrays.type = 'array' AND item.type = 'text'
-  ),
-  counted AS (
-    SELECT
-      filter_key,
-      min(trim(CAST(value AS TEXT))) AS value_label,
-      count(DISTINCT official_url) AS job_count
-    FROM facet_values
-    WHERE value IS NOT NULL AND trim(CAST(value AS TEXT)) <> ''
-      AND (
-        filter_key <> 'employmentTypes'
-        OR lower(replace(replace(replace(replace(trim(CAST(value AS TEXT)), '_', ''), '-', ''), ' ', ''), '/', '')) IN (
-          'fulltime', 'fulltimeemployee', 'modifiedfulltime', 'parttime', 'temporary',
-          'contractor', 'contract', 'intern', 'internship', 'regular', 'permanent',
-          'seasonal', 'casual', 'freelance', 'apprentice', 'apprenticeship',
-          'fixedterm', 'fixedtermcontract', 'employeeregularpermanent'
-        )
+      AND NOT EXISTS (
+        SELECT 1 FROM jobs newer
+        WHERE newer.status = 'open'
+          AND newer.official_url = j.official_url
+          AND (
+            newer.first_seen_at > j.first_seen_at
+            OR (newer.first_seen_at = j.first_seen_at AND newer.company < j.company)
+            OR (newer.first_seen_at = j.first_seen_at AND newer.company = j.company AND newer.id < j.id)
+          )
       )
-    GROUP BY filter_key, lower(trim(CAST(value AS TEXT)))
-  ),
-  bounded AS (
-    SELECT *, row_number() OVER (
-      PARTITION BY filter_key
-      ORDER BY job_count DESC, value_label COLLATE NOCASE ASC
-    ) AS facet_rank
-    FROM counted
+  )`;
+
+const employmentTypePredicate = `AND lower(replace(replace(replace(replace(trim(CAST(value AS TEXT)), '_', ''), '-', ''), ' ', ''), '/', '')) IN (
+    'fulltime', 'fulltimeemployee', 'modifiedfulltime', 'parttime', 'temporary',
+    'contractor', 'contract', 'intern', 'internship', 'regular', 'permanent',
+    'seasonal', 'casual', 'freelance', 'apprentice', 'apprenticeship',
+    'fixedterm', 'fixedtermcontract', 'employeeregularpermanent'
+  )`;
+
+const boundedFacetSql = (
+  key: keyof JobFilterOptions,
+  commonTableExpressions: string,
+  facetValuesSql: string,
+): string => `
+  WITH RECURSIVE ${commonTableExpressions},
+  facet_values(official_url, value) AS (
+    ${facetValuesSql}
   )
-  SELECT filter_key, value_label, job_count
-  FROM bounded
-  WHERE facet_rank <= 100
-  ORDER BY filter_key ASC, facet_rank ASC
+  SELECT '${key}' AS filter_key,
+         min(trim(CAST(value AS TEXT))) AS value_label,
+         count(DISTINCT official_url) AS job_count
+  FROM facet_values
+  WHERE value IS NOT NULL AND trim(CAST(value AS TEXT)) <> ''
+    ${key === "employmentTypes" ? employmentTypePredicate : ""}
+  GROUP BY lower(trim(CAST(value AS TEXT)))
+  ORDER BY job_count DESC, value_label COLLATE NOCASE ASC
+  LIMIT 100
 `;
+
+const filterOptionSql = (key: keyof JobFilterOptions): string => {
+  const scalarColumn = scalarFilterColumns[key];
+  if (scalarColumn) {
+    return boundedFacetSql(
+      key,
+      canonicalJobsCte(`${scalarColumn} AS value`),
+      "SELECT official_url, value FROM canonical",
+    );
+  }
+  if (key === "skills" || key === "languages") {
+    const column = key === "skills" ? "j.skills" : "j.languages";
+    return boundedFacetSql(
+      key,
+      canonicalJobsCte(`${column} AS values_json`),
+      `SELECT c.official_url, CAST(item.value AS TEXT)
+       FROM canonical c,
+         json_each(CASE WHEN json_valid(c.values_json) THEN c.values_json ELSE '[]' END) item
+       WHERE item.type = 'text'`,
+    );
+  }
+  if (key === "programTypes") {
+    return boundedFacetSql(
+      key,
+      canonicalJobsCte(`${titleTokens} AS title_tokens`),
+      `SELECT c.official_url, substr(jp.topic_key, length('program:') + 1)
+       FROM canonical c JOIN job_topics jp ON jp.job_id = c.id
+       WHERE jp.topic_key LIKE 'program:%'
+       UNION
+       SELECT official_url, 'regular' FROM canonical WHERE title_tokens LIKE '% regular %'`,
+    );
+  }
+  if (key === "seasons") {
+    return boundedFacetSql(
+      key,
+      `${canonicalJobsCte(`${titleTokens} AS title_tokens`)},
+       season_values(value) AS (VALUES ('spring'), ('summer'), ('fall'), ('winter'))`,
+      `SELECT c.official_url, season.value
+       FROM canonical c JOIN season_values season
+         ON c.title_tokens LIKE '% ' || season.value || ' %'`,
+    );
+  }
+  return boundedFacetSql(
+    "recruitingYears",
+    `${canonicalJobsCte(`${titleTokens} AS title_tokens`)},
+     title_parts(id, official_url, rest, value) AS (
+       SELECT id, official_url, trim(title_tokens), '' FROM canonical
+       UNION ALL
+       SELECT id, official_url,
+         CASE WHEN instr(rest, ' ') = 0 THEN '' ELSE ltrim(substr(rest, instr(rest, ' ') + 1)) END,
+         CASE WHEN instr(rest, ' ') = 0 THEN rest ELSE substr(rest, 1, instr(rest, ' ') - 1) END
+       FROM title_parts WHERE rest <> ''
+     )`,
+    `SELECT official_url, value FROM title_parts
+       WHERE length(value) = 4 AND value GLOB '[0-9][0-9][0-9][0-9]'
+         AND CAST(value AS INTEGER) BETWEEN 2000 AND 2100
+     UNION
+     SELECT c.official_url, substr(jy.topic_key, length('year:') + 1)
+       FROM canonical c JOIN job_topics jy ON jy.job_id = c.id
+       WHERE jy.topic_key GLOB 'year:[0-9][0-9][0-9][0-9]'`,
+  );
+};
 
 const cachedFilterOptionsSql = `
   SELECT filter_key, value_label, job_count
@@ -174,8 +190,12 @@ const rowsToOptions = (rows: FilterOptionCountRow[]): JobFilterOptions => {
 };
 
 export async function queryJobFilterOptions(database: D1Database): Promise<JobFilterOptions> {
-  const result = await database.prepare(filterOptionsSql).all<FilterOptionCountRow>();
-  return rowsToOptions(result.results);
+  const rows: FilterOptionCountRow[] = [];
+  for (const key of jobFilterOptionKeys) {
+    const result = await database.prepare(filterOptionSql(key)).all<FilterOptionCountRow>();
+    rows.push(...result.results);
+  }
+  return rowsToOptions(rows);
 }
 
 export async function queryCachedJobFilterOptions(database: D1Database): Promise<JobFilterOptions | null> {
@@ -204,15 +224,22 @@ export async function refreshJobFilterOptions(
     };
   }
 
-  const computed = await database.prepare(filterOptionsSql).all<FilterOptionCountRow>();
+  const computed = await queryJobFilterOptions(database);
+  const computedRows: FilterOptionCountRow[] = jobFilterOptionKeys.flatMap((filterKey) =>
+    computed[filterKey].map(({ value, count }) => ({
+      filter_key: filterKey,
+      value_label: String(value),
+      job_count: count,
+    })),
+  );
   const refreshedAt = now.toISOString();
   await database.batch([
     database.prepare("DELETE FROM job_filter_options_cache"),
-    database.prepare(insertCachedFilterOptionsSql).bind(refreshedAt, JSON.stringify(computed.results)),
+    database.prepare(insertCachedFilterOptionsSql).bind(refreshedAt, JSON.stringify(computedRows)),
   ]);
   return {
     refreshed: true,
-    optionCount: computed.results.length,
+    optionCount: computedRows.length,
     refreshedAt,
   };
 }

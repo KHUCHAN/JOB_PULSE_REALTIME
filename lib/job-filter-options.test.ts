@@ -46,14 +46,26 @@ const schema = `
   );
 `;
 
-const createD1 = (sqlite: DatabaseSync, rejectLargeCompound = false): D1Database => {
+const createD1 = (
+  sqlite: DatabaseSync,
+  rejectLargeCompound = false,
+  maxFilterKeysPerQuery = Number.POSITIVE_INFINITY,
+): D1Database => {
   const statement = (sql: string, bindings: SQLInputValue[] = []) => ({
     bind: (...values: unknown[]) => statement(sql, values as SQLInputValue[]),
     async all<T>() {
       if (rejectLargeCompound && (sql.match(/UNION ALL/g) ?? []).length > 5) {
         throw new Error("D1_ERROR: too many terms in compound SELECT: SQLITE_ERROR");
       }
-      return { results: sqlite.prepare(sql).all(...bindings) as T[] };
+      const results = sqlite.prepare(sql).all(...bindings) as T[];
+      const filterKeys = new Set(results.flatMap((row) => {
+        if (typeof row !== "object" || row === null || !("filter_key" in row)) return [];
+        return [String(row.filter_key)];
+      }));
+      if (sql.includes("FROM jobs") && filterKeys.size > maxFilterKeysPerQuery) {
+        throw new Error("D1_ERROR: D1 DB exceeded its CPU time limit and was reset.");
+      }
+      return { results };
     },
     async first<T>() {
       return (sqlite.prepare(sql).get(...bindings) as T | undefined) ?? null;
@@ -205,6 +217,39 @@ describe("queryJobFilterOptions", () => {
 
     await refreshJobFilterOptions(d1, { force: true });
     expect((await queryCachedJobFilterOptions(d1))?.companies).toContainEqual({ value: "Beta", count: 1 });
+    sqlite.close();
+  });
+
+  it("refreshes the full snapshot while keeping each D1 aggregation to one facet", async () => {
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec(schema);
+    sqlite.exec(`
+      CREATE TABLE job_filter_options_cache (
+        filter_key TEXT NOT NULL,
+        normalized_value TEXT NOT NULL,
+        value_label TEXT NOT NULL,
+        job_count INTEGER NOT NULL,
+        refreshed_at TEXT NOT NULL,
+        PRIMARY KEY (filter_key, normalized_value)
+      );
+      INSERT INTO jobs (
+        id, company, title, location_region, arrangement, employment_type,
+        skills, languages, official_url, status, first_seen_at
+      ) VALUES
+        ('one', 'Acme', '2027 Software Engineering Intern', 'us', 'remote', 'Internship',
+         '["TypeScript"]', '["English"]', 'https://example.com/one', 'open', '2026-08-10');
+      INSERT INTO job_topics VALUES ('one', 'program:internship');
+    `);
+    const d1 = createD1(sqlite, false, 1);
+
+    await expect(refreshJobFilterOptions(d1, { force: true })).resolves.toEqual(
+      expect.objectContaining({ refreshed: true }),
+    );
+    const cached = await queryCachedJobFilterOptions(d1);
+    expect(cached?.companies).toEqual([{ value: "Acme", count: 1 }]);
+    expect(cached?.recruitingYears).toEqual([{ value: 2027, count: 1 }]);
+    expect(cached?.programTypes).toEqual([{ value: "internship", count: 1 }]);
+    expect(cached?.skills).toEqual([{ value: "TypeScript", count: 1 }]);
     sqlite.close();
   });
 });
