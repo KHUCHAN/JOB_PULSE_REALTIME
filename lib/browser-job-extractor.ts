@@ -2,7 +2,7 @@ import type { CrawledJob, CrawlSource } from "./crawler";
 
 export type BrowserAnchor = { href: string; text: string };
 
-const JOB_DETAIL = /(?:\/(?:jobs?|positions?|openings?|vacanc(?:y|ies))\/[^/?#]{3,}|\/careers\/(?:jobdetail|details)\/|\/careers\/[^?#]*(?:\d{4,}|[a-z]{1,4}-\d{3,})|[?&](?:jobid|job_id|gh_jid|reqid|pid|opportunityid)=)/i;
+const JOB_DETAIL = /(?:\/(?:jobs?|positions?|openings?|vacanc(?:y|ies))\/[^/?#]{3,}|\/careers\/(?:jobdetail|details)\/|\/careers\/[^?#]*(?:\d{4,}|[a-z]{1,4}-\d{3,})|\/corporate-careers\/jr-\d+\/[^/?#]+|\/[^/?#]+\/[^/?#]+\/[a-f0-9]{24,}\/job\/?(?:[?#]|$)|[?&](?:jobid|job_id|gh_jid|reqid|pid|opportunityid)=)/i;
 const LISTING_ONLY = /(?:search-jobs?|search-results|viewalljobs|job-opportunities|join(?:talent|[-_/]our[-_/]team)|talent-community|jobcart|jobs?\/(?:search|login)|positions?\/{1,2}filter)(?:[/?#]|$)/i;
 const CAREER_CONTENT_ONLY = /\/careers?\/(?:open-positions|view-jobs(?:\.html)?|jobs|culture|benefits)\/?(?:[?#].*)?$/i;
 const GENERIC_TEXT = /^(?:apply|apply now|form|here\.?|learn more(?: about this position)?|read more|view .+|see .+|explore .+|join .+|details|search .+ jobs?|careers?|career website|jobs?|benefits|student programs|open (?:positions?|roles)|skip to (?:main )?(?:jobs search results|content)|click here|(?:first|previous|next|last) page of results(?: first| last)?|page \d+ of \d+(?:\s*,\s*current page)?|your privacy choices|manage cookie preferences|notify me of new jobs|internal careers site|returning applicant login|stay connected|terms of use|total rewards|events|job search tool|chinese \((?:simplified|traditional)\)|french|german|italian|japanese|portuguese|spanish|next|previous)$/i;

@@ -2019,6 +2019,199 @@ Wrong description.
     expect(requests).toContain("https://r.jina.ai/https://careers.acme.example/search/jobs");
   });
 
+  it("recognizes rendered ASML, Eightfold, and SuccessFactors job detail routes", async () => {
+    const fetcher: typeof fetch = async (input) => String(input).startsWith("https://r.jina.ai/")
+      ? new Response([
+          "[Machine Learning Intern](https://careers.acme.example/en/careers/find-your-job/machine-learning-intern-j00349553)",
+          "[Software Engineer](https://careers.acme.example/careers/job/563121776085295)",
+          "[Data Analytics Director](https://careers.acme.example/default/job/Data-Analytics-Director/12804-en_US)",
+        ].join("\n"), { status: 200 })
+      : new Response("<main>Rendered job search</main>", { status: 200 });
+
+    const result = await crawlSource({
+      id: "rendered-detail-routes",
+      company: "Acme",
+      postingUrl: "https://careers.acme.example/careers",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result.status).toBe("succeeded");
+    expect(result.jobs.map((job) => job.title)).toEqual([
+      "Machine Learning Intern",
+      "Software Engineer",
+      "Data Analytics Director",
+    ]);
+  });
+
+  it("recognizes rendered DirectEmployers job detail routes", async () => {
+    const fetcher: typeof fetch = async (input) => String(input).startsWith("https://r.jina.ai/")
+      ? new Response("[Senior Data Engineer](https://aecom.jobs/brisbane-aus/senior-data-engineer/5771DC0FBDBA47DFB2B7099C488139C7/job/)", { status: 200 })
+      : new Response("<main>Rendered job search</main>", { status: 200 });
+
+    const result = await crawlSource({
+      id: "direct-employers-rendered",
+      company: "AECOM",
+      postingUrl: "https://aecom.jobs/",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result.status).toBe("succeeded");
+    expect(result.jobs.map((job) => job.title)).toEqual(["Senior Data Engineer"]);
+  });
+
+  it("uses the reader on a vetted rendered search page discovered from a careers landing page", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === "https://www.acme.example/careers") {
+        return new Response('<a href="/en/careers/find-your-job">Search jobs</a>', { status: 200 });
+      }
+      if (url === "https://www.acme.example/en/careers/find-your-job") {
+        return new Response("<main>Client-rendered results</main>", { status: 200 });
+      }
+      if (url === "https://r.jina.ai/https://www.acme.example/en/careers/find-your-job") {
+        return new Response("[Applied AI Intern](https://www.acme.example/en/careers/find-your-job/applied-ai-intern-j00349553)", { status: 200 });
+      }
+      return new Response("missing", { status: 404 });
+    };
+
+    const result = await crawlSource({
+      id: "rendered-search-candidate",
+      company: "Acme",
+      postingUrl: "https://www.acme.example/careers",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result.status).toBe("succeeded");
+    expect(result.completeListing).toBe(false);
+    expect(result.jobs.map((job) => job.title)).toEqual(["Applied AI Intern"]);
+    expect(result.resolvedListingUrl).toBe("https://www.acme.example/en/careers/find-your-job");
+    expect(requests).toContain("https://r.jina.ai/https://www.acme.example/en/careers/find-your-job");
+  });
+
+  it("follows a vetted all-jobs link discovered from a blocked landing-page reader", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === "https://www.acme.example/careers") return new Response("blocked", { status: 403 });
+      if (url === "https://r.jina.ai/https://www.acme.example/careers") {
+        return new Response("[View Open Positions](https://jobs.acme.example/jobs/)", { status: 200 });
+      }
+      if (url === "https://jobs.acme.example/jobs/") return new Response("<main>Rendered jobs</main>", { status: 200 });
+      if (url === "https://r.jina.ai/https://jobs.acme.example/jobs/") {
+        return new Response("[Applied AI Intern](https://jobs.acme.example/jobs/18099108-applied-ai-intern)", { status: 200 });
+      }
+      return new Response("missing", { status: 404 });
+    };
+
+    const result = await crawlSource({
+      id: "blocked-reader-navigation",
+      company: "Acme",
+      postingUrl: "https://www.acme.example/careers",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result.status).toBe("succeeded");
+    expect(result.completeListing).toBe(false);
+    expect(result.jobs.map((job) => job.title)).toEqual(["Applied AI Intern"]);
+    expect(result.resolvedListingUrl).toBe("https://jobs.acme.example/jobs/");
+    expect(requests).toContain("https://r.jina.ai/https://jobs.acme.example/jobs/");
+  });
+
+  it("paginates every Northwestern Mutual corporate career page without authorizing stale closure", async () => {
+    const requests: string[] = [];
+    const page = (pageNumber: number, first: number, last: number, rows: Array<[string, string]>) => [
+      `Displaying ${first} to ${last} of 3 matching jobs`,
+      ...rows.map(([id, title]) => `[${title}](https://careers.northwesternmutual.com/corporate-careers/${id}/${title.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-")}/)`),
+      ...(pageNumber === 1 ? ["[2](https://careers.northwesternmutual.com/corporate-careers/?page=2#results)"] : []),
+    ].join("\n");
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === "https://r.jina.ai/https://careers.northwesternmutual.com/corporate-careers/") {
+        return new Response(page(1, 1, 2, [["jr-45666", "Sr Analytics Engineer"], ["jr-45468", "Investment Accounting Internship"]]), { status: 200 });
+      }
+      if (url === "https://r.jina.ai/https://careers.northwesternmutual.com/corporate-careers/?page=2") {
+        return new Response(page(2, 3, 3, [["jr-45571", "Software Engineer II"]]), { status: 200 });
+      }
+      return new Response("blocked", { status: 403 });
+    };
+
+    const result = await crawlSource({
+      id: "northwestern-mutual-reader",
+      company: "Northwestern Mutual",
+      postingUrl: "https://careers.northwesternmutual.com/corporate-careers/",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests).toEqual([
+      "https://r.jina.ai/https://careers.northwesternmutual.com/corporate-careers/",
+      "https://r.jina.ai/https://careers.northwesternmutual.com/corporate-careers/?page=2",
+    ]);
+    expect(result.status).toBe("succeeded");
+    expect(result.completeListing).toBe(false);
+    expect(result.jobs.map((job) => job.title)).toEqual([
+      "Sr Analytics Engineer",
+      "Investment Accounting Internship",
+      "Software Engineer II",
+    ]);
+  });
+
+  it("loads the complete ASML catalog with rich fields from its official search API", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === "https://discover-euc1.sitecorecloud.io/discover/v2/126200477") {
+        return Response.json({ widgets: [{
+          total_item: 2,
+          limit: 100,
+          offset: 0,
+          facet: [{ name: "job_type", label: "Job Type", value: [{ text: "Internship", count: 1 }] }],
+          content: [
+            {
+              id: "J-00349553", job_id: "J-00349553", name: "Applied AI Intern",
+              job_location: "San Jose, CA, US", job_city: "San Jose", job_state: "CA", job_country: "US",
+              job_type: "Internship", job_teams: ["Data and Analytics"], job_technical_fields: ["Software"],
+              job_degrees: ["Master"], job_experience_levels: ["Student"], description: "<p>Build AI systems.</p>",
+              job_date_posted: "2026-08-12T00:00:00", url: "https://www.asml.com/en/careers/find-your-job/applied-ai-intern-j00349553",
+            },
+            {
+              id: "J-00349554", job_id: "J-00349554", name: "Software Engineer",
+              job_location: "Veldhoven, Netherlands", job_city: "Veldhoven", job_country: "Netherlands",
+              job_type: "Fix", job_date_posted: "2026-08-11T00:00:00",
+              url: "https://www.asml.com/en/careers/find-your-job/software-engineer-j00349554",
+            },
+          ],
+        }] });
+      }
+      return new Response("missing", { status: 404 });
+    };
+
+    const result = await crawlSource({
+      id: "p5-0550-asml",
+      company: "ASML",
+      postingUrl: "https://www.asml.com/careers",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests).toEqual(["https://discover-euc1.sitecorecloud.io/discover/v2/126200477"]);
+    expect(result.status).toBe("succeeded");
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        externalId: "J-00349553", title: "Applied AI Intern", employmentType: "Internship",
+        location: "San Jose, CA, US", locationCity: "San Jose", locationState: "CA", locationCountry: "US",
+        department: "Data and Analytics", jobFunction: "Software", educationRequirements: "Master",
+        experienceLevel: "Student", description: "Build AI systems.", publishedAt: "2026-08-12T00:00:00.000Z",
+      }),
+      expect.objectContaining({ externalId: "J-00349554", title: "Software Engineer", publishedAt: "2026-08-11T00:00:00.000Z" }),
+    ]);
+    expect(result.facets).toEqual([{ key: "job_type", label: "Job Type", values: [{ key: "Internship", label: "Internship", count: 1 }] }]);
+  });
+
   it("fully paginates a Talemetry JSON feed through the reader when the careers edge blocks requests", async () => {
     const requests: string[] = [];
     const feed = (page: number) => ({
@@ -2064,6 +2257,32 @@ Wrong description.
     ]);
     expect(requests).toContain("https://r.jina.ai/https://careers.acme.example/search/jobs.json?per_page=100&page=1");
     expect(requests).toContain("https://r.jina.ai/https://careers.acme.example/search/jobs.json?per_page=100&page=2");
+  });
+
+  it("supports Talemetry catalogs whose public route is jobs/search", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (!url.startsWith("https://r.jina.ai/")) return new Response("blocked", { status: 403 });
+      return new Response(JSON.stringify({
+        current_page: 1,
+        per_page: 100,
+        total_entries: 1,
+        entries: [{ id: "101", talemetry_job_id: "101", permalink: "data-intern", title: "Data Intern" }],
+      }), { status: 200 });
+    };
+
+    const result = await crawlSource({
+      id: "talemetry-reversed-route",
+      company: "CareFirst",
+      postingUrl: "https://carefirstcareers.ttcportals.com/jobs/search/",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result.status).toBe("succeeded");
+    expect(result.jobs.map((job) => job.title)).toEqual(["Data Intern"]);
+    expect(requests).toContain("https://r.jina.ai/https://carefirstcareers.ttcportals.com/jobs/search.json?per_page=100&page=1");
   });
 
   it("bypasses a stale reader challenge snapshot when the cached response has no jobs", async () => {
@@ -2906,6 +3125,33 @@ Wrong description.
         employmentType: "Internship",
         publishedAt: "2026-08-11T07:17:06.050Z",
       }),
+    ]);
+  });
+
+  it("uses Nutanix's localized public sitemap instead of its protected jobs page", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      return new Response(`<urlset>
+        <url><loc>https://careers.nutanix.com/en/jobs/30320/staff-engineer-linux-kernel-developer/</loc><lastmod>2026-08-11</lastmod></url>
+        <url><loc>https://careers.nutanix.com/en/jobs/31130/machine-learning-intern/</loc><lastmod>2026-08-12</lastmod></url>
+      </urlset>`, { status: 200 });
+    };
+
+    const result = await crawlSource({
+      id: "nutanix-sitemap",
+      company: "Nutanix",
+      postingUrl: "https://careers.nutanix.com/en/jobs/",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests).toEqual(["https://careers.nutanix.com/sitemap.xml"]);
+    expect(result.status).toBe("succeeded");
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs).toEqual([
+      expect.objectContaining({ externalId: "30320", title: "Staff Engineer Linux Kernel Developer" }),
+      expect.objectContaining({ externalId: "31130", title: "Machine Learning Intern", employmentType: "Internship" }),
     ]);
   });
 
@@ -3919,6 +4165,78 @@ Wrong description.
     expect(result.status).toBe("succeeded");
     expect(result.completeListing).toBe(true);
     expect(result.jobs.map((job) => job.title)).toEqual(["Machine Learning Intern"]);
+  });
+
+  it("loads a Workable board through its public jobs API", async () => {
+    const requests: Array<{ url: string; body: unknown }> = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      requests.push({ url: String(input), body: JSON.parse(String(init?.body ?? "{}")) });
+      return Response.json({
+        total: 1,
+        results: [{
+          id: 101,
+          shortcode: "ABC123",
+          title: "Applied AI Intern",
+          remote: true,
+          location: { city: "New York", region: "New York", country: "United States", countryCode: "US" },
+          locations: [{ city: "New York", region: "New York", country: "United States", countryCode: "US" }],
+          published: "2026-08-12T00:00:00.000Z",
+          type: "intern",
+          department: ["Engineering"],
+          workplace: "remote",
+        }],
+      });
+    };
+
+    const result = await crawlSource({
+      id: "workable-public",
+      company: "Acme",
+      postingUrl: "https://apply.workable.com/acme/",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests).toEqual([{ url: "https://apply.workable.com/api/v3/accounts/acme/jobs", body: {} }]);
+    expect(result.status).toBe("succeeded");
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "101", title: "Applied AI Intern", location: "New York, New York, United States",
+      locationCity: "New York", locationState: "New York", locationCountry: "United States",
+      arrangement: "remote", employmentType: "Internship", department: "Engineering",
+      officialUrl: "https://apply.workable.com/acme/j/ABC123/", publishedAt: "2026-08-12T00:00:00.000Z",
+    })]);
+  });
+
+  it("follows an official careers redirect to a Workable board", async () => {
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      if (url === "https://huggingface.co/careers") {
+        const response = new Response("<main>Workable</main>", { status: 200 });
+        Object.defineProperty(response, "url", { value: "https://apply.workable.com/huggingface/" });
+        return response;
+      }
+      if (url === "https://apply.workable.com/api/v3/accounts/huggingface/jobs") {
+        expect(init?.method).toBe("POST");
+        return Response.json({ total: 1, results: [{
+          id: 101,
+          shortcode: "ABC123",
+          title: "Machine Learning Engineer",
+          url: "https://apply.workable.com/huggingface/j/ABC123/",
+          location: { location_str: "Remote" },
+        }] });
+      }
+      return new Response("missing", { status: 404 });
+    };
+
+    const result = await crawlSource({
+      id: "workable-redirect",
+      company: "Hugging Face",
+      postingUrl: "https://huggingface.co/careers",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result.status).toBe("succeeded");
+    expect(result.jobs.map((job) => job.title)).toEqual(["Machine Learning Engineer"]);
+    expect(result.resolvedListingUrl).toBe("https://apply.workable.com/huggingface/");
   });
 
   it("supports Workday recruiting URLs hosted on myworkdaysite.com", async () => {

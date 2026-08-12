@@ -15,6 +15,12 @@ describe("career URL remediation", () => {
     expect(rankCareerLink({ href: "https://jobs.lever.co/acme", text: "Open roles" }, "https://acme.com/careers")).toBeGreaterThan(100);
   });
 
+  it("recognizes a company-branded .jobs catalog even when the CTA text is generic", () => {
+    const links = [{ href: "https://aecom.jobs/", text: "Apply now" }];
+    expect(careerCandidates(links, "https://aecom.com/careers")).toEqual(links);
+    expect(isSafeCareerRecommendation("AECOM", "https://aecom.com/careers", links[0].href)).toBe(true);
+  });
+
   it("prefers an all-jobs search over a single department landing page", () => {
     const links = [
       { href: "https://jobs.acme.com/sales-jobs", text: "See all sales jobs" },

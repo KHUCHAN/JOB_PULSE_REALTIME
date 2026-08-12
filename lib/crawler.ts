@@ -1254,21 +1254,27 @@ const uniqueJobs = (jobs: CrawledJob[]): CrawledJob[] => [
   ...new Map(jobs.map((job) => [job.officialUrl, job])).values(),
 ];
 
-const READER_JOB_DETAIL = /(?:\/jobs\/\d{4,}(?:[-/]|$)|\/site\/careers\/jobs\/\d+|\/careers\/(?:jobdetail(?:[/?]|$)|details\/|position\/)|[?&](?:jobid|job_id|gh_jid|reqid|pid|opportunityid)=)/i;
+const READER_JOB_DETAIL = /(?:\/jobs\/\d{4,}(?:[-/]|$)|\/site\/careers\/jobs\/\d+|\/careers\/(?:job\/\d+|find-your-job\/[^/?#]+-j\d+|jobdetail(?:[/?]|$)|details\/|position\/)|\/[^/?#]+\/[^/?#]+\/[a-f0-9]{24,}\/job\/?(?:[?#]|$)|\/(?:default|[a-z]{2}(?:_[a-z]{2})?|[^/?#]+)\/job\/[^/?#]+\/\d+(?:-[^/?#]+)?(?:[/?#]|$)|[?&](?:jobid|job_id|gh_jid|reqid|pid|opportunityid)=)/i;
+
+const markdownAnchors = (markdown: string, baseUrl: string): BrowserAnchor[] => [...markdown.matchAll(
+  /\[([^\]]{2,240})\]\((https?:\/\/[^)\s]+|\/[^)\s]+)\)/g,
+)].flatMap((match) => {
+  try {
+    const url = new URL(match[2], baseUrl);
+    const text = match[1].replaceAll(/[*_#`]/g, "").replace(/^!\[?/, "").replace(/\s+/g, " ").trim();
+    return text.length >= 2 && text.length <= 180 ? [{ href: url.href, text }] : [];
+  } catch {
+    return [];
+  }
+});
 
 const markdownJobAnchors = (markdown: string, source: CrawlSource): BrowserAnchor[] => {
   const sourceHost = new URL(source.postingUrl).hostname.replace(/^www\./, "");
-  return [...markdown.matchAll(/\[([^\]]{2,240})\]\((https?:\/\/[^)\s]+|\/[^)\s]+)\)/g)].flatMap((match) => {
-    let url: URL;
-    try {
-      url = new URL(match[2], source.postingUrl);
-    } catch {
-      return [];
-    }
+  return markdownAnchors(markdown, source.postingUrl).flatMap(({ href, text }) => {
+    const url = new URL(href);
     const targetHost = url.hostname.replace(/^www\./, "");
     if (!targetHost.endsWith(sourceHost) && !sourceHost.endsWith(targetHost)) return [];
     if (!READER_JOB_DETAIL.test(`${url.pathname}${url.search}`)) return [];
-    const text = match[1].replaceAll(/[*_#`]/g, "").replace(/^!\[?/, "").replace(/\s+/g, " ").trim();
     return text.length >= 4 && text.length <= 180 ? [{ href: url.href, text }] : [];
   });
 };
@@ -1312,13 +1318,51 @@ const crawlReaderFallback = async (
         ...jobsFromBrowserAnchors(markdownJobAnchors(markdown, source), source),
         ...markdownStaticJobs(markdown, source),
       ]);
-      return jobs.length > 0 ? {
+      if (jobs.length > 0) return {
         status: "succeeded",
         responseStatus: 200,
         completeListing: false,
         jobs,
         error: null,
-      } : null;
+      };
+      if ((source.discoveryDepth ?? 0) === 0) {
+        const current = new URL(source.postingUrl);
+        current.hash = "";
+        const candidates = careerCandidates(markdownAnchors(markdown, source.postingUrl), source.postingUrl)
+          .filter(({ href }) => isSafeCareerRecommendation(source.company, source.postingUrl, href))
+          .filter(({ href }) => preservesTenantScope(source.postingUrl, href))
+          .filter(({ href }) => companyScopeMatches(source.company, source.postingUrl, href))
+          .filter(({ href }) => {
+            try {
+              const candidate = new URL(href, source.postingUrl);
+              candidate.hash = "";
+              return candidate.href !== current.href;
+            } catch {
+              return false;
+            }
+          })
+          .slice(0, 3);
+        for (const candidate of candidates) {
+          const candidateUrl = new URL(candidate.href, source.postingUrl);
+          candidateUrl.hash = "";
+          const candidateSource = {
+            ...source,
+            postingUrl: candidateUrl.href,
+            adapter: detectUrlAdapter(candidateUrl.href),
+            discoveryDepth: 1,
+          };
+          const candidateResult = await crawlSourceBase(candidateSource, fetcher, now);
+          const renderedCandidate = candidateResult.status === "succeeded" && candidateResult.jobs.length > 0
+            ? candidateResult
+            : await crawlReaderFallback(candidateSource, fetcher, now);
+          if (renderedCandidate?.status === "succeeded" && renderedCandidate.jobs.length > 0) return {
+            ...renderedCandidate,
+            completeListing: false,
+            resolvedListingUrl: candidateUrl.href,
+          };
+        }
+      }
+      return null;
     };
     const response = await fetchWithTimeout(fetcher, endpoint, { headers: baseHeaders }, false);
     if (!response.ok) return null;
@@ -1334,6 +1378,60 @@ const crawlReaderFallback = async (
   } catch {
     return null;
   }
+};
+
+const crawlNorthwesternMutual = async (
+  source: CrawlSource,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult | null> => {
+  const pageUrl = new URL(source.postingUrl);
+  pageUrl.search = "";
+  pageUrl.hash = "";
+  const fetchPage = async (page: number): Promise<{ markdown: string; jobs: CrawledJob[] } | null> => {
+    const target = new URL(pageUrl);
+    if (page > 1) target.searchParams.set("page", String(page));
+    try {
+      const response = await fetchWithTimeout(fetcher, `https://r.jina.ai/${target.href}`, {
+        headers: { accept: "text/plain", "x-retain-links": "all" },
+      }, false, { attempts: 2, timeoutMs: 30_000 });
+      if (!response.ok) return null;
+      const markdown = await response.text();
+      const anchors = markdownAnchors(markdown, target.href).filter(({ href }) => {
+        try {
+          const url = new URL(href);
+          return url.origin === pageUrl.origin && /\/corporate-careers\/jr-\d+\/[^/?#]+\/?$/i.test(url.pathname);
+        } catch {
+          return false;
+        }
+      });
+      return { markdown, jobs: jobsFromBrowserAnchors(anchors, { ...source, postingUrl: target.href }) };
+    } catch {
+      return null;
+    }
+  };
+
+  const first = await fetchPage(1);
+  if (!first || first.jobs.length === 0) return null;
+  const range = first.markdown.match(/Displaying\s+\*{0,2}\d+\*{0,2}\s+to\s+\*{0,2}([\d,]+)\*{0,2}\s+of\s+\*{0,2}([\d,]+)\*{0,2}\s+matching jobs/i);
+  const pageSize = Number((range?.[1] ?? String(first.jobs.length)).replaceAll(",", ""));
+  const total = Number((range?.[2] ?? String(first.jobs.length)).replaceAll(",", ""));
+  const totalPages = Math.min(Math.max(1, Math.ceil(total / Math.max(pageSize, 1))), 100);
+  const pages: Array<{ markdown: string; jobs: CrawledJob[] } | null> = [first];
+  for (let page = 2; page <= totalPages; page += 4) {
+    pages.push(...await Promise.all(Array.from(
+      { length: Math.min(4, totalPages - page + 1) },
+      (_, index) => fetchPage(page + index),
+    )));
+  }
+  const jobs = uniqueJobs(pages.flatMap((page) => page?.jobs ?? []));
+  return {
+    status: "succeeded",
+    responseStatus: 200,
+    // The reader is a recovery surface, not an authoritative closure signal.
+    completeListing: false,
+    jobs,
+    error: null,
+  };
 };
 
 const parseTalemetryPayload = (text: string): TalemetryPayload | null => {
@@ -1353,9 +1451,10 @@ const crawlTalemetryJson = async (
   fetcher: typeof fetch,
 ): Promise<SourceCrawlResult | null> => {
   const posting = new URL(source.postingUrl);
-  if (!/\/search\/jobs\/?$/i.test(posting.pathname)) return null;
+  const route = posting.pathname.match(/\/(search\/jobs|jobs\/search)\/?$/i)?.[1];
+  if (!route) return null;
   const endpointFor = (page: number) => {
-    const endpoint = new URL("/search/jobs.json", posting.origin);
+    const endpoint = new URL(`/${route}.json`, posting.origin);
     endpoint.searchParams.set("per_page", "100");
     endpoint.searchParams.set("page", String(page));
     return endpoint;
@@ -2750,6 +2849,17 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
         error: `Career site returned HTTP ${response.status}.`,
       };
     }
+    const finalPage = new URL(response.url || source.postingUrl);
+    if (finalPage.hostname === "apply.workable.com") {
+      const workable = await crawlWorkable({
+        ...source,
+        postingUrl: finalPage.href,
+        adapter: "custom",
+      }, fetcher);
+      return workable.status === "succeeded"
+        ? { ...workable, resolvedListingUrl: finalPage.href }
+        : workable;
+    }
     const html = await response.text();
     const deel = deelJobs(html, source);
     if (deel) return {
@@ -2847,14 +2957,22 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
           adapter: detectUrlAdapter(candidateUrl.href),
           discoveryDepth: 1,
         }, fetcher, now);
-        if (candidateResult.status === "succeeded" && candidateResult.jobs.length > 0) {
+        const renderedCandidate = candidateResult.status === "succeeded" && candidateResult.jobs.length > 0
+          ? candidateResult
+          : await crawlReaderFallback({
+              ...source,
+              postingUrl: candidateUrl.href,
+              adapter: detectUrlAdapter(candidateUrl.href),
+              discoveryDepth: 1,
+            }, fetcher, now);
+        if (renderedCandidate?.status === "succeeded" && renderedCandidate.jobs.length > 0) {
           // A link discovered from a careers landing page can still be a
           // departmental or otherwise partial listing. Persist its jobs, but
           // never let that one-hop discovery close jobs that were not present.
           // Once the URL is vetted and promoted into the source catalog, its
           // native adapter may authoritatively complete the listing.
           return {
-            ...candidateResult,
+            ...renderedCandidate,
             completeListing: false,
             resolvedListingUrl: candidateUrl.href,
           };
@@ -3530,7 +3648,7 @@ const sitemapJobEntries = (xml: string, expectedHost: string): Array<{ url: stri
     } catch {
       return [];
     }
-    if (url.hostname !== expectedHost || !/^\/jobs\/[^/]+\/[^/]+\/?$/i.test(url.pathname)) return [];
+    if (url.hostname !== expectedHost || !/^\/(?:[a-z]{2}\/)?jobs\/[^/]+\/[^/]+\/?$/i.test(url.pathname)) return [];
     const lastModified = match[1].match(/<lastmod(?:ified)?>\s*([\s\S]*?)\s*<\/lastmod(?:ified)?>/i)?.[1]?.trim() ?? null;
     return [{ url: url.href, lastModified }];
   })
@@ -3549,8 +3667,9 @@ const crawlJobSitemap = async (
     if (entries.length === 0) return null;
     const jobs = entries.flatMap((entry): CrawledJob[] => {
       const segments = new URL(entry.url).pathname.split("/").filter(Boolean);
-      const externalId = segments[1];
-      const title = careerSlugTitle(segments[2] ?? "");
+      const jobsIndex = segments.findIndex((segment) => segment.toLocaleLowerCase() === "jobs");
+      const externalId = segments[jobsIndex + 1];
+      const title = careerSlugTitle(segments[jobsIndex + 2] ?? "");
       if (!externalId || !title) return [];
       const programs = classifyJobPrograms(title);
       return [{
@@ -3571,6 +3690,318 @@ const crawlJobSitemap = async (
       status: "succeeded",
       responseStatus: response.status,
       completeListing: jobs.length === entries.length,
+      jobs,
+      error: null,
+    };
+  } catch {
+    return null;
+  }
+};
+
+type AsmlSearchJob = {
+  id?: string;
+  job_id?: string;
+  name?: string;
+  description?: string | null;
+  job_location?: string | null;
+  job_city?: string | null;
+  job_state?: string | null;
+  job_country?: string | null;
+  job_type?: string | null;
+  job_teams?: string[] | null;
+  job_technical_fields?: string[] | null;
+  job_degrees?: string[] | null;
+  job_educational_backgrounds?: string[] | null;
+  job_experience_levels?: string[] | null;
+  job_date_posted?: string | null;
+  url?: string;
+};
+
+type AsmlSearchWidget = {
+  total_item?: number;
+  limit?: number;
+  offset?: number;
+  content?: AsmlSearchJob[];
+  facet?: Array<{ name?: string; label?: string; value?: Array<{ text?: string; count?: number }> }>;
+  errors?: unknown[];
+};
+
+type WorkableLocation = {
+  city?: string | null;
+  region?: string | null;
+  country?: string | null;
+  countryCode?: string | null;
+};
+
+type WorkableJob = {
+  id?: number | string;
+  shortcode?: string;
+  title?: string;
+  remote?: boolean;
+  location?: WorkableLocation | null;
+  locations?: WorkableLocation[];
+  published?: string | null;
+  type?: string | null;
+  department?: string[];
+  workplace?: string | null;
+};
+
+const crawlWorkable = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const page = new URL(source.postingUrl);
+  const account = page.pathname.split("/").filter(Boolean)[0];
+  if (!account) return { status: "failed", responseStatus: null, completeListing: false, jobs: [], error: "Workable account is missing." };
+  const endpoint = new URL(`/api/v3/accounts/${encodeURIComponent(account)}/jobs`, page.origin);
+  const maximumPages = 100;
+  let responseStatus: number | null = null;
+  let total = 0;
+  let nextPage: string | null = null;
+  const raw: WorkableJob[] = [];
+  let successfulPages = 0;
+  try {
+    do {
+      const response = await fetchWithTimeout(fetcher, endpoint, {
+        method: "POST",
+        headers: { accept: "application/json", "content-type": "application/json" },
+        body: JSON.stringify(nextPage ? { token: nextPage } : {}),
+      });
+      responseStatus = response.status;
+      if (!response.ok) return {
+        status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
+        responseStatus,
+        completeListing: false,
+        jobs: [],
+        error: `Workable returned HTTP ${response.status}.`,
+      };
+      const payload = await response.json() as { total?: number; results?: WorkableJob[]; nextPage?: string | null };
+      if (!Array.isArray(payload.results) || !Number.isFinite(payload.total)) throw new Error("Workable returned an unusable jobs payload.");
+      if (successfulPages === 0) total = Number(payload.total);
+      if (Number(payload.total) !== total) throw new Error("Workable job count changed during pagination.");
+      raw.push(...payload.results);
+      nextPage = asText(payload.nextPage);
+      successfulPages += 1;
+    } while (nextPage && successfulPages < maximumPages);
+    const jobs = raw.flatMap((job): CrawledJob[] => {
+      const externalId = job.id == null ? null : String(job.id);
+      const title = asText(job.title);
+      const shortcode = asText(job.shortcode);
+      if (!externalId || !title || !shortcode) return [];
+      const location = job.location ?? job.locations?.[0] ?? null;
+      const locationText = location ? [location.city, location.region, location.country].filter(Boolean).join(", ") || null : null;
+      const workplace = job.workplace ?? (job.remote ? "remote" : "");
+      const programs = classifyJobPrograms(title);
+      const employmentType = programs.keys.some((key) => key === "internship" || key === "coop") || /intern|trainee/i.test(job.type ?? "")
+        ? "Internship"
+        : /full/i.test(job.type ?? "") ? "Full-time"
+          : /part/i.test(job.type ?? "") ? "Part-time"
+            : normalizeEmploymentType(job.type);
+      return [{
+        externalId,
+        title,
+        company: source.company,
+        location: locationText,
+        arrangement: /remote/i.test(workplace) ? "remote" : /hybrid/i.test(workplace) ? "hybrid" : /on.?site/i.test(workplace) ? "onsite" : "unknown",
+        employmentType,
+        summary: null,
+        ...(job.department?.length ? { department: job.department.join("; ") } : {}),
+        ...(job.locations && job.locations.length > 1 ? { secondaryLocations: job.locations.slice(1).map((value) => [value.city, value.region, value.country].filter(Boolean).join(", ")).filter(Boolean) } : {}),
+        ...(asText(location?.city) ? { locationCity: asText(location?.city) } : {}),
+        ...(asText(location?.region) ? { locationState: asText(location?.region) } : {}),
+        ...(asText(location?.country) ? { locationCountry: asText(location?.country) } : {}),
+        requisitionId: externalId,
+        officialUrl: new URL(`/${encodeURIComponent(account)}/j/${encodeURIComponent(shortcode)}/`, page.origin).href,
+        publishedAt: normalizedDate(job.published),
+      }];
+    });
+    const unique = uniqueJobs(jobs);
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: !nextPage && successfulPages < maximumPages && raw.length === total && jobs.length === raw.length && unique.length === total,
+      jobs: unique,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: responseStatus != null && isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Workable crawler error.",
+    };
+  }
+};
+
+const crawlAsmlSearch = async (
+  source: CrawlSource,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult | null> => {
+  const endpoint = "https://discover-euc1.sitecorecloud.io/discover/v2/126200477";
+  const pageSize = 100;
+  const maximumJobs = 10_000;
+  const fetchPage = async (offset: number, includeFacets: boolean): Promise<{ status: number; widget: AsmlSearchWidget } | null> => {
+    try {
+      const body = {
+        context: {
+          page: { uri: "https://www.asml.com/en/careers/find-your-job" },
+          locale: { country: "us", language: "en" },
+        },
+        widget: { items: [{
+          entity: "content",
+          rfk_id: "asml_job_search",
+          search: {
+            limit: pageSize,
+            offset,
+            ...(includeFacets ? { facet: { all: true } } : {}),
+            content: {},
+          },
+        }] },
+      };
+      const response = await fetchWithTimeout(fetcher, endpoint, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          authorization: "01-967712c8-5a349c1760436ea6dccfd7bb02bfbe4dc2ccc36c",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(body),
+      }, false, { attempts: 2, timeoutMs: 30_000 });
+      if (!response.ok) return null;
+      const payload = await response.json() as { widgets?: AsmlSearchWidget[] };
+      const widget = payload.widgets?.find((value) => Array.isArray(value.content));
+      return widget ? { status: response.status, widget } : null;
+    } catch {
+      return null;
+    }
+  };
+  const first = await fetchPage(0, true);
+  if (!first) return null;
+  const total = Math.max(0, Number(first.widget.total_item ?? first.widget.content?.length ?? 0));
+  if (total === 0 || total > maximumJobs) return null;
+  const offsets = Array.from({ length: Math.max(0, Math.ceil(total / pageSize) - 1) }, (_, index) => (index + 1) * pageSize);
+  const pages: Array<typeof first | null> = [first];
+  for (let index = 0; index < offsets.length; index += 6) {
+    pages.push(...await Promise.all(offsets.slice(index, index + 6).map((offset) => fetchPage(offset, false))));
+  }
+  const raw = pages.flatMap((page) => page?.widget.content ?? []);
+  const asmlDate = (value: string | null | undefined): string | null => normalizedDate(
+    value && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/i.test(value) ? `${value}Z` : value,
+  );
+  const jobs = raw.flatMap((job): CrawledJob[] => {
+    const externalId = asText(job.job_id) ?? asText(job.id);
+    const title = asText(job.name);
+    if (!externalId || !title || !job.url) return [];
+    let officialUrl: URL;
+    try {
+      officialUrl = new URL(job.url);
+    } catch {
+      return [];
+    }
+    if (officialUrl.origin !== "https://www.asml.com" || !/^\/en\/careers\/find-your-job\//i.test(officialUrl.pathname)) return [];
+    const description = plainText(job.description);
+    const programs = classifyJobPrograms(title);
+    const employmentType = programs.keys.some((key) => key === "internship" || key === "coop") || /intern/i.test(job.job_type ?? "")
+      ? "Internship"
+      : /\bfix(?:ed)?\b|regular|full.?time/i.test(job.job_type ?? "") ? "Full-time"
+        : normalizeEmploymentType(job.job_type);
+    const technicalFields = job.job_technical_fields?.filter(Boolean) ?? [];
+    const teams = job.job_teams?.filter(Boolean) ?? [];
+    const degrees = job.job_degrees?.filter(Boolean) ?? [];
+    const education = job.job_educational_backgrounds?.filter(Boolean) ?? [];
+    const experience = job.job_experience_levels?.filter(Boolean) ?? [];
+    return [{
+      externalId,
+      title,
+      company: source.company,
+      location: asText(job.job_location),
+      arrangement: /\bremote\b/i.test(`${job.job_location ?? ""} ${description ?? ""}`) ? "remote" : "unknown",
+      employmentType,
+      summary: description,
+      ...(description ? { description } : {}),
+      ...(technicalFields.length ? { skills: technicalFields, jobFunction: technicalFields.join("; ") } : {}),
+      ...(teams.length ? { department: teams.join("; ") } : {}),
+      ...(degrees.length || education.length ? { educationRequirements: [...degrees, ...education].join("; ") } : {}),
+      ...(experience.length ? { experienceLevel: experience.join("; ") } : {}),
+      ...(asText(job.job_city) ? { locationCity: asText(job.job_city) } : {}),
+      ...(asText(job.job_state) ? { locationState: asText(job.job_state) } : {}),
+      ...(asText(job.job_country) ? { locationCountry: asText(job.job_country) } : {}),
+      requisitionId: externalId,
+      officialUrl: officialUrl.href,
+      publishedAt: asmlDate(job.job_date_posted),
+      sourceUpdatedAt: asmlDate(job.job_date_posted),
+    }];
+  });
+  const unique = uniqueJobs(jobs);
+  const facets = (first.widget.facet ?? []).flatMap((facet): CrawledFacet[] => {
+    if (!facet.name) return [];
+    const values = (facet.value ?? []).flatMap((value) => value.text
+      ? [{ key: value.text, label: value.text, count: Number.isFinite(value.count) ? value.count! : null }]
+      : []);
+    return values.length ? [{ key: facet.name, label: facet.label ?? facet.name, values }] : [];
+  });
+  const exact = pages.every(Boolean)
+    && pages.every((page) => Number(page?.widget.total_item) === total)
+    && raw.length === total
+    && jobs.length === raw.length
+    && unique.length === total;
+  return {
+    status: "succeeded",
+    responseStatus: first.status,
+    completeListing: exact,
+    jobs: unique,
+    ...(facets.length ? { facets } : {}),
+    error: null,
+  };
+};
+
+const crawlAsmlSitemap = async (
+  source: CrawlSource,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult | null> => {
+  try {
+    const endpoint = "https://www.asml.com/api/job-posting-sitemap";
+    const response = await fetchWithTimeout(fetcher, endpoint, { headers: { accept: "application/xml,text/xml;q=0.9" } });
+    if (!response.ok) return null;
+    const xml = await response.text();
+    const entries = [...xml.matchAll(/<url\b[^>]*>([\s\S]*?)<\/url>/gi)].flatMap((match) => {
+      const rawUrl = match[1].match(/<loc>\s*([\s\S]*?)\s*<\/loc>/i)?.[1];
+      if (!rawUrl) return [];
+      let url: URL;
+      try {
+        url = new URL(decodeHtmlAttribute(rawUrl.trim()));
+      } catch {
+        return [];
+      }
+      if (url.origin !== "https://www.asml.com") return [];
+      const detail = url.pathname.match(/^\/en\/careers\/find-your-job\/(.+)-(j\d+)\/?$/i);
+      if (!detail) return [];
+      const lastModified = match[1].match(/<lastmod(?:ified)?>\s*([\s\S]*?)\s*<\/lastmod(?:ified)?>/i)?.[1]?.trim() ?? null;
+      return [{ url: url.href, slug: detail[1], externalId: detail[2].toUpperCase(), lastModified }];
+    });
+    if (entries.length === 0) return null;
+    const jobs = entries.map((entry): CrawledJob => {
+      const title = careerSlugTitle(entry.slug);
+      const programs = classifyJobPrograms(title);
+      return {
+        externalId: entry.externalId,
+        title,
+        company: source.company,
+        location: null,
+        arrangement: "unknown",
+        employmentType: programs.keys.some((key) => key === "internship" || key === "coop") ? "Internship" : null,
+        summary: null,
+        requisitionId: entry.externalId,
+        ...(entry.lastModified ? { sourceUpdatedAt: normalizedDate(entry.lastModified) } : {}),
+        officialUrl: entry.url,
+        publishedAt: normalizedDate(entry.lastModified),
+      };
+    });
+    const exact = jobs.length === entries.length
+      && new Set(jobs.map((job) => job.externalId)).size === entries.length
+      && new Set(jobs.map((job) => job.officialUrl)).size === entries.length;
+    return {
+      status: "succeeded",
+      responseStatus: response.status,
+      completeListing: exact,
       jobs,
       error: null,
     };
@@ -5042,6 +5473,13 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
     source = { ...source, postingUrl: originalPage.href };
   }
   const sourcePage = new URL(source.postingUrl);
+  if (sourcePage.hostname === "apply.workable.com") return crawlWorkable(source, fetcher);
+  if (sourcePage.hostname === "www.asml.com" && sourcePage.pathname.includes("/careers")) {
+    const search = await crawlAsmlSearch(source, fetcher);
+    if (search) return search;
+    const sitemap = await crawlAsmlSitemap(source, fetcher);
+    if (sitemap) return sitemap;
+  }
   if (sourcePage.hostname === "www.atlassian.com" && sourcePage.pathname.includes("/company/careers")) return crawlAtlassian(source, fetcher);
   if (sourcePage.hostname === "www.okta.com" && sourcePage.pathname.includes("/company/careers/job-listing")) return crawlOktaCareers(source, fetcher);
   if (sourcePage.hostname === "www.amazon.jobs" || sourcePage.hostname === "amazon.jobs") return crawlAmazonJobs(source, fetcher);
@@ -5062,6 +5500,15 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   if (sourcePage.hostname === "mycareer.verizon.com") {
     const sitemap = await crawlJobSitemap(source, "https://mycareer.verizon.com/en/jobs/sitemap.xml", "mycareer.verizon.com", fetcher);
     if (sitemap) return sitemap;
+  }
+  if (sourcePage.hostname === "careers.nutanix.com") {
+    const sitemap = await crawlJobSitemap(source, "https://careers.nutanix.com/sitemap.xml", "careers.nutanix.com", fetcher);
+    if (sitemap) return sitemap;
+  }
+  if (sourcePage.hostname === "careers.northwesternmutual.com"
+    && /\/corporate-careers\/?$/i.test(sourcePage.pathname)) {
+    const result = await crawlNorthwesternMutual(source, fetcher);
+    if (result) return result;
   }
   if (sourcePage.hostname === "www.citadel.com") return crawlCitadel(source, fetcher);
   if (source.id === "p5-1077-tesla" || source.company === "Tesla") return crawlTesla(source, fetcher);

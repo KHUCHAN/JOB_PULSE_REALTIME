@@ -104,6 +104,19 @@ describe("jobsFromBrowserAnchors", () => {
     })]);
   });
 
+  it("keeps DirectEmployers detail links with a stable requisition identity", () => {
+    const directEmployers = { ...source, postingUrl: "https://aecom.jobs/" };
+    const jobs = jobsFromBrowserAnchors([{
+      href: "https://aecom.jobs/brisbane-aus/senior-data-engineer/5771DC0FBDBA47DFB2B7099C488139C7/job/",
+      text: "Senior Data Engineer",
+    }], directEmployers);
+
+    expect(jobs).toEqual([expect.objectContaining({
+      title: "Senior Data Engineer",
+      officialUrl: "https://aecom.jobs/brisbane-aus/senior-data-engineer/5771DC0FBDBA47DFB2B7099C488139C7/job/",
+    })]);
+  });
+
   it("derives a real title from a detail URL when the anchor is a generic CTA", () => {
     const jobs = jobsFromBrowserAnchors([
       { href: "https://acme.com/careers/openings/data/senior-data-scientist-network-value/", text: "See role" },

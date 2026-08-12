@@ -46,6 +46,7 @@ export const rankCareerLink = (link: BrowserLink, currentUrl: string): number =>
   if (/linkedin\.com|indeed\.com|glassdoor\.com|facebook\.com|instagram\.com|twitter\.com|x\.com/i.test(url.hostname)) return -100;
   let score = 0;
   if (ATS_HOST.test(url.hostname)) score += 70;
+  if (/\.jobs$/i.test(url.hostname)) score += 45;
   if (JOB_TEXT.test(link.text)) score += 35;
   if (JOB_PATH.test(`${url.pathname}${url.search}`)) score += 25;
   if (/^(?:jobs?|careers?)\./i.test(url.hostname)) score += 25;
@@ -110,6 +111,7 @@ export const isSafeCareerRecommendation = (company: string, originalUrl: string,
   const companyMatch = tokens.some((token) => destination.includes(token));
   if (!companyMatch) return false;
   return ATS_HOST.test(recommended.hostname)
+    || /\.jobs$/i.test(recommended.hostname)
     || /^(?:jobs?|careers?|talent)\./i.test(recommended.hostname)
     || /careers?/i.test(recommended.hostname)
     || JOB_PATH.test(`${recommended.pathname}${recommended.search}`);
