@@ -4407,4 +4407,208 @@ Wrong description.
       officialUrl: "https://careers.kula.ai/acme/47740/?domain=acme.com",
     })]);
   });
+
+  it("uses a verified Greenhouse feed without waiting on the rendered company landing page", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      expect(url).toBe("https://boards-api.greenhouse.io/v1/boards/affirm/jobs?content=true");
+      return Response.json({ jobs: [{
+        id: 101,
+        title: "Machine Learning Intern",
+        absolute_url: "https://job-boards.greenhouse.io/affirm/jobs/101",
+      }] });
+    };
+
+    const result = await crawlSource({
+      id: "p2-0070-affirm",
+      company: "Affirm",
+      postingUrl: "https://www.affirm.com/careers",
+      adapter: "greenhouse",
+    }, fetcher, new Date());
+
+    expect(requests).toHaveLength(1);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://job-boards.greenhouse.io/affirm",
+    }));
+    expect(result.jobs.map((job) => job.title)).toEqual(["Machine Learning Intern"]);
+  });
+
+  it("crawls every Dow job through the official Coveo search API", async () => {
+    const requests: string[] = [];
+    const makeResult = (index: number) => ({
+      title: index === 0 ? "2027 Data Science Co-op" : `Research Engineer ${index}`,
+      printableUri: `https://dow.wd1.myworkdayjobs.com/ExternalCareers/job/Midland-MI-USA/Role-${index}_R${1000 + index}`,
+      excerpt: "Build production systems.",
+      raw: {
+        dow_jobreqid: `R${1000 + index}`,
+        dow_jobtitle: index === 0 ? "2027 Data Science Co-op" : `Research Engineer ${index}`,
+        dow_joburl: `https://dow.wd1.myworkdayjobs.com/ExternalCareers/job/Midland-MI-USA/Role-${index}_R${1000 + index}`,
+        dow_jobapplyurl: `https://dow.wd1.myworkdayjobs.com/ExternalCareers/job/Midland-MI-USA/Role-${index}_R${1000 + index}/apply`,
+        dow_jobsitenames: ["Midland (MI, USA)"],
+        dow_jobcities: ["U.S. & Canada//United States of America//Michigan//Midland"],
+        dow_jobcountries: ["U.S. & Canada//United States of America"],
+        dow_remotetype: "Hybrid",
+        dow_jobreqtimetype: "Full time",
+        dow_jobdescription: "<p>Build models.</p>",
+        dow_jobstartdate: 1786492800000,
+      },
+    });
+    const allResults = Array.from({ length: 101 }, (_, index) => makeResult(index));
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      requests.push(url);
+      if (url.includes(".dow.search.token.servlet.json")) {
+        return Response.json({ org: "dow-production", token: "a-valid-ephemeral-token-value" });
+      }
+      if (url !== "https://dow-production.org.coveo.com/rest/search/v2") return new Response("missing detail", { status: 404 });
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer a-valid-ephemeral-token-value");
+      const body = JSON.parse(String(init?.body)) as { firstResult: number };
+      return Response.json({ totalCount: 101, results: allResults.slice(body.firstResult, body.firstResult + 100) });
+    };
+
+    const result = await crawlSource({
+      id: "legacy-row-803",
+      company: "Dow",
+      postingUrl: "https://corporate.dow.com/en-us/careers/jobs.html",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests.filter((url) => url === "https://dow-production.org.coveo.com/rest/search/v2")).toHaveLength(2);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://corporate.dow.com/en-us/careers/jobs.html",
+    }));
+    expect(result.jobs).toHaveLength(101);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "R1000",
+      title: "2027 Data Science Co-op",
+      employmentType: "Internship",
+      arrangement: "hybrid",
+      locationCity: "Midland",
+      locationState: "Michigan",
+      locationCountry: "United States of America",
+    }));
+  });
+
+  it("fails closed when Dow returns malformed job identities", async () => {
+    const fetcher: typeof fetch = async (input) => String(input).includes(".dow.search.token.servlet.json")
+      ? Response.json({ org: "dow-production", token: "a-valid-ephemeral-token-value" })
+      : Response.json({ totalCount: 1, results: [{ title: "Missing official URL", raw: {} }] });
+
+    const result = await crawlSource({
+      id: "legacy-row-803",
+      company: "Dow",
+      postingUrl: "https://corporate.dow.com/en-us/careers/jobs.html",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result.status).toBe("succeeded");
+    expect(result.completeListing).toBe(false);
+    expect(result.jobs).toEqual([]);
+  });
+
+  it("crawls a Jobsyn-backed listing in bounded pages with stable official URLs", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = new URL(String(input));
+      requests.push(url.href);
+      if (url.hostname === "aecom.jobs") {
+        return new Response('<script>const api="https://prod-search-api.jobsyn.org/api/"; const source="solr";</script>');
+      }
+      expect(new Headers(init?.headers).get("x-origin")).toBe("aecom.jobs");
+      const page = Number(url.searchParams.get("page"));
+      return Response.json({
+        jobs: [{
+          guid: `guid-${page}`,
+          title_exact: page === 1 ? "AI Intern" : "Data Scientist",
+          title_slug: page === 1 ? "ai-intern" : "data-scientist",
+          location_exact: "Los Angeles, CA",
+          date_added: "2026-08-12T12:00:00Z",
+          description: "Build production models.",
+          job_type: page === 1 ? "Internship" : "Hybrid",
+        }],
+        pagination: { page, page_size: 1, total: 2, total_pages: 2, has_more_pages: page < 2 },
+      });
+    };
+
+    const result = await crawlSource({
+      id: "jobsyn-direct",
+      company: "AECOM",
+      postingUrl: "https://aecom.jobs/jobs/",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests).toHaveLength(3);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 2 },
+    }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        externalId: "guid-1",
+        title: "AI Intern",
+        officialUrl: "https://aecom.jobs/los-angeles-ca/ai-intern/guid-1/job/",
+      }),
+      expect.objectContaining({ externalId: "guid-2", title: "Data Scientist", arrangement: "hybrid" }),
+    ]);
+  });
+
+  it("uses a verified Workday tenant and promotes the canonical listing URL", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url !== "https://aes.wd1.myworkdayjobs.com/wday/cxs/aes/AES_US/jobs") {
+        return new Response("missing detail", { status: 404 });
+      }
+      return Response.json({ total: 1, jobPostings: [{
+        title: "Data Science Intern",
+        externalPath: "/job/Arlington/Data-Science-Intern_R-101",
+        locationsText: "Arlington, VA",
+        postedOn: "Posted Today",
+      }] });
+    };
+
+    const result = await crawlSource({
+      id: "legacy-row-65",
+      company: "AES",
+      postingUrl: "https://www.aes.com/about-us/careers",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-12T12:00:00Z"));
+
+    expect(requests.length).toBeGreaterThan(0);
+    expect(requests[0]).toBe("https://aes.wd1.myworkdayjobs.com/wday/cxs/aes/AES_US/jobs");
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://aes.wd1.myworkdayjobs.com/AES_US",
+    }));
+  });
+
+  it("uses a verified server-rendered listing when the company landing page hides it", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      expect(String(input)).toBe("https://ats.rippling.com/embed/carbon-health/jobs");
+      return new Response(`<a href="https://ats.rippling.com/en-US/carbon-health/jobs/17d7e6a9-9f70-4f59-9db5-999d6a9f7a51">Applied AI Intern</a>`);
+    };
+
+    const result = await crawlSource({
+      id: "p5-0841-carbon-health",
+      company: "Carbon Health",
+      postingUrl: "https://carbonhealth.com/careers",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      resolvedListingUrl: "https://ats.rippling.com/embed/carbon-health/jobs",
+    }));
+    expect(result.jobs.map((job) => job.title)).toEqual(["Applied AI Intern"]);
+  });
 });

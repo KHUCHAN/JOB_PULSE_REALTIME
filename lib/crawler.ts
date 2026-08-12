@@ -87,6 +87,123 @@ export type DiscoveredAts =
   | { kind: "smartrecruiters"; endpoint: string }
   | { kind: "jibe"; endpoint: string };
 
+type VerifiedSourceFeed = {
+  discovered?: DiscoveredAts;
+  listingUrl: string;
+  adapter: CrawlSource["adapter"];
+};
+
+// These source pages render their ATS client-side (or challenge generic
+// server requests), so the public feed cannot be rediscovered reliably on
+// every pass. Keep the verified, first-party board identity here and promote
+// the canonical listing URL after the first successful sync.
+const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
+  "p4-0207-8am": {
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/affinipay1/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/affinipay1",
+    adapter: "greenhouse",
+  },
+  "audit-row-1560": {
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/affinipay1/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/affinipay1",
+    adapter: "greenhouse",
+  },
+  "p4-0391-abnormal-security": {
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/abnormalsecurity/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/abnormalsecurity",
+    adapter: "greenhouse",
+  },
+  "legacy-row-778": { listingUrl: "https://aecom.jobs/jobs/", adapter: "custom" },
+  "legacy-row-65": {
+    discovered: { kind: "workday", endpoint: "https://aes.wd1.myworkdayjobs.com/wday/cxs/aes/AES_US/jobs" },
+    listingUrl: "https://aes.wd1.myworkdayjobs.com/AES_US",
+    adapter: "workday",
+  },
+  "p5-0784-aetion": {
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/datavant2/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/datavant2",
+    adapter: "greenhouse",
+  },
+  "p2-0070-affirm": {
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/affirm/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/affirm",
+    adapter: "greenhouse",
+  },
+  "p4-0213-alixpartners": {
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/alixpartners/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/alixpartners",
+    adapter: "greenhouse",
+  },
+  "p2-0072-alloy": {
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/alloy/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/alloy",
+    adapter: "greenhouse",
+  },
+  "audit-row-319": {
+    discovered: { kind: "workday", endpoint: "https://bakerhughes.wd5.myworkdayjobs.com/wday/cxs/bakerhughes/BakerHughes/jobs" },
+    listingUrl: "https://bakerhughes.wd5.myworkdayjobs.com/BakerHughes",
+    adapter: "workday",
+  },
+  "p4-0402-bill-com": {
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/billcom/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/billcom",
+    adapter: "greenhouse",
+  },
+  "p5-0841-carbon-health": { listingUrl: "https://ats.rippling.com/embed/carbon-health/jobs", adapter: "custom" },
+  "p4-0243-checkout-com": {
+    discovered: { kind: "ashby", endpoint: "https://api.ashbyhq.com/posting-api/job-board/checkout.com" },
+    listingUrl: "https://jobs.ashbyhq.com/checkout.com",
+    adapter: "ashby",
+  },
+  "p4-0248-cloudflare": {
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/cloudflare/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/cloudflare",
+    adapter: "greenhouse",
+  },
+  "p4-0413-coupa": {
+    discovered: { kind: "lever", endpoint: "https://api.lever.co/v0/postings/coupa?mode=json" },
+    listingUrl: "https://jobs.lever.co/coupa",
+    adapter: "lever",
+  },
+  "p2-0094-crypto-com": {
+    discovered: { kind: "lever", endpoint: "https://api.lever.co/v0/postings/crypto?mode=json" },
+    listingUrl: "https://jobs.lever.co/crypto",
+    adapter: "lever",
+  },
+  "audit-row-338": { listingUrl: "https://cummins.jobs/jobs", adapter: "custom" },
+  "p4-0255-current": {
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/current/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/current",
+    adapter: "greenhouse",
+  },
+  "p5-0877-datavant": {
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/datavant2/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/datavant2",
+    adapter: "greenhouse",
+  },
+  "p4-0421-docker": {
+    discovered: { kind: "ashby", endpoint: "https://api.ashbyhq.com/posting-api/job-board/docker" },
+    listingUrl: "https://jobs.ashbyhq.com/docker",
+    adapter: "ashby",
+  },
+  "p4-0264-elliptic": {
+    discovered: { kind: "ashby", endpoint: "https://api.ashbyhq.com/posting-api/job-board/elliptic" },
+    listingUrl: "https://jobs.ashbyhq.com/elliptic",
+    adapter: "ashby",
+  },
+  "p5-0889-elastic": {
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/elastic/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/elastic",
+    adapter: "greenhouse",
+  },
+  "p5-0893-epic-games": {
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/epicgames/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/epicgames",
+    adapter: "greenhouse",
+  },
+  "audit-row-356": { listingUrl: "https://app.eightfold.ai/careers?domain=elcompanies.com", adapter: "custom" },
+};
+
 type GreenhouseJob = {
   id: number | string;
   title: string;
@@ -120,6 +237,47 @@ type WorkdayPayload = {
   total?: number;
   jobPostings?: WorkdayJob[];
   facets?: WorkdayFacet[];
+};
+
+type JobsynJob = {
+  guid?: string;
+  title_exact?: string;
+  title_slug?: string;
+  location_exact?: string;
+  date_added?: string;
+  date_updated?: string;
+  description?: string;
+  job_type?: string;
+  job_category?: string;
+  job_function?: string;
+  reqid?: string;
+  city_exact?: string;
+  state_short_exact?: string;
+  country_exact?: string;
+};
+
+type JobsynPayload = {
+  jobs?: JobsynJob[];
+  pagination?: {
+    page?: number;
+    page_size?: number;
+    total?: number;
+    total_pages?: number;
+    has_more_pages?: boolean;
+  };
+};
+
+type DowSearchResult = {
+  title?: string;
+  clickUri?: string;
+  printableUri?: string;
+  excerpt?: string;
+  raw?: Record<string, unknown>;
+};
+
+type DowSearchPayload = {
+  totalCount?: number;
+  results?: DowSearchResult[];
 };
 
 type LeverJob = {
@@ -1364,13 +1522,13 @@ const crawlReaderFallback = async (
       }
       return null;
     };
-    const response = await fetchWithTimeout(fetcher, endpoint, { headers: baseHeaders }, false);
+    const response = await fetchWithTimeout(fetcher, endpoint, { headers: baseHeaders }, false, { attempts: 1, timeoutMs: 12_000 });
     if (!response.ok) return null;
     let result = await resultFromMarkdown(await response.text());
     if (!result) {
       const freshResponse = await fetchWithTimeout(fetcher, endpoint, {
         headers: { ...baseHeaders, "x-no-cache": "true" },
-      }, false, { attempts: 1, timeoutMs: 30_000 });
+      }, false, { attempts: 1, timeoutMs: 12_000 });
       if (!freshResponse.ok) return null;
       result = await resultFromMarkdown(await freshResponse.text());
     }
@@ -1473,7 +1631,7 @@ const crawlTalemetryJson = async (
     try {
       const reader = await fetchWithTimeout(fetcher, `https://r.jina.ai/${endpoint.href}`, {
         headers: { accept: "text/plain" },
-      }, false, { attempts: 3, timeoutMs: 30_000 });
+      }, false, { attempts: 2, timeoutMs: 12_000 });
       return reader.ok ? parseTalemetryPayload(await reader.text()) : null;
     } catch {
       return null;
@@ -2830,6 +2988,283 @@ const companyScopeMatches = (company: string, originalUrl: string, candidateUrl:
   }
 };
 
+const jobsynSlug = (value: string): string => value
+  .normalize("NFKD")
+  .replace(/[\u0300-\u036f]/g, "")
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, "-")
+  .replace(/^-+|-+$/g, "");
+
+const crawlJobsyn = async (
+  source: CrawlSource,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult> => {
+  const listing = new URL(source.postingUrl);
+  const endpoint = "https://prod-search-api.jobsyn.org/api/v1/solr/search";
+  const requestedStart = Math.max(1, source.crawlPageCursor ?? 1);
+  const maxPagesPerPass = 20;
+  let responseStatus: number | null = null;
+
+  const fetchPage = async (page: number): Promise<{ payload: JobsynPayload; jobs: CrawledJob[] }> => {
+    const url = new URL(endpoint);
+    url.searchParams.set("page", String(page));
+    const response = await fetchWithTimeout(fetcher, url, {
+      headers: { accept: "application/json", "x-origin": listing.hostname },
+    }, false, { attempts: 1, timeoutMs: 12_000 });
+    responseStatus = response.status;
+    if (!response.ok) throw Object.assign(new Error(`Jobsyn returned HTTP ${response.status}.`), { responseStatus: response.status });
+    const payload = await response.json() as JobsynPayload;
+    if (!Array.isArray(payload.jobs) || !payload.pagination?.total_pages) {
+      throw new Error("Jobsyn returned an unusable job catalog.");
+    }
+    const jobs = payload.jobs.flatMap((job): CrawledJob[] => {
+      if (!job.guid || !job.title_exact || !job.title_slug || !job.location_exact) return [];
+      const description = plainText(job.description);
+      const locationSlug = jobsynSlug(job.location_exact);
+      const officialUrl = new URL(`/${locationSlug}/${job.title_slug}/${job.guid}/job/`, listing.origin).href;
+      const employmentType = normalizeEmploymentType(job.job_type) ?? job.job_type ?? null;
+      const arrangement = /remote/i.test(`${job.job_type ?? ""} ${job.location_exact}`)
+        ? "remote" as const
+        : /hybrid/i.test(job.job_type ?? "")
+          ? "hybrid" as const
+          : /on.?site/i.test(job.job_type ?? "")
+            ? "onsite" as const
+            : "unknown" as const;
+      return [{
+        externalId: job.guid,
+        title: job.title_exact,
+        company: source.company,
+        location: job.location_exact,
+        arrangement,
+        employmentType,
+        summary: description,
+        description,
+        ...(job.job_category ? { jobFamily: job.job_category } : {}),
+        ...(job.job_function ? { jobFunction: job.job_function } : {}),
+        ...(job.reqid ? { requisitionId: job.reqid } : {}),
+        ...(job.city_exact ? { locationCity: job.city_exact } : {}),
+        ...(job.state_short_exact ? { locationState: job.state_short_exact } : {}),
+        ...(job.country_exact ? { locationCountry: job.country_exact } : {}),
+        ...(job.date_updated ? { sourceUpdatedAt: normalizedDate(job.date_updated) } : {}),
+        officialUrl,
+        publishedAt: normalizedDate(job.date_added),
+      }];
+    });
+    if (jobs.length !== payload.jobs.length) throw new Error("Jobsyn returned malformed job records.");
+    return { payload, jobs };
+  };
+
+  try {
+    let first = await fetchPage(requestedStart);
+    const totalPages = Math.max(1, first.payload.pagination?.total_pages ?? 1);
+    const startPage = requestedStart > totalPages ? 1 : requestedStart;
+    if (startPage !== requestedStart) first = await fetchPage(startPage);
+    const endPage = Math.min(totalPages, startPage + maxPagesPerPass - 1);
+    const pages = new Map<number, CrawledJob[]>([[startPage, first.jobs]]);
+    let failedPage: number | null = null;
+    for (let page = startPage + 1; page <= endPage && failedPage === null; page += 4) {
+      const pageNumbers = Array.from({ length: Math.min(4, endPage - page + 1) }, (_, index) => page + index);
+      const settled = await Promise.all(pageNumbers.map(async (pageNumber) => {
+        try {
+          return { pageNumber, result: await fetchPage(pageNumber) };
+        } catch {
+          return { pageNumber, result: null };
+        }
+      }));
+      for (const item of settled) {
+        if (!item.result) {
+          failedPage = failedPage == null ? item.pageNumber : Math.min(failedPage, item.pageNumber);
+          continue;
+        }
+        pages.set(item.pageNumber, item.result.jobs);
+      }
+    }
+    const lastCompletePage = failedPage == null ? endPage : failedPage - 1;
+    const jobs = uniqueJobs([...pages.entries()]
+      .filter(([page]) => page <= lastCompletePage)
+      .sort(([left], [right]) => left - right)
+      .flatMap(([, pageJobs]) => pageJobs));
+    if (jobs.length === 0) throw new Error("Jobsyn did not return any usable jobs.");
+    const cycleComplete = failedPage === null && endPage === totalPages;
+    return {
+      status: "succeeded",
+      responseStatus: responseStatus ?? 200,
+      completeListing: false,
+      jobs,
+      pagination: {
+        nextPage: failedPage ?? (cycleComplete ? 1 : endPage + 1),
+        cycleComplete,
+        totalPages,
+      },
+      error: null,
+    };
+  } catch (error) {
+    const status = typeof error === "object" && error && "responseStatus" in error
+      ? Number((error as { responseStatus: unknown }).responseStatus)
+      : responseStatus;
+    return {
+      status: isBlockedHttpStatus(status) ? "blocked" : "failed",
+      responseStatus: status,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Jobsyn crawler error.",
+    };
+  }
+};
+
+const dowTextList = (value: unknown): string[] => {
+  const values = Array.isArray(value) ? value : typeof value === "string" ? value.split("|||") : [];
+  return values.flatMap((item) => typeof item === "string" && item.trim() ? [item.trim()] : []);
+};
+
+const dowDate = (value: unknown): string | null => {
+  const date = typeof value === "number" ? new Date(value) : typeof value === "string" ? new Date(value) : null;
+  return date && !Number.isNaN(date.getTime()) ? date.toISOString() : null;
+};
+
+const safeDowJobUrl = (value: unknown): string | null => {
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value);
+    const allowedOrigin = url.origin === "https://dow.wd1.myworkdayjobs.com"
+      || url.origin === "https://corporate.dow.com";
+    if (!allowedOrigin || url.username || url.password || url.hash) return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+};
+
+const crawlDow = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const tokenEndpoint = "https://corporate.dow.com/.dow.search.token.servlet.json?type=CorporateDowComJobFinder";
+  const pageSize = 100;
+  const maxResults = 1_000;
+  let responseStatus: number | null = null;
+  try {
+    const tokenResponse = await fetchWithTimeout(fetcher, tokenEndpoint, {
+      headers: { accept: "application/json" },
+    }, false, { attempts: 1, timeoutMs: 10_000 });
+    responseStatus = tokenResponse.status;
+    if (!tokenResponse.ok) throw Object.assign(new Error(`Dow search token returned HTTP ${tokenResponse.status}.`), { responseStatus: tokenResponse.status });
+    const tokenPayload = await tokenResponse.json() as { org?: unknown; token?: unknown };
+    const organizationId = typeof tokenPayload.org === "string" && /^[a-z0-9-]+$/i.test(tokenPayload.org)
+      ? tokenPayload.org
+      : null;
+    const token = typeof tokenPayload.token === "string" && tokenPayload.token.length >= 20 && tokenPayload.token.length <= 8_192
+      ? tokenPayload.token
+      : null;
+    if (!organizationId || !token) throw new Error("Dow search token response was unusable.");
+    const endpoint = `https://${organizationId}.org.coveo.com/rest/search/v2`;
+
+    const fetchPage = async (firstResult: number): Promise<{ total: number; results: DowSearchResult[] }> => {
+      const response = await fetchWithTimeout(fetcher, endpoint, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          organizationId,
+          searchHub: "CorporateDowComJobFinder",
+          aq: '@commoncontenttype=="Job"',
+          numberOfResults: pageSize,
+          firstResult,
+        }),
+      }, false, { attempts: 1, timeoutMs: 12_000 });
+      responseStatus = response.status;
+      if (!response.ok) throw Object.assign(new Error(`Dow job search returned HTTP ${response.status}.`), { responseStatus: response.status });
+      const payload = await response.json() as DowSearchPayload;
+      const total = Number(payload.totalCount);
+      if (!Number.isInteger(total) || total <= 0 || !Array.isArray(payload.results)) {
+        throw new Error("Dow job search returned an unusable catalog.");
+      }
+      return { total, results: payload.results };
+    };
+
+    const first = await fetchPage(0);
+    const boundedTotal = Math.min(first.total, maxResults);
+    const offsets = Array.from({ length: Math.ceil(boundedTotal / pageSize) }, (_, index) => index * pageSize);
+    const pages = new Map<number, DowSearchResult[]>([[0, first.results]]);
+    for (let index = 1; index < offsets.length; index += 4) {
+      const batch = offsets.slice(index, index + 4);
+      const results = await Promise.all(batch.map(async (offset) => ({ offset, page: await fetchPage(offset) })));
+      for (const { offset, page } of results) {
+        if (page.total !== first.total) throw new Error("Dow job count changed during pagination.");
+        pages.set(offset, page.results);
+      }
+    }
+    const rawResults = offsets.flatMap((offset) => pages.get(offset) ?? []);
+    const jobs = rawResults.flatMap((result): CrawledJob[] => {
+      const raw = result.raw ?? {};
+      const externalId = asText(raw.dow_jobreqid) ?? asText(raw.dow_jobid);
+      const title = asText(raw.dow_jobtitle) ?? asText(result.title);
+      const officialUrl = safeDowJobUrl(raw.dow_joburl ?? result.printableUri ?? result.clickUri);
+      const applyUrl = safeDowJobUrl(raw.dow_jobapplyurl);
+      if (!externalId || !title || !officialUrl) return [];
+      const siteNames = dowTextList(raw.dow_jobsitenames);
+      const cityPaths = dowTextList(raw.dow_jobcities);
+      const location = siteNames.join("; ") || cityPaths.map((path) => path.split("//").at(-1)).filter(Boolean).join("; ") || null;
+      const primaryPath = cityPaths[0]?.split("//").map((part) => part.trim()).filter(Boolean) ?? [];
+      const countryPaths = dowTextList(raw.dow_jobcountries);
+      const country = countryPaths[0]?.split("//").at(-1) ?? (primaryPath.length >= 2 ? primaryPath[1] : null);
+      const arrangementText = asText(raw.dow_remotetype) ?? "";
+      const programs = classifyJobPrograms(title).keys;
+      const employmentType = programs.some((key) => key === "internship" || key === "coop")
+        ? "Internship"
+        : normalizeEmploymentType(asText(raw.dow_jobreqtimetype) ?? asText(raw.dow_jobreqtype))
+          ?? asText(raw.dow_jobreqtimetype)
+          ?? asText(raw.dow_jobreqtype);
+      const description = plainText(asText(raw.dow_jobdescription));
+      return [{
+        externalId,
+        title,
+        company: source.company,
+        location,
+        arrangement: /remote/i.test(arrangementText) ? "remote" : /hybrid/i.test(arrangementText) ? "hybrid" : /on.?site/i.test(arrangementText) ? "onsite" : "unknown",
+        employmentType,
+        summary: plainText(result.excerpt) ?? description,
+        description,
+        ...(asText(raw.dow_jobreqfunction) ? { jobFunction: asText(raw.dow_jobreqfunction) } : {}),
+        ...(primaryPath.at(-1) ? { locationCity: primaryPath.at(-1) } : {}),
+        ...(primaryPath.length >= 3 ? { locationState: primaryPath.at(-2) } : {}),
+        ...(country ? { locationCountry: country } : {}),
+        requisitionId: externalId,
+        ...(applyUrl ? { applyUrl } : {}),
+        ...(dowDate(raw.dow_jobenddate) ? { validThrough: dowDate(raw.dow_jobenddate) } : {}),
+        ...(dowDate(raw.sysindexeddate) ? { sourceUpdatedAt: dowDate(raw.sysindexeddate) } : {}),
+        rawPayload: raw,
+        officialUrl,
+        publishedAt: dowDate(raw.dow_jobstartdate ?? raw.date),
+      }];
+    });
+    const unique = uniqueJobs(jobs);
+    const exact = first.total <= maxResults
+      && rawResults.length === first.total
+      && jobs.length === rawResults.length
+      && unique.length === first.total;
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: exact,
+      jobs: unique,
+      resolvedListingUrl: "https://corporate.dow.com/en-us/careers/jobs.html",
+      error: null,
+    };
+  } catch (error) {
+    const status = typeof error === "object" && error && "responseStatus" in error
+      ? Number((error as { responseStatus: unknown }).responseStatus)
+      : responseStatus;
+    return {
+      status: isBlockedHttpStatus(status) ? "blocked" : "failed",
+      responseStatus: status,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Dow crawler error.",
+    };
+  }
+};
+
 async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
   const discoveryDepth = source.discoveryDepth ?? 0;
   try {
@@ -2861,6 +3296,9 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
         : workable;
     }
     const html = await response.text();
+    if (/prod-search-api\.jobsyn\.org|source\s*:\s*["']solr["']/i.test(html)) {
+      return crawlJobsyn(source, fetcher);
+    }
     const deel = deelJobs(html, source);
     if (deel) return {
       status: "succeeded",
@@ -5462,6 +5900,24 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
 }
 
 async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
+  const verifiedFeed = VERIFIED_SOURCE_FEEDS[source.id];
+  if (verifiedFeed) {
+    const result = verifiedFeed.discovered
+      ? verifiedFeed.discovered.kind === "workday"
+        ? await crawlWorkday(source, verifiedFeed.discovered.endpoint, fetcher, now)
+        : await crawlDiscoveredFeed(source, verifiedFeed.discovered, fetcher)
+      : new URL(verifiedFeed.listingUrl).hostname.endsWith("eightfold.ai")
+        ? await crawlEightfold({ ...source, postingUrl: verifiedFeed.listingUrl, adapter: verifiedFeed.adapter }, fetcher)
+        : await crawlJsonLd({
+            ...source,
+            postingUrl: verifiedFeed.listingUrl,
+            adapter: verifiedFeed.adapter,
+            discoveryDepth: 1,
+          }, fetcher, now);
+    return result.status === "succeeded"
+      ? { ...result, resolvedListingUrl: verifiedFeed.listingUrl }
+      : result;
+  }
   const originalPage = new URL(source.postingUrl);
   if (source.adapter === "phenom" && /\/jointalentcommunity\/?$/i.test(originalPage.pathname)) {
     originalPage.pathname = originalPage.pathname.replace(/\/jointalentcommunity\/?$/i, "/search-results");
@@ -5473,6 +5929,10 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
     source = { ...source, postingUrl: originalPage.href };
   }
   const sourcePage = new URL(source.postingUrl);
+  if (source.id === "legacy-row-803"
+    || (sourcePage.hostname === "corporate.dow.com" && sourcePage.pathname.includes("/careers/jobs"))) {
+    return crawlDow(source, fetcher);
+  }
   if (sourcePage.hostname === "apply.workable.com") return crawlWorkable(source, fetcher);
   if (sourcePage.hostname === "www.asml.com" && sourcePage.pathname.includes("/careers")) {
     const search = await crawlAsmlSearch(source, fetcher);

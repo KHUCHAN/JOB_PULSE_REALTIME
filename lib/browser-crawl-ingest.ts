@@ -28,7 +28,7 @@ const sourceOrigins: Record<string, string> = {
 
 const dateFromCard = (value: string | null): string | null => {
   if (!value) return null;
-  const timestamp = Date.parse(`${value} UTC`);
+  const timestamp = Date.parse(`${value.replace(/^Date Posted:\s*/i, "")} UTC`);
   return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
 };
 
@@ -71,7 +71,7 @@ export function normalizeBrowserJobSnapshot(
       throw new Error("Browser job URL is outside the official careers origin.");
     }
     const externalId = officialUrl.pathname.match(/^\/jobs\/(\d+)/i)?.[1] ?? null;
-    const location = textValue(raw.location);
+    const location = textValue(raw.location)?.replace(/^Location:\s*/i, "") ?? null;
     const region = textValue(raw.region);
     const businessUnit = textValue(raw.businessUnit);
     const department = textValue(raw.department) ?? businessUnit;

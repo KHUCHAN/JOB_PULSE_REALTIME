@@ -45,4 +45,18 @@ describe("browser crawl ingestion", () => {
       title: "Fake role",
     }])).toThrow(/official careers origin/i);
   });
+
+  it("strips the visible card labels emitted by the browser fallback", () => {
+    const result = normalizeBrowserJobSnapshot(source, [{
+      officialUrl: "https://careers.alvarezandmarsal.com/jobs/18109880-microsoft-365-engineer",
+      title: "Microsoft 365 Engineer",
+      location: "Location: Manchester, United Kingdom",
+      publishedText: "Date Posted: Aug 12, 2026",
+    }]);
+
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      location: "Manchester, United Kingdom",
+      publishedAt: "2026-08-12T00:00:00.000Z",
+    }));
+  });
 });

@@ -32,7 +32,10 @@ export type CrawlBatchResult = {
 
 const emptyResult = (): CrawlBatchResult => ({ attempted: 0, succeeded: 0, failed: 0, blocked: 0, created: 0, updated: 0, closed: 0 });
 
-const twoHoursAfter = (now: Date): string => new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString();
+const nextCrawlAtForStatus = (now: Date, status: "succeeded" | "failed" | "blocked"): string => {
+  const hours = status === "succeeded" ? 2 : status === "failed" ? 6 : 24;
+  return new Date(now.getTime() + hours * 60 * 60 * 1000).toISOString();
+};
 
 const runSource = async (
   store: CrawlStore,
@@ -89,7 +92,7 @@ const runSource = async (
     error,
     finishedAt: new Date().toISOString(),
   });
-  await store.scheduleNext(source.id, twoHoursAfter(now));
+  await store.scheduleNext(source.id, nextCrawlAtForStatus(now, status));
 
   return result;
 };

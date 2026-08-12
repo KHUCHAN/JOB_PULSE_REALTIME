@@ -77,6 +77,21 @@ describe("runDueCrawls", () => {
     expect(store.sources[0].nextCrawlAt).toBe("2026-08-08T14:00:00.000Z");
   });
 
+  it("backs blocked sources off for a day instead of retrying them every batch", async () => {
+    const store = new MemoryStore([{
+      id: "blocked",
+      company: "Blocked",
+      postingUrl: "https://blocked.example/careers",
+      adapter: "custom",
+      nextCrawlAt: null,
+    }]);
+    const fetcher: typeof fetch = async () => new Response("challenge", { status: 403 });
+
+    await expect(runDueCrawls(store, fetcher, new Date("2026-08-08T12:00:00Z"), { concurrency: 1 }))
+      .resolves.toEqual(expect.objectContaining({ blocked: 1 }));
+    expect(store.sources[0].nextCrawlAt).toBe("2026-08-09T12:00:00.000Z");
+  });
+
   it("records a failed run when persistence fails and continues the batch", async () => {
     const store = new MemoryStore([{
       id: "acme",
@@ -99,7 +114,7 @@ describe("runDueCrawls", () => {
       closed: 0,
     });
     expect(store.runs).toEqual([expect.objectContaining({ status: "failed", error: "D1 unavailable" })]);
-    expect(store.sources[0].nextCrawlAt).toBe("2026-08-08T14:00:00.000Z");
+    expect(store.sources[0].nextCrawlAt).toBe("2026-08-08T18:00:00.000Z");
   });
 
   it("recrawls an explicit bounded source set without leasing unrelated due sources", async () => {
