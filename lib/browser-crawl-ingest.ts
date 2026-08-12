@@ -22,10 +22,6 @@ const textValue = (value: unknown, max = 500): string | null => {
   return text ? text.slice(0, max) : null;
 };
 
-const sourceOrigins: Record<string, string> = {
-  "p4-0214-alvarez-marsal": "https://careers.alvarezandmarsal.com",
-};
-
 const dateFromCard = (value: string | null): string | null => {
   if (!value) return null;
   const timestamp = Date.parse(`${value.replace(/^Date Posted:\s*/i, "")} UTC`);
@@ -48,9 +44,16 @@ const countedFacet = (key: string, label: string, values: Array<string | null>):
 export function normalizeBrowserJobSnapshot(
   source: CrawlSource,
   input: unknown,
+  allowedOrigins?: string[],
 ): { jobs: CrawledJob[]; facets: CrawledFacet[] } {
-  const officialOrigin = sourceOrigins[source.id];
-  if (!officialOrigin) throw new Error("This source does not support browser snapshot ingestion.");
+  const officialOrigins = new Set([new URL(source.postingUrl).origin, ...(allowedOrigins ?? [])].flatMap((value) => {
+    try {
+      const url = new URL(value);
+      return url.protocol === "https:" ? [url.origin] : [];
+    } catch {
+      return [];
+    }
+  }));
   if (!Array.isArray(input) || input.length > 10_000) throw new Error("Browser snapshot must contain at most 10,000 jobs.");
 
   const jobs = new Map<string, CrawledJob>();
@@ -67,10 +70,15 @@ export function normalizeBrowserJobSnapshot(
     } catch {
       throw new Error("Browser job URL is invalid.");
     }
-    if (officialUrl.origin !== officialOrigin || !/^\/jobs\/\d+/i.test(officialUrl.pathname)) {
+    if (officialUrl.protocol !== "https:" || officialUrl.username || officialUrl.password
+      || !officialOrigins.has(officialUrl.origin)) {
       throw new Error("Browser job URL is outside the official careers origin.");
     }
-    const externalId = officialUrl.pathname.match(/^\/jobs\/(\d+)/i)?.[1] ?? null;
+    const externalId = officialUrl.pathname.match(/\/jobs\/(\d+)/i)?.[1]
+      ?? officialUrl.pathname.match(/\/jobs?\/([^/?#]+)/i)?.[1]
+      ?? officialUrl.searchParams.get("jobid")
+      ?? officialUrl.searchParams.get("jobId")
+      ?? null;
     const location = textValue(raw.location)?.replace(/^Location:\s*/i, "") ?? null;
     const region = textValue(raw.region);
     const businessUnit = textValue(raw.businessUnit);

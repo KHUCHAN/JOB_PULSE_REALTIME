@@ -5,6 +5,7 @@ import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium, type Page } from "playwright";
+import catalogSeed from "../db/seed/sources.json" with { type: "json" };
 import { classifyJobAreas, jobAreaClassificationMarker } from "../lib/job-area-classifier.ts";
 import { classifyJobRegion } from "../lib/job-region-classifier.ts";
 import { jobsFromBrowserAnchors, type BrowserAnchor } from "../lib/browser-job-extractor.ts";
@@ -33,6 +34,9 @@ const limit = Number.parseInt(process.env.BROWSER_FALLBACK_LIMIT ?? "500", 10);
 const headless = process.env.BROWSER_FALLBACK_HEADFUL !== "1";
 const forceAll = process.env.BROWSER_FALLBACK_ALL === "1";
 const targetSourceId = process.env.BROWSER_FALLBACK_SOURCE_ID?.trim() || null;
+const targetSourceIds = new Set((process.env.BROWSER_FALLBACK_SOURCE_IDS ?? "").split(",").map((value) => value.trim()).filter(Boolean));
+const productionIngestUrl = process.env.BROWSER_FALLBACK_INGEST_URL?.trim() || null;
+const productionIngestSecret = process.env.BROWSER_FALLBACK_INGEST_SECRET?.trim() || null;
 
 const d1 = async (args: string[]): Promise<string> => {
   const { stdout } = await execFileAsync(wrangler, [
@@ -43,6 +47,9 @@ const d1 = async (args: string[]): Promise<string> => {
 };
 
 const problemSources = async (): Promise<CrawlSource[]> => {
+  if (targetSourceIds.size > 0) return catalogSeed.sources.flatMap((source): CrawlSource[] => targetSourceIds.has(source.id) && source.postingUrl
+    ? [{ id: source.id, company: source.company, postingUrl: source.postingUrl, adapter: source.adapter as CrawlSource["adapter"] }]
+    : []);
   const sql = `WITH latest AS (
     SELECT source_id, status, jobs_seen, ROW_NUMBER() OVER (PARTITION BY source_id ORDER BY started_at DESC) row_number
     FROM crawl_runs
@@ -251,7 +258,26 @@ async function main(): Promise<void> {
   await mkdir(dirname(sqlPath), { recursive: true });
   await writeFile(outputPath, `${JSON.stringify({ generatedAt: new Date().toISOString(), results }, null, 2)}\n`);
   const successful = results.filter((result) => result.jobs.length > 0);
-  if (successful.length > 0) {
+  if (successful.length > 0 && productionIngestUrl && productionIngestSecret) {
+    for (const result of successful) {
+      const allowedOrigins = [result.finalUrl, ...result.jobs.map((job) => job.officialUrl)]
+        .flatMap((value) => {
+          try { return value ? [new URL(value).origin] : []; } catch { return []; }
+        });
+      const response = await fetch(productionIngestUrl, {
+        method: "POST",
+        headers: { authorization: `Bearer ${productionIngestSecret}`, "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "ingestBrowserJobs",
+          sourceId: result.source.id,
+          jobs: result.jobs,
+          allowedOrigins: [...new Set(allowedOrigins)].slice(0, 5),
+          completeListing: false,
+        }),
+      });
+      if (!response.ok) result.error = `Production browser ingest returned HTTP ${response.status}.`;
+    }
+  } else if (successful.length > 0) {
     await writeFile(sqlPath, persistenceSql(successful));
     await d1(["--file", sqlPath]);
   }

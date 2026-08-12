@@ -46,6 +46,15 @@ describe("browser crawl ingestion", () => {
     }])).toThrow(/official careers origin/i);
   });
 
+  it("accepts an explicitly verified redirected ATS origin", () => {
+    const result = normalizeBrowserJobSnapshot(source, [{
+      officialUrl: "https://jobs.example-ats.com/jobs/REQ-101",
+      title: "Data Science Intern",
+    }], ["https://jobs.example-ats.com/search"]);
+
+    expect(result.jobs[0]).toEqual(expect.objectContaining({ externalId: "REQ-101" }));
+  });
+
   it("strips the visible card labels emitted by the browser fallback", () => {
     const result = normalizeBrowserJobSnapshot(source, [{
       officialUrl: "https://careers.alvarezandmarsal.com/jobs/18109880-microsoft-365-engineer",

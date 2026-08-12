@@ -71,6 +71,12 @@ type GmailEnvironment = {
   GMAIL_CLIENT_SECRET?: string;
   GMAIL_REFRESH_TOKEN?: string;
   GMAIL_SENDER?: string;
+  CRAWL_INGEST_SECRET?: string;
+};
+
+const browserIngestAuthorized = (request: Request): boolean => {
+  const secret = (env as typeof env & GmailEnvironment).CRAWL_INGEST_SECRET?.trim();
+  return Boolean(secret) && request.headers.get("authorization") === `Bearer ${secret}`;
 };
 
 const gmailRuntimeConfig = (): GmailRuntimeConfig | null => {
@@ -135,12 +141,13 @@ async function persistBrowserSnapshot(
   source: PersistedSource,
   jobs: CrawledJob[],
   facets?: CrawledFacet[],
+  completeListing = false,
 ): Promise<{ sourceId: string; jobs: number; created: number; updated: number; closed: number }> {
   const store = new D1CrawlStore(database);
   const now = new Date();
   const runId = await store.startRun(source, now.toISOString());
   try {
-    const changes = await store.syncJobs(source.id, jobs, true, facets);
+    const changes = await store.syncJobs(source.id, jobs, completeListing, facets);
     await store.finishRun(runId, {
       status: "succeeded",
       responseStatus: 200,
@@ -363,14 +370,17 @@ export async function POST(request: Request): Promise<Response> {
       return json(targets.find((item) => item.id === body.targetId) ?? null);
     }
     if (body.action === "ingestBrowserJobs") {
+      if (!browserIngestAuthorized(request)) return json({ error: "Browser crawl authorization is required." }, 401);
       const sourceId = typeof body.sourceId === "string" ? body.sourceId : "";
-      if (sourceId !== "p4-0214-alvarez-marsal") return json({ error: "This source does not accept browser job snapshots." }, 400);
       const database = db();
       const source = await browserIngestSource(database, sourceId);
       if (!source) return json({ error: "Browser crawl source is unavailable." }, 404);
-      const snapshot = normalizeBrowserJobSnapshot(source, body.jobs);
+      const allowedOrigins = Array.isArray(body.allowedOrigins)
+        ? body.allowedOrigins.filter((value): value is string => typeof value === "string").slice(0, 5)
+        : [];
+      const snapshot = normalizeBrowserJobSnapshot(source, body.jobs, allowedOrigins);
       if (snapshot.jobs.length === 0) return json({ error: "Browser snapshot contained no valid jobs." }, 400);
-      return json(await persistBrowserSnapshot(database, source, snapshot.jobs, snapshot.facets));
+      return json(await persistBrowserSnapshot(database, source, snapshot.jobs, snapshot.facets, body.completeListing === true));
     }
     if (body.action === "ingestTeslaState") {
       const sourceId = typeof body.sourceId === "string" ? body.sourceId : "";
