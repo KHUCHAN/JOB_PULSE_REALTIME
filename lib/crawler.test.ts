@@ -4539,16 +4539,25 @@ Wrong description.
       if (url.startsWith("https://prod-search-api.jobsyn.org/")) {
         return new Response("Forbidden", { status: 403 });
       }
-      expect(url).toBe("https://graybar.jobs/sitemaps/jobs_1.xml");
-      return new Response(`<?xml version="1.0"?><urlset>
-        <url><loc>https://graybar.jobs/reno-nv/ai-engineering-intern/A75C2F7E874C4D2789CD964116421D74/job/</loc><lastmod>2026-08-12</lastmod></url>
-        <url><loc>https://graybar.jobs/tulsa-ok/outside-sales-representative/0C1502475D8A4C91AAF08340C1106309/job/</loc><lastmod>2026-08-10</lastmod></url>
-      </urlset>`, { headers: { "content-type": "application/xml" } });
+      if (url === "https://graybar.jobs/sitemaps/jobs_1.xml") {
+        return new Response("Forbidden", { status: 403 });
+      }
+      expect(url).toBe("https://r.jina.ai/https://graybar.jobs/sitemaps/jobs_1.xml");
+      return new Response(`Title: Sitemap
+
+[https://graybar.jobs/reno-nv/ai-engineering-intern/A75C2F7E874C4D2789CD964116421D74/job/](https://graybar.jobs/reno-nv/ai-engineering-intern/A75C2F7E874C4D2789CD964116421D74/job/)
+
+2026-08-12
+
+[https://graybar.jobs/tulsa-ok/outside-sales-representative/0C1502475D8A4C91AAF08340C1106309/job/](https://graybar.jobs/tulsa-ok/outside-sales-representative/0C1502475D8A4C91AAF08340C1106309/job/)
+
+2026-08-10`);
     }, new Date());
 
     expect(requests).toEqual([
       "https://prod-search-api.jobsyn.org/api/v1/solr/search?page=1",
       "https://graybar.jobs/sitemaps/jobs_1.xml",
+      "https://r.jina.ai/https://graybar.jobs/sitemaps/jobs_1.xml",
     ]);
     expect(result).toEqual(expect.objectContaining({
       status: "succeeded",

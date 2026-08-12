@@ -4197,20 +4197,28 @@ const crawlGraybarSitemap = async (
   source: CrawlSource,
   fetcher: typeof fetch,
 ): Promise<SourceCrawlResult | null> => {
-  const endpoint = "https://graybar.jobs/sitemaps/jobs_1.xml";
-  try {
-    const response = await fetchWithTimeout(fetcher, endpoint, {
-      headers: { accept: "application/xml,text/xml;q=0.9" },
-    }, false, { attempts: 1, timeoutMs: 10_000 });
-    if (!response.ok) return null;
-    const xml = await response.text();
-    const entries = [...xml.matchAll(/<url\b[^>]*>([\s\S]*?)<\/url>/gi)];
-    const jobs = uniqueJobs(entries.flatMap((entry): CrawledJob[] => {
-      const rawUrl = entry[1].match(/<loc>\s*([\s\S]*?)\s*<\/loc>/i)?.[1];
-      if (!rawUrl) return [];
+  const endpoints = [
+    "https://graybar.jobs/sitemaps/jobs_1.xml",
+    "https://r.jina.ai/https://graybar.jobs/sitemaps/jobs_1.xml",
+  ];
+  for (const endpoint of endpoints) {
+    try {
+      const response = await fetchWithTimeout(fetcher, endpoint, {
+        headers: { accept: endpoint.includes("r.jina.ai") ? "text/plain" : "application/xml,text/xml;q=0.9" },
+      }, false, { attempts: 1, timeoutMs: 10_000 });
+      if (!response.ok) continue;
+      const body = await response.text();
+      const recordByUrl = new Map<string, string | null>();
+      for (const match of body.matchAll(/https:\/\/graybar\.jobs\/[^/\s<>)\]]+\/[^/\s<>)\]]+\/[a-f0-9]{32}\/job\//gi)) {
+        const rawUrl = match[0];
+        if (recordByUrl.has(rawUrl)) continue;
+        const following = body.slice((match.index ?? 0) + rawUrl.length, (match.index ?? 0) + rawUrl.length + 600);
+        recordByUrl.set(rawUrl, following.match(/\b\d{4}-\d{2}-\d{2}\b/)?.[0] ?? null);
+      }
+      const jobs = uniqueJobs([...recordByUrl].flatMap(([rawUrl, lastModified]): CrawledJob[] => {
       let officialUrl: URL;
       try {
-        officialUrl = new URL(decodeHtmlAttribute(rawUrl.trim()));
+          officialUrl = new URL(decodeHtmlAttribute(rawUrl.trim()));
       } catch {
         return [];
       }
@@ -4219,7 +4227,6 @@ const crawlGraybarSitemap = async (
       if (!match) return [];
       const title = careerSlugTitle(match[2]);
       const location = careerSlugLocation(match[1]).replace(/\s+([A-Z]{2})$/, ", $1");
-      const lastModified = entry[1].match(/<lastmod>\s*([\s\S]*?)\s*<\/lastmod>/i)?.[1]?.trim();
       const programs = classifyJobPrograms(title).keys;
       return [{
         externalId: match[3],
@@ -4237,22 +4244,24 @@ const crawlGraybarSitemap = async (
         sourceUpdatedAt: normalizedDate(lastModified),
         publishedAt: normalizedDate(lastModified),
       }];
-    }));
-    if (jobs.length === 0 || jobs.length !== entries.length) return null;
-    return {
-      status: "succeeded",
-      responseStatus: response.status,
-      // Jobsyn currently caps this sitemap at 500 entries while its live API
-      // can advertise a slightly larger catalog. It is an ingestion fallback,
-      // never an authoritative signal for closing previously seen jobs.
-      completeListing: false,
-      jobs,
-      resolvedListingUrl: "https://graybar.jobs/jobs/",
-      error: null,
-    };
-  } catch {
-    return null;
+      }));
+      if (jobs.length === 0 || jobs.length !== recordByUrl.size) continue;
+      return {
+        status: "succeeded",
+        responseStatus: response.status,
+        // Jobsyn currently caps this sitemap at 500 entries while its live API
+        // can advertise a slightly larger catalog. It is an ingestion fallback,
+        // never an authoritative signal for closing previously seen jobs.
+        completeListing: false,
+        jobs,
+        resolvedListingUrl: "https://graybar.jobs/jobs/",
+        error: null,
+      };
+    } catch {
+      continue;
+    }
   }
+  return null;
 };
 
 const crawlGraybar = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
