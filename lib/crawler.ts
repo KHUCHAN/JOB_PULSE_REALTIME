@@ -207,6 +207,21 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
     listingUrl: "https://pbfenergy.wd1.myworkdayjobs.com/PBF",
     adapter: "workday",
   },
+  "p4-0510-vanta": {
+    discovered: { kind: "ashby", endpoint: "https://api.ashbyhq.com/posting-api/job-board/vanta" },
+    listingUrl: "https://jobs.ashbyhq.com/vanta",
+    adapter: "ashby",
+  },
+  "p5-1094-vanderbilt-health": {
+    discovered: { kind: "workday", endpoint: "https://vumc.wd1.myworkdayjobs.com/wday/cxs/vumc/vumccareers/jobs" },
+    listingUrl: "https://vumc.wd1.myworkdayjobs.com/vumccareers",
+    adapter: "workday",
+  },
+  "p5-1096-vantor": {
+    discovered: { kind: "workday", endpoint: "https://maxar.wd1.myworkdayjobs.com/wday/cxs/maxar/Vantor/jobs" },
+    listingUrl: "https://maxar.wd1.myworkdayjobs.com/Vantor",
+    adapter: "workday",
+  },
   "p5-0692-openai": {
     discovered: { kind: "ashby", endpoint: "https://api.ashbyhq.com/posting-api/job-board/openai" },
     listingUrl: "https://jobs.ashbyhq.com/openai",
@@ -252,6 +267,37 @@ type WorkdayPayload = {
   total?: number;
   jobPostings?: WorkdayJob[];
   facets?: WorkdayFacet[];
+};
+
+type MCloudLocation = {
+  addtnl_city?: string | null;
+  addtnl_state?: string | null;
+  addtnl_country?: string | null;
+};
+
+type MCloudJob = {
+  id?: number | string;
+  ref?: string | null;
+  title?: string | null;
+  description?: string | null;
+  primary_category?: string | null;
+  primary_city?: string | null;
+  primary_state?: string | null;
+  primary_country?: string | null;
+  addtnl_locations?: MCloudLocation[];
+  department?: string | null;
+  employment_type?: string | null;
+  level?: string | null;
+  compliment?: string | null;
+  open_date?: string | null;
+  close_date?: string | null;
+  url?: string | null;
+  seo_url?: string | null;
+};
+
+type MCloudPayload = {
+  totalHits?: number;
+  searchResults?: Array<{ job?: MCloudJob }>;
 };
 
 type JobsynJob = {
@@ -4523,6 +4569,109 @@ const crawlCardinalHealth = async (source: CrawlSource, fetcher: typeof fetch): 
   };
 };
 
+const crawlVanguard = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const listingUrl = "https://www.vanguardjobs.com/job-search-results/";
+  const pageSize = 10;
+  const maxPages = 50;
+  const fetchPage = async (offset: number): Promise<{ status: number; payload: MCloudPayload } | null> => {
+    try {
+      const endpoint = new URL("https://jobsapi-google.m-cloud.io/api/job/search");
+      endpoint.searchParams.set("pageSize", String(pageSize));
+      endpoint.searchParams.set("offset", String(offset));
+      endpoint.searchParams.set("companyName", "companies/fbd5ce04-22d1-4aae-90dc-0282e45ee06f");
+      endpoint.searchParams.set("customAttributeFilter", 'is_internal="External"');
+      endpoint.searchParams.set("orderBy", "posting_publish_time desc");
+      const response = await fetchWithTimeout(fetcher, endpoint, {
+        headers: { accept: "application/json", referer: listingUrl },
+      }, true, { attempts: 1, timeoutMs: 8_000 });
+      if (!response.ok) return null;
+      const payload = await response.json() as MCloudPayload;
+      if (!Number.isInteger(payload.totalHits) || !Array.isArray(payload.searchResults)) return null;
+      return { status: response.status, payload };
+    } catch {
+      return null;
+    }
+  };
+
+  const first = await fetchPage(0);
+  const total = first?.payload.totalHits ?? 0;
+  if (!first || total <= 0) return {
+    status: "failed",
+    responseStatus: first?.status ?? null,
+    completeListing: false,
+    jobs: [],
+    error: "Vanguard's official jobs API did not return a usable first page.",
+  };
+
+  const totalPages = Math.ceil(total / pageSize);
+  const fetchedPages = Math.min(totalPages, maxPages);
+  const offsets = Array.from({ length: fetchedPages - 1 }, (_, index) => (index + 1) * pageSize);
+  const pages: Array<{ status: number; payload: MCloudPayload } | null> = [first];
+  for (let index = 0; index < offsets.length; index += 8) {
+    pages.push(...await Promise.all(offsets.slice(index, index + 8).map(fetchPage)));
+  }
+
+  const rawJobs = pages.flatMap((page) => page?.payload.searchResults?.flatMap((result) => result.job ? [result.job] : []) ?? []);
+  const jobs = uniqueJobs(rawJobs.flatMap((job): CrawledJob[] => {
+    const externalId = job.id == null ? null : String(job.id);
+    const title = asText(job.title);
+    const rawOfficialUrl = asText(job.url);
+    if (!externalId || !title || !rawOfficialUrl) return [];
+    let officialUrl: URL;
+    try {
+      officialUrl = new URL(rawOfficialUrl, listingUrl);
+      if (officialUrl.hostname !== "www.vanguardjobs.com") return [];
+      officialUrl.protocol = "https:";
+    } catch {
+      return [];
+    }
+    const primaryLocation = [job.primary_city, job.primary_state, job.primary_country].filter(Boolean).join(", ") || null;
+    const secondaryLocations = (job.addtnl_locations ?? []).map((location) =>
+      [location.addtnl_city, location.addtnl_state, location.addtnl_country].filter(Boolean).join(", "))
+      .filter(Boolean);
+    const description = plainText(job.description);
+    const programs = classifyJobPrograms(title).keys;
+    return [{
+      externalId,
+      title,
+      company: source.company,
+      location: primaryLocation,
+      arrangement: /work from home|remote/i.test(job.compliment ?? "")
+        ? "remote"
+        : /hybrid/i.test(job.compliment ?? "") ? "hybrid" : /office|on.?site/i.test(job.compliment ?? "") ? "onsite" : "unknown",
+      employmentType: programs.some((key) => key === "internship" || key === "coop")
+        ? "Internship"
+        : normalizeEmploymentType(job.employment_type),
+      summary: description,
+      description,
+      department: asText(job.department),
+      jobFamily: asText(job.primary_category),
+      experienceLevel: asText(job.level),
+      secondaryLocations,
+      locationCity: asText(job.primary_city),
+      locationState: asText(job.primary_state),
+      locationCountry: asText(job.primary_country),
+      requisitionId: asText(job.ref) ?? externalId,
+      applyUrl: asText(job.seo_url),
+      officialUrl: officialUrl.href,
+      publishedAt: normalizedDate(job.open_date),
+      validThrough: normalizedDate(job.close_date),
+    }];
+  }));
+  const everyPageUsable = pages.every((page, index) => page
+    && page.payload.totalHits === total
+    && page.payload.searchResults?.length === Math.min(pageSize, total - index * pageSize)
+    && page.payload.searchResults.every(({ job }) => Boolean(job?.id != null && asText(job.title) && asText(job.url))));
+  return {
+    status: jobs.length > 0 ? "succeeded" : "failed",
+    responseStatus: first.status,
+    completeListing: totalPages <= maxPages && everyPageUsable && rawJobs.length === total && jobs.length === total,
+    jobs,
+    resolvedListingUrl: listingUrl,
+    error: jobs.length > 0 ? null : "Vanguard's official jobs API contained no usable jobs.",
+  };
+};
+
 const crawlNewsCorpSitemap = async (
   source: CrawlSource,
   fetcher: typeof fetch,
@@ -6485,7 +6634,7 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
       // A later scheduled crawl is the retry boundary. Retrying a slow tenant
       // inside the same source lease can otherwise hold a two-source batch for
       // 30+ seconds without adding coverage.
-      }, true, { attempts: 1, timeoutMs: 12_000 });
+      }, true, { attempts: 1, timeoutMs: source.id === "p5-1096-vantor" ? 22_000 : 12_000 });
       if (!response.ok) {
         throw Object.assign(new Error(`Workday returned HTTP ${response.status}.`), { responseStatus: response.status });
       }
@@ -6692,6 +6841,7 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   if (source.id === "audit-row-354" || sourcePage.hostname === "careers.eogresources.com") return crawlEogJobs(source, fetcher);
   if (source.id === "p2-0076-ameriprise-financial" || sourcePage.hostname === "careers.ameriprise.com") return crawlAmeripriseJobs(source, fetcher);
   if (source.id === "p5-0566-cardinal-health" || sourcePage.hostname === "jobs.cardinalhealth.com") return crawlCardinalHealth(source, fetcher);
+  if (source.id === "p5-1095-vanguard" || sourcePage.hostname === "www.vanguardjobs.com") return crawlVanguard(source, fetcher);
   if (source.id === "p5-1005-olympus-medical-systems") return crawlOlympusSuccessFactors(source, fetcher);
   if (source.id === "p2-0068-abrigo") return crawlAbrigoJobvite(source, fetcher);
   if (source.id === "legacy-row-777") return crawlAceJobs(source, fetcher);

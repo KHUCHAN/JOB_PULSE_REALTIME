@@ -4493,6 +4493,20 @@ Wrong description.
       endpoint: "https://pbfenergy.wd1.myworkdayjobs.com/wday/cxs/pbfenergy/PBF/jobs",
       listingUrl: "https://pbfenergy.wd1.myworkdayjobs.com/PBF",
     },
+    {
+      id: "p5-1094-vanderbilt-health",
+      company: "Vanderbilt Health",
+      postingUrl: "https://www.vumc.org/careers/",
+      endpoint: "https://vumc.wd1.myworkdayjobs.com/wday/cxs/vumc/vumccareers/jobs",
+      listingUrl: "https://vumc.wd1.myworkdayjobs.com/vumccareers",
+    },
+    {
+      id: "p5-1096-vantor",
+      company: "Vantor (ex-Maxar Intelligence)",
+      postingUrl: "https://vantor.com/careers/",
+      endpoint: "https://maxar.wd1.myworkdayjobs.com/wday/cxs/maxar/Vantor/jobs",
+      listingUrl: "https://maxar.wd1.myworkdayjobs.com/Vantor",
+    },
   ])("uses the verified Workday feed for $company without probing its landing page", async ({
     id, company, postingUrl, endpoint, listingUrl,
   }) => {
@@ -4519,6 +4533,98 @@ Wrong description.
       resolvedListingUrl: listingUrl,
     }));
     expect(result.jobs.map((job) => job.title)).toEqual(["Operations Analyst"]);
+  });
+
+  it("uses Vanta's official embedded Ashby feed instead of scraping the rendered careers page", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      requests.push(String(input));
+      return Response.json({ jobs: [{
+        id: "vanta-1", title: "Applied AI Intern", department: "Engineering", employmentType: "Internship",
+        location: "Remote U.S.", isListed: true, isRemote: true, workplaceType: "Remote",
+        jobUrl: "https://jobs.ashbyhq.com/vanta/vanta-1", applyUrl: "https://jobs.ashbyhq.com/vanta/vanta-1/application",
+        publishedAt: "2026-08-12T00:00:00Z", descriptionPlain: "Build trustworthy AI products.",
+      }] });
+    };
+
+    const result = await crawlSource({
+      id: "p4-0510-vanta", company: "Vanta", postingUrl: "https://www.vanta.com/careers", adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests).toEqual(["https://api.ashbyhq.com/posting-api/job-board/vanta"]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: true, resolvedListingUrl: "https://jobs.ashbyhq.com/vanta",
+    }));
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      title: "Applied AI Intern", arrangement: "remote", employmentType: "Internship", department: "Engineering",
+    }));
+  });
+
+  it("paginates Vanguard's official M-Cloud API with rich filter fields and exact closure checks", async () => {
+    const offsets: number[] = [];
+    const total = 25;
+    const fetcher: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      expect(url.origin + url.pathname).toBe("https://jobsapi-google.m-cloud.io/api/job/search");
+      expect(url.searchParams.get("companyName")).toBe("companies/fbd5ce04-22d1-4aae-90dc-0282e45ee06f");
+      expect(url.searchParams.get("customAttributeFilter")).toBe('is_internal="External"');
+      const offset = Number(url.searchParams.get("offset"));
+      offsets.push(offset);
+      return Response.json({
+        totalHits: total,
+        searchResults: Array.from({ length: Math.min(10, total - offset) }, (_, index) => {
+          const id = offset + index + 1;
+          return { job: {
+            id, ref: `REQ-${id}`, title: id === 1 ? "2027 Data Science Intern" : `Application Engineer ${id}`,
+            description: `<p>Build software and data products ${id}.</p>`, primary_category: "Technology",
+            primary_city: "Malvern", primary_state: "PA", primary_country: "US",
+            addtnl_locations: [{ addtnl_city: "Charlotte", addtnl_state: "NC", addtnl_country: "US" }],
+            department: "Application Engineering", employment_type: "Full Time", level: "Early career",
+            compliment: id === 1 ? "Work from home" : "Hybrid", open_date: "2026-08-12T00:00:00",
+            url: `http://www.vanguardjobs.com/job/${id}/application-engineer-${id}-malvern-pa/`,
+            seo_url: `https://vanguard.wd5.myworkdayjobs.com/vanguard_external/job/Malvern-PA/Application-Engineer-${id}_REQ-${id}/apply`,
+          } };
+        }),
+      });
+    };
+
+    const result = await crawlSource({
+      id: "p5-1095-vanguard", company: "Vanguard",
+      postingUrl: "https://www.vanguardjobs.com/job-search-results/", adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(offsets.sort((a, b) => a - b)).toEqual([0, 10, 20]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: true, resolvedListingUrl: "https://www.vanguardjobs.com/job-search-results/",
+    }));
+    expect(result.jobs).toHaveLength(total);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      title: "2027 Data Science Intern", employmentType: "Internship", arrangement: "remote",
+      location: "Malvern, PA, US", locationCity: "Malvern", locationState: "PA", locationCountry: "US",
+      secondaryLocations: ["Charlotte, NC, US"], department: "Application Engineering", jobFamily: "Technology",
+      experienceLevel: "Early career", requisitionId: "REQ-1", officialUrl: "https://www.vanguardjobs.com/job/1/application-engineer-1-malvern-pa/",
+    }));
+  });
+
+  it("caps a Vanguard catalog above 500 jobs without falsely closing unseen jobs", async () => {
+    let requests = 0;
+    const fetcher: typeof fetch = async (input) => {
+      requests += 1;
+      const offset = Number(new URL(String(input)).searchParams.get("offset"));
+      return Response.json({ totalHits: 501, searchResults: Array.from({ length: 10 }, (_, index) => ({ job: {
+        id: offset + index, title: `Role ${offset + index}`, url: `https://www.vanguardjobs.com/job/${offset + index}/role/`,
+      } })) });
+    };
+
+    const result = await crawlSource({
+      id: "p5-1095-vanguard", company: "Vanguard",
+      postingUrl: "https://www.vanguardjobs.com/job-search-results/", adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests).toBe(50);
+    expect(result.status).toBe("succeeded");
+    expect(result.completeListing).toBe(false);
+    expect(result.jobs).toHaveLength(500);
   });
 
   it("routes Graybar to its official Jobsyn API and checkpoints the large catalog", async () => {
