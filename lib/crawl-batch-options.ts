@@ -1,6 +1,9 @@
 export function crawlBatchOptions(requested: number | undefined): { limit: number; concurrency: number } {
   const limit = Math.max(1, Math.min(4, requested ?? 4));
-  const concurrency = Math.min(2, limit);
+  // A single 10k-job response plus its existing D1 snapshot can occupy most
+  // of the Sites Worker heap. Keep sources sequential inside one request;
+  // individual source adapters still parallelize their bounded HTTP pages.
+  const concurrency = 1;
   return { limit, concurrency };
 }
 

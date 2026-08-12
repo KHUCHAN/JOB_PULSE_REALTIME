@@ -4580,6 +4580,100 @@ Wrong description.
     ]);
   });
 
+  it("loads EOG's full server-rendered job search in one request", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "audit-row-354",
+      company: "EOG Resources",
+      postingUrl: "https://careers.eogresources.com/",
+      adapter: "custom",
+    }, async (input) => {
+      requests.push(String(input));
+      return new Response(`
+        <div class="list-group-item"><a href="jobdetails.asp?jo_num=11228&apply=yes&" class="btn">Job Details</a><div class="row"><a class="coloredlink bold" href="jobdetails.asp?jo_num=11228&apply=yes&">Accountant III</a><div class="col-md-12 thinrow">Houston, TX</div><div class="col-md-12 thinrow">Posted&nbsp;5/5/2026</div></div></div>
+        <div class="list-group-item"><a class="coloredlink bold" href="jobdetails.asp?jo_num=11300&apply=yes&">Software Engineering Intern</a><div class="col-md-12 thinrow">Denver, CO</div><div class="col-md-12 thinrow">Posted&nbsp;8/12/2026</div></div>
+      `);
+    }, new Date());
+
+    expect(requests).toEqual(["https://careers.eogresources.com/Process_jobsearch.asp"]);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true, resolvedListingUrl: requests[0] }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({ externalId: "11228", title: "Accountant III", location: "Houston, TX", publishedAt: "2026-05-05T00:00:00.000Z" }),
+      expect.objectContaining({ externalId: "11300", employmentType: "Internship", locationState: "CO" }),
+    ]);
+  });
+
+  it("loads Ameriprise's complete official job sitemap in one request", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p2-0076-ameriprise-financial",
+      company: "Ameriprise Financial",
+      postingUrl: "https://www.ameriprise.com/careers",
+      adapter: "custom",
+    }, async (input, init) => {
+      const url = new URL(String(input));
+      requests.push(url.href);
+      expect(new Headers(init?.headers).get("user-agent")).toContain("Mozilla/5.0");
+      return new Response(`<?xml version="1.0"?><urlset>
+        <url><loc>https://careers.ameriprise.com/</loc><lastmod>2026-01-01</lastmod></url>
+        <url><loc>https://careers.ameriprise.com/search-jobs/r26_1/data-engineer/</loc><lastmod>2026-08-11T10:00:00Z</lastmod></url>
+        <url><loc>https://careers.ameriprise.com/search-jobs/r26_2/ai-intern/</loc><lastmod>2026-08-12T10:00:00Z</lastmod></url>
+      </urlset>`);
+    }, new Date());
+
+    expect(requests).toEqual(["https://careers.ameriprise.com/sitemap.xml"]);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true, resolvedListingUrl: "https://careers.ameriprise.com/search-jobs/" }));
+    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs[1]).toEqual(expect.objectContaining({ title: "AI Intern", employmentType: "Internship", publishedAt: "2026-08-12T10:00:00.000Z" }));
+  });
+
+  it("loads Cardinal Health's complete JSON catalog with structured filter fields", async () => {
+    const requests: string[] = [];
+    const record = (index: number) => ({
+      ID: `uuid-${index}`,
+      PostedDateRaw: "2026-08-12T10:00:00",
+      IsRemote: index === 0,
+      TrackingObject: {
+        ReferenceNumberJson: `20${index}`,
+        TitleJson: index === 0 ? "Data Science Intern - AI" : `Warehouse Engineer ${index}`,
+        TypeNameJson: index === 0 ? "Intern" : "Full time",
+        LocationNamesJson: ["Cardinal Office"],
+        ZipCodesJson: ["43215"],
+        CityNamesJson: ["Columbus"],
+        StateNamesJson: ["Ohio"],
+        CityStatesDataAbbrevJson: ["Columbus, OH"],
+        CountryNamesJson: ["United States"],
+        ActivateCategoryNamesJson: ["Data & Analytics"],
+        AtsCategoryNamesJson: ["Data & Analytics"],
+      },
+    });
+    const result = await crawlSource({
+      id: "p5-0566-cardinal-health",
+      company: "Cardinal Health",
+      postingUrl: "https://jobs.cardinalhealth.com/search/searchjobs",
+      adapter: "custom",
+    }, async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.href);
+      const offset = Number(url.searchParams.get("jtStartIndex"));
+      expect(offset).toBe(0);
+      const records = Array.from({ length: 501 }, (_, index) => record(index));
+      return Response.json(JSON.stringify({ Result: "OK", Records: records, TotalRecordCount: 501 }));
+    }, new Date());
+
+    expect(requests).toHaveLength(1);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true, resolvedListingUrl: "https://jobs.cardinalhealth.com/search-jobs" }));
+    expect(result.jobs).toHaveLength(501);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      title: "Data Science Intern - AI",
+      employmentType: "Internship",
+      arrangement: "remote",
+      department: "Data & Analytics",
+      locationCountry: "United States",
+      officialUrl: "https://jobs.cardinalhealth.com/search/jobdetails/data-science-intern---ai/uuid-0",
+    }));
+  });
+
   it("does not advance a Jobsyn cycle past an incomplete page", async () => {
     const result = await crawlSource({
       id: "jobsyn-incomplete",
