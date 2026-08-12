@@ -4445,13 +4445,6 @@ Wrong description.
       endpoint: "https://pbfenergy.wd1.myworkdayjobs.com/wday/cxs/pbfenergy/PBF/jobs",
       listingUrl: "https://pbfenergy.wd1.myworkdayjobs.com/PBF",
     },
-    {
-      id: "audit-row-364",
-      company: "Graybar Electric",
-      postingUrl: "https://www.graybar.com/careers",
-      endpoint: "https://graybar.wd1.myworkdayjobs.com/wday/cxs/graybar/Careers/jobs",
-      listingUrl: "https://graybar.wd1.myworkdayjobs.com/Careers",
-    },
   ])("uses the verified Workday feed for $company without probing its landing page", async ({
     id, company, postingUrl, endpoint, listingUrl,
   }) => {
@@ -4478,6 +4471,92 @@ Wrong description.
       resolvedListingUrl: listingUrl,
     }));
     expect(result.jobs.map((job) => job.title)).toEqual(["Operations Analyst"]);
+  });
+
+  it("routes Graybar to its official Jobsyn API and checkpoints the large catalog", async () => {
+    const requests: URL[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = new URL(String(input));
+      requests.push(url);
+      expect(url.origin + url.pathname).toBe("https://prod-search-api.jobsyn.org/api/v1/solr/search");
+      expect(new Headers(init?.headers).get("x-origin")).toBe("graybar.jobs");
+      const page = Number(url.searchParams.get("page"));
+      return Response.json({
+        jobs: Array.from({ length: 10 }, (_, index) => ({
+          guid: `graybar-${page}-${index}`,
+          reqid: `R-${page}-${index}`,
+          title_exact: index === 0 ? "AI Engineering Intern" : "Quotations Specialist",
+          title_slug: index === 0 ? "ai-engineering-intern" : "quotations-specialist",
+          location_exact: "Reno, NV",
+          city_exact: "Reno",
+          state_short: "NV",
+          country_exact: "United States",
+          date_added: "2026-08-12T22:00:00Z",
+          date_new: "2026-08-10T08:00:00Z",
+          date_updated: "2026-08-11T08:00:00Z",
+          description: "Build production systems.",
+        })),
+        pagination: { page, page_size: 10, total: 210, total_pages: 21, has_more_pages: page < 21 },
+      });
+    };
+
+    const result = await crawlSource({
+      id: "audit-row-364",
+      company: "Graybar Electric",
+      postingUrl: "https://www.graybar.com/careers",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests).toHaveLength(20);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: { nextPage: 20, cycleComplete: false, totalPages: 21 },
+      resolvedListingUrl: "https://graybar.jobs/jobs/",
+    }));
+    expect(result.jobs).toHaveLength(200);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      title: "AI Engineering Intern",
+      employmentType: "Internship",
+      locationCity: "Reno",
+      locationState: "NV",
+      locationCountry: "United States",
+      publishedAt: "2026-08-10T08:00:00.000Z",
+      officialUrl: "https://graybar.jobs/reno-nv/ai-engineering-intern/graybar-1-0/job/",
+    }));
+  });
+
+  it("does not advance a Jobsyn cycle past an incomplete page", async () => {
+    const result = await crawlSource({
+      id: "jobsyn-incomplete",
+      company: "Acme",
+      postingUrl: "https://acme.jobs/jobs/",
+      adapter: "custom",
+    }, async (input, init) => {
+      const url = new URL(String(input));
+      if (url.hostname === "acme.jobs") {
+        return new Response('<script>const api="https://prod-search-api.jobsyn.org/api/"; const source="solr";</script>');
+      }
+      expect(new Headers(init?.headers).get("x-origin")).toBe("acme.jobs");
+      const page = Number(url.searchParams.get("page"));
+      const count = page === 2 ? 9 : 10;
+      return Response.json({
+        jobs: Array.from({ length: count }, (_, index) => ({
+          guid: `job-${page}-${index}`,
+          title_exact: "Engineer",
+          title_slug: "engineer",
+          location_exact: "Austin, TX",
+        })),
+        pagination: { page, page_size: 10, total: 30, total_pages: 3, has_more_pages: page < 3 },
+      });
+    }, new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: { nextPage: 2, cycleComplete: false, totalPages: 3 },
+    }));
+    expect(result.jobs).toHaveLength(10);
   });
 
   it("routes verified PSI CRO and OpenAI sources straight to their public APIs", async () => {

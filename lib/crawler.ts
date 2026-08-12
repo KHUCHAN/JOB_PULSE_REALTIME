@@ -202,11 +202,6 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
     adapter: "greenhouse",
   },
   "audit-row-356": { listingUrl: "https://app.eightfold.ai/careers?domain=elcompanies.com", adapter: "custom" },
-  "audit-row-364": {
-    discovered: { kind: "workday", endpoint: "https://graybar.wd1.myworkdayjobs.com/wday/cxs/graybar/Careers/jobs" },
-    listingUrl: "https://graybar.wd1.myworkdayjobs.com/Careers",
-    adapter: "workday",
-  },
   "legacy-row-847": {
     discovered: { kind: "workday", endpoint: "https://pbfenergy.wd1.myworkdayjobs.com/wday/cxs/pbfenergy/PBF/jobs" },
     listingUrl: "https://pbfenergy.wd1.myworkdayjobs.com/PBF",
@@ -265,6 +260,7 @@ type JobsynJob = {
   title_slug?: string;
   location_exact?: string;
   date_added?: string;
+  date_new?: string;
   date_updated?: string;
   description?: string;
   job_type?: string;
@@ -272,6 +268,7 @@ type JobsynJob = {
   job_function?: string;
   reqid?: string;
   city_exact?: string;
+  state_short?: string;
   state_short_exact?: string;
   country_exact?: string;
 };
@@ -3034,7 +3031,16 @@ const crawlJobsyn = async (
     responseStatus = response.status;
     if (!response.ok) throw Object.assign(new Error(`Jobsyn returned HTTP ${response.status}.`), { responseStatus: response.status });
     const payload = await response.json() as JobsynPayload;
-    if (!Array.isArray(payload.jobs) || !payload.pagination?.total_pages) {
+    const pagination = payload.pagination;
+    if (!Array.isArray(payload.jobs)
+      || !Number.isInteger(pagination?.page)
+      || pagination?.page !== page
+      || !Number.isInteger(pagination.page_size)
+      || pagination.page_size! < 1
+      || !Number.isInteger(pagination.total)
+      || pagination.total! < 1
+      || !Number.isInteger(pagination.total_pages)
+      || pagination.total_pages! !== Math.ceil(pagination.total! / pagination.page_size!)) {
       throw new Error("Jobsyn returned an unusable job catalog.");
     }
     const jobs = payload.jobs.flatMap((job): CrawledJob[] => {
@@ -3042,7 +3048,10 @@ const crawlJobsyn = async (
       const description = plainText(job.description);
       const locationSlug = jobsynSlug(job.location_exact);
       const officialUrl = new URL(`/${locationSlug}/${job.title_slug}/${job.guid}/job/`, listing.origin).href;
-      const employmentType = normalizeEmploymentType(job.job_type) ?? job.job_type ?? null;
+      const programs = classifyJobPrograms(job.title_exact).keys;
+      const employmentType = programs.some((key) => key === "internship" || key === "coop")
+        ? "Internship"
+        : normalizeEmploymentType(job.job_type) ?? job.job_type ?? null;
       const arrangement = /remote/i.test(`${job.job_type ?? ""} ${job.location_exact}`)
         ? "remote" as const
         : /hybrid/i.test(job.job_type ?? "")
@@ -3057,29 +3066,34 @@ const crawlJobsyn = async (
         location: job.location_exact,
         arrangement,
         employmentType,
-        summary: description,
+        summary: description?.slice(0, 500) ?? null,
         description,
         ...(job.job_category ? { jobFamily: job.job_category } : {}),
         ...(job.job_function ? { jobFunction: job.job_function } : {}),
         ...(job.reqid ? { requisitionId: job.reqid } : {}),
         ...(job.city_exact ? { locationCity: job.city_exact } : {}),
-        ...(job.state_short_exact ? { locationState: job.state_short_exact } : {}),
+        ...(job.state_short_exact || job.state_short ? { locationState: job.state_short_exact ?? job.state_short } : {}),
         ...(job.country_exact ? { locationCountry: job.country_exact } : {}),
         ...(job.date_updated ? { sourceUpdatedAt: normalizedDate(job.date_updated) } : {}),
         officialUrl,
-        publishedAt: normalizedDate(job.date_added),
+        publishedAt: normalizedDate(job.date_new ?? job.date_added),
       }];
     });
-    if (jobs.length !== payload.jobs.length) throw new Error("Jobsyn returned malformed job records.");
+    const expectedJobs = Math.min(pagination.page_size!, pagination.total! - (page - 1) * pagination.page_size!);
+    if (jobs.length !== payload.jobs.length || jobs.length !== expectedJobs) {
+      throw new Error("Jobsyn returned an incomplete or malformed job page.");
+    }
     return { payload, jobs };
   };
 
   try {
-    let first = await fetchPage(requestedStart);
-    const totalPages = Math.max(1, first.payload.pagination?.total_pages ?? 1);
+    const catalog = await fetchPage(1);
+    const totalPages = Math.max(1, catalog.payload.pagination?.total_pages ?? 1);
     const startPage = requestedStart > totalPages ? 1 : requestedStart;
-    if (startPage !== requestedStart) first = await fetchPage(startPage);
+    const first = startPage === 1 ? catalog : await fetchPage(startPage);
     const endPage = Math.min(totalPages, startPage + maxPagesPerPass - 1);
+    const expectedTotal = first.payload.pagination!.total!;
+    const expectedPageSize = first.payload.pagination!.page_size!;
     const pages = new Map<number, CrawledJob[]>([[startPage, first.jobs]]);
     let failedPage: number | null = null;
     for (let page = startPage + 1; page <= endPage && failedPage === null; page += 4) {
@@ -3096,15 +3110,24 @@ const crawlJobsyn = async (
           failedPage = failedPage == null ? item.pageNumber : Math.min(failedPage, item.pageNumber);
           continue;
         }
+        if (item.result.payload.pagination?.total !== expectedTotal
+          || item.result.payload.pagination?.page_size !== expectedPageSize
+          || item.result.payload.pagination?.total_pages !== totalPages) {
+          failedPage = failedPage == null ? item.pageNumber : Math.min(failedPage, item.pageNumber);
+          continue;
+        }
         pages.set(item.pageNumber, item.result.jobs);
       }
     }
     const lastCompletePage = failedPage == null ? endPage : failedPage - 1;
-    const jobs = uniqueJobs([...pages.entries()]
+    const pageJobs = [...pages.entries()]
       .filter(([page]) => page <= lastCompletePage)
       .sort(([left], [right]) => left - right)
-      .flatMap(([, pageJobs]) => pageJobs));
-    if (jobs.length === 0) throw new Error("Jobsyn did not return any usable jobs.");
+      .flatMap(([, jobs]) => jobs);
+    const jobs = uniqueJobs(pageJobs);
+    if (jobs.length === 0 || jobs.length !== pageJobs.length) {
+      throw new Error("Jobsyn returned duplicate or unusable job identities.");
+    }
     const cycleComplete = failedPage === null && endPage === totalPages;
     return {
       status: "succeeded",
@@ -3112,10 +3135,13 @@ const crawlJobsyn = async (
       completeListing: false,
       jobs,
       pagination: {
-        nextPage: failedPage ?? (cycleComplete ? 1 : endPage + 1),
+        // Repeat the boundary page on the next pass. New or removed jobs can
+        // shift a date-sorted catalog between checkpointed invocations.
+        nextPage: failedPage ?? (cycleComplete ? 1 : endPage),
         cycleComplete,
         totalPages,
       },
+      resolvedListingUrl: listing.href,
       error: null,
     };
   } catch (error) {
@@ -6327,6 +6353,11 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
     source = { ...source, postingUrl: originalPage.href };
   }
   const sourcePage = new URL(source.postingUrl);
+  if (source.id === "audit-row-364") return crawlJobsyn({
+    ...source,
+    postingUrl: "https://graybar.jobs/jobs/",
+    adapter: "custom",
+  }, fetcher);
   if (source.id === "p5-1005-olympus-medical-systems") return crawlOlympusSuccessFactors(source, fetcher);
   if (source.id === "p2-0068-abrigo") return crawlAbrigoJobvite(source, fetcher);
   if (source.id === "legacy-row-777") return crawlAceJobs(source, fetcher);
