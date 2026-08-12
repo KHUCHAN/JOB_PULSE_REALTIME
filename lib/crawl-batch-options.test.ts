@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import { crawlBatchOptions, jobAreaRegionBackfillLimit, jobProgramBackfillLimit, jobTopicBackfillLimit, recrawlSourceIds } from "./crawl-batch-options";
 
 describe("remote crawl batch options", () => {
-  it("keeps large source snapshots sequential within the production Worker memory ceiling", () => {
-    expect(crawlBatchOptions(undefined)).toEqual({ limit: 4, concurrency: 1 });
-    expect(crawlBatchOptions(64)).toEqual({ limit: 4, concurrency: 1 });
-    expect(crawlBatchOptions(500)).toEqual({ limit: 4, concurrency: 1 });
+  it("isolates every source in its own production Worker request", () => {
+    expect(crawlBatchOptions(undefined)).toEqual({ limit: 1, concurrency: 1 });
+    expect(crawlBatchOptions(64)).toEqual({ limit: 1, concurrency: 1 });
+    expect(crawlBatchOptions(500)).toEqual({ limit: 1, concurrency: 1 });
     expect(crawlBatchOptions(0)).toEqual({ limit: 1, concurrency: 1 });
   });
 });

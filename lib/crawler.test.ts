@@ -1,6 +1,23 @@
 import { describe, expect, it } from "vitest";
 import * as crawlerModule from "./crawler";
-import { crawlSource, discoverAts, oracleCareerSite } from "./crawler";
+import { crawlBudgetedFetcher, crawlSource, discoverAts, oracleCareerSite } from "./crawler";
+
+describe("source crawl budget", () => {
+  it("stops issuing requests after the per-source request ceiling", async () => {
+    const fetcher = crawlBudgetedFetcher(async () => new Response("ok"), { maxRequests: 2, deadlineMs: 1_000 });
+    await expect(fetcher("https://example.com/1")).resolves.toBeInstanceOf(Response);
+    await expect(fetcher("https://example.com/2")).resolves.toBeInstanceOf(Response);
+    await expect(fetcher("https://example.com/3")).rejects.toThrow("2 request source crawl budget exhausted");
+  });
+
+  it("aborts an active request at the per-source wall-clock deadline", async () => {
+    const hangingFetcher: typeof fetch = async (_input, init) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+    });
+    const fetcher = crawlBudgetedFetcher(hangingFetcher, { maxRequests: 2, deadlineMs: 20 });
+    await expect(fetcher("https://example.com/slow")).rejects.toThrow("source crawl deadline exceeded");
+  });
+});
 
 describe("large catalog content", () => {
   it("keeps a bounded search summary without retaining every full description in memory", () => {
@@ -3844,6 +3861,37 @@ Wrong description.
       publishedAt: "2026-08-07T00:00:00.000Z",
     })]);
     expect(calls.some((url) => url.includes("/wday/cxs/motorolasolutions/Careers/job/"))).toBe(true);
+  });
+
+  it("rotates a bounded Workday detail enrichment window instead of blocking the listing crawl", async () => {
+    const detailCalls: string[] = [];
+    const jobs = Array.from({ length: 20 }, (_, index) => ({
+      title: `Applied AI Engineering Intern ${index}`,
+      jobId: `R${index}`,
+      location: "Chicago, IL",
+      type: "Internship",
+      applyUrl: `https://acme.wd5.myworkdayjobs.com/Careers/job/Chicago-IL/Applied-AI-Engineering-Intern-${index}_R${index}`,
+    }));
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.includes("/wday/cxs/")) {
+        detailCalls.push(url);
+        return Response.json({ jobPostingInfo: { timeType: "Full time", jobDescription: "Build AI systems." } });
+      }
+      return new Response(`<script>phApp.ddo = ${JSON.stringify({ eagerLoadRefineSearch: { data: { totalHits: jobs.length, jobs } } })};</script>`);
+    };
+
+    const result = await crawlSource({
+      id: "bounded-workday-details",
+      company: "Acme",
+      postingUrl: "https://careers.example/search-results",
+      adapter: "phenom",
+    }, fetcher, new Date("2026-08-12T12:00:00Z"));
+
+    expect(result.status).toBe("succeeded");
+    expect(result.jobs).toHaveLength(20);
+    expect(detailCalls).toHaveLength(8);
+    expect(result.jobs.filter((job) => job.description === "Build AI systems.")).toHaveLength(8);
   });
 
   it("paginates Phenom search results and keeps native facets and filter fields", async () => {

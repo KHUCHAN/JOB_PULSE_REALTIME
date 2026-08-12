@@ -643,6 +643,9 @@ type TalemetryPayload = {
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const REQUEST_ATTEMPTS = 2;
+const SOURCE_REQUEST_BUDGET = 50;
+const SOURCE_DEADLINE_MS = 45_000;
+const WORKDAY_DETAIL_BATCH_SIZE = 8;
 const BLOCKED_HTTP_STATUSES = new Set([401, 403, 429, 520, 521, 522, 523, 524]);
 const RETRYABLE_HTTP_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524]);
 const BROWSER_REQUEST_HEADERS = {
@@ -694,6 +697,39 @@ const fetchWithTimeout = async (
     }
   }
   throw lastError;
+};
+
+export const crawlBudgetedFetcher = (
+  fetcher: typeof fetch,
+  options: { maxRequests?: number; deadlineMs?: number } = {},
+): typeof fetch => {
+  const maxRequests = options.maxRequests ?? SOURCE_REQUEST_BUDGET;
+  const deadlineMs = options.deadlineMs ?? SOURCE_DEADLINE_MS;
+  const deadline = Date.now() + deadlineMs;
+  let requests = 0;
+
+  return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    requests += 1;
+    if (requests > maxRequests) throw new Error(`${maxRequests} request source crawl budget exhausted`);
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error(`${deadlineMs / 1_000} second source crawl deadline exceeded`);
+
+    const controller = new AbortController();
+    const upstreamSignal = init?.signal;
+    const forwardAbort = () => controller.abort(upstreamSignal?.reason);
+    if (upstreamSignal?.aborted) forwardAbort();
+    else upstreamSignal?.addEventListener("abort", forwardAbort, { once: true });
+    const timeout = setTimeout(
+      () => controller.abort(new Error(`${deadlineMs / 1_000} second source crawl deadline exceeded`)),
+      remaining,
+    );
+    try {
+      return await fetcher(input, { ...init, signal: controller.signal });
+    } finally {
+      clearTimeout(timeout);
+      upstreamSignal?.removeEventListener("abort", forwardAbort);
+    }
+  };
 };
 
 const plainText = (value: string | null | undefined): string | null => {
@@ -6829,6 +6865,7 @@ const combinedEmploymentType = (job: CrawledJob, timeType: unknown): string | nu
 const enrichWorkdayProgramJobs = async (
   result: SourceCrawlResult,
   fetcher: typeof fetch,
+  now: Date,
 ): Promise<SourceCrawlResult> => {
   if (result.status !== "succeeded" || result.jobs.length === 0) return result;
   const enriched = [...result.jobs];
@@ -6837,12 +6874,21 @@ const enrichWorkdayProgramJobs = async (
       || normalizeEmploymentType(job.employmentType)?.split(" / ").includes("Internship");
     const candidates = indexedAsProgram ? workdayDetailCandidates(job.officialUrl) : [];
     return candidates.length > 0 ? [{ index, candidates }] : [];
-  }).slice(0, 200);
+  });
+  const enrichmentStart = targets.length === 0
+    ? 0
+    : (Math.floor(now.getTime() / (2 * 60 * 60 * 1_000)) * WORKDAY_DETAIL_BATCH_SIZE) % targets.length;
+  const selectedTargets = targets.length <= WORKDAY_DETAIL_BATCH_SIZE
+    ? targets
+    : Array.from(
+        { length: WORKDAY_DETAIL_BATCH_SIZE },
+        (_, offset) => targets[(enrichmentStart + offset) % targets.length],
+      );
 
   const enrichOne = async ({ index, candidates }: { index: number; candidates: string[] }): Promise<void> => {
     for (const endpoint of candidates) {
       try {
-        const response = await fetchWithTimeout(fetcher, endpoint, undefined, true, { attempts: 1, timeoutMs: 8_000 });
+        const response = await fetchWithTimeout(fetcher, endpoint, undefined, true, { attempts: 1, timeoutMs: 4_000 });
         if (!response.ok) continue;
         const payload = await response.json() as WorkdayDetailPayload;
         const info = payload.jobPostingInfo;
@@ -6867,12 +6913,11 @@ const enrichWorkdayProgramJobs = async (
       }
     }
   };
-  for (let index = 0; index < targets.length; index += 8) {
-    await Promise.all(targets.slice(index, index + 8).map(enrichOne));
-  }
+  await Promise.all(selectedTargets.map(enrichOne));
   return { ...result, jobs: enriched };
 };
 
 export async function crawlSource(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
-  return enrichWorkdayProgramJobs(await crawlSourceBase(source, fetcher, now), fetcher);
+  const budgetedFetcher = crawlBudgetedFetcher(fetcher);
+  return enrichWorkdayProgramJobs(await crawlSourceBase(source, budgetedFetcher, now), budgetedFetcher, now);
 }
