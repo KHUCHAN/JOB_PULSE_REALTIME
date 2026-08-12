@@ -4437,6 +4437,179 @@ Wrong description.
     expect(result.jobs.map((job) => job.title)).toEqual(["Machine Learning Intern"]);
   });
 
+  it.each([
+    {
+      id: "legacy-row-847",
+      company: "PBF Energy",
+      postingUrl: "https://www.pbfenergy.com/careers/",
+      endpoint: "https://pbfenergy.wd1.myworkdayjobs.com/wday/cxs/pbfenergy/PBF/jobs",
+      listingUrl: "https://pbfenergy.wd1.myworkdayjobs.com/PBF",
+    },
+    {
+      id: "audit-row-364",
+      company: "Graybar Electric",
+      postingUrl: "https://www.graybar.com/careers",
+      endpoint: "https://graybar.wd1.myworkdayjobs.com/wday/cxs/graybar/Careers/jobs",
+      listingUrl: "https://graybar.wd1.myworkdayjobs.com/Careers",
+    },
+  ])("uses the verified Workday feed for $company without probing its landing page", async ({
+    id, company, postingUrl, endpoint, listingUrl,
+  }) => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      requests.push(String(input));
+      return Response.json({
+        total: 1,
+        jobPostings: [{
+          title: "Operations Analyst",
+          externalPath: "/job/New-York/Operations-Analyst_R100",
+          locationsText: "New York, NY",
+          postedOn: "Posted Today",
+        }],
+      });
+    };
+
+    const result = await crawlSource({ id, company, postingUrl, adapter: "custom" }, fetcher, new Date("2026-08-12T12:00:00Z"));
+
+    expect(requests).toEqual([endpoint]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: listingUrl,
+    }));
+    expect(result.jobs.map((job) => job.title)).toEqual(["Operations Analyst"]);
+  });
+
+  it("routes verified PSI CRO and OpenAI sources straight to their public APIs", async () => {
+    const psiRequests: string[] = [];
+    const psi = await crawlSource({
+      id: "p5-1029-psi-cro",
+      company: "PSI CRO",
+      postingUrl: "https://www.psi-cro.com/careers/",
+      adapter: "custom",
+    }, async (input) => {
+      psiRequests.push(String(input));
+      return Response.json({ totalFound: 1, content: [{ id: "sr-1", name: "Data Analyst" }] });
+    }, new Date());
+
+    const openAiRequests: string[] = [];
+    const openAi = await crawlSource({
+      id: "p5-0692-openai",
+      company: "OpenAI",
+      postingUrl: "https://openai.com/careers/search/?action=apply",
+      adapter: "custom",
+    }, async (input) => {
+      openAiRequests.push(String(input));
+      return Response.json({ jobs: [{
+        id: "ashby-1",
+        title: "Software Engineer",
+        jobUrl: "https://jobs.ashbyhq.com/openai/ashby-1",
+        isListed: true,
+      }] });
+    }, new Date());
+
+    expect(psiRequests).toEqual(["https://api.smartrecruiters.com/v1/companies/PSICRO/postings"]);
+    expect(psi.jobs).toHaveLength(1);
+    expect(openAiRequests).toEqual(["https://api.ashbyhq.com/posting-api/job-board/openai"]);
+    expect(openAi.jobs).toHaveLength(1);
+  });
+
+  it("loads News Corp's complete official job sitemap without opening protected pages", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      requests.push(String(input));
+      return new Response(`<urlset>
+        <url><loc>https://careers.newscorp.com/virtual-usa/data-science-intern/6E4B8B0E7316466F87C815824802986B/job/</loc><lastmod>2026-08-12</lastmod></url>
+        <url><loc>https://careers.newscorp.com/new-york-ny/software-engineer/125953384BF94E769A717894A28032FC/job/</loc><lastmod>2026-08-11</lastmod></url>
+      </urlset>`, { headers: { "content-type": "application/xml" } });
+    };
+
+    const result = await crawlSource({
+      id: "legacy-row-840",
+      company: "News Corp",
+      postingUrl: "https://careers.newscorp.com/",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests).toEqual(["https://careers.newscorp.com/sitemaps/jobs_1.xml"]);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({ title: "Data Science Intern", location: "Virtual USA", arrangement: "remote", employmentType: "Internship" }),
+      expect.objectContaining({ title: "Software Engineer", location: "New York NY" }),
+    ]);
+  });
+
+  it("uses Olympus' paged SuccessFactors search instead of its corporate landing page", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p5-1005-olympus-medical-systems",
+      company: "Olympus Medical Systems",
+      postingUrl: "https://www.olympusamerica.com/careers",
+      adapter: "custom",
+    }, async (input) => {
+      requests.push(String(input));
+      return new Response(`<span class="paginationLabel">Results <b>1 – 2</b> of <b>2</b></span>
+        <tr class="data-row"><span class="jobFacility">REQ-1</span><a class="jobTitle-link" href="/job/Center-Valley-Data-Science-Intern-PA/1400046400/">Data Science Intern</a><span class="jobLocation">Center Valley, PA, US</span></tr>
+        <tr class="data-row"><span class="jobFacility">REQ-2</span><a class="jobTitle-link" href="/job/Redmond-Software-Engineer-WA/1408854700/">Software Engineer</a><span class="jobLocation">Redmond, WA, US</span></tr>`);
+    }, new Date());
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toContain("careers.olympusamerica.com/search/");
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs.map((job) => job.title)).toEqual(["Data Science Intern", "Software Engineer"]);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({ location: "Center Valley, PA, US", requisitionId: "REQ-1" }));
+  });
+
+  it("uses Abrigo's public Jobvite board as a complete one-request catalog", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({ id: "p2-0068-abrigo", company: "Abrigo", postingUrl: "https://www.abrigo.com/careers/", adapter: "custom" }, async (input) => {
+      requests.push(String(input));
+      return new Response(`<table class="jv-job-list"><tr><td class="jv-job-list-name"><a href="/bankerstoolbox/job/oPAxAfwg">Support Analyst</a></td><td class="jv-job-list-location">3 Locations</td></tr></table>`);
+    }, new Date());
+
+    expect(requests).toEqual(["https://jobs.jobvite.com/bankerstoolbox"]);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs[0]).toEqual(expect.objectContaining({ title: "Support Analyst", location: "3 Locations" }));
+  });
+
+  it("checkpoints Ace Hardware's official JSON-backed pages without loading job details", async () => {
+    const requests: string[] = [];
+    const block = (id: string, title: string, location: string) => `<div class="search--item"><label>${id}</label><p><a href="/posting/${title.toLocaleLowerCase().replaceAll(" ", "-")}/${id}">${title}</a></p><label>Location</label><p>${location}</p><label>Category</label><p>Corporate</p></div>`;
+    const result = await crawlSource({ id: "legacy-row-777", company: "Ace Hardware", postingUrl: "https://careers.acehardware.com/", adapter: "custom" }, async (input) => {
+      requests.push(String(input));
+      return Response.json({ showing: "Showing 2 of 2 Results", postings: { jobs: `${block("REQ-123456", "Data Intern", "Oak Brook, Illinois")}${block("a1b2c3d4", "Developer", "Remote")}` } });
+    }, new Date());
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toContain("get-jobs.php");
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: false, pagination: { nextPage: 1, cycleComplete: true, totalPages: 1 } }));
+    expect(result.jobs).toHaveLength(2);
+  });
+
+  it("loads every Astronics posting and description from its linked RSS feed", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({ id: "p5-0808-astronics", company: "ASTRONICS", postingUrl: "https://www.astronics.com/us-jobs", adapter: "custom" }, async (input) => {
+      requests.push(String(input));
+      return new Response(`<rss><channel><item><title><![CDATA[Software Intern   (WA, Kirkland)]]></title><description><![CDATA[<p>Build software.</p>]]></description><link>https://www.appone.com/MainInfoReq.asp?R_ID=7202300&amp;B_ID=83</link><pubDate>Wed, 12 Aug 2026 00:00:00 GMT</pubDate></item></channel></rss>`);
+    }, new Date());
+
+    expect(requests).toEqual(["https://client.hrservicesinc.com/downloads/rss/portals/2110.xml"]);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs[0]).toEqual(expect.objectContaining({ title: "Software Intern", location: "Kirkland, WA", employmentType: "Internship", description: "Build software." }));
+  });
+
+  it("uses Graphic Packaging's self-described JSON job API", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({ id: "legacy-row-820", company: "Graphic Packaging Holding", postingUrl: "https://careers.graphicpkg.com/", adapter: "custom" }, async (input) => {
+      requests.push(String(input));
+      return Response.json({ totalCount: 1, results: [{ requisitionId: "15533", title: "Data Intern", department: "Technology", location: "Atlanta, GA, USA", employmentType: "Internship", datePosted: "2026-08-11", applyUrl: "https://career55.sapsf.eu/careers?career_job_req_id=15533", description: "Analyze data." }] });
+    }, new Date());
+
+    expect(requests[0]).toContain("careers.graphicpkg.com/api/mcp/jobs");
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs[0]).toEqual(expect.objectContaining({ title: "Data Intern", department: "Technology", publishedAt: "2026-08-11T00:00:00.000Z" }));
+  });
+
   it("crawls every Dow job through the official Coveo search API", async () => {
     const requests: string[] = [];
     const makeResult = (index: number) => ({
