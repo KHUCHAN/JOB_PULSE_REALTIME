@@ -3383,6 +3383,52 @@ Wrong description.
     expect(result.completeListing).toBe(true);
   });
 
+  it("checkpoints very large Oracle catalogs within the 50-request source budget", async () => {
+    const total = 2_334;
+    const run = async (crawlPageCursor?: number) => {
+      const offsets: number[] = [];
+      const fetcher: typeof fetch = async (input) => {
+        const url = String(input);
+        if (url === "https://careers.acme.example/en/sites/CX/jobs") {
+          return new Response('<script src="https://acme.fa.us2.oraclecloud.com/hcmUI/app.js"></script>', { status: 200 });
+        }
+        const finder = new URL(url).searchParams.get("finder") ?? "";
+        const offset = Number(finder.match(/offset=(\d+)/)?.[1] ?? 0);
+        offsets.push(offset);
+        const requisitionList = Array.from({ length: Math.min(25, total - offset) }, (_, index) => ({
+          Id: offset + index + 1,
+          Title: `Role ${offset + index + 1}`,
+        }));
+        return Response.json({ items: [{ TotalJobsCount: total, requisitionList }] });
+      };
+      const result = await crawlSource({
+        id: "oracle-huge", company: "Acme", postingUrl: "https://careers.acme.example/en/sites/CX/jobs",
+        adapter: "custom", ...(crawlPageCursor ? { crawlPageCursor } : {}),
+      }, fetcher, new Date());
+      return { result, offsets };
+    };
+
+    const first = await run();
+    expect(first.offsets).toHaveLength(49);
+    expect(first.offsets.at(0)).toBe(0);
+    expect(first.offsets.at(-1)).toBe(1_200);
+    expect(first.result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: false,
+      pagination: { nextPage: 50, cycleComplete: false, totalPages: 94 },
+    }));
+    expect(first.result.jobs).toHaveLength(1_225);
+
+    const second = await run(50);
+    expect(second.offsets).toHaveLength(45);
+    expect(second.offsets.at(0)).toBe(1_225);
+    expect(second.offsets.at(-1)).toBe(2_325);
+    expect(second.result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: false,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 94 },
+    }));
+    expect(second.result.jobs).toHaveLength(1_109);
+  });
+
   it("follows a discovered Lever feed and treats its response as a complete listing", async () => {
     const requests: string[] = [];
     const responses = [
@@ -4558,6 +4604,61 @@ Wrong description.
     expect(result.jobs[0]).toEqual(expect.objectContaining({
       title: "Applied AI Intern", arrangement: "remote", employmentType: "Internship", department: "Engineering",
     }));
+  });
+
+  it.each([
+    {
+      id: "p4-0513-verint",
+      company: "Verint",
+      postingUrl: "https://www.verint.com/careers",
+      listingUrl: "https://fa-epcb-saasfaprod1.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX",
+      apiOrigin: "https://fa-epcb-saasfaprod1.fa.ocs.oraclecloud.com",
+    },
+    {
+      id: "legacy-row-878",
+      company: "Vertiv Holdings",
+      postingUrl: "https://www.vertiv.com/en-us/about/career-center/",
+      listingUrl: "https://egup.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/jobs",
+      apiOrigin: "https://egup.fa.us2.oraclecloud.com",
+    },
+  ])("uses $company's official Oracle Recruiting board instead of its corporate careers landing page", async ({
+    id, company, postingUrl, listingUrl, apiOrigin,
+  }) => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === listingUrl) return new Response(`<!doctype html><title>${company} careers</title>`);
+      const endpoint = new URL(url);
+      expect(endpoint.origin + endpoint.pathname).toBe(
+        `${apiOrigin}/hcmRestApi/resources/latest/recruitingCEJobRequisitions`,
+      );
+      expect(endpoint.searchParams.get("finder")).toContain("siteNumber=CX");
+      return Response.json({ items: [{
+        TotalJobsCount: 1,
+        requisitionList: [{
+          Id: `${id}-101`,
+          Title: "Applied AI Software Engineering Intern",
+          PrimaryLocation: "United States",
+          JobSchedule: "Internship",
+          ShortDescriptionStr: "Build production AI software.",
+          PostedDate: "2026-08-12T00:00:00Z",
+        }],
+      }] });
+    };
+
+    const result = await crawlSource({
+      id, company, postingUrl, adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests).toHaveLength(2);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: true, resolvedListingUrl: listingUrl,
+    }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: `${id}-101`, title: "Applied AI Software Engineering Intern", employmentType: "Internship",
+      officialUrl: `${new URL(listingUrl).origin}/hcmUI/CandidateExperience/en/sites/CX/job/${id}-101`,
+    })]);
   });
 
   it("paginates Vanguard's official M-Cloud API with rich filter fields and exact closure checks", async () => {

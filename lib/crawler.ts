@@ -212,6 +212,14 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
     listingUrl: "https://jobs.ashbyhq.com/vanta",
     adapter: "ashby",
   },
+  "p4-0513-verint": {
+    listingUrl: "https://fa-epcb-saasfaprod1.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX",
+    adapter: "custom",
+  },
+  "legacy-row-878": {
+    listingUrl: "https://egup.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/jobs",
+    adapter: "custom",
+  },
   "p5-1094-vanderbilt-health": {
     discovered: { kind: "workday", endpoint: "https://vumc.wd1.myworkdayjobs.com/wday/cxs/vumc/vumccareers/jobs" },
     listingUrl: "https://vumc.wd1.myworkdayjobs.com/vumccareers",
@@ -1171,18 +1179,30 @@ async function crawlOracle(
   fetcher: typeof fetch,
 ): Promise<SourceCrawlResult> {
   try {
-    const fetchPage = async (offset: number): Promise<{ responseStatus: number; total: number; page: OracleJob[] }> => {
+    const pageSize = 25;
+    // One request is spent discovering Oracle from the public listing page.
+    // Keep the remaining API work inside the source-wide 50-request budget.
+    const maxPagesPerPass = 49;
+    let apiRequests = 0;
+    const fetchPage = async (pageNumber: number): Promise<{ responseStatus: number; total: number; page: OracleJob[] }> => {
+      apiRequests += 1;
+      const offset = (pageNumber - 1) * pageSize;
       const endpoint = new URL("/hcmRestApi/resources/latest/recruitingCEJobRequisitions", oracle.apiOrigin);
       endpoint.searchParams.set("onlyData", "true");
       endpoint.searchParams.set("expand", "requisitionList.workLocation");
-      endpoint.searchParams.set("finder", `findReqs;siteNumber=${oracle.site},limit=25,offset=${offset},sortBy=POSTING_DATES_DESC`);
+      endpoint.searchParams.set("finder", `findReqs;siteNumber=${oracle.site},limit=${pageSize},offset=${offset},sortBy=POSTING_DATES_DESC`);
       const response = await fetchWithTimeout(fetcher, endpoint, {
         headers: { accept: "application/json", referer: source.postingUrl },
       });
       if (!response.ok) throw new Error(`Oracle Recruiting returned HTTP ${response.status}.`);
       const payload = await response.json() as { items?: Array<{ TotalJobsCount?: number; requisitionList?: OracleJob[] }> };
       const container = payload.items?.[0];
-      return { responseStatus: response.status, total: container?.TotalJobsCount ?? 0, page: container?.requisitionList ?? [] };
+      const total = container?.TotalJobsCount;
+      const page = container?.requisitionList;
+      if (!Number.isInteger(total) || total! < 0 || !Array.isArray(page)) {
+        throw new Error("Oracle Recruiting returned an unusable catalog page.");
+      }
+      return { responseStatus: response.status, total: total!, page };
     };
     const normalizePage = (page: OracleJob[]): CrawledJob[] => page.flatMap((job) => {
         if (!job.Id || !job.Title) return [];
@@ -1201,28 +1221,63 @@ async function crawlOracle(
         }];
       });
 
-    const first = await fetchPage(0);
-    const total = first.total || first.page.length;
-    const jobs = normalizePage(first.page);
-    const boundedTotal = Math.min(total, 10_000);
-    const offsets = Array.from({ length: Math.max(0, Math.ceil(boundedTotal / 25) - 1) }, (_, index) => (index + 1) * 25);
-    let successfulPages = 0;
-    for (let index = 0; index < offsets.length; index += 8) {
-      const pages = await Promise.all(offsets.slice(index, index + 8).map(async (offset) => {
+    let startPage = Math.max(1, Math.trunc(source.crawlPageCursor ?? 1));
+    let first = await fetchPage(startPage);
+    let total = first.total;
+    let totalPages = Math.max(1, Math.ceil(total / pageSize));
+    if (startPage > totalPages) {
+      startPage = 1;
+      first = await fetchPage(startPage);
+      total = first.total;
+      totalPages = Math.max(1, Math.ceil(total / pageSize));
+    }
+    const expectedPageLength = (pageNumber: number): number => total === 0
+      ? 0
+      : Math.min(pageSize, Math.max(0, total - (pageNumber - 1) * pageSize));
+    const firstJobs = normalizePage(first.page);
+    if (first.page.length !== expectedPageLength(startPage) || firstJobs.length !== first.page.length) {
+      throw new Error("Oracle Recruiting returned an incomplete or unusable catalog page.");
+    }
+    const jobs = [...firstJobs];
+    const availableAdditionalPages = Math.max(0, maxPagesPerPass - apiRequests);
+    const endPage = Math.min(totalPages, startPage + availableAdditionalPages);
+    const pageNumbers = Array.from({ length: Math.max(0, endPage - startPage) }, (_, index) => startPage + index + 1);
+    let firstFailedPage: number | null = null;
+    let lastSuccessfulPage = startPage;
+    for (let index = 0; index < pageNumbers.length && firstFailedPage === null; index += 8) {
+      const batchNumbers = pageNumbers.slice(index, index + 8);
+      const pages = await Promise.all(batchNumbers.map(async (pageNumber) => {
         try {
-          return await fetchPage(offset);
+          const result = await fetchPage(pageNumber);
+          if (result.total !== total || result.page.length !== expectedPageLength(pageNumber)) return null;
+          const normalized = normalizePage(result.page);
+          return normalized.length === result.page.length ? normalized : null;
         } catch {
           return null;
         }
       }));
-      successfulPages += pages.filter((page): page is NonNullable<typeof page> => page !== null).length;
-      jobs.push(...pages.flatMap((page) => page ? normalizePage(page.page) : []));
+      const failedIndex = pages.findIndex((page) => page === null);
+      const usableCount = failedIndex === -1 ? pages.length : failedIndex;
+      jobs.push(...pages.slice(0, usableCount).flatMap((page) => page ?? []));
+      lastSuccessfulPage += usableCount;
+      if (failedIndex !== -1) firstFailedPage = batchNumbers[failedIndex];
     }
+    const unique = uniqueJobs(jobs);
+    if (unique.length !== jobs.length) throw new Error("Oracle Recruiting repeated job identities across catalog pages.");
+    const cycleComplete = firstFailedPage === null && lastSuccessfulPage === totalPages;
+    const completeListing = startPage === 1 && cycleComplete && totalPages <= maxPagesPerPass && unique.length === total;
     return {
       status: "succeeded",
       responseStatus: first.responseStatus,
-      completeListing: total <= 10_000 && successfulPages === offsets.length && jobs.length >= total,
-      jobs: uniqueJobs(jobs),
+      completeListing,
+      jobs: unique,
+      ...(!completeListing && totalPages > 1 ? {
+        pagination: {
+          nextPage: cycleComplete ? 1 : firstFailedPage ?? lastSuccessfulPage + 1,
+          cycleComplete,
+          totalPages,
+        },
+      } : {}),
       error: null,
     };
   } catch (error) {
