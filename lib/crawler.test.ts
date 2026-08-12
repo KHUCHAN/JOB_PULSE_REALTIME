@@ -2896,6 +2896,67 @@ Wrong description.
     }));
   });
 
+  it("preserves a direct Workday URL search query when crawling a subsidiary catalog", async () => {
+    const requestBodies: Array<{ searchText?: string }> = [];
+    const fetcher: typeof fetch = async (_input, init) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as { searchText?: string });
+      return Response.json({
+        total: 1,
+        jobPostings: [{
+          title: "Verafin - Cloud Security Developer",
+          externalPath: "/job/St-Johns/Verafin---Cloud-Security-Developer_R-100",
+          locationsText: "St. John's, NL",
+        }],
+      });
+    };
+
+    const result = await crawlSource({
+      id: "verafin",
+      company: "Verafin",
+      postingUrl: "https://nasdaq.wd1.myworkdayjobs.com/Global_External_Site?q=verafin",
+      adapter: "workday",
+    }, fetcher, new Date("2026-08-12T00:00:00Z"));
+
+    expect(requestBodies).toEqual([{ appliedFacets: {}, limit: 20, offset: 0, searchText: "verafin" }]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      jobs: [expect.objectContaining({ title: "Verafin - Cloud Security Developer" })],
+    }));
+  });
+
+  it("checkpoints any large Workday catalog within twenty public API requests", async () => {
+    const offsets: number[] = [];
+    const fetcher: typeof fetch = async (_input, init) => {
+      const { offset } = JSON.parse(String(init?.body)) as { offset: number };
+      offsets.push(offset);
+      const count = Math.min(20, 1_109 - offset);
+      return Response.json({
+        total: 1_109,
+        jobPostings: Array.from({ length: count }, (_, index) => ({
+          title: `Medtronic Role ${offset + index}`,
+          externalPath: `/job/Minneapolis-MN/Medtronic-Role-${offset + index}_R-${offset + index}`,
+          locationsText: "Minneapolis, MN",
+        })),
+      });
+    };
+
+    const result = await crawlSource({
+      id: "p5-0665-medtronic",
+      company: "Medtronic",
+      postingUrl: "https://medtronic.wd1.myworkdayjobs.com/MedtronicCareers",
+      adapter: "workday",
+    }, fetcher, new Date("2026-08-12T00:00:00Z"));
+
+    expect(offsets).toEqual(Array.from({ length: 20 }, (_, index) => index * 20));
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: { nextPage: 20, cycleComplete: false, totalPages: 56 },
+    }));
+    expect(result.jobs).toHaveLength(400);
+  });
+
   it("uses Cisco's official Workday catalog and checkpoints it within the request budget", async () => {
     const offsets: number[] = [];
     const fetcher: typeof fetch = async (input, init) => {

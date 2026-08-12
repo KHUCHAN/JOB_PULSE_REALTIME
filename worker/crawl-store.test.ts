@@ -529,6 +529,36 @@ describe("D1CrawlStore source leasing", () => {
     ]);
   });
 
+  it("leases only explicitly requested sources for targeted recovery", async () => {
+    const calls: Array<{ sql: string; values: unknown[] }> = [];
+    const db = {
+      prepare(sql: string) {
+        return {
+          bind(...values: unknown[]) {
+            calls.push({ sql, values });
+            return { all: async () => ({ results: sql.includes("UPDATE sources") ? [{
+              id: "repair-me", company: "Acme", posting_url: "https://example.com/jobs",
+              adapter: "custom", next_crawl_at: String(values[0]),
+            }] : [] }) };
+          },
+        };
+      },
+    } as unknown as D1Database;
+
+    const sources = await new D1CrawlStore(db).sourcesByIds(
+      ["repair-me", "repair-me-too"],
+      "2026-08-12T00:00:00.000Z",
+    );
+
+    expect(sources).toEqual([expect.objectContaining({ id: "repair-me" })]);
+    expect(calls[0].sql).toContain("id IN (SELECT value FROM json_each(?))");
+    expect(calls[0].sql).not.toContain("next_crawl_at <=");
+    expect(calls[0].values).toEqual([
+      "2026-08-12T00:10:00.000Z",
+      JSON.stringify(["repair-me", "repair-me-too"]),
+    ]);
+  });
+
   it("persists page cycles and closes stale rows only after two completed cycles", async () => {
     const calls: Array<{ sql: string; values: unknown[] }> = [];
     const db = {

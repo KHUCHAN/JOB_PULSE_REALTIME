@@ -4453,6 +4453,7 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
   try {
     const isCisco = source.id === "p4-0245-cisco";
     const endpointUrl = new URL(endpoint);
+    const sourceUrl = new URL(source.postingUrl);
     const site = endpointUrl.pathname.split("/").at(-2);
     const referer = site ? `${endpointUrl.origin}/${site}` : endpointUrl.origin;
     const headers = {
@@ -4461,7 +4462,9 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
       origin: endpointUrl.origin,
       referer,
     };
-    const searchText = source.id === "p5-0532-aetna" ? "Aetna" : "";
+    const searchText = source.id === "p5-0532-aetna"
+      ? "Aetna"
+      : sourceUrl.searchParams.get("q")?.trim() ?? "";
     const fetchPage = async (offset: number, appliedFacets: Record<string, string[]> = {}): Promise<{ status: number; payload: WorkdayPayload }> => {
       const response = await fetchWithTimeout(fetcher, endpoint, {
         method: "POST",
@@ -4487,7 +4490,8 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
       error: "Cisco's official Workday catalog returned no usable jobs.",
     };
     const totalPages = Math.max(1, Math.ceil(Math.min(total, 2_000) / 20));
-    const isCheckpointed = isCisco;
+    const isIntel = source.id === "p5-0947-intel" || source.company === "Intel";
+    const isCheckpointed = isCisco || (totalPages > 20 && !isIntel);
     const startPage = isCheckpointed ? Math.min(Math.max(source.crawlPageCursor ?? 1, 1), totalPages) : 1;
     const endPage = isCheckpointed ? Math.min(startPage + (startPage === 1 ? 19 : 18), totalPages) : totalPages;
     const pageNumbers = Array.from(
@@ -4525,7 +4529,6 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
       values: (facet.values ?? []).flatMap((value) => value.id && value.descriptor ? [{ key: value.id, label: value.descriptor, count: value.count ?? null }] : []),
     }] : []);
 
-    const sourceUrl = new URL(source.postingUrl);
     const workdaySitePrefix = sourceUrl.hostname.endsWith(".myworkdaysite.com")
       ? sourceUrl.pathname.replace(/\/$/, "")
       : `/${encodeURIComponent(site ?? "Careers")}`;
@@ -4550,7 +4553,7 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
       }];
     }));
 
-    if (source.id === "p5-0947-intel" || source.company === "Intel") {
+    if (isIntel) {
       const facetByParameter = new Map((first.payload.facets ?? [])
         .flatMap((facet) => facet.facetParameter ? [[facet.facetParameter, facet] as const] : []));
       const membership = new Map<string, string[]>();
@@ -4621,7 +4624,7 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
       ...(isCheckpointed ? {
         pagination: {
           nextPage: firstFailedPage ?? (endPage === totalPages ? 1 : endPage),
-          cycleComplete: firstFailedPage === null && endPage === totalPages,
+          cycleComplete: firstFailedPage === null && endPage === totalPages && total <= 2_000,
           totalPages,
         },
       } : {}),

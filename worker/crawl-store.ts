@@ -172,29 +172,7 @@ const mergedFacets = (nativeFacets: CrawledFacet[] | undefined, jobs: CrawledJob
 export class D1CrawlStore implements CrawlStore {
   constructor(private readonly db: D1Database) {}
 
-  async dueSources(now: string, limit: number): Promise<PersistedSource[]> {
-    const leaseUntil = new Date(new Date(now).getTime() + 10 * 60 * 1000).toISOString();
-    const result = await this.db.prepare(`
-      UPDATE sources
-      SET next_crawl_at = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id IN (
-        SELECT id FROM sources
-        WHERE enabled = 1
-          AND posting_url IS NOT NULL
-          AND (next_crawl_at IS NULL OR next_crawl_at <= ?)
-        ORDER BY COALESCE(next_crawl_at, '') ASC, company ASC
-        LIMIT ?
-      )
-      RETURNING id, company, posting_url, adapter, next_crawl_at
-    `).bind(leaseUntil, now, limit).all<SourceRow>();
-
-    const sources: PersistedSource[] = result.results.map((row) => ({
-      id: row.id,
-      company: row.company,
-      postingUrl: row.posting_url,
-      adapter: row.adapter,
-      nextCrawlAt: row.next_crawl_at,
-    }));
+  private async hydratePagedCrawlState(sources: PersistedSource[]): Promise<PersistedSource[]> {
     if (sources.length === 0) return sources;
     const checkpointKeys = sources.map((source) => pagedCrawlStateKey(source.id));
     const checkpointResult = await this.db.prepare(`
@@ -219,6 +197,53 @@ export class D1CrawlStore implements CrawlStore {
       }
     }
     return sources;
+  }
+
+  async dueSources(now: string, limit: number): Promise<PersistedSource[]> {
+    const leaseUntil = new Date(new Date(now).getTime() + 10 * 60 * 1000).toISOString();
+    const result = await this.db.prepare(`
+      UPDATE sources
+      SET next_crawl_at = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id IN (
+        SELECT id FROM sources
+        WHERE enabled = 1
+          AND posting_url IS NOT NULL
+          AND (next_crawl_at IS NULL OR next_crawl_at <= ?)
+        ORDER BY COALESCE(next_crawl_at, '') ASC, company ASC
+        LIMIT ?
+      )
+      RETURNING id, company, posting_url, adapter, next_crawl_at
+    `).bind(leaseUntil, now, limit).all<SourceRow>();
+
+    const sources: PersistedSource[] = result.results.map((row) => ({
+      id: row.id,
+      company: row.company,
+      postingUrl: row.posting_url,
+      adapter: row.adapter,
+      nextCrawlAt: row.next_crawl_at,
+    }));
+    return this.hydratePagedCrawlState(sources);
+  }
+
+  async sourcesByIds(sourceIds: string[], now: string): Promise<PersistedSource[]> {
+    if (sourceIds.length === 0) return [];
+    const leaseUntil = new Date(new Date(now).getTime() + 10 * 60 * 1000).toISOString();
+    const result = await this.db.prepare(`
+      UPDATE sources
+      SET next_crawl_at = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE enabled = 1
+        AND posting_url IS NOT NULL
+        AND id IN (SELECT value FROM json_each(?))
+      RETURNING id, company, posting_url, adapter, next_crawl_at
+    `).bind(leaseUntil, JSON.stringify(sourceIds)).all<SourceRow>();
+    const sources: PersistedSource[] = result.results.map((row) => ({
+      id: row.id,
+      company: row.company,
+      postingUrl: row.posting_url,
+      adapter: row.adapter,
+      nextCrawlAt: row.next_crawl_at,
+    }));
+    return this.hydratePagedCrawlState(sources);
   }
 
   async startRun(source: PersistedSource, scheduledFor: string): Promise<string> {

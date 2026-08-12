@@ -470,12 +470,10 @@ export async function POST(request: Request): Promise<Response> {
     if (body.action === "recrawlSources") {
       const sourceIds = recrawlSourceIds(body.sourceIds);
       if (sourceIds.length === 0) return json({ error: "At least one source ID is required." }, 400);
-      await db().prepare(`
-        UPDATE sources
-        SET next_crawl_at = '1970-01-01 00:00:00', updated_at = CURRENT_TIMESTAMP
-        WHERE id IN (SELECT value FROM json_each(?))
-      `).bind(JSON.stringify(sourceIds)).run();
-      return json(await runDueCrawls(new D1CrawlStore(db()), fetch, new Date(), crawlBatchOptions(sourceIds.length)));
+      const now = new Date();
+      const store = new D1CrawlStore(db());
+      const sources = await store.sourcesByIds(sourceIds, now.toISOString());
+      return json(await runSpecificCrawls(store, sources, fetch, now, crawlBatchOptions(sources.length)));
     }
     if (body.action === "repairBrokenJobUrls") {
       const afterSourceId = typeof body.afterSourceId === "string"
