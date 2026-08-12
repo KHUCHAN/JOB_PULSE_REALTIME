@@ -3026,7 +3026,12 @@ const crawlJobsyn = async (
     const url = new URL(endpoint);
     url.searchParams.set("page", String(page));
     const response = await fetchWithTimeout(fetcher, url, {
-      headers: { accept: "application/json", "x-origin": listing.hostname },
+      headers: {
+        accept: "application/json",
+        "x-origin": listing.hostname,
+        origin: listing.origin,
+        referer: listing.href,
+      },
     }, false, { attempts: 1, timeoutMs: 12_000 });
     responseStatus = response.status;
     if (!response.ok) throw Object.assign(new Error(`Jobsyn returned HTTP ${response.status}.`), { responseStatus: response.status });
@@ -4186,6 +4191,75 @@ const crawlJobSitemap = async (
   } catch {
     return null;
   }
+};
+
+const crawlGraybarSitemap = async (
+  source: CrawlSource,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult | null> => {
+  const endpoint = "https://graybar.jobs/sitemaps/jobs_1.xml";
+  try {
+    const response = await fetchWithTimeout(fetcher, endpoint, {
+      headers: { accept: "application/xml,text/xml;q=0.9" },
+    }, false, { attempts: 1, timeoutMs: 10_000 });
+    if (!response.ok) return null;
+    const xml = await response.text();
+    const entries = [...xml.matchAll(/<url\b[^>]*>([\s\S]*?)<\/url>/gi)];
+    const jobs = uniqueJobs(entries.flatMap((entry): CrawledJob[] => {
+      const rawUrl = entry[1].match(/<loc>\s*([\s\S]*?)\s*<\/loc>/i)?.[1];
+      if (!rawUrl) return [];
+      let officialUrl: URL;
+      try {
+        officialUrl = new URL(decodeHtmlAttribute(rawUrl.trim()));
+      } catch {
+        return [];
+      }
+      if (officialUrl.origin !== "https://graybar.jobs" || officialUrl.search || officialUrl.hash) return [];
+      const match = officialUrl.pathname.match(/^\/([^/]+)\/([^/]+)\/([a-f0-9]{32})\/job\/$/i);
+      if (!match) return [];
+      const title = careerSlugTitle(match[2]);
+      const location = careerSlugLocation(match[1]).replace(/\s+([A-Z]{2})$/, ", $1");
+      const lastModified = entry[1].match(/<lastmod>\s*([\s\S]*?)\s*<\/lastmod>/i)?.[1]?.trim();
+      const programs = classifyJobPrograms(title).keys;
+      return [{
+        externalId: match[3],
+        title,
+        company: source.company,
+        location,
+        arrangement: /\bremote\b/i.test(`${title} ${location}`) ? "remote" : "unknown",
+        employmentType: programs.some((key) => key === "internship" || key === "coop") ? "Internship" : null,
+        summary: null,
+        locationCity: location.replace(/,\s*[A-Z]{2}$/, ""),
+        locationState: location.match(/,\s*([A-Z]{2})$/)?.[1] ?? null,
+        locationCountry: "United States",
+        requisitionId: match[3],
+        officialUrl: officialUrl.href,
+        sourceUpdatedAt: normalizedDate(lastModified),
+        publishedAt: normalizedDate(lastModified),
+      }];
+    }));
+    if (jobs.length === 0 || jobs.length !== entries.length) return null;
+    return {
+      status: "succeeded",
+      responseStatus: response.status,
+      // Jobsyn currently caps this sitemap at 500 entries while its live API
+      // can advertise a slightly larger catalog. It is an ingestion fallback,
+      // never an authoritative signal for closing previously seen jobs.
+      completeListing: false,
+      jobs,
+      resolvedListingUrl: "https://graybar.jobs/jobs/",
+      error: null,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const crawlGraybar = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const canonical = { ...source, postingUrl: "https://graybar.jobs/jobs/", adapter: "custom" as const };
+  const direct = await crawlJobsyn(canonical, fetcher);
+  if (direct.status === "succeeded") return direct;
+  return await crawlGraybarSitemap(canonical, fetcher) ?? direct;
 };
 
 const crawlNewsCorpSitemap = async (
@@ -6353,11 +6427,7 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
     source = { ...source, postingUrl: originalPage.href };
   }
   const sourcePage = new URL(source.postingUrl);
-  if (source.id === "audit-row-364") return crawlJobsyn({
-    ...source,
-    postingUrl: "https://graybar.jobs/jobs/",
-    adapter: "custom",
-  }, fetcher);
+  if (source.id === "audit-row-364") return crawlGraybar(source, fetcher);
   if (source.id === "p5-1005-olympus-medical-systems") return crawlOlympusSuccessFactors(source, fetcher);
   if (source.id === "p2-0068-abrigo") return crawlAbrigoJobvite(source, fetcher);
   if (source.id === "legacy-row-777") return crawlAceJobs(source, fetcher);

@@ -4526,6 +4526,47 @@ Wrong description.
     }));
   });
 
+  it("falls back to Graybar's official sitemap when the search API blocks Worker requests", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "audit-row-364",
+      company: "Graybar Electric",
+      postingUrl: "https://www.graybar.com/careers",
+      adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url.startsWith("https://prod-search-api.jobsyn.org/")) {
+        return new Response("Forbidden", { status: 403 });
+      }
+      expect(url).toBe("https://graybar.jobs/sitemaps/jobs_1.xml");
+      return new Response(`<?xml version="1.0"?><urlset>
+        <url><loc>https://graybar.jobs/reno-nv/ai-engineering-intern/A75C2F7E874C4D2789CD964116421D74/job/</loc><lastmod>2026-08-12</lastmod></url>
+        <url><loc>https://graybar.jobs/tulsa-ok/outside-sales-representative/0C1502475D8A4C91AAF08340C1106309/job/</loc><lastmod>2026-08-10</lastmod></url>
+      </urlset>`, { headers: { "content-type": "application/xml" } });
+    }, new Date());
+
+    expect(requests).toEqual([
+      "https://prod-search-api.jobsyn.org/api/v1/solr/search?page=1",
+      "https://graybar.jobs/sitemaps/jobs_1.xml",
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      responseStatus: 200,
+      resolvedListingUrl: "https://graybar.jobs/jobs/",
+    }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        title: "AI Engineering Intern",
+        employmentType: "Internship",
+        location: "Reno, NV",
+        locationCountry: "United States",
+      }),
+      expect.objectContaining({ title: "Outside Sales Representative", location: "Tulsa, OK" }),
+    ]);
+  });
+
   it("does not advance a Jobsyn cycle past an incomplete page", async () => {
     const result = await crawlSource({
       id: "jobsyn-incomplete",
