@@ -458,6 +458,109 @@ Wrong description.
     })]);
   });
 
+  it("paginates an official UKG job board discovered from a careers landing page", async () => {
+    const board = "https://recruiting.ultipro.com/KIN1009KINMA/JobBoard/board-id/?q=&o=postedDateDesc";
+    const loadUrl = "https://recruiting.ultipro.com/KIN1009KINMA/JobBoard/board-id/JobBoardView/LoadSearchResults";
+    const detailUrl = "https://recruiting.ultipro.com/KIN1009KINMA/JobBoard/board-id/OpportunityDetail?opportunityId=00000000-0000-0000-0000-000000000000";
+    const requests: Array<{ url: string; body: { opportunitySearch?: { Skip?: number } } | null }> = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : null;
+      requests.push({ url, body });
+      if (url === "https://kinsale.example/careers") {
+        return new Response(`<a href="${board}">View current openings</a>`, { status: 200 });
+      }
+      if (url === board) {
+        return new Response(`<script>
+          var opportunityModel = new US.Opportunity.OpportunitiesViewModel({
+            pageSize: 2,
+            loadUrl: "/KIN1009KINMA/JobBoard/board-id/JobBoardView/LoadSearchResults",
+            opportunityLinkUrl: "/KIN1009KINMA/JobBoard/board-id/OpportunityDetail?opportunityId=00000000-0000-0000-0000-000000000000"
+          });
+        </script>`, { status: 200 });
+      }
+      if (url === loadUrl) {
+        const skip = body?.opportunitySearch?.Skip ?? 0;
+        const opportunities = skip === 0 ? [{
+          Id: "job-1",
+          Title: "Data Scientist Intern",
+          RequisitionNumber: "REQ-1",
+          FullTime: true,
+          JobCategoryName: "Data & Analytics",
+          PostedDate: "2026-08-11T12:00:00.000Z",
+          BriefDescription: "Build applied machine learning systems.",
+          JobLocationType: "Hybrid",
+          Locations: [{
+            LocalizedName: "Corporate Office",
+            Address: { City: "Richmond", State: { Code: "VA" }, Country: { Code: "USA" } },
+          }],
+        }, {
+          Id: "job-2",
+          Title: "Software Engineering Intern",
+          RequisitionNumber: "REQ-2",
+          FullTime: false,
+          PostedDate: "2026-08-10T12:00:00.000Z",
+          Locations: [],
+        }] : [{
+          Id: "job-3",
+          Title: "AI Engineer",
+          RequisitionNumber: "REQ-3",
+          FullTime: true,
+          PostedDate: "2026-08-09T12:00:00.000Z",
+          Locations: [],
+        }];
+        return Response.json({ opportunities, totalCount: 3, locations: [] });
+      }
+      return new Response("not found", { status: 404 });
+    };
+
+    const result = await crawlSource({
+      id: "kinsale",
+      company: "Kinsale Capital",
+      postingUrl: "https://kinsale.example/careers",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-12T00:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      resolvedListingUrl: board,
+    }));
+    expect(result.jobs).toHaveLength(3);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "job-1",
+      title: "Data Scientist Intern",
+      location: "Richmond, VA, USA",
+      locationCity: "Richmond",
+      locationState: "VA",
+      locationCountry: "USA",
+      arrangement: "hybrid",
+      employmentType: "Full-time",
+      department: "Data & Analytics",
+      requisitionId: "REQ-1",
+      officialUrl: detailUrl.replace("00000000-0000-0000-0000-000000000000", "job-1"),
+      publishedAt: "2026-08-11T12:00:00.000Z",
+    }));
+    expect(requests.filter(({ url }) => url === loadUrl).map(({ body }) => body?.opportunitySearch?.Skip)).toEqual([0, 2]);
+  });
+
+  it("keeps a repeated UKG page incomplete instead of closing unseen jobs", async () => {
+    const board = "https://recruiting.ultipro.com/TEST/JobBoard/board-id/";
+    const loadUrl = "https://recruiting.ultipro.com/TEST/JobBoard/board-id/JobBoardView/LoadSearchResults";
+    const repeated = [{ Id: "job-1", Title: "Engineer", Locations: [] }, { Id: "job-2", Title: "Analyst", Locations: [] }];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url === board) return new Response(`<script>new US.Opportunity.OpportunitiesViewModel({pageSize: 2, loadUrl: "/TEST/JobBoard/board-id/JobBoardView/LoadSearchResults", opportunityLinkUrl: "/TEST/JobBoard/board-id/OpportunityDetail?opportunityId=00000000-0000-0000-0000-000000000000"})</script>`);
+      if (url === loadUrl) return Response.json({ opportunities: repeated, totalCount: 4 });
+      return new Response("not found", { status: 404 });
+    };
+
+    const result = await crawlSource({ id: "ukg", company: "Test", postingUrl: board, adapter: "custom" }, fetcher, new Date("2026-08-12T00:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: false }));
+    expect(result.jobs).toHaveLength(2);
+  });
+
   it("does not leave a company-scoped board for a multi-company jobs portal", async () => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input) => {

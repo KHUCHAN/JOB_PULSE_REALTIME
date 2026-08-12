@@ -1,4 +1,4 @@
-const ATS_HOST = /(?:greenhouse\.io|lever\.co|myworkdayjobs\.com|myworkdaysite\.com|smartrecruiters\.com|ashbyhq\.com|icims\.com|jobvite\.com|phenompeople\.com)/i;
+const ATS_HOST = /(?:greenhouse\.io|lever\.co|myworkdayjobs\.com|myworkdaysite\.com|smartrecruiters\.com|ashbyhq\.com|icims\.com|jobvite\.com|phenompeople\.com|recruiting\d*\.ultipro\.com)/i;
 const JOB_TEXT = /\b(?:jobs?|careers?|opportunities|open (?:positions|roles)|join (?:our )?team|search roles?)\b/i;
 const JOB_PATH = /\/(?:jobs?|careers?|opportunities|search-results|job-search|open-positions|join-us)(?:\/|$|[?#-])/i;
 const USER_ONLY = /(?:job-?alerts?|talent-?community|introduceyourself|sign[_-]?in|\/login|\/apply(?:[/?#]|$))/i;
@@ -96,6 +96,12 @@ export const isSafeCareerRecommendation = (company: string, originalUrl: string,
   if (originalRoot === recommendedRoot) {
     return JOB_PATH.test(`${recommended.pathname}${recommended.search}`) || /^(?:jobs?|careers?)\./i.test(recommended.hostname);
   }
+
+  // UKG/UltiPro uses opaque tenant codes instead of company names in its
+  // official public board URLs, so a company-token comparison cannot work.
+  // Restrict this exception to the public JobBoard route on UKG's own host.
+  if (/^recruiting\d*\.ultipro\.com$/i.test(recommended.hostname)
+    && /\/JobBoard\//i.test(recommended.pathname)) return true;
 
   const tokens = company.split(/[^A-Za-z0-9]+/)
     .filter((token) => (token.length >= 4 || (token.length >= 3 && token === token.toUpperCase())) && !COMPANY_STOP_WORDS.has(token.toLowerCase()))

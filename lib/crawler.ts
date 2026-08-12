@@ -1462,6 +1462,156 @@ const crawlRadancyPages = async (
   };
 };
 
+type UkgLocation = {
+  LocalizedName?: string | null;
+  Address?: {
+    City?: string | null;
+    PostalCode?: string | null;
+    State?: { Code?: string | null; Name?: string | null } | null;
+    Country?: { Code?: string | null; Name?: string | null } | null;
+  } | null;
+};
+
+type UkgOpportunity = {
+  Id?: string | null;
+  Title?: string | null;
+  RequisitionNumber?: string | null;
+  FullTime?: boolean | null;
+  JobCategoryName?: string | null;
+  Locations?: UkgLocation[] | null;
+  PostedDate?: string | null;
+  BriefDescription?: string | null;
+  JobLocationType?: string | null;
+};
+
+type UkgSearchPayload = {
+  opportunities?: UkgOpportunity[];
+  totalCount?: number;
+};
+
+const ukgBoardConfig = (html: string, pageUrl: string): {
+  loadUrl: string;
+  detailUrl: string;
+  pageSize: number;
+} | null => {
+  if (!/OpportunitiesViewModel|LoadSearchResults/i.test(html)) return null;
+  const loadPath = html.match(/\bloadUrl\s*:\s*["']([^"']*LoadSearchResults[^"']*)["']/i)?.[1];
+  const detailPath = html.match(/\bopportunityLinkUrl\s*:\s*["']([^"']*OpportunityDetail[^"']*)["']/i)?.[1];
+  const pageSize = Number(html.match(/\bpageSize\s*:\s*(\d{1,3})/i)?.[1] ?? 50);
+  if (!loadPath || !detailPath || !Number.isFinite(pageSize) || pageSize < 1 || pageSize > 100) return null;
+  try {
+    return {
+      loadUrl: new URL(decodeHtmlAttribute(loadPath), pageUrl).href,
+      detailUrl: new URL(decodeHtmlAttribute(detailPath), pageUrl).href,
+      pageSize,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const ukgLocationText = (location: UkgLocation | undefined): string | null => {
+  if (!location) return null;
+  const address = location.Address;
+  const formatted = [
+    asText(address?.City),
+    asText(address?.State?.Code) ?? asText(address?.State?.Name),
+    asText(address?.Country?.Code) ?? asText(address?.Country?.Name),
+  ].filter(Boolean).join(", ");
+  return formatted || asText(location.LocalizedName);
+};
+
+const crawlUkgPages = async (
+  source: CrawlSource,
+  html: string,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult | null> => {
+  const config = ukgBoardConfig(html, source.postingUrl);
+  if (!config) return null;
+  const fetchPage = async (skip: number): Promise<{ payload: UkgSearchPayload; rawValid: boolean } | null> => {
+    try {
+      const response = await fetchWithTimeout(fetcher, config.loadUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json; charset=utf-8", "x-requested-with": "XMLHttpRequest" },
+        body: JSON.stringify({
+          opportunitySearch: {
+            QueryString: "",
+            Filters: [],
+            Top: config.pageSize,
+            Skip: skip,
+            OrderBy: [{ Value: "postedDateDesc", PropertyName: "PostedDate", Ascending: false }],
+          },
+        }),
+      }, false, { attempts: 1, timeoutMs: 10_000 });
+      if (!response.ok) return null;
+      const payload = await response.json() as UkgSearchPayload;
+      if (!Number.isFinite(payload.totalCount) || !Array.isArray(payload.opportunities)) return null;
+      return {
+        payload,
+        rawValid: payload.opportunities.every((job) => Boolean(asText(job.Id) && asText(job.Title))),
+      };
+    } catch {
+      return null;
+    }
+  };
+
+  const first = await fetchPage(0);
+  if (!first) return null;
+  const total = Math.max(0, Math.trunc(first.payload.totalCount ?? 0));
+  const totalPages = Math.max(1, Math.ceil(total / config.pageSize));
+  const boundedPages = Math.min(totalPages, 48);
+  const pages: Array<{ payload: UkgSearchPayload; rawValid: boolean } | null> = [first];
+  for (let page = 1; page < boundedPages; page += 4) {
+    pages.push(...await Promise.all(Array.from(
+      { length: Math.min(4, boundedPages - page) },
+      (_, index) => fetchPage((page + index) * config.pageSize),
+    )));
+  }
+  const successful = pages.filter((page): page is { payload: UkgSearchPayload; rawValid: boolean } => page !== null);
+  const raw = successful.flatMap((page) => page.payload.opportunities ?? []);
+  const jobs = uniqueJobs(raw.flatMap((job): CrawledJob[] => {
+    const externalId = asText(job.Id);
+    const title = asText(job.Title);
+    if (!externalId || !title) return [];
+    const locations = job.Locations ?? [];
+    const primary = locations[0];
+    const officialUrl = new URL(config.detailUrl);
+    officialUrl.searchParams.set("opportunityId", externalId);
+    const arrangementText = asText(job.JobLocationType) ?? "";
+    const summary = plainText(job.BriefDescription);
+    return [{
+      externalId,
+      title,
+      company: source.company,
+      location: ukgLocationText(primary),
+      arrangement: /hybrid/i.test(arrangementText) ? "hybrid" : /remote/i.test(arrangementText) ? "remote" : /on.?site/i.test(arrangementText) ? "onsite" : "unknown",
+      employmentType: job.FullTime === true ? "Full-time" : job.FullTime === false ? "Part-time" : null,
+      summary,
+      ...(summary ? { description: summary } : {}),
+      ...(asText(job.JobCategoryName) ? { department: asText(job.JobCategoryName) } : {}),
+      ...(asText(job.RequisitionNumber) ? { requisitionId: asText(job.RequisitionNumber) } : {}),
+      ...(asText(primary?.Address?.City) ? { locationCity: asText(primary?.Address?.City) } : {}),
+      ...(asText(primary?.Address?.State?.Code) ?? asText(primary?.Address?.State?.Name) ? { locationState: asText(primary?.Address?.State?.Code) ?? asText(primary?.Address?.State?.Name) } : {}),
+      ...(asText(primary?.Address?.Country?.Code) ?? asText(primary?.Address?.Country?.Name) ? { locationCountry: asText(primary?.Address?.Country?.Code) ?? asText(primary?.Address?.Country?.Name) } : {}),
+      ...(locations.length > 1 ? { secondaryLocations: locations.slice(1).map((location) => ukgLocationText(location)).filter((value): value is string => Boolean(value)) } : {}),
+      officialUrl: officialUrl.href,
+      publishedAt: normalizedDate(job.PostedDate),
+    }];
+  }));
+  const rawIds = raw.map((job) => asText(job.Id)).filter((id): id is string => Boolean(id));
+  const exactCatalog = successful.length === totalPages
+    && successful.every((page) => page.rawValid && page.payload.totalCount === total)
+    && new Set(rawIds).size === total
+    && jobs.length === total;
+  return {
+    status: "succeeded",
+    responseStatus: 200,
+    completeListing: totalPages <= 48 && exactCatalog,
+    jobs,
+    error: null,
+  };
+};
+
 const successFactorsRange = (html: string): { pageSize: number; total: number } | null => {
   const match = html.match(/class=["'][^"']*paginationLabel[^"']*["'][^>]*>[\s\S]*?Results\s*<b>\s*[\d,]+\s*(?:–|-|&ndash;)\s*([\d,]+)\s*<\/b>\s*of\s*<b>\s*([\d,]+)/i);
   if (!match) return null;
@@ -2577,6 +2727,8 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
       jobs: kula,
       error: null,
     };
+    const ukg = await crawlUkgPages(source, html, fetcher);
+    if (ukg) return ukg;
     const oracle = oracleCareerSite(html, source.postingUrl);
     if (oracle) return crawlOracle(source, oracle, fetcher);
     const radancy = await crawlRadancyPages(source, html, fetcher);
