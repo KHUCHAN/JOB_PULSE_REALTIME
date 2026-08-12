@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:af1a0a98419b6fe4ec888a8d10e2c8c3421283628a0879c88792c9ca3f936205",
+  "version": "v2:sha256:c5d95e82d60d2c6a1550a521311b7f12a869585d3cce573fe5487310d1c962a0",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -385,12 +385,12 @@
       "talentUrl": null,
       "channel": "공식 공개 채용 경로 미확인",
       "adapter": "custom",
-      "verification": "no_active_careers",
+      "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
       "checkedAt": "2026-08-08",
-      "enabled": false
+      "enabled": true
     },
     {
       "id": "p4-0317-nubank",
@@ -16476,10 +16476,10 @@
       "id": "p4-0206-2k",
       "masterRow": 2936,
       "company": "2K (Take-Two)",
-      "postingUrl": "https://careers.take2games.com/jobs",
+      "postingUrl": "https://job-boards.greenhouse.io/taketwo",
       "talentUrl": "https://careers.take2games.com/",
       "channel": "공식 Career Portal",
-      "adapter": "custom",
+      "adapter": "greenhouse",
       "verification": "career_page_only",
       "confidence": "high",
       "resumeUpload": "unknown",
@@ -20586,10 +20586,10 @@
       "id": "p4-0482-recorded-future",
       "masterRow": 3309,
       "company": "Recorded Future",
-      "postingUrl": "https://www.recordedfuture.com/jobs",
+      "postingUrl": "https://job-boards.greenhouse.io/recordedfuture",
       "talentUrl": "https://www.recordedfuture.com/careers",
       "channel": "공식 Career Portal",
-      "adapter": "custom",
+      "adapter": "greenhouse",
       "verification": "career_page_only",
       "confidence": "high",
       "resumeUpload": "unknown",
