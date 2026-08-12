@@ -4542,6 +4542,9 @@ Wrong description.
       if (url === "https://graybar.jobs/sitemaps/jobs_1.xml") {
         return new Response("Forbidden", { status: 403 });
       }
+      if (url === "https://production--graybar-jobs.microsites.devpc.us/sitemaps/jobs_1.xml") {
+        return new Response("Unavailable", { status: 503 });
+      }
       expect(url).toBe("https://r.jina.ai/https://graybar.jobs/sitemaps/jobs_1.xml");
       return new Response(`Title: Sitemap
 
@@ -4557,6 +4560,7 @@ Wrong description.
     expect(requests).toEqual([
       "https://prod-search-api.jobsyn.org/api/v1/solr/search?page=1",
       "https://graybar.jobs/sitemaps/jobs_1.xml",
+      "https://production--graybar-jobs.microsites.devpc.us/sitemaps/jobs_1.xml",
       "https://r.jina.ai/https://graybar.jobs/sitemaps/jobs_1.xml",
     ]);
     expect(result).toEqual(expect.objectContaining({

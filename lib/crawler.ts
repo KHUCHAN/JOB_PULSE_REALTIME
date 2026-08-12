@@ -4199,6 +4199,10 @@ const crawlGraybarSitemap = async (
 ): Promise<SourceCrawlResult | null> => {
   const endpoints = [
     "https://graybar.jobs/sitemaps/jobs_1.xml",
+    // The branded site's own RSS metadata identifies this first-party
+    // publication host. It serves the same canonical graybar.jobs URLs and
+    // avoids edge rules that can reject Cloudflare Worker egress.
+    "https://production--graybar-jobs.microsites.devpc.us/sitemaps/jobs_1.xml",
     "https://r.jina.ai/https://graybar.jobs/sitemaps/jobs_1.xml",
   ];
   for (const endpoint of endpoints) {
