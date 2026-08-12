@@ -17,7 +17,7 @@ const gmailConfig = (env: CrawlerEnv): GmailRuntimeConfig | null => {
     clientSecret: env.GMAIL_CLIENT_SECRET,
     refreshToken: env.GMAIL_REFRESH_TOKEN,
     sender: env.GMAIL_SENDER,
-    siteUrl: "https://job-pulse-realtime.cksdud985.chatgpt.site/jobs?resumeMatch=chanyoung-resume",
+    siteUrl: "https://job-pulse-realtime.autodev61.chatgpt.site/jobs?resumeMatch=chanyoung-resume",
   };
 };
 

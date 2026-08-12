@@ -91,7 +91,7 @@ const gmailRuntimeConfig = (): GmailRuntimeConfig | null => {
     clientSecret,
     refreshToken,
     sender,
-    siteUrl: "https://job-pulse-realtime.cksdud985.chatgpt.site/jobs?resumeMatch=chanyoung-resume",
+    siteUrl: "https://job-pulse-realtime.autodev61.chatgpt.site/jobs?resumeMatch=chanyoung-resume",
   };
 };
 
