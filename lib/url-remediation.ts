@@ -49,6 +49,10 @@ export const rankCareerLink = (link: BrowserLink, currentUrl: string): number =>
   if (JOB_TEXT.test(link.text)) score += 35;
   if (JOB_PATH.test(`${url.pathname}${url.search}`)) score += 25;
   if (/^(?:jobs?|careers?)\./i.test(url.hostname)) score += 25;
+  if (/\b(?:search|view|explore|see)\s+(?:all\s+)?(?:open\s+)?(?:jobs?|roles?|opportunities)\b/i.test(link.text)
+    || /\/(?:search-jobs|job-search-results|viewalljobs|search)\/?(?:[?#]|$)/i.test(`${url.pathname}${url.search}`)) score += 30;
+  if (/\b(?:sales|nursing|engineering|accounting|finance|college|internship)\s+(?:jobs?|careers?)\b/i.test(link.text)
+    || /\/(?:sales|nursing|engineering|accounting|finance|college|internship)[-/](?:jobs?|careers?)(?:[/?#]|$)/i.test(url.pathname)) score -= 25;
   if (USER_ONLY.test(`${url.pathname}${url.search}`)) score -= 65;
   if (JOB_DETAIL.test(`${url.pathname}${url.search}`) && !/\/jobs?\/search(?:[/?#]|$)/i.test(url.pathname)) score -= 90;
   if (url.href === currentUrl) score -= 10;

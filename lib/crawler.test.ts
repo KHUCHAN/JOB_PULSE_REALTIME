@@ -351,6 +351,163 @@ Wrong description.
     });
   });
 
+  it("follows an official job-search link before declaring a careers landing page undiscovered", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === "https://acme.example/careers") {
+        return new Response('<a href="https://careers.acme.example/search-jobs">Search jobs</a>', { status: 200 });
+      }
+      if (url === "https://careers.acme.example/search-jobs") {
+        return new Response('<script>widget({"company_code":"Acme"})</script>', { status: 200 });
+      }
+      if (url === "https://api.smartrecruiters.com/v1/companies/Acme/postings") {
+        return new Response(JSON.stringify({
+          totalFound: 1,
+          content: [{ id: "job-1", name: "Software Engineer", ref: "https://api.smartrecruiters.com/v1/companies/Acme/postings/job-1" }],
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response("not found", { status: 404 });
+    };
+
+    const result = await crawlSource({
+      id: "acme",
+      company: "Acme",
+      postingUrl: "https://acme.example/careers",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-11T23:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      resolvedListingUrl: "https://careers.acme.example/search-jobs",
+    }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "job-1",
+      title: "Software Engineer",
+      officialUrl: "https://jobs.smartrecruiters.com/Acme/job-1",
+    })]);
+    expect(requests.slice(0, 3)).toEqual([
+      "https://acme.example/careers",
+      "https://careers.acme.example/search-jobs",
+      "https://api.smartrecruiters.com/v1/companies/Acme/postings",
+    ]);
+  });
+
+  it("extracts every server-rendered Deel job reached from an official careers page", async () => {
+    const postings = [{
+      id: "5d3636f8-0712-4fe2-a1f4-84358440d272",
+      jobId: "internal-1",
+      title: "Data Scientist",
+      createdAt: "2026-08-10T12:00:00.000Z",
+      updatedAt: "2026-08-11T12:00:00.000Z",
+      job: {
+        jobEmploymentTypes: [{ employmentType: { name: "Full-time" } }],
+        jobLocations: [{ location: { name: "New York" } }, { location: { name: "Stockholm" } }],
+        currentCompensation: { currencyIsoCode: "USD", minAmount: 150000, maxAmount: 190000 },
+        jobTeams: [{ team: { name: "Analytics" } }],
+        jobDepartments: [{ department: { name: "Engineering" } }],
+      },
+      jobPostingPublications: [{ currentState: { stateSlug: "published_basic", createdAt: "2026-08-10T13:00:00.000Z" } }],
+    }];
+    const detailUrl = "https://jobs.deel.com/klarna/job-details/5d3636f8-0712-4fe2-a1f4-84358440d272/overview";
+    const flight = JSON.stringify({ jobPostings: postings, orgSlug: "klarna" });
+    const deelHtml = [
+      `<script type="application/ld+json">${JSON.stringify({
+        "@context": "https://schema.org",
+        "@type": "ItemList",
+        itemListElement: [{ "@type": "ListItem", position: 1, url: detailUrl }],
+      })}</script>`,
+      `<script>self.__next_f.push(${JSON.stringify([1, flight])})</script>`,
+    ].join("");
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url === "https://www.klarna.com/careers/") {
+        return new Response('<a href="https://jobs.deel.com/job-boards/klarna">All open positions</a>', { status: 200 });
+      }
+      if (url === "https://jobs.deel.com/job-boards/klarna") return new Response(deelHtml, { status: 200 });
+      return new Response("not found", { status: 404 });
+    };
+
+    const result = await crawlSource({
+      id: "p2-0124-klarna",
+      company: "Klarna",
+      postingUrl: "https://www.klarna.com/careers/",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-11T23:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      resolvedListingUrl: "https://jobs.deel.com/job-boards/klarna",
+    }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "5d3636f8-0712-4fe2-a1f4-84358440d272",
+      title: "Data Scientist",
+      location: "New York; Stockholm",
+      secondaryLocations: ["Stockholm"],
+      employmentType: "Full-time",
+      department: "Engineering",
+      team: "Analytics",
+      salaryMin: 150000,
+      salaryMax: 190000,
+      salaryCurrency: "USD",
+      officialUrl: detailUrl,
+      publishedAt: "2026-08-10T13:00:00.000Z",
+    })]);
+  });
+
+  it("does not leave a company-scoped board for a multi-company jobs portal", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === "https://www.ycombinator.com/companies/pixley-ai/jobs") {
+        return new Response('<a href="https://www.ycombinator.com/jobs">See all startup jobs</a>', { status: 200 });
+      }
+      if (url === "https://www.ycombinator.com/jobs") {
+        return new Response('<a href="https://www.ycombinator.com/companies/another-startup/jobs/engineer">Software Engineer</a>', { status: 200 });
+      }
+      return new Response("not found", { status: 404 });
+    };
+
+    const result = await crawlSource({
+      id: "pixley",
+      company: "Pixley AI",
+      postingUrl: "https://www.ycombinator.com/companies/pixley-ai/jobs",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-11T23:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({ status: "failed", jobs: [] }));
+    expect(requests).not.toContain("https://www.ycombinator.com/jobs");
+  });
+
+  it("does not relabel a parent company's entire board as a subsidiary", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url.includes("join-our-talent-community")) {
+        return new Response('<a href="https://careers.unitedhealthgroup.com/search-jobs">Search jobs</a>', { status: 200 });
+      }
+      if (url === "https://careers.unitedhealthgroup.com/search-jobs") {
+        return new Response('<a href="/job/minnetonka/software-engineer/123/456">Software Engineer</a>', { status: 200 });
+      }
+      return new Response("not found", { status: 404 });
+    };
+
+    const result = await crawlSource({
+      id: "optumrx",
+      company: "OptumRx (UnitedHealth)",
+      postingUrl: "https://www.unitedhealthgroup.com/careers/en/job-seeker-resources/join-our-talent-community.html",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-11T23:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({ status: "failed", jobs: [] }));
+    expect(requests).not.toContain("https://careers.unitedhealthgroup.com/search-jobs");
+  });
+
   it("paginates a discovered SmartRecruiters feed and emits public job URLs", async () => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input) => {

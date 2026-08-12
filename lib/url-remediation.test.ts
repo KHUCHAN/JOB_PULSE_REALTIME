@@ -15,6 +15,14 @@ describe("career URL remediation", () => {
     expect(rankCareerLink({ href: "https://jobs.lever.co/acme", text: "Open roles" }, "https://acme.com/careers")).toBeGreaterThan(100);
   });
 
+  it("prefers an all-jobs search over a single department landing page", () => {
+    const links = [
+      { href: "https://jobs.acme.com/sales-jobs", text: "See all sales jobs" },
+      { href: "https://jobs.acme.com/search-jobs", text: "Search all jobs" },
+    ];
+    expect(careerCandidates(links, "https://jobs.acme.com/")[0].href).toBe("https://jobs.acme.com/search-jobs");
+  });
+
   it("detects Phenom from loaded resources", () => {
     expect(detectUrlAdapter("https://careers.acme.com/search-results", ["https://cdn.phenompeople.com/app.js"])).toBe("phenom");
   });

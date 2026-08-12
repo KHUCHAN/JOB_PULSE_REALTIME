@@ -27,4 +27,30 @@ describe("runCoverageAudit", () => {
       ],
     });
   });
+
+  it("records the official listing URL that recovered a careers landing page", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url === "https://acme.example/careers") {
+        return new Response('<a href="https://careers.acme.example/search-jobs">Search jobs</a>', { status: 200 });
+      }
+      if (url === "https://careers.acme.example/search-jobs") {
+        return new Response('<a href="/jobs/software-engineer">Software Engineer</a>', { status: 200 });
+      }
+      return new Response("not found", { status: 404 });
+    };
+
+    const report = await runCoverageAudit([{
+      id: "acme",
+      company: "Acme",
+      postingUrl: "https://acme.example/careers",
+      adapter: "custom",
+    }], fetcher, { now: new Date("2026-08-11T23:00:00Z") });
+
+    expect(report.sources[0]).toEqual(expect.objectContaining({
+      status: "succeeded",
+      jobsExtracted: 1,
+      resolvedListingUrl: "https://careers.acme.example/search-jobs",
+    }));
+  });
 });

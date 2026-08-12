@@ -1,6 +1,7 @@
 import { jobsFromBrowserAnchors, type BrowserAnchor } from "./browser-job-extractor.ts";
 import { normalizeEmploymentType, workdayBulletFields } from "./employment-type.ts";
 import { classifyJobPrograms } from "./job-program-classifier.ts";
+import { careerCandidates, detectUrlAdapter, isSafeCareerRecommendation } from "./url-remediation.ts";
 
 export type CrawlSource = {
   id: string;
@@ -10,6 +11,7 @@ export type CrawlSource = {
   crawlPageCursor?: number;
   crawlCycleStartedAt?: string | null;
   crawlPreviousCycleStartedAt?: string | null;
+  discoveryDepth?: number;
 };
 
 export type CrawledJob = {
@@ -73,6 +75,7 @@ export type SourceCrawlResult = {
   jobs: CrawledJob[];
   facets?: CrawledFacet[];
   pagination?: { nextPage: number; cycleComplete: boolean; totalPages: number };
+  resolvedListingUrl?: string;
   error: string | null;
 };
 
@@ -2413,14 +2416,140 @@ const kulaJobs = (html: string, source: CrawlSource): CrawledJob[] | null => {
   });
 };
 
+type DeelJobPosting = {
+  id?: string;
+  title?: string;
+  richtextDescription?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  job?: {
+    jobEmploymentTypes?: Array<{ employmentType?: { name?: string | null } | null }>;
+    jobLocations?: Array<{ location?: { name?: string | null } | null }>;
+    currentCompensation?: {
+      currencyIsoCode?: string | null;
+      minAmount?: number | null;
+      maxAmount?: number | null;
+    } | null;
+    jobTeams?: Array<{ team?: { name?: string | null } | null }>;
+    jobDepartments?: Array<{ department?: { name?: string | null } | null }>;
+  } | null;
+  jobPostingPublications?: Array<{
+    currentState?: { stateSlug?: string | null; createdAt?: string | null } | null;
+  }>;
+};
+
+const deelJobs = (html: string, source: CrawlSource): { jobs: CrawledJob[]; completeListing: boolean } | null => {
+  const page = new URL(source.postingUrl);
+  if (page.hostname !== "jobs.deel.com") return null;
+  const chunks: string[] = [];
+  for (const match of html.matchAll(/<script[^>]*>\s*self\.__next_f\.push\((\[[\s\S]*?\])\)\s*<\/script>/g)) {
+    try {
+      const payload = JSON.parse(match[1]) as unknown[];
+      if (typeof payload[1] === "string") chunks.push(payload[1]);
+    } catch {
+      // Ignore unrelated or malformed React Flight chunks.
+    }
+  }
+  const flight = chunks.join("");
+  const postingsKey = flight.indexOf('"jobPostings":[');
+  if (postingsKey < 0) return null;
+  const serialized = jsonArrayAt(flight, flight.indexOf("[", postingsKey));
+  if (!serialized) return null;
+  let rawJobs: DeelJobPosting[];
+  try {
+    rawJobs = JSON.parse(serialized) as DeelJobPosting[];
+  } catch {
+    return null;
+  }
+  if (rawJobs.length === 0 || rawJobs.some((job) => !job.id || !job.title)) return null;
+  const segments = page.pathname.split("/").filter(Boolean);
+  const slug = segments[0] === "job-boards" ? segments[1] : segments[0];
+  if (!slug) return null;
+  const listedIds = new Set([...html.matchAll(/https:\/\/jobs\.deel\.com\/[^"'<>\\]+\/job-details\/([0-9a-f-]+)\/overview/gi)]
+    .map((match) => match[1].toLowerCase()));
+  const jobs = rawJobs.flatMap((job): CrawledJob[] => {
+    const publication = job.jobPostingPublications?.find(({ currentState }) => /^published/i.test(currentState?.stateSlug ?? ""));
+    if (!job.id || !job.title || (job.jobPostingPublications?.length && !publication)) return [];
+    const locations = (job.job?.jobLocations ?? []).flatMap(({ location }) => location?.name ?? []);
+    const employmentTypes = (job.job?.jobEmploymentTypes ?? []).flatMap(({ employmentType }) => employmentType?.name ?? []);
+    const departments = (job.job?.jobDepartments ?? []).flatMap(({ department }) => department?.name ?? []);
+    const teams = (job.job?.jobTeams ?? []).flatMap(({ team }) => team?.name ?? []);
+    const compensation = job.job?.currentCompensation;
+    const description = job.richtextDescription && !/^\$[a-z0-9]+$/i.test(job.richtextDescription)
+      ? plainText(job.richtextDescription)
+      : null;
+    return [{
+      externalId: job.id,
+      title: job.title,
+      company: source.company,
+      location: locations.join("; ") || null,
+      arrangement: /\bremote\b/i.test(locations.join(" ")) ? "remote" : "unknown",
+      employmentType: employmentTypes.join("; ") || null,
+      summary: description,
+      ...(description ? { description } : {}),
+      ...(departments.length ? { department: departments.join("; ") } : {}),
+      ...(teams.length ? { team: teams.join("; ") } : {}),
+      ...(locations.length > 1 ? { secondaryLocations: locations.slice(1) } : {}),
+      ...(compensation?.minAmount != null ? { salaryMin: compensation.minAmount } : {}),
+      ...(compensation?.maxAmount != null ? { salaryMax: compensation.maxAmount } : {}),
+      ...(compensation?.currencyIsoCode ? { salaryCurrency: compensation.currencyIsoCode } : {}),
+      officialUrl: `https://jobs.deel.com/${encodeURIComponent(slug)}/job-details/${encodeURIComponent(job.id)}/overview`,
+      publishedAt: normalizedDate(publication?.currentState?.createdAt ?? job.createdAt),
+      sourceUpdatedAt: normalizedDate(job.updatedAt),
+    }];
+  });
+  const rawIds = new Set(rawJobs.map(({ id }) => id!.toLowerCase()));
+  return {
+    jobs: uniqueJobs(jobs),
+    completeListing: jobs.length === rawJobs.length
+      && listedIds.size === rawIds.size
+      && [...rawIds].every((id) => listedIds.has(id)),
+  };
+};
+
+const preservesTenantScope = (originalUrl: string, candidateUrl: string): boolean => {
+  try {
+    const original = new URL(originalUrl);
+    const candidate = new URL(candidateUrl, original);
+    if (original.hostname === "www.ycombinator.com" || original.hostname === "ycombinator.com") {
+      const company = original.pathname.match(/^\/companies\/([^/]+)/i)?.[1];
+      const candidateCompany = candidate.pathname.match(/^\/companies\/([^/]+)/i)?.[1];
+      if (company) return candidateCompany?.toLowerCase() === company.toLowerCase();
+    }
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const companyScopeMatches = (company: string, originalUrl: string, candidateUrl: string): boolean => {
+  const withoutParent = company.split("(")[0].trim();
+  const target = (withoutParent.includes("—") ? withoutParent.split("—").at(-1)! : withoutParent.split(" / ")[0]).trim();
+  const words = target.match(/[A-Za-z0-9]+/g) ?? [];
+  const generic = new Set(["company", "corp", "corporation", "group", "holdings", "holding", "international", "services", "service", "technologies", "technology", "financial", "health", "healthcare", "systems", "system", "united", "america", "american"]);
+  const tokens = words.map((word) => word.toLowerCase()).filter((word) => word.length >= 3 && !generic.has(word));
+  if (words.length > 1) {
+    const acronym = words.map((word) => /^[A-Z]{2,3}$/.test(word) ? word.toLowerCase() : word[0].toLowerCase()).join("");
+    if (acronym.length >= 3) tokens.push(acronym);
+  }
+  if (tokens.length === 0) return true;
+  try {
+    const scope = `${new URL(originalUrl).hostname}${new URL(originalUrl).pathname} ${new URL(candidateUrl, originalUrl).hostname}${new URL(candidateUrl, originalUrl).pathname}`.toLowerCase().replace(/[^a-z0-9]+/g, "");
+    return tokens.some((token) => scope.includes(token));
+  } catch {
+    return false;
+  }
+};
+
 async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
+  const discoveryDepth = source.discoveryDepth ?? 0;
   try {
     const response = await fetchWithTimeout(fetcher, source.postingUrl);
     if (!response.ok) {
       if (isBlockedHttpStatus(response.status)) {
         const talemetry = await crawlTalemetryJson(source, fetcher);
         if (talemetry) return talemetry;
-        const fallback = await crawlReaderFallback(source, fetcher, now);
+        const fallback = discoveryDepth === 0 ? await crawlReaderFallback(source, fetcher, now) : null;
         if (fallback) return fallback;
       }
       return {
@@ -2432,6 +2561,14 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
       };
     }
     const html = await response.text();
+    const deel = deelJobs(html, source);
+    if (deel) return {
+      status: "succeeded",
+      responseStatus: response.status,
+      completeListing: deel.completeListing,
+      jobs: deel.jobs,
+      error: null,
+    };
     const kula = kulaJobs(html, source);
     if (kula) return {
       status: "succeeded",
@@ -2467,7 +2604,8 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
       jobs: extracted.jobs,
       error: null,
     };
-    const linked = jobsFromBrowserAnchors(anchorsFromHtml(html), source);
+    const anchors = anchorsFromHtml(html);
+    const linked = jobsFromBrowserAnchors(anchors, source);
     if (linked.length > 0) return {
       status: "succeeded",
       responseStatus: response.status,
@@ -2475,7 +2613,47 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
       jobs: linked,
       error: null,
     };
-    const fallback = await crawlReaderFallback(source, fetcher, now);
+    if (discoveryDepth === 0) {
+      const current = new URL(source.postingUrl);
+      current.hash = "";
+      const candidates = careerCandidates(anchors, source.postingUrl)
+        .filter(({ href }) => isSafeCareerRecommendation(source.company, source.postingUrl, href))
+        .filter(({ href }) => preservesTenantScope(source.postingUrl, href))
+        .filter(({ href }) => companyScopeMatches(source.company, source.postingUrl, href))
+        .filter(({ href }) => {
+          try {
+            const candidate = new URL(href, source.postingUrl);
+            candidate.hash = "";
+            return candidate.href !== current.href;
+          } catch {
+            return false;
+          }
+        })
+        .slice(0, 3);
+      for (const candidate of candidates) {
+        const candidateUrl = new URL(candidate.href, source.postingUrl);
+        candidateUrl.hash = "";
+        const candidateResult = await crawlSourceBase({
+          ...source,
+          postingUrl: candidateUrl.href,
+          adapter: detectUrlAdapter(candidateUrl.href),
+          discoveryDepth: 1,
+        }, fetcher, now);
+        if (candidateResult.status === "succeeded" && candidateResult.jobs.length > 0) {
+          // A link discovered from a careers landing page can still be a
+          // departmental or otherwise partial listing. Persist its jobs, but
+          // never let that one-hop discovery close jobs that were not present.
+          // Once the URL is vetted and promoted into the source catalog, its
+          // native adapter may authoritatively complete the listing.
+          return {
+            ...candidateResult,
+            completeListing: false,
+            resolvedListingUrl: candidateUrl.href,
+          };
+        }
+      }
+    }
+    const fallback = discoveryDepth === 0 ? await crawlReaderFallback(source, fetcher, now) : null;
     if (fallback) return fallback;
     return {
       status: "failed",
@@ -2485,7 +2663,7 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
       error: "No supported public job feed or job listings were discovered.",
     };
   } catch (error) {
-    const fallback = await crawlReaderFallback(source, fetcher, now);
+    const fallback = discoveryDepth === 0 ? await crawlReaderFallback(source, fetcher, now) : null;
     if (fallback) return fallback;
     return {
       status: "failed",

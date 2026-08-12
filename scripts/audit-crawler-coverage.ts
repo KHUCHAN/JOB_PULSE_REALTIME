@@ -12,6 +12,7 @@ type CoverageRecord = {
   responseStatus: number | null;
   jobsExtracted: number;
   completeListing: boolean;
+  resolvedListingUrl: string | null;
   error: string | null;
 };
 
@@ -45,6 +46,7 @@ export async function runCoverageAudit(
         responseStatus: result.responseStatus,
         jobsExtracted: result.jobs.length,
         completeListing: result.completeListing,
+        resolvedListingUrl: result.resolvedListingUrl ?? null,
         error: result.error,
       };
     }
