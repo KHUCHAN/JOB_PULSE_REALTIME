@@ -220,6 +220,10 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
     listingUrl: "https://egup.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/jobs",
     adapter: "custom",
   },
+  "legacy-row-881": {
+    listingUrl: "https://careers.vulcanmaterials.com/hcmUI/CandidateExperience/en/sites/careers/jobs",
+    adapter: "custom",
+  },
   "p5-1094-vanderbilt-health": {
     discovered: { kind: "workday", endpoint: "https://vumc.wd1.myworkdayjobs.com/wday/cxs/vumc/vumccareers/jobs" },
     listingUrl: "https://vumc.wd1.myworkdayjobs.com/vumccareers",

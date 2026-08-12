@@ -4613,6 +4613,7 @@ Wrong description.
       postingUrl: "https://www.verint.com/careers",
       listingUrl: "https://fa-epcb-saasfaprod1.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX",
       apiOrigin: "https://fa-epcb-saasfaprod1.fa.ocs.oraclecloud.com",
+      site: "CX",
     },
     {
       id: "legacy-row-878",
@@ -4620,9 +4621,18 @@ Wrong description.
       postingUrl: "https://www.vertiv.com/en-us/about/career-center/",
       listingUrl: "https://egup.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/jobs",
       apiOrigin: "https://egup.fa.us2.oraclecloud.com",
+      site: "CX",
+    },
+    {
+      id: "legacy-row-881",
+      company: "Vulcan Materials",
+      postingUrl: "https://jobs.vulcanmaterials.com/",
+      listingUrl: "https://careers.vulcanmaterials.com/hcmUI/CandidateExperience/en/sites/careers/jobs",
+      apiOrigin: "https://careers.vulcanmaterials.com",
+      site: "careers",
     },
   ])("uses $company's official Oracle Recruiting board instead of its corporate careers landing page", async ({
-    id, company, postingUrl, listingUrl, apiOrigin,
+    id, company, postingUrl, listingUrl, apiOrigin, site,
   }) => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input) => {
@@ -4633,7 +4643,7 @@ Wrong description.
       expect(endpoint.origin + endpoint.pathname).toBe(
         `${apiOrigin}/hcmRestApi/resources/latest/recruitingCEJobRequisitions`,
       );
-      expect(endpoint.searchParams.get("finder")).toContain("siteNumber=CX");
+      expect(endpoint.searchParams.get("finder")).toContain(`siteNumber=${site}`);
       return Response.json({ items: [{
         TotalJobsCount: 1,
         requisitionList: [{
@@ -4657,7 +4667,7 @@ Wrong description.
     }));
     expect(result.jobs).toEqual([expect.objectContaining({
       externalId: `${id}-101`, title: "Applied AI Software Engineering Intern", employmentType: "Internship",
-      officialUrl: `${new URL(listingUrl).origin}/hcmUI/CandidateExperience/en/sites/CX/job/${id}-101`,
+      officialUrl: `${new URL(listingUrl).origin}/hcmUI/CandidateExperience/en/sites/${site}/job/${id}-101`,
     })]);
   });
 
