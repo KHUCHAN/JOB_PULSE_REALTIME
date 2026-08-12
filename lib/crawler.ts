@@ -521,7 +521,10 @@ const greenhouseBoard = (postingUrl: string): string | null => {
   if (!url.hostname.endsWith("greenhouse.io")) return null;
   const queryBoard = url.searchParams.get("job_board");
   if (queryBoard && /^[a-z0-9-]+$/i.test(queryBoard)) return queryBoard;
-  const board = url.pathname.split("/").filter(Boolean).at(0);
+  const path = url.pathname.split("/").filter(Boolean);
+  const board = url.hostname === "boards-api.greenhouse.io" && path[0] === "v1" && path[1] === "boards"
+    ? path[2]
+    : path.at(0);
   if (board === "users" || board === "embed") return null;
   return board || null;
 };
@@ -534,7 +537,9 @@ const smartRecruitersFeed = (postingUrl: string): string | null => {
 };
 
 export function discoverAts(html: string, _pageUrl: string): DiscoveredAts | null {
-  const greenhouse = html.match(/https?:\/\/(?:job-boards|boards)\.greenhouse\.io\/([a-z0-9-]+)/i);
+  const greenhouse = html.match(/https?:\/\/boards\.greenhouse\.io\/embed\/job_board\/js\?[^\s"'<>]*\bfor=([a-z0-9-]+)/i)
+    ?? html.match(/https?:\/\/(?:job-boards|boards)\.greenhouse\.io\/([a-z0-9-]+)/i)
+    ?? html.match(/https?:\/\/boards-api\.greenhouse\.io\/v1\/boards\/([a-z0-9-]+)/i);
   if (greenhouse) return { kind: "greenhouse", endpoint: `https://boards-api.greenhouse.io/v1/boards/${greenhouse[1]}/jobs?content=true` };
 
   const workday = html.match(/https?:\/\/[^\s"'<>]+\.(?:myworkdayjobs|myworkdaysite)\.com\/[^\s"'<>?#]+/i);
@@ -560,6 +565,41 @@ export function discoverAts(html: string, _pageUrl: string): DiscoveredAts | nul
 
   return null;
 }
+
+const phenomSearchResultsUrl = (html: string, pageUrl: string): string | null => {
+  if (!/(?:phenompeople\.com|phApp\.|ph-page|phenom-track)/i.test(html)) return null;
+  const page = new URL(pageUrl);
+  if (/\/search-results\/?$/i.test(page.pathname)) return null;
+  if (/\/(?:[a-z]{2}\/)?en\/?$/i.test(page.pathname)) {
+    page.pathname = `${page.pathname.replace(/\/$/, "")}/search-results`;
+    page.search = "";
+    page.hash = "";
+    return page.href;
+  }
+  if (/\/jointalentcommunity\/?$/i.test(page.pathname)) {
+    page.pathname = page.pathname.replace(/\/jointalentcommunity\/?$/i, "/search-results");
+    page.search = "";
+    page.hash = "";
+    return page.href;
+  }
+  const linkedSearch = anchorsFromHtml(html).flatMap(({ href }) => {
+    try {
+      const url = new URL(href, page);
+      return url.origin === page.origin && /\/search-results\/?$/i.test(url.pathname) ? [url] : [];
+    } catch {
+      return [];
+    }
+  }).at(0);
+  if (linkedSearch) {
+    linkedSearch.search = "";
+    linkedSearch.hash = "";
+    return linkedSearch.href;
+  }
+  page.pathname = `${page.pathname.replace(/\/$/, "")}/search-results`;
+  page.search = "";
+  page.hash = "";
+  return page.href;
+};
 
 async function crawlDiscoveredFeed(source: CrawlSource, discovered: DiscoveredAts, fetcher: typeof fetch): Promise<SourceCrawlResult> {
   try {
@@ -2741,6 +2781,22 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
     if (avature) return avature;
     const phenom = phenomJobs(html, source);
     if (phenom) return crawlPhenomPages(source, phenom, fetcher);
+    if (discoveryDepth === 0) {
+      const phenomListingUrl = phenomSearchResultsUrl(html, source.postingUrl);
+      if (phenomListingUrl) {
+        const phenomResult = await crawlSourceBase({
+          ...source,
+          postingUrl: phenomListingUrl,
+          adapter: "phenom",
+          discoveryDepth: 1,
+        }, fetcher, now);
+        if (phenomResult.status === "succeeded" && phenomResult.jobs.length > 0) return {
+          ...phenomResult,
+          completeListing: false,
+          resolvedListingUrl: phenomListingUrl,
+        };
+      }
+    }
     const discovered = discoverAts(html, source.postingUrl);
     if (discovered) {
       const discoveredResult = discovered.kind === "workday"

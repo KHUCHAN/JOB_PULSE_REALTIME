@@ -1,4 +1,5 @@
 import { crawlSource, type CrawledFacet, type CrawledJob, type CrawlSource } from "./crawler";
+import { detectUrlAdapter } from "./url-remediation";
 
 export type PersistedSource = CrawlSource & {
   nextCrawlAt: string | null;
@@ -14,6 +15,7 @@ export interface CrawlStore {
     cycleStartedAt: string,
     previousCycleStartedAt: string | null,
   ): Promise<{ closed: number }>;
+  updateResolvedListing(sourceId: string, previousUrl: string, postingUrl: string, adapter: CrawlSource["adapter"]): Promise<void>;
   finishRun(runId: string, values: Record<string, unknown>): Promise<void>;
   scheduleNext(sourceId: string, nextCrawlAt: string): Promise<void>;
 }
@@ -58,6 +60,14 @@ const runSource = async (
           source.crawlPreviousCycleStartedAt ?? null,
         );
         changes.closed += paged.closed;
+      }
+      if (crawl.resolvedListingUrl && crawl.resolvedListingUrl !== source.postingUrl) {
+        await store.updateResolvedListing(
+          source.id,
+          source.postingUrl,
+          crawl.resolvedListingUrl,
+          detectUrlAdapter(crawl.resolvedListingUrl),
+        );
       }
     } catch (syncError) {
       status = "failed";

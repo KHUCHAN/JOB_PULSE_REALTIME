@@ -321,6 +321,26 @@ Wrong description.
     });
   });
 
+  it("discovers a Greenhouse board API embedded by a JavaScript careers app", () => {
+    expect(discoverAts(
+      '<script>const endpoint = "https://boards-api.greenhouse.io/v1/boards/adyen/jobs";</script>',
+      "https://careers.adyen.com/vacancies",
+    )).toEqual({
+      kind: "greenhouse",
+      endpoint: "https://boards-api.greenhouse.io/v1/boards/adyen/jobs?content=true",
+    });
+  });
+
+  it("discovers a legacy Greenhouse embed board slug", () => {
+    expect(discoverAts(
+      '<script src="https://boards.greenhouse.io/embed/job_board/js?for=adaptivebiotechnologies"></script>',
+      "https://www.adaptivebiotech.com/career-listings/",
+    )).toEqual({
+      kind: "greenhouse",
+      endpoint: "https://boards-api.greenhouse.io/v1/boards/adaptivebiotechnologies/jobs?content=true",
+    });
+  });
+
   it("discovers a direct Workday search feed behind a company careers page", () => {
     expect(discoverAts(
       '<a href="https://acme.wd5.myworkdayjobs.com/Careers">Open jobs</a>',
@@ -2935,6 +2955,45 @@ Wrong description.
 
     expect(requests).toEqual(["https://careers.snowflake.com/us/en/search-results"]);
     expect(result.jobs.map((job) => job.title)).toEqual(["Data Engineer"]);
+  });
+
+  it("recognizes a Phenom landing page even when the catalog adapter is stale", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === "https://careers.acme.example/us/en") {
+        return new Response('<script src="https://assets.phenompeople.com/app.js"></script>', { status: 200 });
+      }
+      if (url === "https://careers.acme.example/us/en/search-results") {
+        return new Response(`<script>phApp.ddo = ${JSON.stringify({
+          eagerLoadRefineSearch: {
+            hits: 1,
+            totalHits: 1,
+            data: { jobs: [{ jobId: "acme-1", title: "AI Intern", applyUrl: "https://careers.acme.example/us/en/job/acme-1/ai-intern" }] },
+          },
+        })};</script>`, { status: 200 });
+      }
+      return new Response("missing", { status: 404 });
+    };
+
+    const result = await crawlSource({
+      id: "stale-phenom-adapter",
+      company: "Acme",
+      postingUrl: "https://careers.acme.example/us/en",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-12T12:00:00Z"));
+
+    expect(requests.slice(0, 2)).toEqual([
+      "https://careers.acme.example/us/en",
+      "https://careers.acme.example/us/en/search-results",
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      resolvedListingUrl: "https://careers.acme.example/us/en/search-results",
+    }));
+    expect(result.jobs.map((job) => job.title)).toEqual(["AI Intern"]);
   });
 
   it("extracts a public embedded JOB_ITEMS collection", async () => {

@@ -246,6 +246,19 @@ export class D1CrawlStore implements CrawlStore {
     return this.hydratePagedCrawlState(sources);
   }
 
+  async updateResolvedListing(
+    sourceId: string,
+    previousUrl: string,
+    postingUrl: string,
+    adapter: PersistedSource["adapter"],
+  ): Promise<void> {
+    await this.db.prepare(`
+      UPDATE sources
+      SET posting_url = ?, adapter = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND posting_url = ?
+    `).bind(postingUrl, adapter, sourceId, previousUrl).run();
+  }
+
   async startRun(source: PersistedSource, scheduledFor: string): Promise<string> {
     const id = crypto.randomUUID();
     const startedAt = new Date().toISOString();

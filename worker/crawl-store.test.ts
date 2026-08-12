@@ -474,6 +474,35 @@ describe("D1CrawlStore enriched job persistence", () => {
 });
 
 describe("D1CrawlStore source leasing", () => {
+  it("promotes a discovered listing URL only while the original URL is still current", async () => {
+    const calls: Array<{ sql: string; values: unknown[] }> = [];
+    const db = {
+      prepare(sql: string) {
+        return {
+          bind(...values: unknown[]) {
+            calls.push({ sql, values });
+            return { run: async () => ({ meta: { changes: 1 } }) };
+          },
+        };
+      },
+    } as unknown as D1Database;
+
+    await new D1CrawlStore(db).updateResolvedListing(
+      "source-1",
+      "https://acme.example/careers",
+      "https://acme.example/jobs",
+      "custom",
+    );
+
+    expect(calls[0].sql).toContain("WHERE id = ? AND posting_url = ?");
+    expect(calls[0].values).toEqual([
+      "https://acme.example/jobs",
+      "custom",
+      "source-1",
+      "https://acme.example/careers",
+    ]);
+  });
+
   it("claims due sources before returning them so parallel batches cannot overlap", async () => {
     const calls: Array<{ sql: string; values: unknown[] }> = [];
     const db = {

@@ -8,6 +8,7 @@ class MemoryStore implements CrawlStore {
   readonly runs: Array<Record<string, unknown>> = [];
   readonly synced: Array<{ sourceId: string; jobs: CrawledJob[]; completeListing: boolean }> = [];
   readonly paged: Array<{ sourceId: string; nextPage: number; cycleComplete: boolean; cycleStartedAt: string; previousCycleStartedAt: string | null }> = [];
+  readonly resolvedListings: Array<{ sourceId: string; previousUrl: string; postingUrl: string; adapter: PersistedSource["adapter"] }> = [];
 
   async dueSources(): Promise<PersistedSource[]> {
     return this.sources;
@@ -33,6 +34,10 @@ class MemoryStore implements CrawlStore {
   ): Promise<{ closed: number }> {
     this.paged.push({ sourceId, nextPage: pagination.nextPage, cycleComplete: pagination.cycleComplete, cycleStartedAt, previousCycleStartedAt });
     return { closed: pagination.cycleComplete && previousCycleStartedAt ? 2 : 0 };
+  }
+
+  async updateResolvedListing(sourceId: string, previousUrl: string, postingUrl: string, adapter: PersistedSource["adapter"]): Promise<void> {
+    this.resolvedListings.push({ sourceId, previousUrl, postingUrl, adapter });
   }
 
   async finishRun(runId: string, values: Record<string, unknown>): Promise<void> {
@@ -111,6 +116,36 @@ describe("runDueCrawls", () => {
     await expect(runSpecificCrawls(store, [source], fetcher, new Date("2026-08-08T12:00:00Z"), { concurrency: 1 }))
       .resolves.toEqual(expect.objectContaining({ attempted: 1, succeeded: 1 }));
     expect(store.synced).toEqual([expect.objectContaining({ sourceId: "repair-me" })]);
+  });
+
+  it("promotes a verified listing URL after its discovered jobs are persisted", async () => {
+    const source: PersistedSource = {
+      id: "acme",
+      company: "Acme",
+      postingUrl: "https://www.acme.example/careers",
+      adapter: "custom",
+      nextCrawlAt: null,
+    };
+    const store = new MemoryStore([source]);
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url === source.postingUrl) return new Response('<a href="https://careers.acme.example/search-jobs">Search jobs</a>');
+      if (url === "https://careers.acme.example/search-jobs") return new Response('<script>widget({"company_code":"Acme"})</script>');
+      if (url === "https://api.smartrecruiters.com/v1/companies/Acme/postings") return Response.json({
+        totalFound: 1,
+        content: [{ id: "1", name: "AI Intern", ref: "https://api.smartrecruiters.com/v1/companies/Acme/postings/1" }],
+      });
+      return new Response("missing", { status: 404 });
+    };
+
+    await runDueCrawls(store, fetcher, new Date("2026-08-12T12:00:00Z"), { concurrency: 1 });
+
+    expect(store.resolvedListings).toEqual([{
+      sourceId: "acme",
+      previousUrl: "https://www.acme.example/careers",
+      postingUrl: "https://careers.acme.example/search-jobs",
+      adapter: "custom",
+    }]);
   });
 
   it("advances a paged crawl checkpoint and closes stale rows only after the final page window", async () => {
