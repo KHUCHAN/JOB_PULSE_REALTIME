@@ -1079,6 +1079,9 @@ async function crawlDiscoveredFeed(source: CrawlSource, discovered: DiscoveredAt
       const prefix = listing.pathname.split("/jobs")[0];
       const firstItems = firstPayload.jobs ?? [];
       const total = firstPayload.totalCount ?? firstItems.length;
+      if (!Number.isInteger(total) || total < 0 || (total > 0 && firstItems.length === 0)) {
+        throw new Error("Jibe returned an unusable catalog page.");
+      }
       const compactContent = total > 10_000;
       const stringPool = new Map<string, string>();
       const intern = (value: string | null): string | null => {
@@ -1117,29 +1120,66 @@ async function crawlDiscoveredFeed(source: CrawlSource, discovered: DiscoveredAt
           publishedAt: normalizedDate(data.posted_date),
         }];
       });
-      const jobs = normalize(firstItems);
       const pageSize = Math.max(firstItems.length, 1);
       const boundedTotal = Math.min(total, 10_000);
-      const pageNumbers = Array.from({ length: Math.max(0, Math.ceil(boundedTotal / pageSize) - 1) }, (_, index) => index + 2);
-      for (let index = 0; index < pageNumbers.length; index += 8) {
-        const pages = await Promise.all(pageNumbers.slice(index, index + 8).map(async (page) => {
+      const totalPages = Math.max(1, Math.ceil(boundedTotal / pageSize));
+      const requestedStartPage = Math.max(1, Math.trunc(source.crawlPageCursor ?? 1));
+      const startPage = requestedStartPage <= totalPages ? requestedStartPage : 1;
+      const maxPagesPerPass = 40;
+      const endPage = Math.min(totalPages, startPage + maxPagesPerPass - 1);
+      const expectedPageLength = (page: number): number => boundedTotal === 0
+        ? 0
+        : Math.min(pageSize, Math.max(0, boundedTotal - (page - 1) * pageSize));
+      const fetchPage = async (page: number): Promise<JibeJob[] | null> => {
+        try {
           const pageUrl = new URL(discovered.endpoint);
           pageUrl.searchParams.set("page", String(page));
           const pageResponse = await fetchWithTimeout(fetcher, pageUrl);
-          if (!pageResponse.ok) return { response: pageResponse, jobs: [] as JibeJob[] };
-          const payload = await pageResponse.json() as { jobs?: JibeJob[] };
-          return { response: pageResponse, jobs: payload.jobs ?? [] };
-        }));
-        const failure = pages.find((page) => !page.response.ok);
-        if (failure) return {
-          status: isBlockedHttpStatus(failure.response.status) ? "blocked" : "failed",
-          responseStatus: failure.response.status,
-          completeListing: false,
-          jobs: [],
-          error: `jibe returned HTTP ${failure.response.status}.`,
-        };
-        for (const page of pages) jobs.push(...normalize(page.jobs));
+          if (!pageResponse.ok) return null;
+          const payload = await pageResponse.json() as { totalCount?: number; jobs?: JibeJob[] };
+          const items = payload.jobs;
+          const stableCatalog = total > 10_000
+            ? Number.isInteger(payload.totalCount) && Number(payload.totalCount) >= boundedTotal
+            : payload.totalCount === total;
+          return stableCatalog && Array.isArray(items) && items.length === expectedPageLength(page)
+            ? items
+            : null;
+        } catch {
+          return null;
+        }
+      };
+
+      const startItems = startPage === 1 ? firstItems : await fetchPage(startPage);
+      if (!startItems || startItems.length !== expectedPageLength(startPage)) {
+        throw new Error("Jibe returned an incomplete or malformed catalog page.");
       }
+      const jobs = normalize(startItems);
+      if (jobs.length !== startItems.length) throw new Error("Jibe returned unusable job identities.");
+      const pageNumbers = Array.from({ length: Math.max(0, endPage - startPage) }, (_, index) => startPage + index + 1);
+      let firstFailedPage: number | null = null;
+      let lastSuccessfulPage = startPage;
+      for (let index = 0; index < pageNumbers.length && firstFailedPage === null; index += 8) {
+        const batchNumbers = pageNumbers.slice(index, index + 8);
+        const pages = await Promise.all(batchNumbers.map(fetchPage));
+        const failedIndex = pages.findIndex((page) => page === null);
+        const usableCount = failedIndex === -1 ? pages.length : failedIndex;
+        for (let pageIndex = 0; pageIndex < usableCount; pageIndex += 1) {
+          const page = pages[pageIndex] ?? [];
+          const normalized = normalize(page);
+          if (normalized.length !== page.length) {
+            firstFailedPage = batchNumbers[pageIndex];
+            break;
+          }
+          jobs.push(...normalized);
+          lastSuccessfulPage += 1;
+        }
+        if (firstFailedPage === null && failedIndex !== -1) firstFailedPage = batchNumbers[failedIndex];
+      }
+      const unique = uniqueJobs(jobs);
+      if (unique.length !== jobs.length) throw new Error("Jibe repeated job identities across catalog pages.");
+      const boundedCycleComplete = firstFailedPage === null && lastSuccessfulPage === totalPages;
+      const cycleComplete = boundedCycleComplete && total <= 10_000;
+      const completeListing = startPage === 1 && cycleComplete && totalPages <= maxPagesPerPass && unique.length === total;
       const facets: CrawledFacet[] = [
         ...(firstPayload.filter?.categories?.all?.length ? [{
           key: "category",
@@ -1155,9 +1195,16 @@ async function crawlDiscoveredFeed(source: CrawlSource, discovered: DiscoveredAt
       return {
         status: "succeeded",
         responseStatus: response.status,
-        completeListing: total <= 10_000 && jobs.length >= total,
-        jobs,
+        completeListing,
+        jobs: unique,
         ...(facets.length > 0 ? { facets } : {}),
+        ...(!completeListing && totalPages > 1 ? {
+          pagination: {
+            nextPage: firstFailedPage ?? (boundedCycleComplete ? 1 : Math.max(startPage + 1, lastSuccessfulPage)),
+            cycleComplete,
+            totalPages,
+          },
+        } : {}),
         error: null,
       };
     }

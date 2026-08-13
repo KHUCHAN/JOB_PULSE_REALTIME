@@ -974,6 +974,40 @@ Wrong description.
     expect(maxPage).toBe(10);
   });
 
+  it("checkpoints large Jibe catalogs before the per-source request budget", async () => {
+    const requestedPages: number[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url === "https://careers.acme.example/jobs") {
+        return new Response('<script src="https://app.jibecdn.com/prod/search/app.js"></script>', { status: 200 });
+      }
+      const page = Number(new URL(url).searchParams.get("page"));
+      requestedPages.push(page);
+      const start = (page - 1) * 100;
+      const jobs = Array.from({ length: 100 }, (_, index) => ({
+        data: { slug: String(start + index), req_id: String(start + index), title: `Role ${start + index}` },
+      }));
+      return new Response(JSON.stringify({ totalCount: page === 1 ? 19_253 : 19_254, jobs }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+
+    const result = await crawlSource({
+      id: "large-jibe",
+      company: "Acme",
+      postingUrl: "https://careers.acme.example/jobs",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result.status).toBe("succeeded");
+    expect(result.jobs).toHaveLength(4_000);
+    expect(result.completeListing).toBe(false);
+    expect(result.pagination).toEqual({ nextPage: 40, cycleComplete: false, totalPages: 100 });
+    expect(requestedPages).toHaveLength(40);
+    expect(Math.max(...requestedPages)).toBe(40);
+  });
+
   it("fully paginates an Eightfold public jobs API", async () => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input) => {
