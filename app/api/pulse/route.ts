@@ -317,6 +317,71 @@ async function activityFor(limit = 200): Promise<ActivityEvent[]> {
   return result.results.map(mapCrawlActivity);
 }
 
+async function runStatusFor(): Promise<{
+  checkedAt: string;
+  running: number;
+  staleRunning: number;
+  recent: Array<{
+    id: string;
+    sourceId: string;
+    company: string;
+    status: string;
+    scheduledFor: string;
+    startedAt: string | null;
+    finishedAt: string | null;
+    jobsSeen: number;
+    jobsCreated: number;
+    jobsUpdated: number;
+    jobsClosed: number;
+    error: string | null;
+  }>;
+}> {
+  type Row = {
+    id: string;
+    source_id: string;
+    company: string;
+    status: string;
+    scheduled_for: string;
+    started_at: string | null;
+    finished_at: string | null;
+    jobs_seen: number;
+    jobs_created: number;
+    jobs_updated: number;
+    jobs_closed: number;
+    error: string | null;
+  };
+  const result = await db().prepare(`
+    SELECT cr.id, cr.source_id, s.company, cr.status, cr.scheduled_for,
+           cr.started_at, cr.finished_at, cr.jobs_seen, cr.jobs_created,
+           cr.jobs_updated, cr.jobs_closed, cr.error
+    FROM crawl_runs cr
+    JOIN sources s ON s.id = cr.source_id
+    ORDER BY COALESCE(cr.finished_at, cr.started_at, cr.scheduled_for) DESC
+    LIMIT 100
+  `).all<Row>();
+  const now = Date.now();
+  const running = result.results.filter((row) => row.status === "running");
+  return {
+    checkedAt: new Date(now).toISOString(),
+    running: running.length,
+    staleRunning: running.filter((row) => row.started_at && now - Date.parse(row.started_at) > 120_000).length,
+    recent: result.results.slice(0, 50).map((row) => ({
+      id: row.id,
+      sourceId: row.source_id,
+      company: row.company,
+      status: row.status,
+      scheduledFor: row.scheduled_for,
+      startedAt: row.started_at,
+      finishedAt: row.finished_at,
+      jobsSeen: row.jobs_seen,
+      jobsCreated: row.jobs_created,
+      jobsUpdated: row.jobs_updated,
+      jobsClosed: row.jobs_closed,
+      error: row.error,
+    })),
+  };
+}
+
 async function listSources(): Promise<SourceRecord[]> {
   type Row = {
     id: string; company: string; posting_url: string | null; talent_url: string | null;
@@ -433,6 +498,7 @@ export async function GET(request: Request): Promise<Response> {
       const kind = url.searchParams.get("kind");
       return json(events.filter((event) => (!severity || event.severity === severity) && (!kind || event.kind === kind)));
     }
+    if (resource === "runStatus") return json(await runStatusFor());
     if (resource === "overview") return json(await overview());
     if (resource === "resumeAlert") return json(await resumeStatus());
     return json({ error: "Unknown resource." }, 400);

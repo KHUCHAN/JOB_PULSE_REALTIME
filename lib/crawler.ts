@@ -839,7 +839,10 @@ type TalemetryPayload = {
 const REQUEST_TIMEOUT_MS = 15_000;
 const REQUEST_ATTEMPTS = 2;
 const SOURCE_REQUEST_BUDGET = 50;
-const SOURCE_DEADLINE_MS = 45_000;
+// Sites Worker requests are canceled at roughly 55 seconds. Leave enough
+// headroom for D1 persistence and run finalization after the upstream crawl;
+// checkpointed adapters resume the remaining pages on the next pass.
+const SOURCE_DEADLINE_MS = 32_000;
 const WORKDAY_DETAIL_BATCH_SIZE = 8;
 const BLOCKED_HTTP_STATUSES = new Set([401, 403, 429, 520, 521, 522, 523, 524]);
 const RETRYABLE_HTTP_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524]);

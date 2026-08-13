@@ -59,6 +59,7 @@ const summary = {
   closed: 0,
   requestErrors: 0,
   drained: false,
+  stopReason: null,
 };
 
 const number = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
@@ -87,7 +88,15 @@ const postAction = async (action, timeoutMs) => {
   }
 };
 
-const crawlOne = () => postAction("scheduledCrawlBatch", 55_000);
+// Leave a margin below the Sites Worker cancellation window. A timed-out
+// source is recorded and handed to browser recovery rather than allowing the
+// platform to cancel both concurrent requests at the hard edge.
+const crawlOne = () => postAction("scheduledCrawlBatch", 42_000);
+
+const isRecoverableRequestError = (error) => {
+  const message = error instanceof Error ? error.message : String(error);
+  return /aborted|abort|exceeded|timed out|fetch failed|network|socket|ECONN|HTTP 5\d\d/i.test(message);
+};
 
 let consecutiveDoubleErrors = 0;
 while (Date.now() < deadline) {
@@ -108,7 +117,16 @@ while (Date.now() < deadline) {
     break;
   }
   consecutiveDoubleErrors = rejected.length === 2 ? consecutiveDoubleErrors + 1 : 0;
-  if (consecutiveDoubleErrors >= 3) throw new Error("Production crawl API failed in three consecutive rounds.");
+  if (consecutiveDoubleErrors >= 3) {
+    // Browser recovery is the independent safety net for slow/edge-blocked
+    // sources. Stop this bounded native drain cleanly so the recovery job can
+    // run instead of marking the whole scheduled workflow as a hard failure.
+    if (rejected.some((error) => !isRecoverableRequestError(error))) {
+      throw new Error("Production crawl API authorization or configuration failed three consecutive rounds.");
+    }
+    summary.stopReason = "consecutive-request-errors";
+    break;
+  }
 }
 
 const alertDispatch = await postAction("scheduledProcessAlerts", 110_000);
@@ -146,6 +164,7 @@ if (process.env.GITHUB_STEP_SUMMARY) {
     `- Successful / failed / blocked: ${result.succeeded} / ${result.failed} / ${result.blocked}`,
     `- Jobs created / updated / closed: ${result.created} / ${result.updated} / ${result.closed}`,
     `- Runtime: ${result.elapsedMinutes} minutes`,
+    `- Stop reason: ${result.stopReason || "queue drained or time limit reached"}`,
     `- Current source health: ${JSON.stringify(result.sourceCounts)}`,
     `- Alert dispatch: ${JSON.stringify(result.alerts)}`,
     "",

@@ -1,4 +1,4 @@
-import { crawlSource, type CrawledFacet, type CrawledJob, type CrawlSource } from "./crawler";
+import { crawlSource, type CrawledFacet, type CrawledJob, type CrawlSource, type SourceCrawlResult } from "./crawler";
 import { detectUrlAdapter } from "./url-remediation";
 
 export type PersistedSource = CrawlSource & {
@@ -51,7 +51,22 @@ const runSource = async (
 ): Promise<CrawlBatchResult> => {
   const scheduledFor = now.toISOString();
   const runId = await store.startRun(source, scheduledFor);
-  const crawl = await crawlSource(source, fetcher, now);
+  let crawl: SourceCrawlResult;
+  try {
+    crawl = await crawlSource(source, fetcher, now);
+  } catch (error) {
+    // A Worker request can be canceled while a slow upstream is still being
+    // inspected. Always turn that exception into a terminal source result so
+    // the run is finalized and the source gets a normal backoff instead of
+    // leaving a permanent `running` row behind.
+    crawl = {
+      status: "failed",
+      responseStatus: null,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Source crawl failed before a result was returned.",
+    };
+  }
   const result = emptyResult();
   result.attempted = 1;
 
