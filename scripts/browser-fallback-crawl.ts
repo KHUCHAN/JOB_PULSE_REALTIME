@@ -78,7 +78,7 @@ const problemSources = async (): Promise<CrawlSource[]> => {
     const sources = await response.json() as Array<{
       id: string; company: string; postingUrl: string | null; talentUrl: string | null;
       adapter: CrawlSource["adapter"];
-      health: string; currentJobs: number; lastCheckedAt: string | null;
+      health: string; currentJobs: number; lastCheckedAt: string | null; nextRunAt: string | null;
     }>;
     const candidateUrl = (source: { postingUrl: string | null; talentUrl: string | null }): string | null => {
       if (source.postingUrl) return source.postingUrl;
@@ -101,7 +101,8 @@ const problemSources = async (): Promise<CrawlSource[]> => {
     return sources
       .map((source) => ({ ...source, candidateUrl: candidateUrl(source) }))
       .filter((source) => source.candidateUrl && (source.health === "failed" || source.health === "blocked"
-        || source.health === "inactive" || (source.health === "healthy" && source.currentJobs === 0)))
+        || source.health === "inactive" || (source.health === "healthy" && source.currentJobs === 0))
+        && (!source.nextRunAt || !Number.isFinite(Date.parse(source.nextRunAt)) || Date.parse(source.nextRunAt) <= Date.now()))
       .sort((left, right) => healthRank(left) - healthRank(right)
         || Date.parse(left.lastCheckedAt ?? "1970-01-01") - Date.parse(right.lastCheckedAt ?? "1970-01-01")
         || left.company.localeCompare(right.company))
