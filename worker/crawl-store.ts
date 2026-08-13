@@ -739,11 +739,11 @@ export class D1CrawlStore implements CrawlStore {
       await this.db.batch([
         this.db.prepare(`
           DELETE FROM notification_items
-          WHERE notification_id IN (
-            SELECT ni.notification_id
-            FROM notification_items ni
-            JOIN job_matches jm ON jm.id = ni.job_match_id
+          WHERE job_match_id IN (
+            SELECT jm.id
+            FROM job_matches jm
             JOIN jobs j ON j.id = jm.job_id
+            JOIN notification_items ni ON ni.job_match_id = jm.id
             JOIN notifications n ON n.id = ni.notification_id
             WHERE j.source_id = ? AND jm.notified_at IS NULL AND n.status <> 'sent'
           )
