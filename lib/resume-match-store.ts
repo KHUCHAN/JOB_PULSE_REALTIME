@@ -131,23 +131,30 @@ const persistDecisions = async (
   now: string,
   baseline: boolean,
 ): Promise<{ matched: number; deactivated: number }> => {
-  const active = values.filter(({ decision }) => decision.eligible).map(({ candidate, decision, notificationEligible }) => ({
-    id: crypto.randomUUID(),
-    jobId: candidate.id,
-    keywordId: profileRow.keyword_id,
-    score: decision.score,
-    matchedTerms: decision.evidence.map((item) => `${item.code}|${item.label}|${item.points}`),
-    openGeneration: candidate.openGeneration,
-    notificationEligible: baseline || !isTargetInternship(candidate) ? 0 : typeof notificationEligible === "boolean"
-      ? Number(notificationEligible)
-      : Number(Boolean(
-        profileRow.activation_watermark
-        && (candidate.firstSeenAt > profileRow.activation_watermark
-          || (candidate.openGeneration > 1
-            && candidate.reopenedAt !== null
-            && candidate.reopenedAt > profileRow.activation_watermark)),
-      )),
-  }));
+  const active = values
+    .filter(({ candidate, decision }) => decision.eligible || isTargetInternship(candidate))
+    .map(({ candidate, decision, notificationEligible }) => {
+      const target = isTargetInternship(candidate);
+      const matchedTerms = decision.evidence.map((item) => `${item.code}|${item.label}|${item.points}`);
+      if (target) matchedTerms.push("target:2027-us-internship|US 2027 internship or co-op|0");
+      return {
+        id: crypto.randomUUID(),
+        jobId: candidate.id,
+        keywordId: profileRow.keyword_id,
+        score: decision.score,
+        matchedTerms,
+        openGeneration: candidate.openGeneration,
+        notificationEligible: baseline || !target ? 0 : typeof notificationEligible === "boolean"
+          ? Number(notificationEligible)
+          : Number(Boolean(
+            profileRow.activation_watermark
+            && (candidate.firstSeenAt > profileRow.activation_watermark
+              || (candidate.openGeneration > 1
+                && candidate.reopenedAt !== null
+                && candidate.reopenedAt > profileRow.activation_watermark)),
+          )),
+      };
+    });
   for (const chunk of jsonChunks(active)) {
     await database.prepare(`
       INSERT INTO job_matches (
@@ -186,7 +193,9 @@ const persistDecisions = async (
     `).bind(now, now, profileRow.id).run();
   }
 
-  const inactive = values.filter(({ decision }) => !decision.eligible).map(({ candidate }) => ({
+  const inactive = values
+    .filter(({ candidate, decision }) => !decision.eligible && !isTargetInternship(candidate))
+    .map(({ candidate }) => ({
     jobId: candidate.id,
     keywordId: profileRow.keyword_id,
     openGeneration: candidate.openGeneration,

@@ -242,6 +242,33 @@ describe("resume match persistence migration", () => {
       .toEqual({ next_digest_at: "2026-08-13T16:01:00.000Z" });
   });
 
+  it("queues every newly seen US 2027 internship even when resume scoring has no role evidence", async () => {
+    const sqlite = migratedSqlite();
+    sqlite.exec(`
+      INSERT INTO sources (id) VALUES ('source');
+      UPDATE match_profiles
+      SET enabled = 1, activation_watermark = '2026-08-10T12:00:00.000Z',
+          next_digest_at = '2026-08-13T20:00:00.000Z';
+      INSERT INTO jobs (
+        id, source_id, title, company, location_region, official_url, status, first_seen_at, last_seen_at
+      ) VALUES (
+        'target', 'source', '2027 Human Resources Internship', 'Acme', 'us',
+        'https://example.com/target', 'open', '2026-08-13T16:00:00.000Z', '2026-08-13T16:00:00.000Z'
+      );
+      INSERT INTO job_topics (job_id, topic_key) VALUES ('target', 'program:internship'), ('target', 'year:2027');
+    `);
+
+    await syncResumeMatchesForUrls(
+      createD1(sqlite), "source", ["https://example.com/target"], "2026-08-13T16:01:00.000Z",
+      ["https://example.com/target"],
+    );
+
+    expect(sqlite.prepare("SELECT is_active, notification_eligible FROM job_matches WHERE job_id = 'target'").get())
+      .toEqual({ is_active: 1, notification_eligible: 1 });
+    expect(sqlite.prepare("SELECT next_digest_at FROM match_profiles WHERE id = 'chanyoung-resume'").get())
+      .toEqual({ next_digest_at: "2026-08-13T16:01:00.000Z" });
+  });
+
   it("creates a new eligible match generation for a genuinely reopened job", async () => {
     const sqlite = migratedSqlite();
     sqlite.exec(`

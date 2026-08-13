@@ -76,6 +76,11 @@ describe("classifyJobRegion", () => {
       sourceCompany: "Wells Fargo",
       sourcePostingUrl: "https://www.wellsfargojobs.com/en/jobs/",
     })).toBe("non_us");
+    expect(classifyJobRegion({
+      location: "Bengaluru, Karnataka",
+      sourceCompany: "Wells Fargo",
+      sourcePostingUrl: "https://www.wellsfargojobs.com/en/jobs/",
+    })).toBe("non_us");
   });
 
   it("does not infer US from an unrelated or non-US source URL", () => {

@@ -51,7 +51,7 @@ const nonUsCountryNames = [
   "portugal", "greece", "india", "china", "hong kong", "singapore", "japan", "south korea",
   "korea", "taiwan", "australia", "new zealand", "brazil", "argentina", "chile", "colombia",
   "peru", "israel", "united arab emirates", "saudi arabia", "south africa", "philippines",
-  "malaysia", "indonesia", "thailand", "vietnam",
+  "malaysia", "indonesia", "thailand", "vietnam", "india", "karnataka", "bengaluru", "bangalore",
 ];
 
 const normalize = (value: unknown): string => typeof value === "string"
@@ -81,6 +81,13 @@ const rawLocation = (value: unknown): RegionEvidence => {
   const contextualCode = original.match(/,\s*([A-Z]{2})(?:\s*[,-]|\s+\d{5}|$)/);
   if (contextualCode && usStateCodes.has(contextualCode[1])) return "us";
   return null;
+};
+
+const isGenericLocation = (value: unknown): boolean => {
+  const location = normalize(value);
+  return !location
+    || ["remote", "location not specified", "multiple locations", "flexible any site"].includes(location)
+    || /^\d+ locations?$/.test(location);
 };
 
 const sourceRegionHint = (company: unknown, postingUrl: unknown): RegionEvidence => {
@@ -120,7 +127,19 @@ export function classifyJobRegion(input: JobRegionInput): JobRegion {
   if (hasUs && hasNonUs) return "mixed";
   if (hasUs) return "us";
   if (hasNonUs) return "non_us";
-  add(sourceRegionHint(input.sourceCompany, input.sourcePostingUrl));
+  // A source-level US hint is safe only when the feed omitted location data.
+  // Do not turn an unrecognized but explicit location (for example Bengaluru,
+  // India) into a US posting merely because the employer has a US portal.
+  const explicitRawLocation = [input.location, ...(input.secondaryLocations ?? [])]
+    .some((value) => !isGenericLocation(value));
+  const explicitStructuredLocation = Boolean(
+    (input.locationCity && input.locationCity.trim())
+      || (input.locationState && input.locationState.trim())
+      || (input.locationCountry && !unknownCountryValues.has(normalize(input.locationCountry))),
+  );
+  if (!explicitRawLocation && !explicitStructuredLocation) {
+    add(sourceRegionHint(input.sourceCompany, input.sourcePostingUrl));
+  }
   if (hasUs) return "us";
   return "unknown";
 }

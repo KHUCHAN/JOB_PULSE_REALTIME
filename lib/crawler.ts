@@ -2384,18 +2384,35 @@ const readerMarkdown = async (
   postingUrl: string,
   fetcher: typeof fetch,
 ): Promise<string | null> => {
-  try {
-    const response = await fetchWithTimeout(
-      fetcher,
-      `https://r.jina.ai/${postingUrl}`,
-      { headers: { accept: "text/plain", "x-retain-links": "all", "x-with-links-summary": "all" } },
-      false,
-      { attempts: 1, timeoutMs: 12_000 },
-    );
-    return response.ok ? await response.text() : null;
-  } catch {
-    return null;
-  }
+  const target = new URL(postingUrl);
+  const httpTarget = new URL(target);
+  httpTarget.protocol = "http:";
+  const endpoints = [...new Set([
+    `https://r.jina.ai/${target.href}`,
+    `https://r.jina.ai/${httpTarget.href}`,
+  ])];
+  const results = await Promise.allSettled(endpoints.map(async (endpoint) => {
+    try {
+      const response = await fetchWithTimeout(
+        fetcher,
+        endpoint,
+        { headers: { accept: "text/plain", "x-retain-links": "all", "x-with-links-summary": "all" } },
+        false,
+        // Avature's WAF can make the reader take longer from a Worker than
+        // from a desktop request. Try both protocol variants concurrently so
+        // one slow edge does not consume the entire source deadline.
+        { attempts: 1, timeoutMs: 20_000 },
+      );
+      if (!response.ok) return null;
+      const text = await response.text();
+      return text.trim() ? text : null;
+    } catch {
+      return null;
+    }
+  }));
+  return results.find((result): result is PromiseFulfilledResult<string> =>
+    result.status === "fulfilled" && typeof result.value === "string" && result.value.length > 0,
+  )?.value ?? null;
 };
 
 const crawlDeltaAvature = async (
