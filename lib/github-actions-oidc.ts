@@ -45,7 +45,11 @@ const claimsAreAllowed = (claims: GithubActionsClaims, nowSeconds: number): bool
     && claims.repository === EXPECTED_REPOSITORY
     && claims.ref === EXPECTED_REF
     && claims.workflow_ref === EXPECTED_WORKFLOW_REF
-    && (eventName === "schedule" || eventName === "workflow_dispatch")
+    // The production workflow also runs on an explicitly scoped `push` to
+    // main so changes to the crawler cannot wait for the next cron tick.
+    // Repository/ref/workflow_ref are still pinned above, so this does not
+    // authorize tokens from forks or feature branches.
+    && (eventName === "schedule" || eventName === "workflow_dispatch" || eventName === "push")
     && typeof claims.exp === "number"
     && claims.exp >= nowSeconds - clockSkewSeconds
     && typeof claims.iat === "number"

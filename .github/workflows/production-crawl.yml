@@ -51,7 +51,19 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      - name: Install dependencies
+        # A transient registry/cache failure should not turn a scheduled
+        # browser recovery into a false source outage. Keep the lockfile
+        # authoritative, retry the normal install, then use npm's resolver
+        # only as a recovery path for a stale runner cache.
+        run: |
+          npm ci --no-audit --no-fund --prefer-offline || \
+            npm install --no-audit --no-fund --prefer-offline
+        env:
+          npm_config_fetch_retries: "5"
+          npm_config_fetch_retry_factor: "2"
+          npm_config_fetch_retry_mintimeout: "1000"
+          npm_config_fetch_retry_maxtimeout: "20000"
       - name: Recover browser-only problem sources
         env:
           BROWSER_FALLBACK_LIVE_URL: https://job-pulse-realtime.autodev61.chatgpt.site

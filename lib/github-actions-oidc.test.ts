@@ -44,6 +44,12 @@ describe("GitHub Actions OIDC", () => {
     await expect(verifyGithubActionsOidc(`Bearer ${token}`, fetcher, new Date("2026-08-12T22:00:00Z"))).resolves.toBe(true);
   });
 
+  it("accepts the explicitly scoped main-branch push workflow token", async () => {
+    const { token, jwk } = await signedToken({ event_name: "push" });
+    const fetcher: typeof fetch = async () => Response.json({ keys: [jwk] });
+    await expect(verifyGithubActionsOidc(`Bearer ${token}`, fetcher, new Date("2026-08-12T22:00:00Z"))).resolves.toBe(true);
+  });
+
   it("rejects tokens from another repository or branch", async () => {
     const { token, jwk } = await signedToken({ repository: "attacker/fork" });
     const fetcher: typeof fetch = async () => Response.json({ keys: [jwk] });
