@@ -27,6 +27,10 @@ jobs:
 
   browser-recovery:
     needs: crawl
+    # Browser recovery is the safety net for exactly the runs where the
+    # native drain encounters an infrastructure/OIDC failure.  Do not let a
+    # failed native job suppress the independent browser queue.
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
