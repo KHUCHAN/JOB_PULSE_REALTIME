@@ -2,11 +2,11 @@ import type { CrawledJob, CrawlSource } from "./crawler";
 
 export type BrowserAnchor = { href: string; text: string };
 
-const JOB_DETAIL = /(?:\/(?:jobs?|positions?|openings?|vacanc(?:y|ies))\/[^/?#]{3,}|\/careers\/(?:jobdetail|details)\/|\/careers\/[^?#]*(?:\d{4,}|[a-z]{1,4}-\d{3,})|\/corporate-careers\/jr-\d+\/[^/?#]+|\/[^/?#]+\/[^/?#]+\/[a-f0-9]{24,}\/job\/?(?:[?#]|$)|[?&](?:jobid|job_id|gh_jid|reqid|pid|opportunityid)=)/i;
+const JOB_DETAIL = /(?:\/(?:jobs?|positions?|openings?|vacanc(?:y|ies))\/[^/?#]{3,}|\/job\.html\?[^#]*\bid=|\/careers\/(?:jobdetail|details)\/|\/careers\/[^?#]*(?:\d{4,}|[a-z]{1,4}-\d{3,})|\/corporate-careers\/jr-\d+\/[^/?#]+|\/[^/?#]+\/[^/?#]+\/[a-f0-9]{24,}\/job\/?(?:[?#]|$)|[?&](?:jobid|job_id|gh_jid|reqid|pid|opportunityid)=)/i;
 const LISTING_ONLY = /(?:search-jobs?|search-results|viewalljobs|job-opportunities|join(?:talent|[-_/]our[-_/]team)|talent-community|jobcart|jobs?\/(?:search|login)|positions?\/{1,2}filter)(?:[/?#]|$)/i;
 const CAREER_CONTENT_ONLY = /\/careers?\/(?:open-positions|view-jobs(?:\.html)?|jobs|culture|benefits)\/?(?:[?#].*)?$/i;
 const GENERIC_TEXT = /^(?:apply|apply now|form|here\.?|learn more(?: about this position)?|read more|view .+|see .+|explore .+|join .+|details|search .+ jobs?|careers?|career website|jobs?|benefits|student programs|open (?:positions?|roles)|skip to (?:main )?(?:jobs search results|content)|click here|(?:first|previous|next|last) page of results(?: first| last)?|page \d+ of \d+(?:\s*,\s*current page)?|your privacy choices|manage cookie preferences|notify me of new jobs|internal careers site|returning applicant login|stay connected|terms of use|total rewards|events|job search tool|chinese \((?:simplified|traditional)\)|french|german|italian|japanese|portuguese|spanish|next|previous)$/i;
-const EXTERNAL_BOARDS = /(?:greenhouse\.io|lever\.co|myworkdayjobs\.com|myworkdaysite\.com|smartrecruiters\.com|icims\.com|jobvite\.com|selectminds\.com)/i;
+const EXTERNAL_BOARDS = /(?:greenhouse\.io|lever\.co|myworkdayjobs\.com|myworkdaysite\.com|smartrecruiters\.com|ashbyhq\.com|icims\.com|jobvite\.com|hirebridge\.com|taleo\.net|selectminds\.com|apply\.workable\.com|bamboohr\.com|pinpointhq\.com|ats\.rippling\.com|dayforcehcm\.com|successfactors\.(?:com|eu)|oraclecloud\.com|eightfold\.ai|avature\.net|(?:myjobs|workforcenow)\.adp\.com|recruiting\.paylocity\.com|recruiting\d*\.ultipro\.com)/i;
 const ROLE_TITLE = /\b(?:accountant|administrator|analyst|architect|associate|consultant|coordinator|counsel|developer|director|engineer|executive|intern|lead|manager|officer|principal|recruiter|representative|researcher|scientist|specialist|supervisor|technician)\b/i;
 
 const titleFromJobUrl = (url: URL): string | null => {
@@ -19,6 +19,19 @@ const titleFromJobUrl = (url: URL): string | null => {
   const title = decodeURIComponent(segment).replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
   if (title.length < 4 || GENERIC_TEXT.test(title)) return null;
   return title.replace(/\b\w/g, (letter) => letter.toUpperCase());
+};
+
+const externalIdFromJobUrl = (url: URL): string | null => {
+  const queryId = url.searchParams.get("jobid")
+    ?? url.searchParams.get("job_id")
+    ?? url.searchParams.get("gh_jid")
+    ?? url.searchParams.get("opportunityId")
+    ?? (/\/job\.html$/i.test(url.pathname) ? url.searchParams.get("id") : null);
+  if (queryId) return queryId;
+  const pathId = url.pathname.match(/\/(?:jobs?|positions?|openings?)\/([^/?#]+)\/?$/i)?.[1];
+  return pathId && /^(?:\d{3,}|[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12})$/i.test(pathId)
+    ? pathId
+    : null;
 };
 
 export const jobsFromBrowserAnchors = (anchors: BrowserAnchor[], source: CrawlSource): CrawledJob[] => {
@@ -55,7 +68,7 @@ export const jobsFromBrowserAnchors = (anchors: BrowserAnchor[], source: CrawlSo
     if (!targetHost.endsWith(sourceHost) && !sourceHost.endsWith(targetHost) && !externalBoard) continue;
     url.hash = "";
     unique.set(url.href, {
-      externalId: url.searchParams.get("jobid") ?? url.searchParams.get("job_id") ?? url.searchParams.get("gh_jid") ?? url.searchParams.get("opportunityId"),
+      externalId: externalIdFromJobUrl(url),
       title,
       company: source.company,
       location: null,

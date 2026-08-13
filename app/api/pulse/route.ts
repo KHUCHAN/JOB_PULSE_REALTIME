@@ -55,6 +55,7 @@ import {
   sendResumeTestEmail,
   type GmailRuntimeConfig,
 } from "../../../lib/resume-alert-service";
+import { verifyGithubActionsOidc } from "../../../lib/github-actions-oidc";
 
 export const dynamic = "force-dynamic";
 
@@ -98,6 +99,29 @@ const gmailRuntimeConfig = (): GmailRuntimeConfig | null => {
 const resumeStatus = async () => {
   const config = gmailRuntimeConfig();
   return getResumeAlertStatus(db(), "chanyoung-resume", Boolean(config), config?.sender ?? "");
+};
+
+const runResumeAlerts = async (database: D1Database) => {
+  let alerts: Awaited<ReturnType<typeof processDueResumeAlerts>> | { error: string };
+  try {
+    alerts = await processDueResumeAlerts(database, gmailRuntimeConfig(), new Date());
+  } catch {
+    alerts = { error: "Resume alert processing failed independently of the crawl." };
+  }
+  return alerts;
+};
+
+const runCrawlBatch = async (requested: number | undefined, includeAlerts: boolean) => {
+  const database = db();
+  const result = await runDueCrawls(new D1CrawlStore(database), fetch, new Date(), crawlBatchOptions(requested));
+  if (result.attempted === 0) {
+    const refreshed = await refreshJobFilterOptions(database, {
+      force: true,
+      filterKeys: rotatingJobFilterOptionKeys(new Date()),
+    });
+    if (refreshed.refreshed) filterOptionsCache = null;
+  }
+  return includeAlerts ? { ...result, alerts: await runResumeAlerts(database) } : result;
 };
 
 const parseJsonArray = (value: string | null): string[] => {
@@ -396,22 +420,18 @@ export async function POST(request: Request): Promise<Response> {
     }
     if (body.action === "crawlBatch") {
       const requested = typeof body.limit === "number" ? body.limit : 4;
-      const database = db();
-      const result = await runDueCrawls(new D1CrawlStore(database), fetch, new Date(), crawlBatchOptions(requested));
-      if (result.attempted === 0) {
-        const refreshed = await refreshJobFilterOptions(database, {
-          force: true,
-          filterKeys: rotatingJobFilterOptionKeys(new Date()),
-        });
-        if (refreshed.refreshed) filterOptionsCache = null;
-      }
-      let alerts: Awaited<ReturnType<typeof processDueResumeAlerts>> | { error: string };
-      try {
-        alerts = await processDueResumeAlerts(database, gmailRuntimeConfig(), new Date());
-      } catch {
-        alerts = { error: "Resume alert processing failed independently of the crawl." };
-      }
-      return json({ ...result, alerts });
+      return json(await runCrawlBatch(requested, true));
+    }
+    if (body.action === "scheduledCrawlBatch") {
+      const authorized = await verifyGithubActionsOidc(request.headers.get("authorization"));
+      if (!authorized) return json({ error: "Scheduled crawl authorization is required." }, 401);
+      const requested = typeof body.limit === "number" ? body.limit : 1;
+      return json(await runCrawlBatch(requested, false));
+    }
+    if (body.action === "scheduledProcessAlerts") {
+      const authorized = await verifyGithubActionsOidc(request.headers.get("authorization"));
+      if (!authorized) return json({ error: "Scheduled alert authorization is required." }, 401);
+      return json({ alerts: await runResumeAlerts(db()) });
     }
     if (body.action === "backfillResumeMatches") {
       const requested = typeof body.limit === "number" ? body.limit : 500;

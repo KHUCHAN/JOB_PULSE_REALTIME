@@ -14,6 +14,31 @@ describe("jobsFromBrowserAnchors", () => {
     expect(jobs[1].arrangement).toBe("remote");
   });
 
+  it("keeps Rippling job details linked by an official company careers page", () => {
+    const jobs = jobsFromBrowserAnchors([{
+      href: "https://ats.rippling.com/positron/jobs/6bc9d718-770b-48da-b9ea-d86b70705d39",
+      text: "Software Engineer",
+    }], { ...source, company: "Positron" });
+
+    expect(jobs).toEqual([expect.objectContaining({
+      externalId: "6bc9d718-770b-48da-b9ea-d86b70705d39",
+      title: "Software Engineer",
+    })]);
+  });
+
+  it("keeps server-rendered job.html detail links with a stable id", () => {
+    const jobs = jobsFromBrowserAnchors([{
+      href: "/job.html?id=2026-36450&category=Engineering",
+      text: "Software Engineering Intern",
+    }], { ...source, postingUrl: "https://www.group1careers.com/results", company: "Group 1 Automotive" });
+
+    expect(jobs).toEqual([expect.objectContaining({
+      externalId: "2026-36450",
+      title: "Software Engineering Intern",
+      officialUrl: "https://www.group1careers.com/job.html?id=2026-36450&category=Engineering",
+    })]);
+  });
+
   it("rejects listing links and generic navigation", () => {
     expect(jobsFromBrowserAnchors([
       { href: "https://acme.com/careers/search-jobs", text: "Search jobs" },

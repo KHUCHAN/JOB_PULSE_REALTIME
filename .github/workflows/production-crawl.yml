@@ -1,0 +1,26 @@
+name: Job Pulse production crawl
+
+on:
+  schedule:
+    - cron: "17 */2 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: job-pulse-production-crawl
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Drain due production sources
+        env:
+          JOB_PULSE_SITE_URL: https://job-pulse-realtime.autodev61.chatgpt.site
+          JOB_PULSE_MAX_RUN_MINUTES: "20"
+        run: node scripts/run-production-crawl.mjs

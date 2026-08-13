@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { careerCandidates, detectUrlAdapter, isSafeCareerRecommendation, rankCareerLink, unwrapSearchResultUrl } from "./url-remediation";
+import { careerCandidates, detectUrlAdapter, isPublicAtsCatalogUrl, isSafeCareerRecommendation, rankCareerLink, unwrapSearchResultUrl } from "./url-remediation";
 
 describe("career URL remediation", () => {
   it("prefers a public ATS job board over talent-only and social links", () => {
@@ -13,6 +13,12 @@ describe("career URL remediation", () => {
 
   it("ranks official ATS links highly", () => {
     expect(rankCareerLink({ href: "https://jobs.lever.co/acme", text: "Open roles" }, "https://acme.com/careers")).toBeGreaterThan(100);
+  });
+
+  it("recognizes opaque public ATS catalogs linked from an official careers page", () => {
+    expect(isPublicAtsCatalogUrl("https://career8.successfactors.com/career?company=amkor")).toBe(true);
+    expect(isPublicAtsCatalogUrl("https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=tenant")).toBe(true);
+    expect(isPublicAtsCatalogUrl("https://employee-alaskaair.icims.com/jobs/login")).toBe(false);
   });
 
   it("recognizes a company-branded .jobs catalog even when the CTA text is generic", () => {

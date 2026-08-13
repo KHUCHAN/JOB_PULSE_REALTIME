@@ -1,7 +1,7 @@
 import { jobsFromBrowserAnchors, type BrowserAnchor } from "./browser-job-extractor.ts";
 import { normalizeEmploymentType, workdayBulletFields } from "./employment-type.ts";
 import { classifyJobPrograms } from "./job-program-classifier.ts";
-import { careerCandidates, detectUrlAdapter, isSafeCareerRecommendation } from "./url-remediation.ts";
+import { careerCandidates, detectUrlAdapter, isPublicAtsCatalogUrl, isSafeCareerRecommendation } from "./url-remediation.ts";
 
 export type CrawlSource = {
   id: string;
@@ -85,6 +85,11 @@ export type DiscoveredAts =
   | { kind: "lever"; endpoint: string }
   | { kind: "ashby"; endpoint: string }
   | { kind: "smartrecruiters"; endpoint: string }
+  | { kind: "workable"; endpoint: string }
+  | { kind: "bamboohr"; endpoint: string }
+  | { kind: "pinpoint"; endpoint: string }
+  | { kind: "hirebridge"; endpoint: string }
+  | { kind: "taleo"; endpoint: string }
   | { kind: "jibe"; endpoint: string };
 
 type VerifiedSourceFeed = {
@@ -98,6 +103,38 @@ type VerifiedSourceFeed = {
 // every pass. Keep the verified, first-party board identity here and promote
 // the canonical listing URL after the first successful sync.
 const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
+  "audit-row-370": { listingUrl: "https://careers.hfsinclair.com/search/?q=&locationsearch=&sortColumn=referencedate&sortDirection=desc", adapter: "custom" },
+  "audit-row-373": { listingUrl: "https://careers.irco.com/search/?q=&locationsearch=&sortColumn=referencedate&sortDirection=desc", adapter: "custom" },
+  "audit-row-406": { listingUrl: "https://jobs.nucor.com/search/?q=&locationsearch=&sortColumn=referencedate&sortDirection=desc", adapter: "custom" },
+  "audit-row-430": { listingUrl: "https://www.tractorsupply.careers/search/?q=&locationsearch=&sortColumn=referencedate&sortDirection=desc", adapter: "custom" },
+  "legacy-row-821": {
+    listingUrl: "https://www.group1careers.com/results",
+    adapter: "custom",
+  },
+  "p2-0050-morgan-stanley": {
+    listingUrl: "https://morganstanley.eightfold.ai/careers?domain=morganstanley.com",
+    adapter: "custom",
+  },
+  "p4-0289-hcltech": {
+    listingUrl: "https://careers.hcltech.com/search/?locale=en_US",
+    adapter: "custom",
+  },
+  "legacy-row-103": { listingUrl: "https://careers.jetblue.com/search/?q=&locationsearch=&sortColumn=referencedate&sortDirection=desc", adapter: "custom" },
+  "legacy-row-110": { listingUrl: "https://jobs.nscorp.com/search/?q=&locationsearch=&sortColumn=referencedate&sortDirection=desc", adapter: "custom" },
+  "legacy-row-114": { listingUrl: "https://jobs.pseg.com/search/?q=&locationsearch=&sortColumn=referencedate&sortDirection=desc", adapter: "custom" },
+  "p5-0642-kia-motors-america": { listingUrl: "https://careers-americas.kia.com/kus/search/?q=&locationsearch=&sortColumn=referencedate&sortDirection=desc", adapter: "custom" },
+  "p5-1001-oak-ridge-national-lab": { listingUrl: "https://jobs.ornl.gov/search/?q=&locationsearch=&sortColumn=referencedate&sortDirection=desc", adapter: "custom" },
+  "p5-0564-canon-medical-systems": { listingUrl: "https://cmsu.csod.com/ux/ats/careersite/1/home?c=cmsu", adapter: "custom" },
+  "legacy-row-823": { listingUrl: "https://fa-exty-saasfaprod1.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1", adapter: "custom" },
+  "legacy-row-826": { listingUrl: "https://jobs.dayforcehcm.com/en-US/ibgllc/CANDIDATEPORTAL", adapter: "custom" },
+  "p4-0455-logrhythm": { listingUrl: "https://jobs.jobvite.com/exabeam/#openings", adapter: "custom" },
+  "p4-0470-oliver-wyman": { listingUrl: "https://mmc.phenompeople.com/global/en/oliver-wyman-early-careers-search", adapter: "phenom" },
+  "p1-0011-trm-labs": {
+    discovered: { kind: "ashby", endpoint: "https://api.ashbyhq.com/posting-api/job-board/trm-labs" },
+    listingUrl: "https://jobs.ashbyhq.com/trm-labs",
+    adapter: "ashby",
+  },
+  "p5-1082-trinetx": { listingUrl: "https://globaleur241.dayforcehcm.com/CandidatePortal/en-US/trinetx1", adapter: "custom" },
   "p4-0207-8am": {
     discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/affinipay1/jobs?content=true" },
     listingUrl: "https://job-boards.greenhouse.io/affinipay1",
@@ -835,28 +872,49 @@ const smartRecruitersFeed = (postingUrl: string): string | null => {
 };
 
 export function discoverAts(html: string, _pageUrl: string): DiscoveredAts | null {
-  const greenhouse = html.match(/https?:\/\/boards\.greenhouse\.io\/embed\/job_board\/js\?[^\s"'<>]*\bfor=([a-z0-9-]+)/i)
-    ?? html.match(/https?:\/\/(?:job-boards|boards)\.greenhouse\.io\/([a-z0-9-]+)/i)
-    ?? html.match(/https?:\/\/boards-api\.greenhouse\.io\/v1\/boards\/([a-z0-9-]+)/i);
+  // ATS links are frequently embedded in JSON or script attributes as
+  // `https:\/\/...`. Normalize only URL escaping before running the strict
+  // provider patterns; this does not broaden the trusted host allow-list.
+  const searchable = html.replaceAll("\\/", "/").replaceAll("&amp;", "&");
+  const greenhouse = searchable.match(/https?:\/\/boards\.greenhouse\.io\/embed\/job_board\/js\?[^\s"'<>]*\bfor=([a-z0-9-]+)/i)
+    ?? searchable.match(/https?:\/\/(?:job-boards|boards)\.greenhouse\.io\/([a-z0-9-]+)/i)
+    ?? searchable.match(/https?:\/\/boards-api\.greenhouse\.io\/v1\/boards\/([a-z0-9-]+)/i);
   if (greenhouse) return { kind: "greenhouse", endpoint: `https://boards-api.greenhouse.io/v1/boards/${greenhouse[1]}/jobs?content=true` };
 
-  const workday = html.match(/https?:\/\/[^\s"'<>]+\.(?:myworkdayjobs|myworkdaysite)\.com\/[^\s"'<>?#]+/i);
+  const workday = searchable.match(/https?:\/\/[^\s"'<>]+\.(?:myworkdayjobs|myworkdaysite)\.com\/[^\s"'<>?#\\)]+/i);
   const workdayEndpoint = workday ? workdayFeed(workday[0]) : null;
   if (workdayEndpoint) return { kind: "workday", endpoint: workdayEndpoint };
 
-  const lever = html.match(/https?:\/\/jobs\.lever\.co\/([a-z0-9-]+)/i);
+  const lever = searchable.match(/https?:\/\/jobs\.lever\.co\/([a-z0-9-]+)/i);
   if (lever) return { kind: "lever", endpoint: `https://api.lever.co/v0/postings/${lever[1]}?mode=json` };
 
-  const ashby = html.match(/https?:\/\/jobs\.ashbyhq\.com\/([^\s"'<>/?#]+)/i);
+  const ashby = searchable.match(/https?:\/\/jobs\.ashbyhq\.com\/([^\s"'<>/?#]+)/i);
   if (ashby) return { kind: "ashby", endpoint: `https://api.ashbyhq.com/posting-api/job-board/${ashby[1]}` };
 
-  const smartRecruiters = html.match(/https?:\/\/(?:jobs|careers)\.smartrecruiters\.com\/([a-z0-9-]+)/i);
+  const smartRecruiters = searchable.match(/https?:\/\/(?:jobs|careers)\.smartrecruiters\.com\/([a-z0-9-]+)/i);
   if (smartRecruiters) return { kind: "smartrecruiters", endpoint: `https://api.smartrecruiters.com/v1/companies/${smartRecruiters[1]}/postings` };
 
-  const smartRecruitersWidget = html.match(/["']company_code["']\s*:\s*["']([a-z0-9-]+)["']/i);
+  const smartRecruitersWidget = searchable.match(/["']company_code["']\s*:\s*["']([a-z0-9-]+)["']/i);
   if (smartRecruitersWidget) return { kind: "smartrecruiters", endpoint: `https://api.smartrecruiters.com/v1/companies/${smartRecruitersWidget[1]}/postings` };
 
-  if (/(?:app\.jibecdn\.com\/prod\/search\/|cms\.jibecdn\.com\/prod\/)/i.test(html)) {
+  const workableWidget = searchable.match(/https?:\/\/apply\.workable\.com\/api\/v1\/widget\/accounts\/([a-z0-9-]+)/i);
+  const workableBoard = searchable.match(/https?:\/\/apply\.workable\.com\/(?!api\/|j\/)([a-z0-9-]+)(?:[/?#"'<>]|$)/i);
+  const workableAccount = workableWidget?.[1] ?? workableBoard?.[1];
+  if (workableAccount) return { kind: "workable", endpoint: `https://apply.workable.com/${workableAccount}/` };
+
+  const bamboo = searchable.match(/https?:\/\/([a-z0-9-]+)\.bamboohr\.com\/(?:careers|jobs\/embed2\.php|jobs2\.php|js\/(?:embed\.js|jobs2\.php))/i);
+  if (bamboo) return { kind: "bamboohr", endpoint: `https://${bamboo[1]}.bamboohr.com/careers` };
+
+  const pinpoint = searchable.match(/https?:\/\/([a-z0-9-]+)\.pinpointhq\.com\/(?:[a-z]{2}(?:-[A-Z]{2})?\/)?(?:postings)?/i);
+  if (pinpoint) return { kind: "pinpoint", endpoint: `https://${pinpoint[1]}.pinpointhq.com/` };
+
+  const hirebridge = searchable.match(/https?:\/\/recruit\.hirebridge\.com\/v3\/(?:CareerCenter\/v2\/)?[^\s"'<>]*[?&]cid=(\d+)/i);
+  if (hirebridge) return { kind: "hirebridge", endpoint: `https://recruit.hirebridge.com/v3/CareerCenter/v2/?cid=${hirebridge[1]}` };
+
+  const taleo = searchable.match(/https?:\/\/[^\s"'<>]+\.taleo\.net\/[^\s"'<>]*\/ats\/careers\/v2\/(?:jobSearch|searchResults)[^\s"'<>]*/i);
+  if (taleo) return { kind: "taleo", endpoint: decodeHtmlAttribute(taleo[0]) };
+
+  if (/(?:app\.jibecdn\.com\/prod\/search\/|cms\.jibecdn\.com\/prod\/)/i.test(searchable)) {
     const page = new URL(_pageUrl);
     return { kind: "jibe", endpoint: `${page.origin}/api/jobs?page=1&limit=100&sortBy=relevance&descending=false&internal=false` };
   }
@@ -868,7 +926,7 @@ const phenomSearchResultsUrl = (html: string, pageUrl: string): string | null =>
   if (!/(?:phenompeople\.com|phApp\.|ph-page|phenom-track)/i.test(html)) return null;
   const page = new URL(pageUrl);
   if (/\/search-results\/?$/i.test(page.pathname)) return null;
-  if (/\/(?:[a-z]{2}\/)?en\/?$/i.test(page.pathname)) {
+  if (/(?:^|\/)en\/?$/i.test(page.pathname)) {
     page.pathname = `${page.pathname.replace(/\/$/, "")}/search-results`;
     page.search = "";
     page.hash = "";
@@ -900,6 +958,22 @@ const phenomSearchResultsUrl = (html: string, pageUrl: string): string | null =>
 };
 
 async function crawlDiscoveredFeed(source: CrawlSource, discovered: DiscoveredAts, fetcher: typeof fetch): Promise<SourceCrawlResult> {
+  if (discovered.kind === "workable") {
+    return crawlWorkable({ ...source, postingUrl: discovered.endpoint, adapter: "custom" }, fetcher);
+  }
+  if (discovered.kind === "bamboohr") {
+    return crawlBambooHr({ ...source, postingUrl: discovered.endpoint, adapter: "custom" }, fetcher);
+  }
+  if (discovered.kind === "pinpoint") {
+    return crawlPinpoint({ ...source, postingUrl: discovered.endpoint, adapter: "custom" }, fetcher);
+  }
+  if (discovered.kind === "hirebridge") {
+    return crawlHirebridge({ ...source, postingUrl: discovered.endpoint, adapter: "custom" }, fetcher);
+  }
+  if (discovered.kind === "taleo") {
+    return (await crawlTaleoV2({ ...source, postingUrl: discovered.endpoint, adapter: "custom" }, fetcher))
+      ?? { status: "failed", responseStatus: null, completeListing: false, jobs: [], error: "Unsupported Taleo catalog." };
+  }
   try {
     const response = await fetchWithTimeout(fetcher, discovered.endpoint);
     if (!response.ok) return {
@@ -1576,7 +1650,7 @@ export const extractJobsFromHtml = (html: string, source: CrawlSource): { jobs: 
   const phenom = phenomJobs(html, source);
   if (phenom) return { jobs: phenom.jobs, completeListing: phenom.completeListing };
   const paylocity = paylocityJobs(html, source);
-  if (paylocity) return { jobs: paylocity, completeListing: true };
+  if (paylocity !== null) return { jobs: paylocity, completeListing: true };
   const embedded = embeddedJobItems(html, source);
   if (embedded.length > 0) return { jobs: embedded, completeListing: true };
   const nodes = jsonLdScripts(html).flatMap(jobPostingNodes);
@@ -1674,9 +1748,11 @@ const crawlReaderFallback = async (
         const current = new URL(source.postingUrl);
         current.hash = "";
         const candidates = careerCandidates(markdownAnchors(markdown, source.postingUrl), source.postingUrl)
-          .filter(({ href }) => isSafeCareerRecommendation(source.company, source.postingUrl, href))
-          .filter(({ href }) => preservesTenantScope(source.postingUrl, href))
-          .filter(({ href }) => companyScopeMatches(source.company, source.postingUrl, href))
+          .filter(({ href }) => isPublicAtsCatalogUrl(href) || (
+            isSafeCareerRecommendation(source.company, source.postingUrl, href)
+            && preservesTenantScope(source.postingUrl, href)
+            && companyScopeMatches(source.company, source.postingUrl, href)
+          ))
           .filter(({ href }) => {
             try {
               const candidate = new URL(href, source.postingUrl);
@@ -1877,6 +1953,223 @@ const crawlTalemetryJson = async (
 const dataAttribute = (html: string, name: string): string | null => {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return html.match(new RegExp(`\\b${escaped}=["']([^"']*)["']`, "i"))?.[1] ?? null;
+};
+
+const embeddedRipplingJobs = (html: string, source: CrawlSource): { jobs: CrawledJob[]; completeListing: boolean } | null => {
+  const linkedIds = [...html.matchAll(/href=["']https:\/\/ats\.rippling\.com\/[^"']+\/jobs\/([a-f\d-]{36})["']/gi)]
+    .map((match) => match[1].toLocaleLowerCase());
+  if (linkedIds.length === 0) return null;
+  const rows = [...html.matchAll(
+    /<span\b[^>]*class=["'][^"']*open-jobs_date[^"']*["'][^>]*>([\s\S]*?)<\/span>\s*<span\b[^>]*class=["'][^"']*open-jobs_title[^"']*["'][^>]*>([\s\S]*?)<\/span>\s*<span\b[^>]*class=["'][^"']*open-jobs_place[^"']*["'][^>]*>([\s\S]*?)<\/span>[\s\S]{0,2000}?href=["'](https:\/\/ats\.rippling\.com\/[^"']+\/jobs\/([a-f\d-]{36}))["']/gi,
+  )];
+  if (rows.length === 0) return null;
+  const byId = new Map<string, CrawledJob>();
+  for (const row of rows) {
+    const externalId = row[5].toLocaleLowerCase();
+    const title = plainText(row[2]);
+    const location = plainText(row[3]);
+    if (!title) continue;
+    const existing = byId.get(externalId);
+    if (existing) {
+      if (location && location !== existing.location && !existing.secondaryLocations?.includes(location)) {
+        existing.secondaryLocations = [...(existing.secondaryLocations ?? []), location];
+      }
+      continue;
+    }
+    const department = plainText(row[1]);
+    byId.set(externalId, {
+      externalId,
+      title,
+      company: source.company,
+      location,
+      arrangement: /\bremote\b/i.test(location ?? "") ? "remote" : "unknown",
+      employmentType: classifyJobPrograms(title).keys.length > 0 ? "Internship" : null,
+      summary: null,
+      ...(department ? { department } : {}),
+      requisitionId: externalId,
+      officialUrl: decodeHtmlAttribute(row[4]),
+      publishedAt: null,
+    });
+  }
+  const jobs = [...byId.values()];
+  return jobs.length > 0 ? {
+    jobs,
+    completeListing: rows.length === linkedIds.length
+      && new Set(rows.map((row) => row[5].toLocaleLowerCase())).size === jobs.length
+      && linkedIds.every((id) => byId.has(id)),
+  } : null;
+};
+
+type CornerstoneContext = {
+  corp?: unknown;
+  cultureID?: unknown;
+  cultureName?: unknown;
+  token?: unknown;
+  endpoints?: { cloud?: unknown };
+};
+
+type CornerstoneRequisition = {
+  requisitionId?: unknown;
+  postingEffectiveDate?: unknown;
+  postingExpirationDate?: unknown;
+  displayJobTitle?: unknown;
+  externalDescription?: unknown;
+  employmentType?: unknown;
+  jobCategory?: unknown;
+  locations?: Array<{ city?: unknown; state?: unknown; country?: unknown }>;
+};
+
+type CornerstonePayload = {
+  status?: unknown;
+  data?: { totalCount?: unknown; requisitions?: CornerstoneRequisition[] };
+};
+
+const cornerstoneContext = (html: string): CornerstoneContext | null => {
+  const raw = html.match(/csod\.context\s*=\s*(\{[\s\S]*?\})\s*;<\/script>/i)?.[1];
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as CornerstoneContext;
+  } catch {
+    return null;
+  }
+};
+
+const crawlCornerstone = async (
+  source: CrawlSource,
+  html: string,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult | null> => {
+  const page = new URL(source.postingUrl);
+  const siteId = page.pathname.match(/\/careersite\/(\d+)\//i)?.[1];
+  const context = cornerstoneContext(html);
+  const token = asText(context?.token);
+  const corp = asText(context?.corp) ?? page.searchParams.get("c");
+  const cloud = asText(context?.endpoints?.cloud);
+  const cultureId = Number(context?.cultureID ?? 1);
+  const cultureName = asText(context?.cultureName) ?? "en-US";
+  if (!siteId || !token || !corp || !cloud || !Number.isInteger(cultureId)) return null;
+  let endpoint: URL;
+  try {
+    endpoint = new URL("rec-job-search/external/jobs", cloud.endsWith("/") ? cloud : `${cloud}/`);
+  } catch {
+    return null;
+  }
+  const pageSize = 200;
+  const maximumPages = 49;
+  const fetchPage = async (pageNumber: number): Promise<CornerstonePayload | null> => {
+    try {
+      const response = await fetchWithTimeout(fetcher, endpoint, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+          "csod-accept-language": cultureName,
+          referer: page.origin,
+        },
+        body: JSON.stringify({
+          careerSiteId: Number(siteId),
+          careerSitePageId: Number(siteId),
+          pageNumber,
+          pageSize,
+          cultureId,
+          searchText: "",
+          cultureName,
+          states: [],
+          countryCodes: [],
+          cities: [],
+          placeID: "",
+          radius: null,
+          postingsWithinDays: null,
+          customFieldCheckboxKeys: [],
+          customFieldDropdowns: [],
+          customFieldRadios: [],
+        }),
+      }, false, { attempts: 1, timeoutMs: 10_000 });
+      if (!response.ok) return null;
+      const payload = await response.json() as CornerstonePayload;
+      return payload.status === "Success" && Array.isArray(payload.data?.requisitions) ? payload : null;
+    } catch {
+      return null;
+    }
+  };
+  const requestedStart = Math.max(1, Math.trunc(source.crawlPageCursor ?? 1));
+  const first = await fetchPage(requestedStart);
+  if (!first) return null;
+  const total = Number(first.data?.totalCount);
+  if (!Number.isInteger(total) || total < 0) return null;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const startPage = Math.min(requestedStart, totalPages);
+  const endPage = Math.min(startPage + maximumPages - 1, totalPages);
+  const pages = new Map<number, CornerstonePayload>([[startPage, first]]);
+  const remaining = Array.from({ length: endPage - startPage }, (_, index) => startPage + index + 1);
+  for (let index = 0; index < remaining.length; index += 8) {
+    const results = await Promise.all(remaining.slice(index, index + 8).map(async (pageNumber) => ({ pageNumber, payload: await fetchPage(pageNumber) })));
+    for (const { pageNumber, payload } of results) if (payload) pages.set(pageNumber, payload);
+  }
+  let firstFailedPage: number | null = null;
+  const raw: CornerstoneRequisition[] = [];
+  const seen = new Set<string>();
+  for (let pageNumber = startPage; pageNumber <= endPage; pageNumber += 1) {
+    const payload = pages.get(pageNumber);
+    const rows = payload?.data?.requisitions ?? [];
+    const expected = Math.min(pageSize, Math.max(0, total - (pageNumber - 1) * pageSize));
+    const ids = rows.map((job) => job.requisitionId == null ? "" : String(job.requisitionId).trim());
+    if (!payload || Number(payload.data?.totalCount) !== total || rows.length !== expected
+      || ids.some((id) => !id) || new Set(ids).size !== ids.length || ids.some((id) => seen.has(id))) {
+      firstFailedPage ??= pageNumber;
+      continue;
+    }
+    ids.forEach((id) => seen.add(id));
+    raw.push(...rows);
+  }
+  const jobs = uniqueJobs(raw.flatMap((job): CrawledJob[] => {
+    const externalId = job.requisitionId == null ? null : String(job.requisitionId).trim() || null;
+    const title = asText(job.displayJobTitle);
+    if (!externalId || !title) return [];
+    const locations = job.locations ?? [];
+    const locationText = (location: NonNullable<CornerstoneRequisition["locations"]>[number]) =>
+      [asText(location.city), asText(location.state), asText(location.country)].filter(Boolean).join(", ") || null;
+    const primary = locations[0];
+    const description = plainText(asText(job.externalDescription));
+    const officialUrl = new URL(`/ux/ats/careersite/${encodeURIComponent(siteId)}/home/requisition/${encodeURIComponent(externalId)}`, page.origin);
+    officialUrl.searchParams.set("c", corp);
+    return [{
+      externalId,
+      title,
+      company: source.company,
+      location: primary ? locationText(primary) : null,
+      arrangement: /\bremote\b/i.test(locations.map((location) => locationText(location)).join(" ")) ? "remote" : "unknown",
+      employmentType: classifyJobPrograms(title).keys.length > 0 ? "Internship" : normalizeEmploymentType(asText(job.employmentType)),
+      summary: description,
+      description,
+      ...(asText(job.jobCategory) ? { department: asText(job.jobCategory) } : {}),
+      ...(asText(primary?.city) ? { locationCity: asText(primary?.city) } : {}),
+      ...(asText(primary?.state) ? { locationState: asText(primary?.state) } : {}),
+      ...(asText(primary?.country) ? { locationCountry: asText(primary?.country) } : {}),
+      ...(locations.length > 1 ? { secondaryLocations: locations.slice(1).map(locationText).filter((value): value is string => Boolean(value)) } : {}),
+      requisitionId: externalId,
+      ...(normalizedUsDate(asText(job.postingExpirationDate)) ? { validThrough: normalizedUsDate(asText(job.postingExpirationDate)) } : {}),
+      officialUrl: officialUrl.href,
+      publishedAt: normalizedUsDate(asText(job.postingEffectiveDate)),
+    }];
+  }));
+  const cycleComplete = firstFailedPage === null && endPage === totalPages;
+  return {
+    status: "succeeded",
+    responseStatus: 200,
+    completeListing: startPage === 1 && cycleComplete && totalPages <= maximumPages && raw.length === total && jobs.length === total,
+    jobs,
+    ...(totalPages > maximumPages ? {
+      pagination: {
+        nextPage: cycleComplete ? 1 : firstFailedPage ?? Math.max(startPage + 1, endPage),
+        cycleComplete,
+        totalPages,
+      },
+    } : {}),
+    resolvedListingUrl: page.href,
+    error: null,
+  };
 };
 
 const crawlRadancyPages = async (
@@ -2104,12 +2397,211 @@ const successFactorsRange = (html: string): { pageSize: number; total: number } 
   return Number.isFinite(pageSize) && pageSize > 0 && Number.isFinite(total) ? { pageSize, total } : null;
 };
 
+const successFactorsListingUrl = (html: string, pageUrl: string): string | null => {
+  if (!/(?:successfactors|\.sapsf\.(?:com|eu)\/)/i.test(html)) return null;
+  const current = new URL(pageUrl);
+  if (/\/search\/?$/i.test(current.pathname)) return null;
+  const sameOrigin = anchorsFromHtml(html).flatMap(({ href }) => {
+    try {
+      const url = new URL(href, current);
+      return url.origin === current.origin ? [url] : [];
+    } catch {
+      return [];
+    }
+  });
+  const searchLink = sameOrigin.find((url) => /\/search(?:\/|$)/i.test(url.pathname));
+  const goLink = sameOrigin.find((url) => /\/go\/[^/]+\/\d+\/?$/i.test(url.pathname));
+  const target = new URL(current);
+  if (searchLink) {
+    target.pathname = `${searchLink.pathname.replace(/\/search(?:\/.*)?$/i, "/search/").replace(/\/{2,}/g, "/")}`;
+  } else if (goLink) {
+    target.pathname = `${goLink.pathname.replace(/\/go\/.*$/i, "")}/search/`.replace(/\/{2,}/g, "/");
+  } else {
+    const segments = current.pathname.split("/").filter(Boolean);
+    target.pathname = segments.length === 1 ? `/${segments[0]}/search/` : "/search/";
+  }
+  target.search = "";
+  target.searchParams.set("q", "");
+  target.searchParams.set("locationsearch", "");
+  target.searchParams.set("sortColumn", "referencedate");
+  target.searchParams.set("sortDirection", "desc");
+  target.hash = "";
+  return target.href;
+};
+
+type SuccessFactorsUnifiedJob = {
+  id?: unknown;
+  unifiedStandardTitle?: unknown;
+  unifiedUrlTitle?: unknown;
+  urlTitle?: unknown;
+  custprimecity?: unknown;
+  custCountryRegion?: unknown;
+  unifiedStandardStart?: unknown;
+  jobFunction?: unknown;
+  department?: unknown;
+};
+
+type SuccessFactorsUnifiedPayload = {
+  jobSearchResult?: Array<{ response?: SuccessFactorsUnifiedJob }>;
+  totalJobs?: unknown;
+};
+
+const successFactorsUnifiedJob = (
+  source: CrawlSource,
+  origin: string,
+  locale: string,
+  value: SuccessFactorsUnifiedJob,
+): CrawledJob | null => {
+  const externalId = value.id == null ? null : String(value.id).trim() || null;
+  const title = plainText(asText(value.unifiedStandardTitle) ?? asText(value.urlTitle));
+  if (!externalId || !title) return null;
+  const city = asText(value.custprimecity);
+  const countries = Array.isArray(value.custCountryRegion)
+    ? value.custCountryRegion.flatMap((country) => asText(country) ?? [])
+    : asText(value.custCountryRegion) ? [asText(value.custCountryRegion)!] : [];
+  const location = [city, ...countries].filter(Boolean).join(", ") || null;
+  const rawSlug = asText(value.unifiedUrlTitle) ?? asText(value.urlTitle) ?? title;
+  const slug = decodeHtmlAttribute(rawSlug).replace(/[^A-Za-z0-9._~-]+/g, "-").replace(/^-|-$/g, "");
+  const programs = classifyJobPrograms(title);
+  return {
+    externalId,
+    title: decodeHtmlAttribute(title),
+    company: source.company,
+    location,
+    arrangement: /\bremote\b/i.test(location ?? "") ? "remote" : "unknown",
+    employmentType: programs.keys.length > 0 ? "Internship" : null,
+    summary: null,
+    ...(asText(value.department) ?? asText(value.jobFunction) ? { department: asText(value.department) ?? asText(value.jobFunction) } : {}),
+    ...(city ? { locationCity: city } : {}),
+    ...(countries[0] ? { locationCountry: countries[0] } : {}),
+    requisitionId: externalId,
+    ...(asText(value.unifiedStandardStart) ? { sourcePostedText: asText(value.unifiedStandardStart) } : {}),
+    officialUrl: new URL(`/job/${encodeURIComponent(slug)}/${encodeURIComponent(externalId)}-${encodeURIComponent(locale)}`, origin).href,
+    publishedAt: null,
+  };
+};
+
+const crawlSuccessFactorsUnified = async (
+  source: CrawlSource,
+  html: string,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult | null> => {
+  if (!/SearchResultsUnify|rmk-jobs-search/i.test(html)) return null;
+  const page = new URL(source.postingUrl);
+  const locale = page.searchParams.get("locale") || "en_US";
+  const endpoint = new URL("/services/recruiting/v1/jobs", page.origin);
+  const maximumPages = 40;
+  const fetchPage = async (pageNumber: number, sessionCookie?: string): Promise<{ payload: SuccessFactorsUnifiedPayload; jobs: CrawledJob[]; valid: boolean; sessionCookie?: string } | null> => {
+    try {
+      const response = await fetchWithTimeout(fetcher, endpoint, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+          referer: page.href,
+          ...(sessionCookie ? { cookie: sessionCookie } : {}),
+        },
+        body: JSON.stringify({
+          locale,
+          pageNumber: pageNumber - 1,
+          // SAP's relevance order is not stable across requests and repeats
+          // records between pages. Date order is deterministic enough for a
+          // checkpointed catalog and is paired with a one-page overlap below.
+          sortBy: "date",
+          keywords: "",
+          location: "",
+          facetFilters: {},
+          brand: "",
+          skills: [],
+          categoryId: 0,
+          alertId: "",
+          rcmCandidateId: "",
+        }),
+      }, false, { attempts: 1, timeoutMs: 10_000 });
+      if (!response.ok) return null;
+      const payload = await response.json() as SuccessFactorsUnifiedPayload;
+      const raw = payload.jobSearchResult;
+      if (!Array.isArray(raw)) return null;
+      const jobs = raw.flatMap(({ response: job }) => job ? successFactorsUnifiedJob(source, page.origin, locale, job) ?? [] : []);
+      const responseCookie = response.headers.get("set-cookie")?.match(/^\s*([^;,]+=[^;,]+)/)?.[1];
+      return { payload, jobs, valid: jobs.length === raw.length, ...(responseCookie ? { sessionCookie: responseCookie } : {}) };
+    } catch {
+      return null;
+    }
+  };
+
+  const requestedStart = Math.max(1, Math.trunc(source.crawlPageCursor ?? 1));
+  // Bootstrap page 1 on every invocation. Besides giving us an invariant page
+  // size, its JSESSIONID keeps the public API's ordering stable across all
+  // subsequent page requests in this checkpoint segment.
+  const first = await fetchPage(1);
+  if (!first) return null;
+  const total = Number(first.payload.totalJobs);
+  if (!Number.isInteger(total) || total < 0) return null;
+  if (total === 0) return {
+    status: "succeeded",
+    responseStatus: 200,
+    completeListing: first.valid && first.jobs.length === 0,
+    jobs: [],
+    error: null,
+  };
+  const pageSize = first.payload.jobSearchResult?.length ?? 0;
+  if (pageSize < 1 || !first.valid) return null;
+  const totalPages = Math.ceil(total / pageSize);
+  const startPage = Math.min(requestedStart, totalPages);
+  const endPage = Math.min(startPage + maximumPages - 1, totalPages);
+  const pages = new Map<number, typeof first>([[1, first]]);
+  const remaining = Array.from({ length: endPage - startPage + 1 }, (_, index) => startPage + index)
+    .filter((pageNumber) => pageNumber !== 1);
+  for (let index = 0; index < remaining.length; index += 8) {
+    const batch = remaining.slice(index, index + 8);
+    const results = await Promise.all(batch.map(async (pageNumber) => ({
+      pageNumber,
+      result: await fetchPage(pageNumber, first.sessionCookie),
+    })));
+    for (const { pageNumber, result } of results) if (result) pages.set(pageNumber, result);
+  }
+  let firstFailedPage: number | null = null;
+  const jobs: CrawledJob[] = startPage === 1 ? [] : [...first.jobs];
+  const seenIds = new Set(jobs.map((job) => job.externalId ?? job.officialUrl));
+  for (let pageNumber = startPage; pageNumber <= endPage; pageNumber += 1) {
+    const result = pages.get(pageNumber);
+    const expected = Math.min(pageSize, total - (pageNumber - 1) * pageSize);
+    const ids = result?.jobs.map((job) => job.externalId ?? job.officialUrl) ?? [];
+    const uniqueProgress = ids.length === new Set(ids).size
+      && (pageNumber === 1 || ids.some((id) => !seenIds.has(id)));
+    if (!result || !result.valid || Number(result.payload.totalJobs) !== total || result.jobs.length !== expected || !uniqueProgress) {
+      firstFailedPage ??= pageNumber;
+      continue;
+    }
+    jobs.push(...result.jobs);
+    ids.forEach((id) => seenIds.add(id));
+  }
+  const unique = uniqueJobs(jobs);
+  const cycleComplete = firstFailedPage === null && endPage === totalPages;
+  return {
+    status: "succeeded",
+    responseStatus: 200,
+    // Paged closure uses two complete checkpoint cycles in CrawlStore. Do not
+    // let a changing public catalog close unseen jobs in this request itself.
+    completeListing: false,
+    jobs: unique,
+    pagination: {
+      nextPage: cycleComplete ? 1 : firstFailedPage ?? Math.max(startPage + 1, endPage),
+      cycleComplete,
+      totalPages,
+    },
+    resolvedListingUrl: new URL(`/search/?locale=${encodeURIComponent(locale)}`, page.origin).href,
+    error: null,
+  };
+};
+
 const crawlSuccessFactorsPages = async (
   source: CrawlSource,
   html: string,
   fetcher: typeof fetch,
 ): Promise<SourceCrawlResult | null> => {
-  if (!/\.sapsf\.com\//i.test(html)) return null;
+  if (!/(?:successfactors|\.sapsf\.(?:com|eu)\/)/i.test(html)) return null;
   const range = successFactorsRange(html);
   if (!range) return null;
   const paginationHref = anchorsFromHtml(html).find(({ href }) => /[?&]startrow=\d+/i.test(href))?.href;
@@ -3516,7 +4008,57 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
         ? { ...workable, resolvedListingUrl: finalPage.href }
         : workable;
     }
+    if (finalPage.hostname.endsWith(".bamboohr.com")) {
+      const bamboo = await crawlBambooHr({
+        ...source,
+        postingUrl: finalPage.href,
+        adapter: "custom",
+      }, fetcher);
+      return bamboo.status === "succeeded"
+        ? { ...bamboo, resolvedListingUrl: new URL("/careers", finalPage.origin).href }
+        : bamboo;
+    }
+    if (finalPage.href !== source.postingUrl && isPublicAtsCatalogUrl(finalPage.href)) {
+      await response.body?.cancel().catch(() => undefined);
+      const redirected = await crawlSourceBase({
+        ...source,
+        postingUrl: finalPage.href,
+        adapter: detectUrlAdapter(finalPage.href),
+        discoveryDepth: 1,
+      }, fetcher, now);
+      return redirected.status === "succeeded"
+        ? { ...redirected, resolvedListingUrl: finalPage.href }
+        : redirected;
+    }
+    if (finalPage.href !== source.postingUrl && discoveryDepth === 0) {
+      await response.body?.cancel().catch(() => undefined);
+      const redirected = await crawlSourceBase({
+        ...source,
+        postingUrl: finalPage.href,
+        adapter: detectUrlAdapter(finalPage.href),
+        discoveryDepth: 1,
+      }, fetcher, now);
+      return redirected.status === "succeeded"
+        ? { ...redirected, resolvedListingUrl: redirected.resolvedListingUrl ?? finalPage.href }
+        : redirected;
+    }
     const html = await response.text();
+    const decodedApplicationState = html
+      .replaceAll("&#34;", '"')
+      .replaceAll("&quot;", '"')
+      .replaceAll("&#39;", "'")
+      .replaceAll("&amp;", "&");
+    const cornerstone = await crawlCornerstone(source, html, fetcher);
+    if (cornerstone) return cornerstone;
+    const eightfoldDomain = /(?:id=["']pcsx["']|eightfold\.ai|\/api\/pcsx\/search)/i.test(decodedApplicationState)
+      ? decodedApplicationState.match(/["']domain["']\s*:\s*["']([^"']+)["']/i)?.[1]
+      : null;
+    if (eightfoldDomain && /^[a-z0-9.-]+$/i.test(eightfoldDomain)) {
+      const eightfoldUrl = new URL("/careers", finalPage.origin);
+      eightfoldUrl.searchParams.set("domain", eightfoldDomain);
+      const eightfold = await crawlEightfold({ ...source, postingUrl: eightfoldUrl.href, adapter: "custom" }, fetcher);
+      if (eightfold.status === "succeeded") return { ...eightfold, resolvedListingUrl: eightfoldUrl.href };
+    }
     if (/prod-search-api\.jobsyn\.org|source\s*:\s*["']solr["']/i.test(html)) {
       return crawlJobsyn(source, fetcher);
     }
@@ -3536,21 +4078,46 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
       jobs: kula,
       error: null,
     };
+    const rippling = embeddedRipplingJobs(html, source);
+    if (rippling) return {
+      status: "succeeded",
+      responseStatus: response.status,
+      completeListing: rippling.completeListing,
+      jobs: rippling.jobs,
+      error: null,
+    };
     const ukg = await crawlUkgPages(source, html, fetcher);
     if (ukg) return ukg;
     const oracle = oracleCareerSite(html, source.postingUrl);
     if (oracle) return crawlOracle(source, oracle, fetcher);
     const radancy = await crawlRadancyPages(source, html, fetcher);
     if (radancy) return radancy;
+    const successFactorsUnified = await crawlSuccessFactorsUnified(source, html, fetcher);
+    if (successFactorsUnified) return successFactorsUnified;
     const successFactors = await crawlSuccessFactorsPages(source, html, fetcher);
     if (successFactors) return successFactors;
+    if (discoveryDepth <= 1) {
+      const successFactorsListing = successFactorsListingUrl(html, source.postingUrl);
+      if (successFactorsListing) {
+        const listingResult = await crawlSourceBase({
+          ...source,
+          postingUrl: successFactorsListing,
+          adapter: "custom",
+          discoveryDepth: 1,
+        }, fetcher, now);
+        if (listingResult.status === "succeeded") return {
+          ...listingResult,
+          resolvedListingUrl: successFactorsListing,
+        };
+      }
+    }
     const talentHub = await crawlTalentHubPages(source, html, fetcher);
     if (talentHub) return talentHub;
     const avature = await crawlAvaturePages(source, html, fetcher);
     if (avature) return avature;
     const phenom = phenomJobs(html, source);
     if (phenom) return crawlPhenomPages(source, phenom, fetcher);
-    if (discoveryDepth === 0) {
+    if (discoveryDepth <= 1) {
       const phenomListingUrl = phenomSearchResultsUrl(html, source.postingUrl);
       if (phenomListingUrl) {
         const phenomResult = await crawlSourceBase({
@@ -3574,7 +4141,7 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
       if (discoveredResult.status === "succeeded") return discoveredResult;
     }
     const extracted = extractJobsFromHtml(html, source);
-    if (extracted.jobs.length > 0) return {
+    if (extracted.jobs.length > 0 || extracted.completeListing) return {
       status: "succeeded",
       responseStatus: response.status,
       completeListing: extracted.completeListing,
@@ -3583,20 +4150,15 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
     };
     const anchors = anchorsFromHtml(html);
     const linked = jobsFromBrowserAnchors(anchors, source);
-    if (linked.length > 0) return {
-      status: "succeeded",
-      responseStatus: response.status,
-      completeListing: false,
-      jobs: linked,
-      error: null,
-    };
     if (discoveryDepth === 0) {
       const current = new URL(source.postingUrl);
       current.hash = "";
       const candidates = careerCandidates(anchors, source.postingUrl)
-        .filter(({ href }) => isSafeCareerRecommendation(source.company, source.postingUrl, href))
-        .filter(({ href }) => preservesTenantScope(source.postingUrl, href))
-        .filter(({ href }) => companyScopeMatches(source.company, source.postingUrl, href))
+        .filter(({ href }) => isPublicAtsCatalogUrl(href) || (
+          isSafeCareerRecommendation(source.company, source.postingUrl, href)
+          && preservesTenantScope(source.postingUrl, href)
+          && companyScopeMatches(source.company, source.postingUrl, href)
+        ))
         .filter(({ href }) => {
           try {
             const candidate = new URL(href, source.postingUrl);
@@ -3638,6 +4200,13 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
         }
       }
     }
+    if (linked.length > 0) return {
+      status: "succeeded",
+      responseStatus: response.status,
+      completeListing: false,
+      jobs: linked,
+      error: null,
+    };
     const fallback = discoveryDepth === 0 ? await crawlReaderFallback(source, fetcher, now) : null;
     if (fallback) return fallback;
     return {
@@ -5148,7 +5717,7 @@ type WorkableJob = {
   workplace?: string | null;
 };
 
-const crawlWorkable = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+async function crawlWorkable(source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> {
   const page = new URL(source.postingUrl);
   const account = page.pathname.split("/").filter(Boolean)[0];
   if (!account) return { status: "failed", responseStatus: null, completeListing: false, jobs: [], error: "Workable account is missing." };
@@ -5231,7 +5800,401 @@ const crawlWorkable = async (source: CrawlSource, fetcher: typeof fetch): Promis
       error: error instanceof Error ? error.message : "Unknown Workable crawler error.",
     };
   }
+}
+
+type BambooHrJob = {
+  id?: unknown;
+  jobOpeningName?: unknown;
+  departmentLabel?: unknown;
+  employmentStatusLabel?: unknown;
+  employmentType?: unknown;
+  isRemote?: unknown;
+  location?: { city?: unknown; state?: unknown } | null;
+  atsLocation?: { city?: unknown; state?: unknown; province?: unknown; country?: unknown } | null;
 };
+
+async function crawlBambooHr(source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> {
+  const page = new URL(source.postingUrl);
+  if (!page.hostname.endsWith(".bamboohr.com")) {
+    return { status: "failed", responseStatus: null, completeListing: false, jobs: [], error: "BambooHR tenant is missing." };
+  }
+  const listingUrl = new URL("/careers", page.origin).href;
+  const endpoint = new URL("/careers/list", page.origin).href;
+  let responseStatus: number | null = null;
+  try {
+    const response = await fetchWithTimeout(fetcher, endpoint, { headers: { accept: "application/json" } });
+    responseStatus = response.status;
+    if (!response.ok) return {
+      status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: `BambooHR returned HTTP ${response.status}.`,
+    };
+    const payload = await response.json() as { meta?: { totalCount?: unknown }; result?: BambooHrJob[] };
+    const total = Number(payload.meta?.totalCount);
+    if (!Number.isInteger(total) || total < 0 || !Array.isArray(payload.result) || payload.result.length !== total) {
+      throw new Error("BambooHR returned an unusable jobs payload.");
+    }
+    const jobs = payload.result.flatMap((job): CrawledJob[] => {
+      const externalId = job.id == null ? null : String(job.id).trim();
+      const title = asText(job.jobOpeningName);
+      if (!externalId || !title) return [];
+      const location = job.atsLocation && Object.values(job.atsLocation).some(asText)
+        ? job.atsLocation
+        : job.location;
+      const city = asText(location?.city);
+      const state = asText(location && "state" in location ? location.state : null)
+        ?? asText(location && "province" in location ? location.province : null);
+      const country = asText(location && "country" in location ? location.country : null);
+      const locationText = [city, state, country].filter(Boolean).join(", ") || null;
+      const employment = asText(job.employmentType) ?? asText(job.employmentStatusLabel);
+      const programs = classifyJobPrograms(title);
+      return [{
+        externalId,
+        title,
+        company: source.company,
+        location: locationText,
+        arrangement: job.isRemote === true || /remote/i.test(locationText ?? "") ? "remote" : "unknown",
+        employmentType: programs.keys.some((key) => key === "internship" || key === "coop")
+          ? "Internship"
+          : normalizeEmploymentType(employment),
+        summary: null,
+        ...(asText(job.departmentLabel) ? { department: asText(job.departmentLabel) } : {}),
+        ...(city ? { locationCity: city } : {}),
+        ...(state ? { locationState: state } : {}),
+        ...(country ? { locationCountry: country } : {}),
+        requisitionId: externalId,
+        officialUrl: new URL(`/careers/${encodeURIComponent(externalId)}`, page.origin).href,
+        publishedAt: null,
+      }];
+    });
+    const unique = uniqueJobs(jobs);
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: jobs.length === total && unique.length === total,
+      jobs: unique,
+      resolvedListingUrl: listingUrl,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: responseStatus != null && isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown BambooHR crawler error.",
+    };
+  }
+}
+
+type PinpointJob = {
+  id?: unknown;
+  title?: unknown;
+  url?: unknown;
+  description?: unknown;
+  key_responsibilities?: unknown;
+  skills_knowledge_expertise?: unknown;
+  benefits?: unknown;
+  employment_type_text?: unknown;
+  employment_type?: unknown;
+  workplace_type_text?: unknown;
+  workplace_type?: unknown;
+  deadline_at?: unknown;
+  compensation_currency?: unknown;
+  compensation_frequency?: unknown;
+  compensation_minimum?: unknown;
+  compensation_maximum?: unknown;
+  location?: { city?: unknown; province?: unknown; postal_code?: unknown; name?: unknown } | null;
+  job?: { id?: unknown; requisition_id?: unknown; department?: { name?: unknown } | null; division?: { name?: unknown } | null } | null;
+};
+
+async function crawlPinpoint(source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> {
+  const page = new URL(source.postingUrl);
+  if (!page.hostname.endsWith(".pinpointhq.com")) {
+    return { status: "failed", responseStatus: null, completeListing: false, jobs: [], error: "Pinpoint tenant is missing." };
+  }
+  const endpoint = new URL("/postings.json", page.origin).href;
+  let responseStatus: number | null = null;
+  try {
+    const response = await fetchWithTimeout(fetcher, endpoint, { headers: { accept: "application/json" } });
+    responseStatus = response.status;
+    if (!response.ok) return {
+      status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: `Pinpoint returned HTTP ${response.status}.`,
+    };
+    const payload = await response.json() as { data?: PinpointJob[] };
+    if (!Array.isArray(payload.data)) throw new Error("Pinpoint returned an unusable jobs payload.");
+    const jobs = payload.data.flatMap((job): CrawledJob[] => {
+      const externalId = asText(job.job?.requisition_id) ?? asText(job.job?.id) ?? asText(job.id);
+      const title = asText(job.title);
+      const officialUrl = asText(job.url);
+      if (!externalId || !title || !officialUrl) return [];
+      const city = asText(job.location?.city);
+      const region = asText(job.location?.province);
+      const location = asText(job.location?.name) ?? ([city, region].filter(Boolean).join(", ") || null);
+      const workplace = asText(job.workplace_type_text) ?? asText(job.workplace_type) ?? "";
+      const description = plainText(asText(job.description));
+      return [{
+        externalId,
+        title,
+        company: source.company,
+        location,
+        arrangement: /remote/i.test(workplace) ? "remote" : /hybrid/i.test(workplace) ? "hybrid" : /on.?site|office/i.test(workplace) ? "onsite" : "unknown",
+        employmentType: classifyJobPrograms(title).keys.length > 0
+          ? "Internship"
+          : normalizeEmploymentType(asText(job.employment_type_text) ?? asText(job.employment_type)),
+        summary: description,
+        description,
+        responsibilities: plainText(asText(job.key_responsibilities)),
+        qualifications: plainText(asText(job.skills_knowledge_expertise)),
+        benefits: plainText(asText(job.benefits)),
+        ...(asText(job.job?.department?.name) ? { department: asText(job.job?.department?.name) } : {}),
+        ...(asText(job.job?.division?.name) ? { businessUnit: asText(job.job?.division?.name) } : {}),
+        ...(city ? { locationCity: city } : {}),
+        ...(region ? { locationState: region } : {}),
+        ...(asText(job.location?.postal_code) ? { locationPostalCode: asText(job.location?.postal_code) } : {}),
+        ...(Number.isFinite(Number(job.compensation_minimum)) ? { salaryMin: Number(job.compensation_minimum) } : {}),
+        ...(Number.isFinite(Number(job.compensation_maximum)) ? { salaryMax: Number(job.compensation_maximum) } : {}),
+        ...(asText(job.compensation_currency) ? { salaryCurrency: asText(job.compensation_currency) } : {}),
+        ...(asText(job.compensation_frequency) ? { salaryInterval: asText(job.compensation_frequency) } : {}),
+        ...(normalizedDate(job.deadline_at) ? { validThrough: normalizedDate(job.deadline_at) } : {}),
+        requisitionId: externalId,
+        officialUrl,
+        publishedAt: null,
+      }];
+    });
+    const unique = uniqueJobs(jobs);
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: jobs.length === payload.data.length && unique.length === payload.data.length,
+      jobs: unique,
+      resolvedListingUrl: page.origin + "/",
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: responseStatus != null && isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Pinpoint crawler error.",
+    };
+  }
+}
+
+type HirebridgeJob = {
+  joblistid?: unknown;
+  jobtitle?: unknown;
+  joblocname?: unknown;
+  jobloccity?: unknown;
+  joblocstatename?: unknown;
+  jobloccountryname?: unknown;
+  jobcatname?: unknown;
+  jobdeptname?: unknown;
+  jobfunctionname?: unknown;
+  jobtypename?: unknown;
+  jobindeedremotetypename?: unknown;
+  jobdivisionname?: unknown;
+  description?: unknown;
+  skills?: unknown;
+  benefits?: unknown;
+  url?: unknown;
+  applyurl?: unknown;
+  publicdate?: unknown;
+  modifydate?: unknown;
+};
+
+async function crawlHirebridge(source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> {
+  const page = new URL(source.postingUrl);
+  const cid = page.searchParams.get("cid");
+  if (!cid || !/^\d+$/.test(cid)) {
+    return { status: "failed", responseStatus: null, completeListing: false, jobs: [], error: "Hirebridge company id is missing." };
+  }
+  const endpoint = new URL("https://hbapi.hirebridge.com/careercenter/v2/GetJobListings");
+  endpoint.searchParams.set("cid", cid);
+  endpoint.searchParams.set("language", "en-US");
+  let responseStatus: number | null = null;
+  try {
+    const response = await fetchWithTimeout(fetcher, endpoint, { headers: { accept: "application/json" } });
+    responseStatus = response.status;
+    if (!response.ok) return {
+      status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: `Hirebridge returned HTTP ${response.status}.`,
+    };
+    const outer = await response.json() as unknown;
+    const raw = typeof outer === "string" ? JSON.parse(outer) as unknown : outer;
+    if (!Array.isArray(raw)) throw new Error("Hirebridge returned an unusable jobs payload.");
+    const jobs = (raw as HirebridgeJob[]).flatMap((job): CrawledJob[] => {
+      const externalId = job.joblistid == null ? null : String(job.joblistid).trim() || null;
+      const title = asText(job.jobtitle);
+      const officialUrl = asText(job.url);
+      if (!externalId || !title || !officialUrl) return [];
+      const city = asText(job.jobloccity);
+      const state = asText(job.joblocstatename);
+      const country = asText(job.jobloccountryname);
+      const description = plainText(asText(job.description));
+      const remote = asText(job.jobindeedremotetypename) ?? asText(job.joblocname) ?? "";
+      let applyUrl = asText(job.applyurl);
+      if (applyUrl?.startsWith("http://")) applyUrl = `https://${applyUrl.slice("http://".length)}`;
+      return [{
+        externalId,
+        title,
+        company: source.company,
+        location: asText(job.joblocname) ?? ([city, state, country].filter(Boolean).join(", ") || null),
+        arrangement: /remote/i.test(remote) ? "remote" : /hybrid/i.test(remote) ? "hybrid" : "unknown",
+        employmentType: classifyJobPrograms(title).keys.length > 0 ? "Internship" : normalizeEmploymentType(asText(job.jobtypename)),
+        summary: description,
+        description,
+        ...(asText(job.skills) ? { skills: [asText(job.skills)!] } : {}),
+        ...(asText(job.jobdeptname) ?? asText(job.jobcatname) ? { department: asText(job.jobdeptname) ?? asText(job.jobcatname) } : {}),
+        ...(asText(job.jobdivisionname) ? { businessUnit: asText(job.jobdivisionname) } : {}),
+        ...(asText(job.jobfunctionname) ? { jobFunction: asText(job.jobfunctionname) } : {}),
+        ...(plainText(asText(job.benefits)) ? { benefits: plainText(asText(job.benefits)) } : {}),
+        ...(city ? { locationCity: city } : {}),
+        ...(state ? { locationState: state } : {}),
+        ...(country ? { locationCountry: country } : {}),
+        requisitionId: externalId,
+        ...(applyUrl ? { applyUrl } : {}),
+        officialUrl,
+        publishedAt: normalizedDate(job.publicdate),
+        sourceUpdatedAt: normalizedDate(job.modifydate),
+      }];
+    });
+    const unique = uniqueJobs(jobs);
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: jobs.length === raw.length && unique.length === raw.length,
+      jobs: unique,
+      resolvedListingUrl: `https://recruit.hirebridge.com/v3/CareerCenter/v2/?cid=${cid}`,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: responseStatus != null && isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Hirebridge crawler error.",
+    };
+  }
+}
+
+const taleoV2Config = (value: string): { endpoint: URL; org: string; cws: string } | null => {
+  try {
+    const page = new URL(value);
+    const org = page.searchParams.get("org");
+    const cws = page.searchParams.get("cws");
+    const prefix = page.pathname.match(/^(.*\/ats\/careers\/v2\/)(?:jobSearch|searchResults)/i)?.[1];
+    if (!org || !cws || !prefix || !page.hostname.endsWith(".taleo.net")) return null;
+    return { endpoint: new URL(`${prefix}searchResults`, page.origin), org, cws };
+  } catch {
+    return null;
+  }
+};
+
+const taleoV2Jobs = (html: string, source: CrawlSource): CrawledJob[] => [...html.matchAll(
+  /<h4\b[^>]*class=["'][^"']*oracletaleocwsv2-head-title[^"']*["'][^>]*>\s*<a\b[^>]*href=["']([^"']*viewRequisition[^"']*\brid=(\d+)[^"']*)["'][^>]*>([\s\S]*?)<\/a><\/h4>\s*<div\b[^>]*tabindex=["']0["'][^>]*>([\s\S]*?)<\/div>\s*<div\b[^>]*tabindex=["']0["'][^>]*>([\s\S]*?)<\/div>/gi,
+)].map((match) => {
+  const title = plainText(match[3])!;
+  const department = plainText(match[4]);
+  const location = plainText(match[5]);
+  const url = new URL(decodeHtmlAttribute(match[1]), source.postingUrl);
+  const programs = classifyJobPrograms(title);
+  return {
+    externalId: match[2],
+    title,
+    company: source.company,
+    location,
+    arrangement: /remote/i.test(location ?? "") ? "remote" as const : "unknown" as const,
+    employmentType: programs.keys.length > 0 ? "Internship" : null,
+    summary: null,
+    ...(department ? { department } : {}),
+    requisitionId: match[2],
+    officialUrl: url.href,
+    publishedAt: null,
+  };
+});
+
+async function crawlTaleoV2(source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult | null> {
+  const config = taleoV2Config(source.postingUrl);
+  if (!config) return null;
+  const jobs: CrawledJob[] = [];
+  const seenPages = new Set<string>();
+  let responseStatus: number | null = null;
+  let complete = false;
+  try {
+    for (let page = 0; page < 50; page += 1) {
+      const endpoint = new URL(config.endpoint);
+      endpoint.searchParams.set("org", config.org);
+      endpoint.searchParams.set("cws", config.cws);
+      endpoint.searchParams.set("rowFrom", String(page * 10));
+      const response = await fetchWithTimeout(fetcher, endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: "",
+      }, true, { attempts: 1, timeoutMs: 10_000 });
+      responseStatus = response.status;
+      if (!response.ok) return jobs.length > 0 ? {
+        status: "succeeded",
+        responseStatus,
+        completeListing: false,
+        jobs: uniqueJobs(jobs),
+        error: null,
+      } : {
+        status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
+        responseStatus,
+        completeListing: false,
+        jobs: [],
+        error: `Taleo returned HTTP ${response.status}.`,
+      };
+      const html = await response.text();
+      const pageJobs = taleoV2Jobs(html, source);
+      const identity = pageJobs.map((job) => job.externalId).join(",");
+      if (!identity || seenPages.has(identity)) break;
+      seenPages.add(identity);
+      jobs.push(...pageJobs);
+      const hasNext = /class=["'][^"']*jscroll-next[^"']*["']/i.test(html);
+      if (!hasNext) {
+        complete = true;
+        break;
+      }
+    }
+    const unique = uniqueJobs(jobs);
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: complete && unique.length === jobs.length,
+      jobs: unique,
+      resolvedListingUrl: source.postingUrl,
+      error: null,
+    };
+  } catch (error) {
+    if (jobs.length > 0) return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: false,
+      jobs: uniqueJobs(jobs),
+      error: null,
+    };
+    return {
+      status: responseStatus != null && isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: uniqueJobs(jobs),
+      error: error instanceof Error ? error.message : "Unknown Taleo crawler error.",
+    };
+  }
+}
 
 const crawlAsmlSearch = async (
   source: CrawlSource,
@@ -6671,6 +7634,7 @@ const workdayPublishedAt = (value: string | undefined, now: Date): string | null
 async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
   try {
     const isCisco = source.id === "p4-0245-cisco";
+    let activeEndpoint = endpoint;
     const endpointUrl = new URL(endpoint);
     const sourceUrl = new URL(source.postingUrl);
     const site = endpointUrl.pathname.split("/").at(-2);
@@ -6685,7 +7649,7 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
       ? "Aetna"
       : sourceUrl.searchParams.get("q")?.trim() ?? "";
     const fetchPage = async (offset: number, appliedFacets: Record<string, string[]> = {}): Promise<{ status: number; payload: WorkdayPayload }> => {
-      const response = await fetchWithTimeout(fetcher, endpoint, {
+      let response = await fetchWithTimeout(fetcher, activeEndpoint, {
         method: "POST",
         headers,
         // Workday's public CXS endpoint rejects page sizes above 20.
@@ -6694,6 +7658,27 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
       // inside the same source lease can otherwise hold a two-source batch for
       // 30+ seconds without adding coverage.
       }, true, { attempts: 1, timeoutMs: source.id === "p5-1096-vantor" ? 22_000 : 12_000 });
+      // A small set of Workday vanity hosts replace the tenant underscore in
+      // the public CXS path with a hyphen (for example sallie-mae ->
+      // sallie_mae). The board HTML advertises the underscored tenant, but a
+      // landing-page discovery only sees the vanity hostname. Retry this
+      // deterministic spelling once when Workday rejects the first request.
+      if (offset === 0 && response.status === 422) {
+        const candidate = new URL(activeEndpoint);
+        const segments = candidate.pathname.split("/").filter(Boolean);
+        if (segments[0] === "wday" && segments[1] === "cxs" && segments[2]?.includes("-")) {
+          await response.body?.cancel().catch(() => undefined);
+          segments[2] = segments[2].replaceAll("-", "_");
+          candidate.pathname = `/${segments.join("/")}`;
+          const retry = await fetchWithTimeout(fetcher, candidate, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ appliedFacets, limit: 20, offset, searchText }),
+          }, true, { attempts: 1, timeoutMs: source.id === "p5-1096-vantor" ? 22_000 : 12_000 });
+          if (retry.ok) activeEndpoint = candidate.href;
+          response = retry;
+        }
+      }
       if (!response.ok) {
         throw Object.assign(new Error(`Workday returned HTTP ${response.status}.`), { responseStatus: response.status });
       }
@@ -6867,7 +7852,10 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
 }
 
 async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
-  const verifiedFeed = VERIFIED_SOURCE_FEEDS[source.id];
+  // Apply an ID-pinned feed only at the root. Redirect/candidate recursion
+  // keeps the same source ID, so reapplying it at discovery depth 1 would
+  // loop back to the root feed until the request/deadline budget is spent.
+  const verifiedFeed = (source.discoveryDepth ?? 0) === 0 ? VERIFIED_SOURCE_FEEDS[source.id] : undefined;
   if (verifiedFeed) {
     const result = verifiedFeed.discovered
       ? verifiedFeed.discovered.kind === "workday"
@@ -6911,6 +7899,13 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
     return crawlDow(source, fetcher);
   }
   if (sourcePage.hostname === "apply.workable.com") return crawlWorkable(source, fetcher);
+  if (sourcePage.hostname.endsWith(".bamboohr.com")) return crawlBambooHr(source, fetcher);
+  if (sourcePage.hostname.endsWith(".pinpointhq.com")) return crawlPinpoint(source, fetcher);
+  if (sourcePage.hostname === "recruit.hirebridge.com") return crawlHirebridge(source, fetcher);
+  if (sourcePage.hostname.endsWith(".taleo.net")) {
+    const taleo = await crawlTaleoV2(source, fetcher);
+    if (taleo) return taleo;
+  }
   if (sourcePage.hostname === "www.asml.com" && sourcePage.pathname.includes("/careers")) {
     const search = await crawlAsmlSearch(source, fetcher);
     if (search) return search;
@@ -7052,10 +8047,11 @@ const workdayDetailCandidates = (jobUrl: string): string[] => {
     : null;
   const sites = [...new Set([explicitSite, "External", "Careers"].filter((site): site is string => Boolean(site)))];
   const suffix = segments.slice(jobIndex + 1).map(encodeURIComponent).join("/");
-  return sites.map((site) => new URL(
-    `/wday/cxs/${encodeURIComponent(tenantMatch[1])}/${encodeURIComponent(site)}/job/${suffix}`,
+  const tenants = [...new Set([tenantMatch[1], tenantMatch[1].replaceAll("-", "_")])];
+  return tenants.flatMap((tenant) => sites.map((site) => new URL(
+    `/wday/cxs/${encodeURIComponent(tenant)}/${encodeURIComponent(site)}/job/${suffix}`,
     url.origin,
-  ).href);
+  ).href));
 };
 
 const combinedEmploymentType = (job: CrawledJob, timeType: unknown): string | null => {

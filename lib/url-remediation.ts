@@ -1,7 +1,7 @@
-const ATS_HOST = /(?:greenhouse\.io|lever\.co|myworkdayjobs\.com|myworkdaysite\.com|smartrecruiters\.com|ashbyhq\.com|icims\.com|jobvite\.com|phenompeople\.com|recruiting\d*\.ultipro\.com)/i;
+const ATS_HOST = /(?:greenhouse\.io|lever\.co|myworkdayjobs\.com|myworkdaysite\.com|smartrecruiters\.com|ashbyhq\.com|icims\.com|jobvite\.com|hirebridge\.com|taleo\.net|apply\.workable\.com|bamboohr\.com|pinpointhq\.com|ats\.rippling\.com|csod\.com|dayforcehcm\.com|successfactors\.(?:com|eu)|oraclecloud\.com|eightfold\.ai|avature\.net|(?:myjobs|workforcenow)\.adp\.com|recruiting\.paylocity\.com|recruiting\d*\.ultipro\.com)/i;
 const JOB_TEXT = /\b(?:jobs?|careers?|opportunities|open (?:positions|roles)|join (?:our )?team|search roles?)\b/i;
 const JOB_PATH = /\/(?:jobs?|careers?|opportunities|search-results|job-search|open-positions|join-us)(?:\/|$|[?#-])/i;
-const USER_ONLY = /(?:job-?alerts?|talent-?community|introduceyourself|sign[_-]?in|\/login|\/apply(?:[/?#]|$))/i;
+const USER_ONLY = /(?:job-?alerts?|talent-?community|introduceyourself|sign[_-]?in|\/login|\/connect(?:[/?#]|$)|\/apply(?:[/?#]|$))/i;
 const JOB_DETAIL = /(?:\/(?:job|jobs)\/[^/?#]+(?:\/[^/?#]+)?(?:[?#]|$)|[?&](?:pid|jobid|jobseqno|gh_jid)=)/i;
 
 export type BrowserLink = { href: string; text: string };
@@ -33,6 +33,17 @@ export const detectUrlAdapter = (url: string, resourceUrls: string[] = []): "gre
   if (value.includes("icims.com")) return "icims";
   if (value.includes("phenompeople") || value.includes("/search-results")) return "phenom";
   return "custom";
+};
+
+export const isPublicAtsCatalogUrl = (value: string): boolean => {
+  try {
+    const url = new URL(value);
+    const path = `${url.pathname}${url.search}`;
+    if (!ATS_HOST.test(url.hostname) || USER_ONLY.test(path) || JOB_DETAIL.test(path)) return false;
+    return url.protocol === "https:";
+  } catch {
+    return false;
+  }
 };
 
 export const rankCareerLink = (link: BrowserLink, currentUrl: string): number => {
