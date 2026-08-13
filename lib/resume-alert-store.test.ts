@@ -15,6 +15,17 @@ describe("resume digest reservation", () => {
     expect(sqlite.prepare("SELECT count(*) AS total FROM notification_items").get()).toEqual({ total: 4 });
   });
 
+  it("accepts a digest that becomes due within the scheduler boundary window", async () => {
+    const sqlite = alertDatabaseWithMatches(1);
+    sqlite.prepare("UPDATE match_profiles SET next_digest_at = '2026-08-10T12:00:30.000Z'").run();
+
+    const planned = await planResumeDigests(
+      createD1ForSqlite(sqlite), "chanyoung-resume", "2026-08-10T12:00:00.000Z", 25,
+    );
+
+    expect(planned).toHaveLength(2);
+  });
+
   it("splits more than 25 jobs into deterministic parts up to the four-message cap", async () => {
     const sqlite = alertDatabaseWithMatches(60);
     const planned = await planResumeDigests(

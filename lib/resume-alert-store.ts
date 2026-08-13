@@ -52,6 +52,11 @@ export const planResumeDigests = async (
 ): Promise<PlannedNotification[]> => {
   const owner = crypto.randomUUID();
   const leaseUntil = plusMinutes(now, 5);
+  // The scheduled crawl performs alert planning immediately after persistence.
+  // Allow a short scheduler boundary window so a digest that becomes due while
+  // the crawl is finishing is not skipped until the next two-hour run. This
+  // only affects eligibility; all timestamps written below still use `now`.
+  const dueNow = plusMinutes(now, 1);
   const lease = await database.prepare(`
     UPDATE match_profiles
     SET dispatch_lease_owner = ?, dispatch_lease_expires_at = ?, updated_at = CURRENT_TIMESTAMP
@@ -60,7 +65,7 @@ export const planResumeDigests = async (
       AND (next_digest_at IS NULL OR next_digest_at <= ?)
       AND (dispatch_lease_expires_at IS NULL OR dispatch_lease_expires_at <= ?)
     RETURNING keyword_id
-  `).bind(owner, leaseUntil, profileId, now, now).all<LeaseRow>();
+  `).bind(owner, leaseUntil, profileId, dueNow, now).all<LeaseRow>();
   const keywordId = lease.results[0]?.keyword_id;
   if (!keywordId) return [];
 
