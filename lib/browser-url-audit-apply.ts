@@ -9,7 +9,13 @@ export type BrowserUrlAuditResult = {
 };
 
 export type OfficialUrlOverrides = {
-  overrides: Record<string, { url: string | null; adapter: NormalizedSourceRecord["adapter"]; verification?: string }>;
+  overrides: Record<string, {
+    url: string | null;
+    talentUrl?: string | null;
+    adapter: NormalizedSourceRecord["adapter"];
+    verification?: string;
+    channel?: string;
+  }>;
   rejectedRecommendations: string[];
 };
 
@@ -39,8 +45,8 @@ export function buildRemediatedCatalog(
       Company: source.company,
       "Ledger ID": source.id,
       postingUrl,
-      talentPoolUrl: source.talentUrl,
-      channel: source.channel,
+      talentPoolUrl: override && "talentUrl" in override ? override.talentUrl ?? null : source.talentUrl,
+      channel: override?.channel ?? source.channel,
       resumeUpload: source.resumeUpload === "available" ? "가능" : source.resumeUpload === "job_only" ? "지원 시 가능" : "unknown",
       jobAlerts: source.jobAlerts === "available" ? "가능" : "unknown",
       verification: override?.verification ?? source.verification.toUpperCase(),

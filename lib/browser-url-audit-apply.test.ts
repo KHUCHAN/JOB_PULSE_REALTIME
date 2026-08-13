@@ -32,4 +32,42 @@ describe("buildRemediatedCatalog", () => {
       adapter: "workday",
     }));
   });
+
+  it("updates a stale Talent URL and merger channel from an official override", () => {
+    const source = {
+      masterRow: 43,
+      company: "Legacy Bank",
+      id: "legacy-bank",
+      postingUrl: "https://legacy.example/careers",
+      talentUrl: "https://legacy.example/talent",
+      channel: "Official careers",
+      adapter: "custom" as const,
+      verification: "verified_talent",
+      confidence: "medium",
+      resumeUpload: "available" as const,
+      jobAlerts: "available" as const,
+      enabled: true,
+      checkedAt: "2026-08-12",
+    };
+
+    const result = buildRemediatedCatalog([source], [], {
+      overrides: {
+        "legacy-bank": {
+          url: "https://parent.example/search/jobs",
+          talentUrl: "https://parent.example/talent",
+          adapter: "custom",
+          verification: "MERGED_PARENT_CAREERS",
+          channel: "모회사/승계 조직 공식 채용 경로",
+        },
+      },
+      rejectedRecommendations: [],
+    });
+
+    expect(result.records[0]).toEqual(expect.objectContaining({
+      postingUrl: "https://parent.example/search/jobs",
+      talentPoolUrl: "https://parent.example/talent",
+      verification: "MERGED_PARENT_CAREERS",
+      channel: "모회사/승계 조직 공식 채용 경로",
+    }));
+  });
 });

@@ -2,7 +2,7 @@ import type { CrawledJob, CrawlSource } from "./crawler";
 
 export type BrowserAnchor = { href: string; text: string };
 
-const JOB_DETAIL = /(?:\/(?:jobs?|positions?|openings?|vacanc(?:y|ies))\/[^/?#]{3,}|\/job\.html\?[^#]*\bid=|\/careers\/(?:jobdetail|details)\/|\/careers\/[^?#]*(?:\d{4,}|[a-z]{1,4}-\d{3,})|\/corporate-careers\/jr-\d+\/[^/?#]+|\/[^/?#]+\/[^/?#]+\/[a-f0-9]{24,}\/job\/?(?:[?#]|$)|[?&](?:jobid|job_id|gh_jid|reqid|pid|opportunityid)=)/i;
+const JOB_DETAIL = /(?:\/(?:jobs?|positions?|openings?|vacanc(?:y|ies))\/[^/?#]{3,}|\/job\.html\?[^#]*\bid=|\/job-detail\?[^#]*\bjob=|\/job-opening\.php\?[^#]*\breq=|\/career-application\/?\?[^#]*\bjobtitle=|\/careers\/(?:jobdetail|details)\/|\/careers\/[^?#]*(?:\d{4,}|[a-z]{1,4}-\d{3,})|\/corporate-careers\/jr-\d+\/[^/?#]+|\/[^/?#]+\/[^/?#]+\/[a-f0-9]{24,}\/job\/?(?:[?#]|$)|[?&](?:jobid|job_id|gh_jid|reqid|pid|opportunityid)=)/i;
 const LISTING_ONLY = /(?:search-jobs?|search-results|viewalljobs|job-opportunities|join(?:talent|[-_/]our[-_/]team)|talent-community|jobcart|jobs?\/(?:search|login)|positions?\/{1,2}filter)(?:[/?#]|$)/i;
 const CAREER_CONTENT_ONLY = /\/careers?\/(?:open-positions|view-jobs(?:\.html)?|jobs|culture|benefits)\/?(?:[?#].*)?$/i;
 const GENERIC_TEXT = /^(?:apply|apply now|form|here\.?|learn more(?: about this position)?|read more|view .+|see .+|explore .+|join .+|details|search .+ jobs?|careers?|career website|jobs?|benefits|student programs|open (?:positions?|roles)|skip to (?:main )?(?:jobs search results|content)|click here|(?:first|previous|next|last) page of results(?: first| last)?|page \d+ of \d+(?:\s*,\s*current page)?|your privacy choices|manage cookie preferences|notify me of new jobs|internal careers site|returning applicant login|stay connected|terms of use|total rewards|events|job search tool|chinese \((?:simplified|traditional)\)|french|german|italian|japanese|portuguese|spanish|next|previous)$/i;
@@ -17,6 +17,10 @@ const isExternalBoardDetail = (url: URL): boolean => {
 };
 
 const titleFromJobUrl = (url: URL): string | null => {
+  const queryTitle = url.searchParams.get("jobtitle")?.replace(/\s+/g, " ").trim() ?? null;
+  if (queryTitle && queryTitle.length >= 4 && queryTitle.length <= 180 && !GENERIC_TEXT.test(queryTitle)) {
+    return queryTitle;
+  }
   const ignored = /^(?:job|jobs|career|careers|company|talent|opening|openings|position|positions|role|roles|search|login|userhome|all-jobs|open-roles|current-openings|explore|join|programs?|benefits|culture|teams?|early-career)$/i;
   const segment = url.pathname.split("/").filter(Boolean).reverse().find((value) => {
     const decoded = decodeURIComponent(value);
@@ -33,6 +37,8 @@ const externalIdFromJobUrl = (url: URL): string | null => {
     ?? url.searchParams.get("job_id")
     ?? url.searchParams.get("gh_jid")
     ?? url.searchParams.get("opportunityId")
+    ?? (/\/job-detail$/i.test(url.pathname) ? url.searchParams.get("job") : null)
+    ?? (/\/job-opening\.php$/i.test(url.pathname) ? url.searchParams.get("req") : null)
     ?? (/\/job\.html$/i.test(url.pathname) ? url.searchParams.get("id") : null);
   if (queryId) return queryId;
   const jobviteId = /^(?:www\.)?jobs\.jobvite\.com$/i.test(url.hostname)

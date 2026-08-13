@@ -56,6 +56,38 @@ describe("jobsFromBrowserAnchors", () => {
     })]);
   });
 
+  it("keeps Sonic and HRMDirect query-based job details", () => {
+    const sonic = jobsFromBrowserAnchors([{
+      href: "/job-detail?job=744000143190129&post_date=2026-08-12",
+      text: "Automotive Service Technician",
+    }], { ...source, postingUrl: "https://jobs.sonicautomotive.com/search", company: "Sonic Automotive" });
+    const hrmDirect = jobsFromBrowserAnchors([{
+      href: "/employment/job-opening.php?req=3750384&req_loc=12345",
+      text: "Senior Process Engineer",
+    }], { ...source, postingUrl: "https://ao-inc.hrmdirect.com/employment/job-openings.php?search=true", company: "Applied Optoelectronics" });
+
+    expect(sonic).toEqual([expect.objectContaining({
+      externalId: "744000143190129",
+      title: "Automotive Service Technician",
+    })]);
+    expect(hrmDirect).toEqual([expect.objectContaining({
+      externalId: "3750384",
+      title: "Senior Process Engineer",
+    })]);
+  });
+
+  it("derives the role title from an official career application query", () => {
+    const jobs = jobsFromBrowserAnchors([{
+      href: "/career-application/?jobtitle=Field+Service+Engineer+-+Phoenix%2C+AZ",
+      text: "Apply Now",
+    }], { ...source, postingUrl: "https://www.acm-usa.com/careers/", company: "ACM Research" });
+
+    expect(jobs).toEqual([expect.objectContaining({
+      title: "Field Service Engineer - Phoenix, AZ",
+      officialUrl: "https://www.acm-usa.com/career-application/?jobtitle=Field+Service+Engineer+-+Phoenix%2C+AZ",
+    })]);
+  });
+
   it("rejects listing links and generic navigation", () => {
     expect(jobsFromBrowserAnchors([
       { href: "https://acme.com/careers/search-jobs", text: "Search jobs" },

@@ -402,11 +402,24 @@ type CardinalTracking = {
   CountryNamesJson?: string[];
   ActivateCategoryNamesJson?: string[];
   AtsCategoryNamesJson?: string[];
+  ActivateFamilyNamesJson?: string[];
+  AtsFamilyNamesJson?: string[];
 };
 
 type CardinalRecord = {
   ID?: string;
+  ReferenceNumber?: string;
+  Title?: string;
+  LocationName?: string;
+  ZipCode?: string;
+  CityName?: string;
+  StateName?: string;
+  CityStateDataAbbrev?: string;
+  CountryName?: string;
+  PostedDate?: string;
   PostedDateRaw?: string;
+  DepartmentName?: string;
+  TypeName?: string;
   IsRemote?: boolean;
   TrackingObject?: CardinalTracking;
 };
@@ -1733,6 +1746,54 @@ const jobPostingNodes = (value: JsonLdValue): JsonLdValue[] => {
 const uniqueJobs = (jobs: CrawledJob[]): CrawledJob[] => [
   ...new Map(jobs.map((job) => [job.officialUrl, job])).values(),
 ];
+
+const hrmDirectJobs = (html: string, source: CrawlSource): SourceCrawlResult | null => {
+  if (!/hrmdirect\.com$/i.test(new URL(source.postingUrl).hostname) || !/data-req-id=/i.test(html)) return null;
+  const rows = [...html.matchAll(/<tr\b[^>]*data-req-id\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/tr>/gi)];
+  if (rows.length === 0) return null;
+  const cell = (row: string, className: string): string | null => {
+    const match = row.match(new RegExp(`<td\\b[^>]*class=["'][^"']*\\b${className}\\b[^"']*["'][^>]*>([\\s\\S]*?)<\\/td>`, "i"));
+    const value = plainText(match?.[1]);
+    return value ? decodeHtmlAttribute(value) : null;
+  };
+  const jobs = uniqueJobs(rows.flatMap((row): CrawledJob[] => {
+    const externalId = row[1]?.trim();
+    const body = row[2] ?? "";
+    const title = cell(body, "posTitle");
+    if (!externalId || !title) return [];
+    const reqLocation = body.match(/[?&]req_loc=([^&#"']+)/i)?.[1] ?? null;
+    const detailUrl = new URL("job-opening.php", source.postingUrl);
+    detailUrl.searchParams.set("req", externalId);
+    if (reqLocation) detailUrl.searchParams.set("req_loc", decodeHtmlAttribute(reqLocation));
+    detailUrl.hash = "job";
+    const city = cell(body, "cities");
+    const state = cell(body, "state");
+    const department = cell(body, "departments");
+    const programs = classifyJobPrograms(title).keys;
+    return [{
+      externalId,
+      title,
+      company: source.company,
+      location: [city, state].filter(Boolean).join(", ") || null,
+      arrangement: /\bremote\b/i.test([title, city, state].filter(Boolean).join(" ")) ? "remote" : "unknown",
+      employmentType: programs.some((key) => key === "internship" || key === "coop") ? "Internship" : null,
+      summary: null,
+      department,
+      locationCity: city,
+      locationState: state,
+      requisitionId: externalId,
+      officialUrl: detailUrl.href,
+      publishedAt: null,
+    }];
+  }));
+  return {
+    status: jobs.length > 0 ? "succeeded" : "failed",
+    responseStatus: 200,
+    completeListing: jobs.length > 0 && jobs.length === rows.length,
+    jobs,
+    error: jobs.length > 0 ? null : "HRMDirect listing contained no usable jobs.",
+  };
+};
 
 const READER_JOB_DETAIL = /(?:\/jobs\/\d{4,}(?:[-/]|$)|\/site\/careers\/jobs\/\d+|\/careers\/(?:job\/\d+|find-your-job\/[^/?#]+-j\d+|jobdetail(?:[/?]|$)|details\/|position\/)|\/[^/?#]+\/[^/?#]+\/[a-f0-9]{24,}\/job\/?(?:[?#]|$)|\/(?:default|[a-z]{2}(?:_[a-z]{2})?|[^/?#]+)\/job\/[^/?#]+\/\d+(?:-[^/?#]+)?(?:[/?#]|$)|[?&](?:jobid|job_id|gh_jid|reqid|pid|opportunityid)=)/i;
 
@@ -4109,6 +4170,10 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
       .replaceAll("&quot;", '"')
       .replaceAll("&#39;", "'")
       .replaceAll("&amp;", "&");
+    const hrmDirect = hrmDirectJobs(html, source);
+    if (hrmDirect) return hrmDirect;
+    const activate = await crawlActivateJobSearch(source, html, fetcher);
+    if (activate) return activate;
     const cornerstone = await crawlCornerstone(source, html, fetcher);
     if (cornerstone) return cornerstone;
     const eightfoldDomain = /(?:id=["']pcsx["']|eightfold\.ai|\/api\/pcsx\/search)/i.test(decodedApplicationState)
@@ -5256,6 +5321,109 @@ const crawlCardinalHealth = async (source: CrawlSource, fetcher: typeof fetch): 
     resolvedListingUrl: listingUrl,
     error: jobs.length > 0 ? null : "Cardinal Health job API contained no usable jobs.",
   };
+};
+
+const crawlActivateJobSearch = async (
+  source: CrawlSource,
+  html: string,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult | null> => {
+  if (!/(?:ReusableComponents\/JobSearchResultsTable|SearchResultsManager|\/Search\/SearchResults)/i.test(html)) return null;
+  const listingUrl = new URL(source.postingUrl);
+  const endpoint = new URL("/Search/SearchResults", listingUrl.origin);
+  endpoint.searchParams.set("jtStartIndex", "0");
+  endpoint.searchParams.set("jtPageSize", "10000");
+  endpoint.searchParams.set("jtSorting", "");
+  try {
+    const response = await fetchWithTimeout(fetcher, endpoint, {
+      headers: { accept: "application/json", referer: listingUrl.href },
+    }, true, { attempts: 1, timeoutMs: 15_000 });
+    if (!response.ok) return {
+      status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
+      responseStatus: response.status,
+      completeListing: false,
+      jobs: [],
+      error: `Activate job API returned HTTP ${response.status}.`,
+    };
+    const raw = await response.json() as CardinalPayload | string;
+    const payload = typeof raw === "string" ? JSON.parse(raw) as CardinalPayload : raw;
+    const total = payload.TotalRecordCount;
+    const records = payload.Records;
+    if (payload.Result !== "OK" || !Number.isInteger(total) || (total ?? -1) <= 0 || !Array.isArray(records)) {
+      return {
+        status: "failed",
+        responseStatus: response.status,
+        completeListing: false,
+        jobs: [],
+        error: "Activate job API did not return a nonempty usable catalog.",
+      };
+    }
+    const jobs = uniqueJobs(records.flatMap((record): CrawledJob[] => {
+      const tracking = record.TrackingObject;
+      const id = record.ID?.trim();
+      const title = plainText(tracking?.TitleJson ?? record.Title);
+      if (!id || !title) return [];
+      const locations = tracking?.CityStatesDataAbbrevJson?.filter(Boolean)
+        ?? [plainText(record.CityStateDataAbbrev ?? record.LocationName)].filter((value): value is string => Boolean(value));
+      const countries = tracking?.CountryNamesJson?.filter(Boolean)
+        ?? [plainText(record.CountryName)].filter((value): value is string => Boolean(value));
+      const categories = [...new Set([
+        ...(tracking?.ActivateCategoryNamesJson ?? []),
+        ...(tracking?.AtsCategoryNamesJson ?? []),
+      ].map((value) => plainText(value)).filter((value): value is string => Boolean(value)))];
+      const families = [...new Set([
+        ...(tracking?.ActivateFamilyNamesJson ?? []),
+        ...(tracking?.AtsFamilyNamesJson ?? []),
+      ].map((value) => plainText(value)).filter((value): value is string => Boolean(value)))];
+      const requisitionId = plainText(tracking?.ReferenceNumberJson ?? record.ReferenceNumber) ?? id;
+      const programs = classifyJobPrograms(title).keys;
+      return [{
+        externalId: id,
+        title,
+        company: source.company,
+        location: locations.join("; ") || null,
+        arrangement: record.IsRemote ? "remote" : "unknown",
+        employmentType: programs.some((key) => key === "internship" || key === "coop")
+          ? "Internship"
+          : normalizeEmploymentType(tracking?.TypeNameJson ?? record.TypeName),
+        summary: null,
+        ...(categories.length ? { department: plainText(record.DepartmentName) ?? categories.join("; "), jobFunction: categories.join("; ") } : {}),
+        ...(families.length ? { jobFamily: families.join("; ") } : {}),
+        ...(tracking?.LocationNamesJson?.length ? { office: tracking.LocationNamesJson.join("; ") } : {}),
+        ...(locations.length > 1 ? { secondaryLocations: locations.slice(1) } : {}),
+        locationCity: tracking?.CityNamesJson?.[0] ?? plainText(record.CityName),
+        locationState: tracking?.StateNamesJson?.[0] ?? plainText(record.StateName),
+        locationCountry: countries[0] ?? null,
+        locationPostalCode: tracking?.ZipCodesJson?.[0] ?? plainText(record.ZipCode),
+        requisitionId,
+        officialUrl: new URL(`/search/jobdetails/${cardinalSlug(title)}/${id}`, listingUrl.origin).href,
+        sourcePostedText: plainText(record.PostedDate ?? record.PostedDateRaw ?? tracking?.PostedDateJson),
+        publishedAt: normalizedDate(record.PostedDateRaw ?? tracking?.PostedDateJson ?? record.PostedDate),
+      }];
+    }));
+    const rawIds = records.map((record) => record.ID?.trim()).filter((value): value is string => Boolean(value));
+    const exact = total! <= 10_000
+      && records.length === total
+      && rawIds.length === records.length
+      && new Set(rawIds).size === records.length
+      && jobs.length === records.length;
+    return {
+      status: jobs.length > 0 ? "succeeded" : "failed",
+      responseStatus: response.status,
+      completeListing: jobs.length > 0 && exact,
+      jobs,
+      resolvedListingUrl: listingUrl.href,
+      error: jobs.length > 0 ? null : "Activate job API contained no usable jobs.",
+    };
+  } catch (error) {
+    return {
+      status: "failed",
+      responseStatus: null,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Activate crawler error.",
+    };
+  }
 };
 
 const crawlVanguard = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {

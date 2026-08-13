@@ -5523,6 +5523,123 @@ Wrong description.
     }));
   });
 
+  it("loads a complete Activate job-search catalog from an official listing page", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "audit-row-420",
+      company: "Ross Stores",
+      postingUrl: "https://jobs.rossstores.com/search/searchjobs",
+      adapter: "custom",
+    }, async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.href);
+      if (url.pathname !== "/Search/SearchResults") {
+        return new Response('<script src="/Views/ReusableComponents/JobSearchResultsTable/SearchResultsManager.js"></script>');
+      }
+      expect(url.searchParams.get("jtPageSize")).toBe("10000");
+      return Response.json(JSON.stringify({
+        Result: "OK",
+        TotalRecordCount: 2,
+        Records: [{
+          ID: "8cd45af3-ef52-4c64-bb4c-8c6ceba42c3a",
+          ReferenceNumber: "R12345",
+          Title: "2027 Software Engineering Intern",
+          CityName: "Dublin",
+          StateName: "CA",
+          CityStateDataAbbrev: "Dublin, CA",
+          CountryName: "United States",
+          PostedDateRaw: "2026-08-12T10:00:00",
+          TypeName: "Internship",
+          TrackingObject: {
+            ReferenceNumberJson: "R12345",
+            TitleJson: "2027 Software Engineering Intern",
+            CityNamesJson: ["Dublin"],
+            StateNamesJson: ["CA"],
+            CityStatesDataAbbrevJson: ["Dublin, CA"],
+            CountryNamesJson: ["United States"],
+            ActivateCategoryNamesJson: ["Technology"],
+            ActivateFamilyNamesJson: ["Engineering"],
+          },
+        }, {
+          ID: "4599625f-4f72-4077-a8d2-2310e884c298",
+          Title: "Store Manager",
+          CityStateDataAbbrev: "Austin, TX",
+          CountryName: "United States",
+        }],
+      }));
+    }, new Date());
+
+    expect(requests).toHaveLength(2);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "8cd45af3-ef52-4c64-bb4c-8c6ceba42c3a",
+      requisitionId: "R12345",
+      employmentType: "Internship",
+      jobFamily: "Engineering",
+      locationCountry: "United States",
+      officialUrl: "https://jobs.rossstores.com/search/jobdetails/2027-software-engineering-intern/8cd45af3-ef52-4c64-bb4c-8c6ceba42c3a",
+    }));
+  });
+
+  it("reads every HRMDirect row even when its source HTML omits closing anchor tags", async () => {
+    const html = `<table>
+      <tr class="reqitem" data-req-id="3750384">
+        <td class="departments reqitem">Accounting &amp; Finance</td>
+        <td class="posTitle reqitem"><a href="job-opening.php?req=3750384&req_loc=1375571&&amp;#job">Accounts Payable Specialist</td>
+        <td class="cities reqitem">Sugar Land</td><td class="state reqitem">TX</td>
+      </tr>
+      <tr class="reqitem1" data-req-id="3750428">
+        <td class="departments reqitem1">Engineering</td>
+        <td class="posTitle reqitem1"><a href="job-opening.php?req=3750428&req_loc=1375620&&amp;#job">AI Engineering Intern</td>
+        <td class="cities reqitem1">Houston</td><td class="state reqitem1">TX</td>
+      </tr>
+    </table>`;
+    const result = await crawlSource({
+      id: "p5-0799-applied-optoelectronics",
+      company: "Applied Optoelectronics (AOI)",
+      postingUrl: "https://ao-inc.hrmdirect.com/employment/job-openings.php?search=true&",
+      adapter: "custom",
+    }, async () => new Response(html), new Date());
+
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        externalId: "3750384",
+        title: "Accounts Payable Specialist",
+        department: "Accounting & Finance",
+        location: "Sugar Land, TX",
+      }),
+      expect.objectContaining({
+        externalId: "3750428",
+        title: "AI Engineering Intern",
+        employmentType: "Internship",
+        officialUrl: "https://ao-inc.hrmdirect.com/employment/job-opening.php?req=3750428&req_loc=1375620#job",
+      }),
+    ]);
+  });
+
+  it("keeps an Activate response non-authoritative when record identities repeat", async () => {
+    const result = await crawlSource({
+      id: "p2-0086-cadence-bank",
+      company: "Huntington Bank",
+      postingUrl: "https://huntington-careers.com/search/searchjobs",
+      adapter: "custom",
+    }, async (input) => new URL(String(input)).pathname === "/Search/SearchResults"
+      ? Response.json({
+          Result: "OK",
+          TotalRecordCount: 2,
+          Records: [
+            { ID: "duplicate", Title: "Data Engineer" },
+            { ID: "duplicate", Title: "Data Engineer" },
+          ],
+        })
+      : new Response("ReusableComponents/JobSearchResultsTable"), new Date());
+
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: false }));
+    expect(result.jobs).toHaveLength(1);
+  });
+
   it("does not advance a Jobsyn cycle past an incomplete page", async () => {
     const result = await crawlSource({
       id: "jobsyn-incomplete",
