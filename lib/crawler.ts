@@ -2283,7 +2283,23 @@ const markdownLocationForHref = (markdown: string, href: string): string | null 
 const markdownJobs = (markdown: string, source: CrawlSource): CrawledJob[] => {
   const anchors = markdownJobAnchors(markdown, source);
   const sourceUrl = new URL(source.postingUrl);
-  return jobsFromBrowserAnchors(anchors, source).map((job) => {
+  const avatureOrigin = isAvatureListing(source) ? sourceUrl.hostname.toLowerCase() : null;
+  return jobsFromBrowserAnchors(anchors, source)
+    // Reader mirrors expose navigation and recommendation links alongside
+    // roles. An Avature listing is authoritative only for same-origin
+    // /JobDetail/ URLs; reject foreign ATS links and portal controls before
+    // they can be persisted as jobs under the company name.
+    .filter((job) => {
+      if (!avatureOrigin) return true;
+      try {
+        const official = new URL(job.officialUrl);
+        return official.hostname.toLowerCase() === avatureOrigin
+          && /\/careers\/JobDetail\//i.test(official.pathname);
+      } catch {
+        return false;
+      }
+    })
+    .map((job) => {
     const location = markdownLocationForHref(markdown, job.officialUrl)
       ?? markdownLocationForHref(markdown, job.officialUrl.replace(/^https:/i, "http:"));
     const official = new URL(job.officialUrl);
@@ -2295,7 +2311,7 @@ const markdownJobs = (markdown: string, source: CrawlSource): CrawledJob[] => {
     }
     const normalized = { ...job, officialUrl: official.href };
     return location ? { ...normalized, location } : normalized;
-  });
+    });
 };
 
 const markdownStaticJobs = (markdown: string, source: CrawlSource): CrawledJob[] => {

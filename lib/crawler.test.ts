@@ -932,7 +932,7 @@ Wrong description.
         const number = start + index;
         return `* [Co-op Data Analyst ${number}](https://delta.avature.net/en_US/careers/JobDetail/Co-op-Data-Analyst-${number}/${10_000 + number}?jobId=${10_000 + number}) United States, Georgia, Atlanta.Ref #${10_000 + number}`;
       }).join("\n");
-      return `1-${end} of 20 results\n${jobs}`;
+      return `1-${end} of 20 results\n${jobs}\n* [Sponsored role](https://job-boards.greenhouse.io/forter/jobs/8622108002)`;
     };
     const fetcher: typeof fetch = async (input) => {
       const url = String(input);
