@@ -223,7 +223,16 @@ async function persistBrowserSnapshot(
   try {
     const changes = await store.syncJobs(source.id, jobs, completeListing, facets);
     if (listingUrl && listingUrl !== source.postingUrl && isSafeCareerListingUrl(source.company, source.postingUrl, listingUrl)) {
-      await store.updateResolvedListing(source.id, source.postingUrl, listingUrl, detectUrlAdapter(listingUrl));
+      const original = await database.prepare("SELECT posting_url FROM sources WHERE id = ?").bind(source.id).first<{ posting_url: string | null }>();
+      if (original?.posting_url === null) {
+        await database.prepare(`
+          UPDATE sources
+          SET posting_url = ?, adapter = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ? AND posting_url IS NULL
+        `).bind(listingUrl, detectUrlAdapter(listingUrl), source.id).run();
+      } else {
+        await store.updateResolvedListing(source.id, source.postingUrl, listingUrl, detectUrlAdapter(listingUrl));
+      }
     }
     // A disabled source is allowed through browser verification so an
     // official board found by Chrome can be promoted back to the active queue.
