@@ -22,6 +22,8 @@ const textValue = (value: unknown, max = 500): string | null => {
   return text ? text.slice(0, max) : null;
 };
 
+const NON_JOB_TITLE = /^(?:privacy notice|create (?:an? )?(?:job )?alert|share your information|get in touch!?|join (?:our )?talent (?:community|network)|candidate (?:pool|profile)|sign in|log in|view profile|apply now)$/i;
+
 const dateFromCard = (value: string | null): string | null => {
   if (!value) return null;
   const timestamp = Date.parse(`${value.replace(/^Date Posted:\s*/i, "")} UTC`);
@@ -63,7 +65,7 @@ export function normalizeBrowserJobSnapshot(
   for (const raw of input as BrowserJobRecord[]) {
     const title = textValue(raw?.title);
     const officialUrlText = textValue(raw?.officialUrl, 2_000);
-    if (!title || !officialUrlText) continue;
+    if (!title || !officialUrlText || NON_JOB_TITLE.test(title)) continue;
     let officialUrl: URL;
     try {
       officialUrl = new URL(officialUrlText);

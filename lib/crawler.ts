@@ -290,6 +290,81 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
     listingUrl: "https://careers.smartrecruiters.com/PSICRO",
     adapter: "custom",
   },
+  "p2-0146-oportun": {
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/oportun/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/oportun",
+    adapter: "greenhouse",
+  },
+  "p4-0318-nuvei": {
+    discovered: { kind: "workable", endpoint: "https://apply.workable.com/nuvei/" },
+    listingUrl: "https://apply.workable.com/nuvei/",
+    adapter: "custom",
+  },
+  "p4-0342-sardine": {
+    discovered: { kind: "ashby", endpoint: "https://api.ashbyhq.com/posting-api/job-board/sardine" },
+    listingUrl: "https://jobs.ashbyhq.com/sardine",
+    adapter: "ashby",
+  },
+  "p4-0430-fastly": {
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/fastly/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/fastly",
+    adapter: "greenhouse",
+  },
+  "p4-0492-scale-ai": {
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/scaleai/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/scaleai",
+    adapter: "greenhouse",
+  },
+  "p5-0615-harvey-ai": {
+    discovered: { kind: "ashby", endpoint: "https://api.ashbyhq.com/posting-api/job-board/harvey" },
+    listingUrl: "https://jobs.ashbyhq.com/harvey",
+    adapter: "ashby",
+  },
+  "p5-0657-machina-labs": {
+    discovered: { kind: "lever", endpoint: "https://api.lever.co/v0/postings/MachinaLabs?mode=json" },
+    listingUrl: "https://jobs.lever.co/MachinaLabs",
+    adapter: "lever",
+  },
+  "p5-0739-stardog": {
+    discovered: { kind: "lever", endpoint: "https://api.lever.co/v0/postings/stardog?mode=json" },
+    listingUrl: "https://jobs.lever.co/stardog",
+    adapter: "lever",
+  },
+  "p5-0944-instacart": {
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/instacart/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/instacart",
+    adapter: "greenhouse",
+  },
+  "p5-1011-oscar-health": {
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/oscar/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/oscar",
+    adapter: "greenhouse",
+  },
+  "p5-1022-planet-labs": {
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/planetlabs/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/planetlabs",
+    adapter: "greenhouse",
+  },
+  "p5-1116-zoox": {
+    discovered: { kind: "lever", endpoint: "https://api.lever.co/v0/postings/zoox?mode=json" },
+    listingUrl: "https://jobs.lever.co/zoox",
+    adapter: "lever",
+  },
+  "p4-0498-snyk": {
+    discovered: { kind: "workday", endpoint: "https://snyk.wd103.myworkdayjobs.com/wday/cxs/snyk/External/jobs" },
+    listingUrl: "https://snyk.wd103.myworkdayjobs.com/External",
+    adapter: "workday",
+  },
+  "p4-0313-nbcuniversal": {
+    discovered: { kind: "smartrecruiters", endpoint: "https://api.smartrecruiters.com/v1/companies/NBCUniversal3/postings" },
+    listingUrl: "https://careers.smartrecruiters.com/NBCUniversal3",
+    adapter: "custom",
+  },
+  "legacy-row-128": {
+    discovered: { kind: "smartrecruiters", endpoint: "https://api.smartrecruiters.com/v1/companies/Wabtec/postings" },
+    listingUrl: "https://careers.smartrecruiters.com/Wabtec",
+    adapter: "custom",
+  },
 };
 
 type GreenhouseJob = {
@@ -576,6 +651,9 @@ type PhenomJob = {
   type?: string;
   descriptionTeaser?: string;
   applyUrl?: string;
+  actionUrl?: string;
+  jobUrl?: string;
+  workplaceType?: string;
   postedDate?: string;
   reqId?: string;
   category?: string;
@@ -1608,13 +1686,27 @@ const phenomJobs = (html: string, source: CrawlSource): PhenomPage | null => {
   const normalizedJobs = jobs.flatMap((value) => {
     if (!value || typeof value !== "object") return [];
     const job = value as PhenomJob;
-    if (typeof job.title !== "string" || !job.title.trim()
-      || typeof job.applyUrl !== "string" || !job.applyUrl.trim()) return [];
-    const workplace = `${job.checkRemote ?? ""} ${job.location ?? ""}`.toLowerCase();
+    if (typeof job.title !== "string" || !job.title.trim()) return [];
+    const externalId = job.jobId ?? job.reqId ?? job.jobSeqNo ?? null;
+    const listing = new URL(source.postingUrl);
+    const localeRoot = listing.pathname.replace(/\/(?:search-results|jobs?)(?:\/.*)?$/i, "").replace(/\/$/, "");
+    const titleSlug = job.title.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    // Prefer an explicit first-party detail/apply URL from the payload.  A
+    // generated Phenom detail path is only a fallback: several tenants expose
+    // the real Workday requisition in `applyUrl`, and using the guessed path
+    // both loses the canonical posting URL and prevents optional Workday
+    // detail enrichment from running.
+    const officialUrl = asText(job.jobUrl)
+      ?? asText(job.applyUrl)
+      ?? asText(job.actionUrl)
+      ?? (externalId ? `${listing.origin}${localeRoot}/job/${encodeURIComponent(externalId)}/${titleSlug}` : null);
+    if (!officialUrl) return [];
+    const workplace = `${job.checkRemote ?? ""} ${job.workplaceType ?? ""} ${job.location ?? ""}`.toLowerCase();
     const latitude = typeof job.latitude === "number" ? job.latitude : Number.parseFloat(job.latitude ?? "");
     const longitude = typeof job.longitude === "number" ? job.longitude : Number.parseFloat(job.longitude ?? "");
     return [{
-      externalId: job.jobId ?? job.jobSeqNo ?? null,
+      externalId,
       title: job.title,
       company: source.company,
       location: job.location ?? job.cityStateCountry ?? null,
@@ -1633,7 +1725,8 @@ const phenomJobs = (html: string, source: CrawlSource): PhenomPage | null => {
       ...(Number.isFinite(latitude) ? { latitude } : {}),
       ...(Number.isFinite(longitude) ? { longitude } : {}),
       ...(job.reqId || job.jobId ? { requisitionId: job.reqId ?? job.jobId } : {}),
-      officialUrl: job.applyUrl,
+      ...(asText(job.applyUrl) || asText(job.actionUrl) ? { applyUrl: asText(job.applyUrl) ?? asText(job.actionUrl) } : {}),
+      officialUrl,
       publishedAt: normalizedDate(job.postedDate),
     }];
   });
@@ -8498,6 +8591,155 @@ const crawlHoulihanLokey = async (
   };
 };
 
+const crawlWhatnot = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const endpoint = "https://jobs.whatnot.com/api/jobs";
+  try {
+    const response = await fetchWithTimeout(fetcher, endpoint, { headers: { accept: "application/json" } }, true, { attempts: 2, timeoutMs: 10_000 });
+    if (!response.ok) return { status: isBlockedHttpStatus(response.status) ? "blocked" : "failed", responseStatus: response.status, completeListing: false, jobs: [], error: `Whatnot jobs API returned HTTP ${response.status}.` };
+    const payload = await response.json() as { results?: Array<Record<string, unknown>> };
+    const records = Array.isArray(payload.results) ? payload.results.filter((record) => record.isListed !== false && record.status !== "Archived") : [];
+    const jobs = uniqueJobs(records.flatMap((record): CrawledJob[] => {
+      const id = asText(record.id);
+      const title = asText(record.title);
+      const officialUrl = asText(record.externalLink) ?? asText(record.applyLink);
+      if (!id || !title || !officialUrl) return [];
+      return [{
+        externalId: id, title, company: source.company, location: asText(record.locationExternalName) ?? asText(record.locationName),
+        arrangement: /remote/i.test(asText(record.workplaceType) ?? "") ? "remote" : /hybrid/i.test(asText(record.workplaceType) ?? "") ? "hybrid" : "onsite",
+        employmentType: normalizeEmploymentType(record.employmentType), summary: asText(record.compensationTierSummary),
+        department: asText(record.departmentName), team: asText(record.teamName),
+        secondaryLocations: Array.isArray(record.secondaryLocationNames) ? record.secondaryLocationNames.flatMap((value) => asText(value) ?? []) : [],
+        applyUrl: asText(record.applyLink), officialUrl, publishedAt: normalizedDate(record.publishedDate), sourceUpdatedAt: normalizedDate(record.updatedAt),
+      }];
+    }));
+    return { status: jobs.length ? "succeeded" : "failed", responseStatus: response.status, completeListing: jobs.length > 0 && jobs.length === records.length, jobs, resolvedListingUrl: "https://jobs.whatnot.com/", error: jobs.length ? null : "Whatnot jobs API contained no usable jobs." };
+  } catch (error) {
+    return { status: "failed", responseStatus: null, completeListing: false, jobs: [], error: error instanceof Error ? error.message : "Whatnot jobs API failed." };
+  }
+};
+
+const crawlAurora = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const endpoint = "https://aurora.tech/api/jobs-index";
+  try {
+    const response = await fetchWithTimeout(fetcher, endpoint, { headers: { accept: "application/json" } }, true, { attempts: 2, timeoutMs: 10_000 });
+    if (!response.ok) return { status: isBlockedHttpStatus(response.status) ? "blocked" : "failed", responseStatus: response.status, completeListing: false, jobs: [], error: `Aurora jobs API returned HTTP ${response.status}.` };
+    const payload = await response.json() as { jobs?: Array<Record<string, unknown>> };
+    const records = Array.isArray(payload.jobs) ? payload.jobs : [];
+    const jobs = uniqueJobs(records.flatMap((record): CrawledJob[] => {
+      const id = asText(record.id);
+      const title = asText(record.title);
+      const officialUrl = asText(record.applyLink);
+      if (!id || !title || !officialUrl) return [];
+      const locations = Array.isArray(record.locations) ? record.locations.flatMap((value) => asText(value) ?? []) : [];
+      const description = asText(record.searchText)?.slice(0, 50_000) ?? null;
+      return [{
+        externalId: id, title, company: source.company, location: locations[0] ?? null,
+        arrangement: record.isRemote === true ? "remote" : "onsite", employmentType: normalizeEmploymentType(record.employmentType),
+        summary: description, description, department: asText(record.category), secondaryLocations: locations.slice(1),
+        officialUrl, publishedAt: normalizedDate(record.publishedDate), sourceUpdatedAt: normalizedDate(record.updatedAt),
+      }];
+    }));
+    return { status: jobs.length ? "succeeded" : "failed", responseStatus: response.status, completeListing: jobs.length > 0 && jobs.length === records.length, jobs, resolvedListingUrl: "https://aurora.tech/careers", error: jobs.length ? null : "Aurora jobs API contained no usable jobs." };
+  } catch (error) {
+    return { status: "failed", responseStatus: null, completeListing: false, jobs: [], error: error instanceof Error ? error.message : "Aurora jobs API failed." };
+  }
+};
+
+const crawlJaneStreet = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const endpoint = "https://www.janestreet.com/jobs/main.json";
+  try {
+    const response = await fetchWithTimeout(fetcher, endpoint, { headers: { accept: "application/json" } }, true, { attempts: 2, timeoutMs: 10_000 });
+    if (!response.ok) return { status: isBlockedHttpStatus(response.status) ? "blocked" : "failed", responseStatus: response.status, completeListing: false, jobs: [], error: `Jane Street jobs API returned HTTP ${response.status}.` };
+    const records = await response.json() as Array<Record<string, unknown>>;
+    const jobs = uniqueJobs((Array.isArray(records) ? records : []).flatMap((record): CrawledJob[] => {
+      const id = record.id == null ? null : String(record.id);
+      const title = asText(record.position)?.replaceAll("ꓟ", "M").replaceAll("ꓡ", "L").replaceAll("ꓣ", "R");
+      if (!id || !title) return [];
+      const description = plainText(asText(record.overview)?.slice(0, 100_000));
+      const salaryMin = Number(record.min_salary);
+      const salaryMax = Number(record.max_salary);
+      return [{
+        externalId: id, title, company: source.company, location: asText(record.city), arrangement: "unknown",
+        employmentType: normalizeEmploymentType(record.availability), summary: description, description,
+        department: asText(record.category), team: asText(record.team),
+        salaryMin: Number.isFinite(salaryMin) ? salaryMin : null,
+        salaryMax: Number.isFinite(salaryMax) ? salaryMax : null,
+        salaryCurrency: Number.isFinite(salaryMin) || Number.isFinite(salaryMax) ? "USD" : null,
+        officialUrl: `https://www.janestreet.com/join-jane-street/position/${encodeURIComponent(id)}/`, publishedAt: null,
+      }];
+    }));
+    return { status: jobs.length ? "succeeded" : "failed", responseStatus: response.status, completeListing: jobs.length > 0 && jobs.length === records.length, jobs, resolvedListingUrl: "https://www.janestreet.com/join-jane-street/open-roles/", error: jobs.length ? null : "Jane Street jobs API contained no usable jobs." };
+  } catch (error) {
+    return { status: "failed", responseStatus: null, completeListing: false, jobs: [], error: error instanceof Error ? error.message : "Jane Street jobs API failed." };
+  }
+};
+
+const crawlGuardantHealth = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const listingUrl = "https://guardanthealth.com/careers/jobs/";
+  try {
+    const page = await fetchWithTimeout(fetcher, listingUrl, undefined, true, { attempts: 2, timeoutMs: 10_000 });
+    const html = page.ok ? await page.text() : "";
+    const nonce = html.match(/var\s+workdayApi\s*=\s*\{[^}]*"nonce":"([^"]+)"/i)?.[1];
+    if (!nonce) return { status: page.status === 403 ? "blocked" : "failed", responseStatus: page.status, completeListing: false, jobs: [], error: "Guardant Health careers page did not expose its jobs API nonce." };
+    const response = await fetchWithTimeout(fetcher, "https://guardanthealth.com/wp-admin/admin-ajax.php", {
+      method: "POST", headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded", referer: listingUrl },
+      body: new URLSearchParams({ action: "get_workday_data", nonce }).toString(),
+    }, true, { attempts: 2, timeoutMs: 12_000 });
+    if (!response.ok) return { status: isBlockedHttpStatus(response.status) ? "blocked" : "failed", responseStatus: response.status, completeListing: false, jobs: [], error: `Guardant Health jobs API returned HTTP ${response.status}.` };
+    const payload = await response.json() as { success?: unknown; data?: { data?: Array<Record<string, unknown>> } };
+    const records = payload.success === true && Array.isArray(payload.data?.data) ? payload.data.data : [];
+    const jobs = uniqueJobs(records.flatMap((record): CrawledJob[] => {
+      const id = asText(record.id);
+      const title = asText(record.title);
+      const officialUrl = asText(record.url);
+      if (!id || !title || !officialUrl) return [];
+      const primary = record.primaryLocation as Record<string, unknown> | undefined;
+      const timeType = record.timeType as Record<string, unknown> | undefined;
+      const company = record.company as Record<string, unknown> | undefined;
+      const categories = Array.isArray(record.categories) ? record.categories as Array<Record<string, unknown>> : [];
+      const description = plainText(asText(record.jobDescription)?.slice(0, 100_000));
+      return [{
+        externalId: id, title, company: source.company, location: asText(primary?.descriptor), arrangement: /remote/i.test(asText(primary?.descriptor) ?? "") ? "remote" : "onsite",
+        employmentType: normalizeEmploymentType(timeType?.descriptor), summary: description, description,
+        department: categories.map((value) => asText(value.descriptor)).filter(Boolean).join("; ") || null,
+        businessUnit: asText(company?.descriptor), officialUrl, publishedAt: normalizedDate(record.startDate),
+      }];
+    }));
+    return { status: jobs.length ? "succeeded" : "failed", responseStatus: response.status, completeListing: jobs.length > 0 && jobs.length === records.length, jobs, resolvedListingUrl: listingUrl, error: jobs.length ? null : "Guardant Health jobs API contained no usable jobs." };
+  } catch (error) {
+    return { status: "failed", responseStatus: null, completeListing: false, jobs: [], error: error instanceof Error ? error.message : "Guardant Health jobs API failed." };
+  }
+};
+
+const crawlCapgemini = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const listingUrl = "https://www.capgemini.com/us-en/careers/?country_code=us-en";
+  const pageSize = 100;
+  const fetchPage = async (page: number) => {
+    try {
+      const endpoint = new URL("https://cg-jobstream-api.azurewebsites.net/api/job-search");
+      endpoint.searchParams.set("page", String(page)); endpoint.searchParams.set("size", String(pageSize)); endpoint.searchParams.set("country_code", "us-en");
+      const response = await fetchWithTimeout(fetcher, endpoint, { headers: { accept: "application/json", referer: listingUrl } }, true, { attempts: 1, timeoutMs: 10_000 });
+      if (!response.ok) return null;
+      const payload = await response.json() as { total?: unknown; data?: Array<Record<string, unknown>> };
+      return Number.isInteger(payload.total) && Array.isArray(payload.data) ? { status: response.status, total: payload.total as number, records: payload.data } : null;
+    } catch { return null; }
+  };
+  const first = await fetchPage(1);
+  if (!first || first.total <= 0) return { status: "failed", responseStatus: first?.status ?? null, completeListing: false, jobs: [], error: "Capgemini jobs API did not return a usable first page." };
+  const totalPages = Math.ceil(first.total / pageSize);
+  const pages: Array<Awaited<ReturnType<typeof fetchPage>>> = [first];
+  for (let page = 2; page <= totalPages; page += 6) pages.push(...await Promise.all(Array.from({ length: Math.min(6, totalPages - page + 1) }, (_, index) => fetchPage(page + index))));
+  const records = pages.flatMap((page) => page?.records ?? []);
+  const jobs = uniqueJobs(records.flatMap((record): CrawledJob[] => {
+    const id = asText(record.id); const title = asText(record.title); const officialUrl = asText(record.apply_job_url);
+    if (!id || !title || !officialUrl) return [];
+    const description = plainText(asText(record.description)?.slice(0, 100_000));
+    return [{ externalId: id, title, company: source.company, location: asText(record.location), arrangement: /remote/i.test(asText(record.location) ?? "") ? "remote" : "unknown", employmentType: normalizeEmploymentType(record.contract_type), summary: description, description, department: asText(record.department) ?? asText(record.sbu), experienceLevel: asText(record.experience_level), requisitionId: asText(record.ref) ?? id, officialUrl, publishedAt: normalizedDate(record.updated_at) }];
+  }));
+  const exact = pages.length === totalPages && pages.every((page) => page?.total === first.total) && records.length === first.total && jobs.length === records.length;
+  return { status: jobs.length ? "succeeded" : "failed", responseStatus: first.status, completeListing: exact, jobs, resolvedListingUrl: listingUrl, error: jobs.length ? null : "Capgemini jobs API contained no usable jobs." };
+};
+
 async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
   // Apply an ID-pinned feed only at the root. Redirect/candidate recursion
   // keeps the same source ID, so reapplying it at discovery depth 1 would
@@ -8531,6 +8773,11 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
     source = { ...source, postingUrl: originalPage.href };
   }
   const sourcePage = new URL(source.postingUrl);
+  if (source.id === "p4-0386-whatnot") return crawlWhatnot(source, fetcher);
+  if (source.id === "p5-0812-aurora-innovation") return crawlAurora(source, fetcher);
+  if (source.id === "p5-0950-jane-street") return crawlJaneStreet(source, fetcher);
+  if (source.id === "p5-0921-guardant-health") return crawlGuardantHealth(source, fetcher);
+  if (source.id === "p4-0234-capgemini") return crawlCapgemini(source, fetcher);
   if (source.id === "audit-row-364") return crawlGraybar(source, fetcher);
   if (source.id === "audit-row-354" || sourcePage.hostname === "careers.eogresources.com") return crawlEogJobs(source, fetcher);
   if (source.id === "p2-0076-ameriprise-financial" || sourcePage.hostname === "careers.ameriprise.com") return crawlAmeripriseJobs(source, fetcher);

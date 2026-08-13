@@ -12,7 +12,7 @@ import { jobsFromBrowserAnchors, type BrowserAnchor } from "../lib/browser-job-e
 import { needsBrowserFallback, type LatestCrawlSummary } from "../lib/browser-fallback-selection.ts";
 import { numericPaginationTargets } from "../lib/browser-pagination.ts";
 import { anchorsFromHtml, crawlSource, extractJobsFromHtml, jobsFromTeslaState, type CrawledFacet, type CrawledJob, type CrawlSource, type TeslaState } from "../lib/crawler.ts";
-import { careerCandidates } from "../lib/url-remediation.ts";
+import { careerCandidates, isSafeCareerListingUrl } from "../lib/url-remediation.ts";
 
 export type BrowserFallbackResult = {
   source: CrawlSource;
@@ -31,12 +31,35 @@ const outputPath = resolve(projectRoot, "output/playwright/browser-fallback/resu
 const sqlPath = resolve(projectRoot, ".codex_tmp/browser-fallback.sql");
 const concurrency = Math.max(1, Number.parseInt(process.env.BROWSER_FALLBACK_CONCURRENCY ?? "12", 10));
 const limit = Number.parseInt(process.env.BROWSER_FALLBACK_LIMIT ?? "500", 10);
+const offset = Math.max(0, Number.parseInt(process.env.BROWSER_FALLBACK_OFFSET ?? "0", 10));
 const headless = process.env.BROWSER_FALLBACK_HEADFUL !== "1";
 const forceAll = process.env.BROWSER_FALLBACK_ALL === "1";
 const targetSourceId = process.env.BROWSER_FALLBACK_SOURCE_ID?.trim() || null;
 const targetSourceIds = new Set((process.env.BROWSER_FALLBACK_SOURCE_IDS ?? "").split(",").map((value) => value.trim()).filter(Boolean));
 const productionIngestUrl = process.env.BROWSER_FALLBACK_INGEST_URL?.trim() || null;
 const productionIngestSecret = process.env.BROWSER_FALLBACK_INGEST_SECRET?.trim() || null;
+const liveUrl = process.env.BROWSER_FALLBACK_LIVE_URL?.trim().replace(/\/$/, "") || null;
+const dryRun = process.env.BROWSER_FALLBACK_DRY_RUN === "1";
+
+let cachedOidc = { value: "", expiresAt: 0 };
+const githubOidcToken = async (): Promise<string | null> => {
+  if (productionIngestSecret) return productionIngestSecret;
+  const requestUrl = process.env.ACTIONS_ID_TOKEN_REQUEST_URL;
+  const requestToken = process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
+  if (!requestUrl || !requestToken) return null;
+  if (cachedOidc.value && cachedOidc.expiresAt > Date.now() + 60_000) return cachedOidc.value;
+  const endpoint = new URL(requestUrl);
+  endpoint.searchParams.set("audience", "job-pulse-realtime");
+  const response = await fetch(endpoint, { headers: { authorization: `Bearer ${requestToken}` } });
+  if (!response.ok) throw new Error(`GitHub Actions OIDC returned HTTP ${response.status}.`);
+  const payload = await response.json() as { value?: unknown };
+  if (typeof payload.value !== "string" || !payload.value) throw new Error("GitHub Actions OIDC token was missing.");
+  const encoded = payload.value.split(".")[1];
+  const claims = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as { exp?: unknown };
+  if (typeof claims.exp !== "number") throw new Error("GitHub Actions OIDC token expiry was missing.");
+  cachedOidc = { value: payload.value, expiresAt: claims.exp * 1_000 };
+  return payload.value;
+};
 
 const d1 = async (args: string[]): Promise<string> => {
   const { stdout } = await execFileAsync(wrangler, [
@@ -50,6 +73,33 @@ const problemSources = async (): Promise<CrawlSource[]> => {
   if (targetSourceIds.size > 0) return catalogSeed.sources.flatMap((source): CrawlSource[] => targetSourceIds.has(source.id) && source.postingUrl
     ? [{ id: source.id, company: source.company, postingUrl: source.postingUrl, adapter: source.adapter as CrawlSource["adapter"] }]
     : []);
+  if (liveUrl) {
+    const response = await fetch(`${liveUrl}/api/pulse?resource=sources`, { headers: { accept: "application/json" } });
+    if (!response.ok) throw new Error(`Live source inventory returned HTTP ${response.status}.`);
+    const sources = await response.json() as Array<{
+      id: string; company: string; postingUrl: string | null; adapter: CrawlSource["adapter"];
+      health: string; currentJobs: number; lastCheckedAt: string | null;
+    }>;
+    const healthRank = (source: { health: string; currentJobs: number }): number => {
+      // Empty feeds are the highest-risk state: they may represent a
+      // rendered ATS board that native HTTP parsing missed.  Give those a
+      // browser pass before retrying sources that already have a usable
+      // inventory, while still rotating through every failing category.
+      const emptyRank = source.currentJobs === 0 ? 0 : 1;
+      const stateRank = source.health === "healthy" ? 0
+        : source.health === "inactive" ? 1
+          : source.health === "blocked" ? 2 : 3;
+      return emptyRank * 10 + stateRank;
+    };
+    return sources
+      .filter((source) => source.postingUrl && (source.health === "failed" || source.health === "blocked"
+        || source.health === "inactive" || (source.health === "healthy" && source.currentJobs === 0)))
+      .sort((left, right) => healthRank(left) - healthRank(right)
+        || Date.parse(left.lastCheckedAt ?? "1970-01-01") - Date.parse(right.lastCheckedAt ?? "1970-01-01")
+        || left.company.localeCompare(right.company))
+      .slice(offset, offset + (Number.isFinite(limit) ? Math.max(1, limit) : 500))
+      .map((source) => ({ id: source.id, company: source.company, postingUrl: source.postingUrl!, adapter: source.adapter }));
+  }
   const sql = `WITH latest AS (
     SELECT source_id, status, jobs_seen, ROW_NUMBER() OVER (PARTITION BY source_id ORDER BY started_at DESC) row_number
     FROM crawl_runs
@@ -133,7 +183,7 @@ const inspect = async (page: Page, source: CrawlSource): Promise<BrowserFallback
   try {
     const direct = await crawlSource(source, fetch, new Date());
     if (direct.status === "succeeded" && direct.jobs.length > 0) {
-      return { source, status: direct.responseStatus, finalUrl: source.postingUrl, jobs: direct.jobs, ...(direct.facets?.length ? { facets: direct.facets } : {}), error: null };
+      return { source, status: direct.responseStatus, finalUrl: direct.resolvedListingUrl ?? source.postingUrl, jobs: direct.jobs, ...(direct.facets?.length ? { facets: direct.facets } : {}), error: null };
     }
     const http1Jobs = await jobsViaHttp1(source);
     if (http1Jobs.length > 0) {
@@ -179,7 +229,10 @@ const inspectWithDeadline = async (page: Page, source: CrawlSource): Promise<Bro
     return await Promise.race([
       inspect(page, source),
       new Promise<BrowserFallbackResult>((resolveResult) => {
-        timeout = setTimeout(() => resolveResult({ source, status: null, finalUrl: null, jobs: [], error: "Browser fallback exceeded 60 seconds." }), 60_000);
+        timeout = setTimeout(() => {
+          void page.close({ runBeforeUnload: false }).catch(() => undefined);
+          resolveResult({ source, status: null, finalUrl: null, jobs: [], error: "Browser fallback exceeded 60 seconds." });
+        }, 60_000);
       }),
     ]);
   } finally {
@@ -247,7 +300,10 @@ async function main(): Promise<void> {
       try {
         results[index] = await inspectWithDeadline(page, sources[index]);
       } finally {
-        await page.close();
+        if (!page.isClosed()) await Promise.race([
+          page.close({ runBeforeUnload: false }).catch(() => undefined),
+          new Promise((resolveClose) => setTimeout(resolveClose, 2_000)),
+        ]);
       }
       completed += 1;
       if (completed % 25 === 0) process.stdout.write(`browser fallback ${completed}/${sources.length}\n`);
@@ -257,19 +313,27 @@ async function main(): Promise<void> {
   await mkdir(dirname(outputPath), { recursive: true });
   await mkdir(dirname(sqlPath), { recursive: true });
   await writeFile(outputPath, `${JSON.stringify({ generatedAt: new Date().toISOString(), results }, null, 2)}\n`);
-  const successful = results.filter((result) => result.jobs.length > 0);
-  if (successful.length > 0 && productionIngestUrl && productionIngestSecret) {
+  const successful = results.filter((result) => {
+    if (result.jobs.length === 0 || !result.finalUrl) return false;
+    const safe = isSafeCareerListingUrl(result.source.company, result.source.postingUrl, result.finalUrl);
+    if (!safe) result.error = `Rejected unsafe browser listing candidate: ${result.finalUrl}`;
+    return safe;
+  });
+  if (!dryRun && successful.length > 0 && productionIngestUrl) {
     for (const result of successful) {
+      const bearer = await githubOidcToken();
+      if (!bearer) throw new Error("Production browser ingest authorization is unavailable.");
       const allowedOrigins = [result.finalUrl, ...result.jobs.map((job) => job.officialUrl)]
         .flatMap((value) => {
           try { return value ? [new URL(value).origin] : []; } catch { return []; }
         });
       const response = await fetch(productionIngestUrl, {
         method: "POST",
-        headers: { authorization: `Bearer ${productionIngestSecret}`, "content-type": "application/json" },
+        headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
         body: JSON.stringify({
           action: "ingestBrowserJobs",
           sourceId: result.source.id,
+          listingUrl: result.finalUrl,
           jobs: result.jobs,
           allowedOrigins: [...new Set(allowedOrigins)].slice(0, 5),
           completeListing: false,
@@ -277,7 +341,7 @@ async function main(): Promise<void> {
       });
       if (!response.ok) result.error = `Production browser ingest returned HTTP ${response.status}.`;
     }
-  } else if (successful.length > 0) {
+  } else if (!dryRun && successful.length > 0) {
     await writeFile(sqlPath, persistenceSql(successful));
     await d1(["--file", sqlPath]);
   }

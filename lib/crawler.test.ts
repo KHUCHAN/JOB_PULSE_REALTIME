@@ -4144,6 +4144,7 @@ Wrong description.
     const fetcher: typeof fetch = async () => new Response(`
       <script>var phApp = phApp || {}; phApp.ddo = {"eagerLoadRefineSearch":{"data":{"totalHits":2,"jobs":[
         {"title":"AI Engineer","jobId":"R42","location":"Remote, United States","type":"Full time","descriptionTeaser":"Build useful AI.","applyUrl":"https://jobs.example/apply/R42","postedDate":"2026-08-08T00:00:00.000+0000"},
+        {"title":"Data Science Intern","jobId":"R43","jobSeqNo":"ACME43EXTERNALENUS","location":"New York, United States","workplaceType":"Hybrid","postedDate":"2026-08-09T00:00:00.000+0000"},
         {"title":{"en":"Malformed"},"applyUrl":"https://jobs.example/apply/broken"}
       ]}}};</script>
     `, { status: 200 });
@@ -4157,12 +4158,17 @@ Wrong description.
 
     expect(result).toEqual(expect.objectContaining({
       status: "succeeded",
-      completeListing: false,
+      completeListing: true,
       jobs: [expect.objectContaining({
         externalId: "R42",
         title: "AI Engineer",
         arrangement: "remote",
         officialUrl: "https://jobs.example/apply/R42",
+      }), expect.objectContaining({
+        externalId: "R43",
+        title: "Data Science Intern",
+        arrangement: "hybrid",
+        officialUrl: "https://careers.example/job/R43/data-science-intern",
       })],
     }));
   });
@@ -5360,6 +5366,37 @@ Wrong description.
   });
 
   it.each([
+    ["p2-0146-oportun", "Oportun", "https://www.oportun.com/careers", "https://boards-api.greenhouse.io/v1/boards/oportun/jobs?content=true", "https://job-boards.greenhouse.io/oportun"],
+    ["p4-0430-fastly", "Fastly", "https://www.fastly.com/careers", "https://boards-api.greenhouse.io/v1/boards/fastly/jobs?content=true", "https://job-boards.greenhouse.io/fastly"],
+    ["p4-0492-scale-ai", "Scale AI", "https://scale.com/careers", "https://boards-api.greenhouse.io/v1/boards/scaleai/jobs?content=true", "https://job-boards.greenhouse.io/scaleai"],
+    ["p5-0944-instacart", "Instacart", "https://www.instacart.careers/current-openings", "https://boards-api.greenhouse.io/v1/boards/instacart/jobs?content=true", "https://job-boards.greenhouse.io/instacart"],
+    ["p5-1011-oscar-health", "Oscar Health", "https://www.hioscar.com/careers/search", "https://boards-api.greenhouse.io/v1/boards/oscar/jobs?content=true", "https://job-boards.greenhouse.io/oscar"],
+    ["p5-1022-planet-labs", "Planet Labs", "https://www.planet.com/company/careers/", "https://boards-api.greenhouse.io/v1/boards/planetlabs/jobs?content=true", "https://job-boards.greenhouse.io/planetlabs"],
+  ])("uses the browser-verified Greenhouse feed for %s", async (id, company, postingUrl, endpoint, listingUrl) => {
+    const requests: string[] = [];
+    const result = await crawlSource({ id, company, postingUrl, adapter: "custom" }, async (input) => {
+      requests.push(String(input));
+      return Response.json({ jobs: [{ id: 101, title: "AI Intern", absolute_url: `${listingUrl}/jobs/101` }] });
+    }, new Date());
+    expect(requests).toEqual([endpoint]);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true, resolvedListingUrl: listingUrl }));
+  });
+
+  it.each([
+    ["p5-0657-machina-labs", "Machina Labs", "https://machinalabs.ai/careers", "https://api.lever.co/v0/postings/MachinaLabs?mode=json", "https://jobs.lever.co/MachinaLabs"],
+    ["p5-0739-stardog", "Stardog", "https://www.stardog.com/company/careers/", "https://api.lever.co/v0/postings/stardog?mode=json", "https://jobs.lever.co/stardog"],
+    ["p5-1116-zoox", "Zoox", "https://zoox.com/careers", "https://api.lever.co/v0/postings/zoox?mode=json", "https://jobs.lever.co/zoox"],
+  ])("uses the browser-verified Lever feed for %s", async (id, company, postingUrl, endpoint, listingUrl) => {
+    const requests: string[] = [];
+    const result = await crawlSource({ id, company, postingUrl, adapter: "custom" }, async (input) => {
+      requests.push(String(input));
+      return Response.json([{ id: "job-1", text: "Software Intern", hostedUrl: `${listingUrl}/job-1`, categories: { location: "United States", commitment: "Internship" } }]);
+    }, new Date());
+    expect(requests).toEqual([endpoint]);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true, resolvedListingUrl: listingUrl }));
+  });
+
+  it.each([
     {
       id: "p4-0513-verint",
       company: "Verint",
@@ -5842,7 +5879,7 @@ Wrong description.
     expect(result.jobs).toHaveLength(10);
   });
 
-  it("routes verified PSI CRO and OpenAI sources straight to their public APIs", async () => {
+  it("routes verified PSI CRO, OpenAI, NBCUniversal, and Wabtec sources straight to their public APIs", async () => {
     const psiRequests: string[] = [];
     const psi = await crawlSource({
       id: "p5-1029-psi-cro",
@@ -5870,10 +5907,29 @@ Wrong description.
       }] });
     }, new Date());
 
+    const smartRecruitersRequests: string[] = [];
+    const smartRecruitersFetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      smartRecruitersRequests.push(url);
+      return Response.json({ totalFound: 1, content: [{ id: url.includes("NBCUniversal3") ? "nbc-1" : "wabtec-1", name: "Data Science Intern" }] });
+    };
+    const nbc = await crawlSource({
+      id: "p4-0313-nbcuniversal", company: "NBCUniversal", postingUrl: "https://www.nbcunicareers.com/talent-community", adapter: "custom",
+    }, smartRecruitersFetcher, new Date());
+    const wabtec = await crawlSource({
+      id: "legacy-row-128", company: "Westinghouse Air Brake", postingUrl: "https://careers.wabtec.com/jobs", adapter: "custom",
+    }, smartRecruitersFetcher, new Date());
+
     expect(psiRequests).toEqual(["https://api.smartrecruiters.com/v1/companies/PSICRO/postings"]);
     expect(psi.jobs).toHaveLength(1);
     expect(openAiRequests).toEqual(["https://api.ashbyhq.com/posting-api/job-board/openai"]);
     expect(openAi.jobs).toHaveLength(1);
+    expect(smartRecruitersRequests).toEqual([
+      "https://api.smartrecruiters.com/v1/companies/NBCUniversal3/postings",
+      "https://api.smartrecruiters.com/v1/companies/Wabtec/postings",
+    ]);
+    expect(nbc.jobs).toHaveLength(1);
+    expect(wabtec.jobs).toHaveLength(1);
   });
 
   it("loads News Corp's complete official job sitemap without opening protected pages", async () => {
@@ -6168,5 +6224,50 @@ Wrong description.
       resolvedListingUrl: "https://ats.rippling.com/embed/carbon-health/jobs",
     }));
     expect(result.jobs.map((job) => job.title)).toEqual(["Applied AI Intern"]);
+  });
+
+  it("uses first-party JSON endpoints for browser-only company catalogs", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url === "https://jobs.whatnot.com/api/jobs") return Response.json({ results: [{
+        id: "whatnot-1", title: "AI Intern", externalLink: "https://jobs.whatnot.com/job/whatnot-1",
+        locationExternalName: "San Francisco, CA", isListed: true, status: "Open",
+      }] });
+      if (url === "https://aurora.tech/api/jobs-index") return Response.json({ jobs: [{
+        id: "aurora-1", title: "Software Engineering Intern", applyLink: "https://aurora.tech/job/aurora-1",
+        locations: ["Pittsburgh, PA"], searchText: "Build autonomy software.",
+      }] });
+      if (url === "https://www.janestreet.com/jobs/main.json") return Response.json([{
+        id: 101, position: "Data Science Intern", city: "New York", overview: "Research models.", min_salary: 100,
+      }]);
+      if (url === "https://guardanthealth.com/careers/jobs/") {
+        return new Response('<script>var workdayApi={"ajax_url":"/wp-admin/admin-ajax.php","nonce":"nonce-1"};</script>');
+      }
+      if (url === "https://guardanthealth.com/wp-admin/admin-ajax.php") return Response.json({ success: true, data: { data: [{
+        id: "guardant-1", title: "Machine Learning Intern", url: "https://guardant.wd5.myworkdayjobs.com/job/guardant-1",
+        primaryLocation: { descriptor: "Palo Alto, CA" }, jobDescription: "Build clinical models.",
+      }] } });
+      if (url.startsWith("https://cg-jobstream-api.azurewebsites.net/api/job-search")) return Response.json({ total: 1, data: [{
+        id: "cap-1", title: "Data Engineer Intern", apply_job_url: "https://www.capgemini.com/jobs/cap-1",
+        location: "Chicago, IL", description: "Build data platforms.",
+      }] });
+      return new Response("missing", { status: 404 });
+    };
+
+    const sources = [
+      { id: "p4-0386-whatnot", company: "Whatnot", postingUrl: "https://careers.whatnot.com/home", adapter: "custom" as const },
+      { id: "p5-0812-aurora-innovation", company: "Aurora Innovation", postingUrl: "https://aurora.tech/careers", adapter: "custom" as const },
+      { id: "p5-0950-jane-street", company: "Jane Street", postingUrl: "https://www.janestreet.com/join-jane-street/open-roles/", adapter: "custom" as const },
+      { id: "p5-0921-guardant-health", company: "Guardant Health", postingUrl: "https://guardanthealth.com/careers/jobs/", adapter: "custom" as const },
+      { id: "p4-0234-capgemini", company: "Capgemini", postingUrl: "https://www.capgemini.com/us-en/careers/career-paths/", adapter: "custom" as const },
+    ];
+    const results = await Promise.all(sources.map((source) => crawlSource(source, fetcher, new Date())));
+
+    expect(results.map((result) => [result.status, result.completeListing, result.jobs.length])).toEqual([
+      ["succeeded", true, 1], ["succeeded", true, 1], ["succeeded", true, 1], ["succeeded", true, 1], ["succeeded", true, 1],
+    ]);
+    expect(results.map((result) => result.jobs[0].title)).toEqual([
+      "AI Intern", "Software Engineering Intern", "Data Science Intern", "Machine Learning Intern", "Data Engineer Intern",
+    ]);
   });
 });

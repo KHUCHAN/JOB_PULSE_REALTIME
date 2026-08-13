@@ -24,3 +24,26 @@ jobs:
           JOB_PULSE_SITE_URL: https://job-pulse-realtime.autodev61.chatgpt.site
           JOB_PULSE_MAX_RUN_MINUTES: "20"
         run: node scripts/run-production-crawl.mjs
+
+  browser-recovery:
+    needs: crawl
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Recover browser-only problem sources
+        env:
+          BROWSER_FALLBACK_LIVE_URL: https://job-pulse-realtime.autodev61.chatgpt.site
+          BROWSER_FALLBACK_INGEST_URL: https://job-pulse-realtime.autodev61.chatgpt.site/api/pulse
+          # Rotate the browser queue across scheduled runs so a persistent
+          # Cloudflare/JS source cannot starve the remaining 0-job and failed
+          # sources. Six 60-source windows cover the full problem queue.
+          BROWSER_FALLBACK_LIMIT: "60"
+          BROWSER_FALLBACK_OFFSET: ${{ ((github.run_number - 1) % 6) * 60 }}
+          BROWSER_FALLBACK_CONCURRENCY: "4"
+        run: npm run crawler:fallback:browser

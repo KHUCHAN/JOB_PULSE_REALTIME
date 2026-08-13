@@ -68,4 +68,13 @@ describe("browser crawl ingestion", () => {
       publishedAt: "2026-08-12T00:00:00.000Z",
     }));
   });
+
+  it("drops non-job UI controls even when their URL resembles a job detail", () => {
+    const result = normalizeBrowserJobSnapshot(source, [
+      { officialUrl: "https://careers.alvarezandmarsal.com/jobs/123", title: "Create alert" },
+      { officialUrl: "https://careers.alvarezandmarsal.com/jobs/124", title: "Get in touch!" },
+      { officialUrl: "https://careers.alvarezandmarsal.com/jobs/125", title: "Share Your Information" },
+    ]);
+    expect(result.jobs).toEqual([]);
+  });
 });

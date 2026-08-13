@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { careerCandidates, detectUrlAdapter, isPublicAtsCatalogUrl, isSafeCareerRecommendation, rankCareerLink, unwrapSearchResultUrl } from "./url-remediation";
+import { careerCandidates, detectUrlAdapter, isPublicAtsCatalogUrl, isSafeCareerListingUrl, isSafeCareerRecommendation, rankCareerLink, unwrapSearchResultUrl } from "./url-remediation";
 
 describe("career URL remediation", () => {
   it("prefers a public ATS job board over talent-only and social links", () => {
@@ -72,5 +72,18 @@ describe("career URL remediation", () => {
   it("rejects third-party job aggregators even when the company appears in the path", () => {
     expect(isSafeCareerRecommendation("Tesla", "https://tesla.com/careers", "https://ev.careers/tesla-jobs")).toBe(false);
     expect(isSafeCareerRecommendation("Devon Energy", "https://devonenergy.com/careers", "https://gotocareer.io/companies/devon-energy")).toBe(false);
+  });
+
+  it("rejects vendor, support, talent-only, parent-company, and global aggregator recovery pages", () => {
+    expect(isSafeCareerListingUrl("Rain AI", "https://www.rain.ai/careers", "https://www.ashbyhq.com/")).toBe(false);
+    expect(isSafeCareerListingUrl("Graylog", "https://graylog.org/careers", "https://www.lever.co/job-seeker-support")).toBe(false);
+    expect(isSafeCareerListingUrl("NBCUniversal", "https://www.nbcunicareers.com/talent-community", "https://www.nbcunicareers.com/talent-community")).toBe(false);
+    expect(isSafeCareerListingUrl("Replicate", "https://replicate.com/careers", "https://www.cloudflare.com/careers/")).toBe(false);
+    expect(isSafeCareerListingUrl("Pixley AI", "https://www.ycombinator.com/companies/pixley/jobs", "https://www.ycombinator.com/jobs")).toBe(false);
+  });
+
+  it("accepts the company's exact ATS catalog and branded cross-domain board", () => {
+    expect(isSafeCareerListingUrl("Bitstamp", "https://apply.workable.com/bitstamp/", "https://apply.workable.com/bitstamp/")).toBe(true);
+    expect(isSafeCareerListingUrl("Oportun", "https://www.oportun.com/careers", "https://job-boards.greenhouse.io/oportun")).toBe(true);
   });
 });

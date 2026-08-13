@@ -29,9 +29,9 @@ type BrowserAudit = {
 const execFileAsync = promisify(execFile);
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const wrangler = resolve(projectRoot, "node_modules/.bin/wrangler");
-const outputPath = resolve(projectRoot, "output/playwright/url-audit/results.json");
-const progressPath = resolve(projectRoot, "output/playwright/url-audit/progress.json");
-const concurrency = 4;
+const outputPath = resolve(projectRoot, process.env.AUDIT_OUTPUT_PATH?.trim() || "output/playwright/url-audit/results.json");
+const progressPath = resolve(projectRoot, process.env.AUDIT_PROGRESS_PATH?.trim() || "output/playwright/url-audit/progress.json");
+const concurrency = Math.max(1, Number.parseInt(process.env.AUDIT_CONCURRENCY ?? "4", 10));
 const JOB_SEARCH_TEXT = /\b(?:jobs?|careers?|open (?:positions|roles)|opportunities)\b/i;
 
 const registrableDomain = (hostname: string): string => {
@@ -44,6 +44,17 @@ const registrableDomain = (hostname: string): string => {
 };
 
 const latestProblemSourceIds = async (): Promise<Set<string>> => {
+  const requestedIds = (process.env.AUDIT_SOURCE_IDS ?? "").split(",").map((value) => value.trim()).filter(Boolean);
+  if (requestedIds.length > 0) return new Set(requestedIds);
+  const coveragePath = process.env.AUDIT_COVERAGE_PATH?.trim();
+  if (coveragePath) {
+    const coverage = JSON.parse(await readFile(resolve(projectRoot, coveragePath), "utf8")) as {
+      sources?: Array<{ id?: unknown; status?: unknown }>;
+    };
+    return new Set((coverage.sources ?? []).flatMap((source) => (
+      typeof source.id === "string" && source.status !== "succeeded" ? [source.id] : []
+    )));
+  }
   const sql = `WITH latest AS (
     SELECT source_id, status, ROW_NUMBER() OVER (PARTITION BY source_id ORDER BY started_at DESC) AS row_number
     FROM crawl_runs
@@ -205,18 +216,21 @@ const inspectSourceWithDeadline = async (page: Page, source: SeedSource): Promis
     return await Promise.race([
       inspectSource(page, source),
       new Promise<BrowserAudit>((resolveAudit) => {
-        timeout = setTimeout(() => resolveAudit({
-          id: source.id,
-          company: source.company,
-          originalUrl: source.postingUrl!,
-          browserStatus: null,
-          finalUrl: null,
-          recommendedUrl: null,
-          adapter: source.adapter,
-          candidateUrls: [],
-          resourceUrls: [],
-          error: "Browser audit exceeded the 90 second per-source deadline.",
-        }), 90_000);
+        timeout = setTimeout(() => {
+          void page.close({ runBeforeUnload: false }).catch(() => undefined);
+          resolveAudit({
+            id: source.id,
+            company: source.company,
+            originalUrl: source.postingUrl!,
+            browserStatus: null,
+            finalUrl: null,
+            recommendedUrl: null,
+            adapter: source.adapter,
+            candidateUrls: [],
+            resourceUrls: [],
+            error: "Browser audit exceeded the 90 second per-source deadline.",
+          });
+        }, 90_000);
       }),
     ]);
   } finally {
@@ -231,7 +245,15 @@ async function main(): Promise<void> {
   const previous = await readFile(outputPath, "utf8")
     .then((value) => JSON.parse(value) as { results: BrowserAudit[] })
     .catch(() => ({ results: [] as BrowserAudit[] }));
-  const previousById = new Map(previous.results.map((result) => [result.id, result]));
+  const partial = process.env.AUDIT_RESUME_PARTIAL === "1"
+    ? await readFile(`${outputPath}.partial`, "utf8")
+      .then((value) => JSON.parse(value) as { results: BrowserAudit[] })
+      .catch(() => ({ results: [] as BrowserAudit[] }))
+    : { results: [] as BrowserAudit[] };
+  const previousById = new Map([
+    ...previous.results.map((result) => [result.id, result] as const),
+    ...partial.results.map((result) => [result.id, result] as const),
+  ]);
   const retryUnresolved = process.env.AUDIT_RETRY_UNRESOLVED === "1";
   const sources = retryUnresolved
     ? allSources.filter((source) => !previousById.get(source.id)?.recommendedUrl)
@@ -252,7 +274,10 @@ async function main(): Promise<void> {
         const source = sources[index];
         auditedResults[index] = await inspectSourceWithDeadline(page, source);
       } finally {
-        await page.close();
+        if (!page.isClosed()) await Promise.race([
+          page.close({ runBeforeUnload: false }).catch(() => undefined),
+          new Promise((resolveClose) => setTimeout(resolveClose, 2_000)),
+        ]);
       }
       completed += 1;
       if (completed % 25 === 0) {

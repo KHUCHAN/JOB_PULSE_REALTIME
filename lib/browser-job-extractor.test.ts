@@ -275,4 +275,13 @@ describe("jobsFromBrowserAnchors", () => {
       postingUrl: "https://www.hubspot.com/careers-blog",
     })).toEqual([]);
   });
+
+  it("never treats alert, privacy, or talent-pool controls as job postings", () => {
+    expect(jobsFromBrowserAnchors([
+      { href: "https://apply.workable.com/acme/gdpr_policy", text: "privacy notice" },
+      { href: "https://jobs.smartrecruiters.com/oneclick-ui/company/Acme/job/123", text: "Get in touch!" },
+      { href: "https://recruiting.paylocity.com/Recruiting/PublicLeads/New/acme", text: "Share Your Information" },
+      { href: "https://my.greenhouse.io/users/sign_in?job_board=acme", text: "Create alert" },
+    ], source)).toEqual([]);
+  });
 });

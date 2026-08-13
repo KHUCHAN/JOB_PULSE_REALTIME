@@ -56,6 +56,7 @@ import {
   type GmailRuntimeConfig,
 } from "../../../lib/resume-alert-service";
 import { verifyGithubActionsOidc } from "../../../lib/github-actions-oidc";
+import { isSafeCareerListingUrl } from "../../../lib/url-remediation";
 
 export const dynamic = "force-dynamic";
 
@@ -75,9 +76,11 @@ type GmailEnvironment = {
   CRAWL_INGEST_SECRET?: string;
 };
 
-const browserIngestAuthorized = (request: Request): boolean => {
+const browserIngestAuthorized = async (request: Request): Promise<boolean> => {
   const secret = (env as typeof env & GmailEnvironment).CRAWL_INGEST_SECRET?.trim();
-  return Boolean(secret) && request.headers.get("authorization") === `Bearer ${secret}`;
+  const authorization = request.headers.get("authorization");
+  return (Boolean(secret) && authorization === `Bearer ${secret}`)
+    || verifyGithubActionsOidc(authorization);
 };
 
 const gmailRuntimeConfig = (): GmailRuntimeConfig | null => {
@@ -394,11 +397,15 @@ export async function POST(request: Request): Promise<Response> {
       return json(targets.find((item) => item.id === body.targetId) ?? null);
     }
     if (body.action === "ingestBrowserJobs") {
-      if (!browserIngestAuthorized(request)) return json({ error: "Browser crawl authorization is required." }, 401);
+      if (!await browserIngestAuthorized(request)) return json({ error: "Browser crawl authorization is required." }, 401);
       const sourceId = typeof body.sourceId === "string" ? body.sourceId : "";
       const database = db();
       const source = await browserIngestSource(database, sourceId);
       if (!source) return json({ error: "Browser crawl source is unavailable." }, 404);
+      const listingUrl = typeof body.listingUrl === "string" ? body.listingUrl : "";
+      if (!isSafeCareerListingUrl(source.company, source.postingUrl, listingUrl)) {
+        return json({ error: "Browser snapshot listing URL did not match the source company." }, 400);
+      }
       const allowedOrigins = Array.isArray(body.allowedOrigins)
         ? body.allowedOrigins.filter((value): value is string => typeof value === "string").slice(0, 5)
         : [];
