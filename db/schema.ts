@@ -256,7 +256,7 @@ export const codexReviews = sqliteTable("codex_reviews", {
   id: text("id").primaryKey(),
   jobMatchId: text("job_match_id").notNull().references(() => jobMatches.id, { onDelete: "cascade" }),
   profileId: text("profile_id").notNull().references(() => matchProfiles.id, { onDelete: "cascade" }),
-  decision: text("decision", { enum: ["approve", "hold", "reject"] }).notNull(),
+  decision: text("decision", { enum: ["approve", "reject"] }).notNull(),
   rationale: text("rationale").notNull(),
   verifiedUrl: text("verified_url").notNull(),
   sourceFile: text("source_file"),
