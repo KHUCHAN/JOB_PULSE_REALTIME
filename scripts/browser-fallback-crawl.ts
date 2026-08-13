@@ -222,7 +222,9 @@ const jobsViaHttp1 = async (source: CrawlSource): Promise<CrawledJob[]> => {
   try {
     const { stdout: html } = await execFileAsync("curl", [
       "--http1.1", "--location", "--silent", "--show-error", "--compressed",
-      "--max-time", "30", "--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+      // Keep the cheap HTTP probe bounded so a slow origin cannot consume the
+      // browser recovery window before client-side rendering gets a chance.
+      "--connect-timeout", "5", "--max-time", "12", "--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
       source.postingUrl,
     ], { maxBuffer: 25 * 1024 * 1024 });
     const structured = extractJobsFromHtml(html, source).jobs;
