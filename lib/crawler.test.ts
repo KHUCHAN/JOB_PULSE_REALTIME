@@ -964,6 +964,33 @@ Wrong description.
     expect(requests).toContain("https://r.jina.ai/https://delta.avature.net/en_US/careers/SearchJobs/?jobOffset=10");
   });
 
+  it("falls back to Delta's keyword path when the query listing is empty from a Worker", async () => {
+    const requests: string[] = [];
+    const markdown = [
+      "1-1 of 1 results",
+      "* [Data Science Intern](https://delta.avature.net/en_US/careers/JobDetail/Data-Science-Intern/7001) United States, Georgia, Atlanta.Ref #7001",
+    ].join("\n");
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url.startsWith("https://delta.avature.net/")) return new Response("", { status: 202 });
+      if (/SearchJobs\/intern\?jobOffset=0/.test(url)) return new Response(markdown, { status: 200 });
+      return new Response("", { status: 503 });
+    };
+
+    const result = await crawlSource({
+      id: "audit-row-342",
+      company: "Delta Air Lines",
+      postingUrl: "https://delta.avature.net/en_US/careers/SearchJobs/?jobOffset=40",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-13T16:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toHaveLength(1);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({ title: "Data Science Intern", externalId: "7001" }));
+    expect(requests.some((url) => url.includes("r.jina.ai/https://delta.avature.net/en_US/careers/SearchJobs/intern?jobOffset=0"))).toBe(true);
+  });
+
   it("recovers Wells Fargo's 2027 internship slice from the reader without closing the full catalog", async () => {
     const wellsUrl = "https://www.wellsfargojobs.com/en/jobs/?search=internship";
     const markdown = [

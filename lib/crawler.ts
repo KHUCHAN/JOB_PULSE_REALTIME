@@ -2427,6 +2427,23 @@ const readerMarkdown = async (
     queryless.searchParams.delete("jobOffset");
     targets.push(queryless);
   }
+  // Delta's Avature edge intermittently returns a 202/empty body for the
+  // normal SearchJobs query route from a Worker, while the equivalent
+  // keyword path remains readable. Keep both routes in the bounded reader
+  // fan-out so a transient WAF decision does not turn into a source failure.
+  if (options.querylessFallback
+    && target.searchParams.has("search")
+    && /\/SearchJobs\/?$/i.test(target.pathname)) {
+    const keywordPath = new URL(target);
+    keywordPath.pathname = keywordPath.pathname.replace(/SearchJobs\/?$/i, "SearchJobs/intern");
+    keywordPath.searchParams.delete("search");
+    targets.push(keywordPath);
+    if (target.searchParams.has("jobOffset")) {
+      const keywordPathQueryless = new URL(keywordPath);
+      keywordPathQueryless.searchParams.delete("jobOffset");
+      targets.push(keywordPathQueryless);
+    }
+  }
   const endpoints = [...new Set(targets.flatMap((value) => {
     const http = new URL(value);
     http.protocol = "http:";
