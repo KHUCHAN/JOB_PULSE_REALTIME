@@ -6,7 +6,7 @@ class MemoryStore implements CrawlStore {
   constructor(readonly sources: PersistedSource[], private readonly failSync = false) {}
 
   readonly runs: Array<Record<string, unknown>> = [];
-  readonly synced: Array<{ sourceId: string; jobs: CrawledJob[]; completeListing: boolean }> = [];
+  readonly synced: Array<{ sourceId: string; jobs: CrawledJob[]; completeListing: boolean; suppressNotifications?: boolean }> = [];
   readonly paged: Array<{ sourceId: string; nextPage: number; cycleComplete: boolean; cycleStartedAt: string; previousCycleStartedAt: string | null }> = [];
   readonly resolvedListings: Array<{ sourceId: string; previousUrl: string; postingUrl: string; adapter: PersistedSource["adapter"] }> = [];
 
@@ -20,9 +20,15 @@ class MemoryStore implements CrawlStore {
     return id;
   }
 
-  async syncJobs(sourceId: string, jobs: CrawledJob[], completeListing: boolean): Promise<{ created: number; updated: number; closed: number }> {
+  async syncJobs(
+    sourceId: string,
+    jobs: CrawledJob[],
+    completeListing: boolean,
+    _facets?: unknown,
+    options?: { suppressNotifications?: boolean },
+  ): Promise<{ created: number; updated: number; closed: number }> {
     if (this.failSync) throw new Error("D1 unavailable");
-    this.synced.push({ sourceId, jobs, completeListing });
+    this.synced.push({ sourceId, jobs, completeListing, suppressNotifications: options?.suppressNotifications });
     return { created: jobs.length, updated: 0, closed: completeListing ? 1 : 0 };
   }
 
@@ -187,7 +193,7 @@ describe("runDueCrawls", () => {
     const result = await runDueCrawls(store, fetcher, new Date("2026-08-08T12:00:00.000Z"), { concurrency: 1 });
 
     expect(result).toEqual(expect.objectContaining({ succeeded: 1, closed: 2 }));
-    expect(store.synced[0]).toEqual(expect.objectContaining({ completeListing: false }));
+    expect(store.synced[0]).toEqual(expect.objectContaining({ completeListing: false, suppressNotifications: false }));
     expect(store.paged).toEqual([{
       sourceId: "p4-0285-google",
       nextPage: 1,

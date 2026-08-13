@@ -88,6 +88,9 @@ describe("D1CrawlStore enriched job persistence", () => {
           },
         };
       },
+      batch: async (statements: Array<{ run: () => Promise<unknown> }>) => {
+        for (const statement of statements) if (typeof statement.run === "function") await statement.run();
+      },
     };
     return { db: db as unknown as D1Database, calls };
   };
@@ -411,6 +414,25 @@ describe("D1CrawlStore enriched job persistence", () => {
     }])).rejects.toThrow("injected facet insert failure");
 
     expect(calls.some((call) => call.sql.includes("DELETE FROM source_facets"))).toBe(false);
+  });
+
+  it("suppresses unsent alerts while a checkpointed source is establishing its baseline", async () => {
+    const { db, calls } = fakeDb({
+      existingJobs: [{
+        id: "existing", external_id: "old", title: "Existing role",
+        official_url: "https://jobs.example/existing", status: "open", resume_match_hash: null,
+      }],
+    });
+    const store = new D1CrawlStore(db);
+
+    await store.syncJobs("source-1", [{
+      externalId: "new", title: "Data Science Intern", company: "Acme", location: "Remote",
+      arrangement: "remote", employmentType: "Internship", summary: "Build models.",
+      officialUrl: "https://jobs.example/new", publishedAt: null,
+    }], false, undefined, { suppressNotifications: true });
+
+    expect(calls.some((call) => call.sql.includes("DELETE FROM notification_items"))).toBe(true);
+    expect(calls.some((call) => call.sql.includes("UPDATE job_matches") && call.sql.includes("notification_eligible = 0"))).toBe(true);
   });
 
   it("derives company facet values from structured jobs when the ATS has no native facet payload", async () => {

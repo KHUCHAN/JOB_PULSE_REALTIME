@@ -312,7 +312,13 @@ export class D1CrawlStore implements CrawlStore {
     return { closed: closedCount };
   }
 
-  async syncJobs(sourceId: string, jobs: CrawledJob[], completeListing: boolean, facets?: CrawledFacet[]): Promise<{ created: number; updated: number; closed: number }> {
+  async syncJobs(
+    sourceId: string,
+    jobs: CrawledJob[],
+    completeListing: boolean,
+    facets?: CrawledFacet[],
+    options: { suppressNotifications?: boolean } = {},
+  ): Promise<{ created: number; updated: number; closed: number }> {
     const now = new Date().toISOString();
     const existingResult = await this.db.prepare(`
       SELECT id, external_id, title, official_url, status, resume_match_hash FROM jobs WHERE source_id = ?
@@ -327,6 +333,10 @@ export class D1CrawlStore implements CrawlStore {
     const visibleUrls = new Set(jobs.map((job) => job.officialUrl));
     const resumeTouchedUrls = new Set<string>();
     const notificationEligibleUrls = new Set<string>();
+    // A source with no real catalog rows is being initialized. Its first
+    // complete feed is a baseline, not a set of newly published jobs.
+    const hasPriorCatalogRows = existingResult.results.some((row) => !isNavigationArtifact(row));
+    const allowNewJobNotifications = !options.suppressNotifications && hasPriorCatalogRows;
     const recordFor = async (job: CrawledJob): Promise<Record<string, unknown>> => {
       const aiData = classifyAiDataJob(job);
       const areaMemberships = classifyJobAreas(job).map((area) => ({
@@ -442,7 +452,7 @@ export class D1CrawlStore implements CrawlStore {
       for (const record of records) {
         const officialUrl = String(record.officialUrl);
         const previous = existingByUrl.get(officialUrl);
-        if (!previous) notificationEligibleUrls.add(officialUrl);
+        if (!previous && allowNewJobNotifications) notificationEligibleUrls.add(officialUrl);
         if (!previous || previous.status === "closed" || previous.resume_match_hash !== record.resumeMatchHash) {
           resumeTouchedUrls.add(officialUrl);
         }
@@ -721,6 +731,37 @@ export class D1CrawlStore implements CrawlStore {
       now,
       [...notificationEligibleUrls],
     );
+
+    if (options.suppressNotifications) {
+      // Remove any queued items created by an earlier page of this same
+      // initial catalog walk. Sent mail is intentionally preserved; only
+      // unsent inventory is reclassified as baseline.
+      await this.db.batch([
+        this.db.prepare(`
+          DELETE FROM notification_items
+          WHERE notification_id IN (
+            SELECT ni.notification_id
+            FROM notification_items ni
+            JOIN job_matches jm ON jm.id = ni.job_match_id
+            JOIN jobs j ON j.id = jm.job_id
+            JOIN notifications n ON n.id = ni.notification_id
+            WHERE j.source_id = ? AND jm.notified_at IS NULL AND n.status <> 'sent'
+          )
+        `).bind(sourceId),
+        this.db.prepare(`
+          DELETE FROM notifications
+          WHERE status <> 'sent' AND NOT EXISTS (
+            SELECT 1 FROM notification_items WHERE notification_id = notifications.id
+          )
+        `),
+        this.db.prepare(`
+          UPDATE job_matches
+          SET notification_eligible = 0
+          WHERE notified_at IS NULL
+            AND job_id IN (SELECT id FROM jobs WHERE source_id = ?)
+        `).bind(sourceId),
+      ]);
+    }
 
     const shouldReplaceFacets = completeListing || facets !== undefined;
     const effectiveFacets = completeListing ? mergedFacets(facets, jobs) : facets ?? [];

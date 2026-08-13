@@ -8,7 +8,13 @@ export type PersistedSource = CrawlSource & {
 export interface CrawlStore {
   dueSources(now: string, limit: number): Promise<PersistedSource[]>;
   startRun(source: PersistedSource, scheduledFor: string): Promise<string>;
-  syncJobs(sourceId: string, jobs: CrawledJob[], completeListing: boolean, facets?: CrawledFacet[]): Promise<{ created: number; updated: number; closed: number }>;
+  syncJobs(
+    sourceId: string,
+    jobs: CrawledJob[],
+    completeListing: boolean,
+    facets?: CrawledFacet[],
+    options?: { suppressNotifications?: boolean },
+  ): Promise<{ created: number; updated: number; closed: number }>;
   advancePagedCrawl(
     sourceId: string,
     pagination: { nextPage: number; cycleComplete: boolean; totalPages: number },
@@ -54,7 +60,19 @@ const runSource = async (
   let changes = { created: 0, updated: 0, closed: 0 };
   if (crawl.status === "succeeded") {
     try {
-      changes = await store.syncJobs(source.id, crawl.jobs, crawl.completeListing, crawl.facets);
+      // A checkpointed feed is initially walked over several invocations. Every
+      // page in that first catalog pass is existing inventory, not a newly
+      // published role; alert only after the first complete authoritative cycle.
+      const suppressInitialCatalogNotifications = Boolean(
+        crawl.pagination && source.crawlPreviousCycleStartedAt == null,
+      );
+      changes = await store.syncJobs(
+        source.id,
+        crawl.jobs,
+        crawl.completeListing,
+        crawl.facets,
+        { suppressNotifications: suppressInitialCatalogNotifications },
+      );
       if (crawl.pagination) {
         const paged = await store.advancePagedCrawl(
           source.id,
