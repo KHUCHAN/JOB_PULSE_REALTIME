@@ -2418,7 +2418,7 @@ const crawlAvatureReaderPages = async (
 const readerMarkdown = async (
   postingUrl: string,
   fetcher: typeof fetch,
-  options: { querylessFallback?: boolean; richLinks?: boolean } = {},
+  options: { querylessFallback?: boolean; richLinks?: boolean; maxConcurrent?: number; timeoutMs?: number } = {},
 ): Promise<string | null> => {
   const target = new URL(postingUrl);
   const targets = [target];
@@ -2449,7 +2449,7 @@ const readerMarkdown = async (
     http.protocol = "http:";
     return [`https://r.jina.ai/${value.href}`, `https://r.jina.ai/${http.href}`];
   }))];
-  const results = await Promise.allSettled(endpoints.map(async (endpoint) => {
+  const readEndpoint = async (endpoint: string): Promise<string | null> => {
     try {
       const response = await fetchWithTimeout(
         fetcher,
@@ -2459,9 +2459,9 @@ const readerMarkdown = async (
           : { accept: "text/plain", "x-retain-links": "all", "x-with-links-summary": "all" } },
         false,
         // Avature's WAF can make the reader take longer from a Worker than
-        // from a desktop request. Try both protocol variants concurrently so
-        // one slow edge does not consume the entire source deadline.
-        { attempts: 1, timeoutMs: 20_000 },
+        // from a desktop request. The caller can cap concurrency so a
+        // fallback pass does not trip the reader's rate limiter.
+        { attempts: 1, timeoutMs: options.timeoutMs ?? 20_000 },
       );
       if (!response.ok) return null;
       const text = await response.text();
@@ -2469,10 +2469,16 @@ const readerMarkdown = async (
     } catch {
       return null;
     }
-  }));
-  return results.find((result): result is PromiseFulfilledResult<string> =>
-    result.status === "fulfilled" && typeof result.value === "string" && result.value.length > 0,
-  )?.value ?? null;
+  };
+  const maxConcurrent = Math.max(1, Math.min(endpoints.length, Math.trunc(options.maxConcurrent ?? endpoints.length)));
+  for (let index = 0; index < endpoints.length; index += maxConcurrent) {
+    const batch = await Promise.allSettled(endpoints.slice(index, index + maxConcurrent).map(readEndpoint));
+    const result = batch.find((value): value is PromiseFulfilledResult<string> =>
+      value.status === "fulfilled" && typeof value.value === "string" && value.value.length > 0,
+    );
+    if (result) return result.value;
+  }
+  return null;
 };
 
 const crawlDeltaAvature = async (
@@ -2486,7 +2492,12 @@ const crawlDeltaAvature = async (
   // catalog (which would make unrelated roles eligible for closure).
   listing.searchParams.set("search", "intern");
   listing.searchParams.set("jobOffset", "0");
-  const markdown = await readerMarkdown(listing.href, fetcher, { querylessFallback: true, richLinks: false });
+  const markdown = await readerMarkdown(listing.href, fetcher, {
+    querylessFallback: true,
+    richLinks: false,
+    maxConcurrent: 2,
+    timeoutMs: 12_000,
+  });
   if (!markdown) return {
     status: "failed", responseStatus: null, completeListing: false, jobs: [],
     error: "Delta Avature reader listing was unavailable.",
