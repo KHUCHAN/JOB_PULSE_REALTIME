@@ -264,4 +264,15 @@ describe("jobsFromBrowserAnchors", () => {
       "Rf Ms Ic Design Engineer",
     ]);
   });
+
+  it("never treats careers blog profiles as live job postings", () => {
+    expect(jobsFromBrowserAnchors([{
+      href: "https://www.hubspot.com/careers-blog/meet-elizabeth-premium-customer-support-specialist",
+      text: "Meet Elizabeth: Premium Customer Support Specialist",
+    }], {
+      ...source,
+      company: "HubSpot",
+      postingUrl: "https://www.hubspot.com/careers-blog",
+    })).toEqual([]);
+  });
 });

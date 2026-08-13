@@ -482,7 +482,8 @@
     "p4-0326-paxos": { "url": "https://jobs.ashbyhq.com/paxos", "adapter": "ashby" },
     "p4-0474-poshmark": { "url": "https://jobs.ashbyhq.com/poshmark", "adapter": "ashby" },
     "legacy-row-849": { "url": "https://sjobs.brassring.com/TGnewUI/Search/Home/Home?partnerid=26350&siteid=6930", "adapter": "custom" },
-    "p4-0349-slalom": { "url": "https://jobs.slalom.com/en_US/careersmarketplace/SearchJobs", "adapter": "custom" }
+    "p4-0349-slalom": { "url": "https://jobs.slalom.com/en_US/careersmarketplace/SearchJobs", "adapter": "custom" },
+    "p4-0443-hubspot": { "url": "https://www.hubspot.com/careers/jobs/all", "adapter": "custom" }
   },
   "rejectedRecommendations": [
     "https://www.better.co/careers",

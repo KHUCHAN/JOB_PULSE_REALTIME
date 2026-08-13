@@ -1899,6 +1899,251 @@ const crawlInfosys = async (
   }
 };
 
+type HubSpotJob = {
+  id?: number | string;
+  title?: string;
+  department?: { name?: string | null } | null;
+  office?: { location?: string | null } | null;
+  location?: { name?: string | null } | null;
+};
+
+const HUBSPOT_JOBS_QUERY = `query Jobs($departmentIds: [Int], $officeIds: [Int], $languages: [String], $roleTypes: [String], $searchQuery: String) {
+  jobs(departmentIds: $departmentIds, officeIds: $officeIds, languages: $languages, roleTypes: $roleTypes, searchQuery: $searchQuery) {
+    id title department { name } office { location } location { name }
+  }
+}`;
+
+const crawlHubSpot = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  try {
+    const response = await fetchWithTimeout(fetcher, "https://wtcfns.hubspot.com/careers/graphql", {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({
+        operationName: "Jobs",
+        query: HUBSPOT_JOBS_QUERY,
+        variables: { departmentIds: [], officeIds: [], languages: [], roleTypes: [], searchQuery: "" },
+      }),
+    }, false, { attempts: 2, timeoutMs: 15_000 });
+    if (!response.ok) {
+      return {
+        status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
+        responseStatus: response.status,
+        completeListing: false,
+        jobs: [],
+        error: `HubSpot careers GraphQL returned HTTP ${response.status}.`,
+      };
+    }
+    const payload = await response.json() as { data?: { jobs?: HubSpotJob[] }; errors?: unknown[] };
+    const raw = payload.data?.jobs;
+    if (!Array.isArray(raw) || raw.length === 0 || (payload.errors?.length ?? 0) > 0) {
+      throw Object.assign(new Error("HubSpot careers GraphQL returned no authoritative job catalog."), { responseStatus: response.status });
+    }
+    const jobs = raw.flatMap((job): CrawledJob[] => {
+      const id = job.id == null ? "" : String(job.id).trim();
+      const title = job.title?.replace(/\s+/g, " ").trim() ?? "";
+      if (!id || !title) return [];
+      const location = job.location?.name?.trim() || job.office?.location?.trim() || null;
+      const programs = classifyJobPrograms(title).keys;
+      return [{
+        externalId: id,
+        title,
+        company: source.company,
+        location,
+        arrangement: /\bremote\b/i.test(location ?? "") ? "remote" : "unknown",
+        employmentType: programs.some((key) => key === "internship" || key === "coop") ? "Internship" : null,
+        summary: null,
+        department: job.department?.name?.trim() || null,
+        office: job.office?.location?.trim() || null,
+        locationCountry: /\b(?:USA|United States)\b/i.test(location ?? "") ? "United States" : null,
+        requisitionId: id,
+        officialUrl: `https://www.hubspot.com/careers/jobs/${encodeURIComponent(id)}`,
+        publishedAt: null,
+      }];
+    });
+    const exact = jobs.length === raw.length && new Set(jobs.map((job) => job.externalId)).size === raw.length;
+    if (!exact) throw Object.assign(new Error("HubSpot careers GraphQL contained malformed or duplicate job identities."), { responseStatus: response.status });
+    return { status: "succeeded", responseStatus: response.status, completeListing: true, jobs, error: null };
+  } catch (error) {
+    const responseStatus = typeof error === "object" && error && "responseStatus" in error
+      ? Number((error as { responseStatus: unknown }).responseStatus)
+      : null;
+    return {
+      status: responseStatus != null && isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown HubSpot crawler error.",
+    };
+  }
+};
+
+type BrassRingQuestion = { QuestionName?: string; Value?: string | null };
+type BrassRingJob = { Questions?: BrassRingQuestion[] };
+type BrassRingPayload = {
+  Jobs?: { Job?: BrassRingJob[] } | null;
+  JobsCount?: number;
+};
+
+const responseCookies = (response: Response): string[] => {
+  const headers = response.headers as Headers & { getSetCookie?: () => string[] };
+  const cookies = headers.getSetCookie?.() ?? [];
+  if (cookies.length > 0) return cookies;
+  const combined = response.headers.get("set-cookie");
+  return combined ? combined.split(/,(?=[^;,]+=)/) : [];
+};
+
+const mergeCookies = (jar: Map<string, string>, response: Response): void => {
+  for (const cookie of responseCookies(response)) {
+    const pair = cookie.split(";", 1)[0]?.trim();
+    const name = pair?.split("=", 1)[0]?.trim();
+    if (pair && name) jar.set(name, pair);
+  }
+};
+
+const brassRingJobs = (payload: BrassRingPayload, source: CrawlSource): CrawledJob[] => {
+  const raw = payload.Jobs?.Job;
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((job): CrawledJob[] => {
+    const fields = new Map((job.Questions ?? []).flatMap((question) => {
+      const key = question.QuestionName?.trim().toLowerCase();
+      return key ? [[key, question.Value?.trim() ?? ""] as const] : [];
+    }));
+    const id = fields.get("reqid") ?? "";
+    const title = fields.get("jobtitle")?.replace(/\s+/g, " ").trim() ?? "";
+    if (!id || !title) return [];
+    const location = fields.get("formtext5")?.replace(/\s+/g, " ").trim() || null;
+    const description = plainText(fields.get("jobdescription")) ?? null;
+    const programs = classifyJobPrograms(title).keys;
+    return [{
+      externalId: id,
+      title,
+      company: source.company,
+      location,
+      arrangement: /\bremote\b/i.test(`${title} ${location ?? ""}`) ? "remote" : "unknown",
+      employmentType: programs.some((key) => key === "internship" || key === "coop") ? "Internship" : null,
+      summary: description?.slice(0, 1_200) ?? null,
+      description,
+      businessUnit: fields.get("formtext6")?.replace(/\s+/g, " ").trim() || null,
+      locationCountry: "United States",
+      requisitionId: id,
+      sourcePostedText: fields.get("lastupdated") || null,
+      officialUrl: `https://sjobs.brassring.com/TGnewUI/Search/home/HomeWithPreLoad?partnerid=26350&siteid=6930&PageType=JobDetails&jobid=${encodeURIComponent(id)}`,
+      publishedAt: normalizedDate(fields.get("lastupdated")),
+    }];
+  });
+};
+
+const crawlPerformanceFoodGroup = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  try {
+    const listingUrl = new URL(source.postingUrl);
+    const initial = await fetchWithTimeout(fetcher, listingUrl, {}, true, { attempts: 1, timeoutMs: 15_000 });
+    responseStatus = initial.status;
+    if (!initial.ok) throw Object.assign(new Error(`Performance Food Group careers returned HTTP ${initial.status}.`), { responseStatus: initial.status });
+    const cookies = new Map<string, string>();
+    mergeCookies(cookies, initial);
+    const html = await initial.text();
+    const token = decodeHtmlAttribute(html.match(/name=["']__RequestVerificationToken["'][^>]*value=["']([^"']+)/i)?.[1] ?? "");
+    const encryptedSessionValue = decodeHtmlAttribute(html.match(/id=["']CookieValue["'][^>]*value=["']([^"']+)/i)?.[1] ?? "");
+    if (!token || !encryptedSessionValue || cookies.size === 0) throw new Error("Performance Food Group careers did not establish a crawl session.");
+    const requestHeaders = () => ({
+      "content-type": "application/json;charset=UTF-8",
+      accept: "application/json, text/plain, */*",
+      RFT: token,
+      cookie: [...cookies.values()].join("; "),
+      referer: listingUrl.href,
+    });
+    const firstResponse = await fetchWithTimeout(fetcher, new URL("/TgNewUI/Search/Ajax/CBMatchedJobs", listingUrl.origin), {
+      method: "POST",
+      headers: requestHeaders(),
+      body: JSON.stringify({
+        PartnerId: "26350",
+        SiteId: "6930",
+        ListKeyword: [],
+        Location: "",
+        UserGivenKeyWords: "",
+        KeywordCustomSolrFields: "JobTitle,FORMTEXT4,FORMTEXT6,FORMTEXT7",
+        LocationCustomSolrFields: "FORMTEXT5,FORMTEXT6",
+        FacetFilterFields: null,
+        TurnOffHttps: false,
+        encryptedsessionvalue: encryptedSessionValue,
+      }),
+    }, true, { attempts: 1, timeoutMs: 15_000 });
+    responseStatus = firstResponse.status;
+    if (!firstResponse.ok) throw Object.assign(new Error(`Performance Food Group job API returned HTTP ${firstResponse.status}.`), { responseStatus: firstResponse.status });
+    mergeCookies(cookies, firstResponse);
+    const bootstrap = await firstResponse.json() as BrassRingPayload;
+    const total = Number(bootstrap.JobsCount);
+    const bootstrapJobs = brassRingJobs(bootstrap, source);
+    if (!Number.isInteger(total) || total <= 0 || bootstrapJobs.length !== Math.min(50, total)) {
+      throw new Error("Performance Food Group job API returned no authoritative first page.");
+    }
+    const totalPages = Math.ceil(total / 50);
+    const startPage = Math.min(Math.max(source.crawlPageCursor ?? 1, 1), totalPages);
+    // CBMatchedJobs establishes the session but may use a different default sort.
+    // Fetch every admitted page through one stable sort endpoint so identities do
+    // not overlap merely because the bootstrap and page windows were ordered differently.
+    const endPage = Math.min(startPage + 17, totalPages);
+    const pages = Array.from({ length: endPage - startPage + 1 }, (_, index) => startPage + index);
+    const payloads: Array<{ page: number; payload: BrassRingPayload; jobs: CrawledJob[] }> = [];
+    for (const page of pages) {
+      const response = await fetchWithTimeout(fetcher, new URL("/TgNewUI/Search/Ajax/ProcessSortAndShowMoreJobs", listingUrl.origin), {
+        method: "POST",
+        headers: requestHeaders(),
+        body: JSON.stringify({
+          partnerId: 26350,
+          siteId: 6930,
+          keyword: "",
+          location: "",
+          keywordCustomSolrFields: "JobTitle,FORMTEXT4,FORMTEXT6,FORMTEXT7",
+          locationCustomSolrFields: "FORMTEXT5,FORMTEXT6",
+          linkId: "",
+          Latitude: 0,
+          Longitude: 0,
+          sortby: 1,
+          facetfilterfields: { Facet: [] },
+          powersearchoptions: { PowerSearchOption: [] },
+          SortType: "JobTitle",
+          pageNumber: page,
+          encryptedSessionValue,
+        }),
+      }, true, { attempts: 1, timeoutMs: 15_000 });
+      responseStatus = response.status;
+      if (!response.ok) throw Object.assign(new Error(`Performance Food Group page ${page} returned HTTP ${response.status}.`), { responseStatus: response.status });
+      mergeCookies(cookies, response);
+      const payload = await response.json() as BrassRingPayload;
+      payloads.push({ page, payload, jobs: brassRingJobs(payload, source) });
+    }
+    const exact = payloads.every(({ page, payload, jobs }) => {
+      const expected = Math.min(50, total - (page - 1) * 50);
+      return payload.JobsCount === total && jobs.length === expected && new Set(jobs.map((job) => job.externalId)).size === jobs.length;
+    });
+    const jobs = uniqueJobs(payloads.flatMap((payload) => payload.jobs));
+    const expectedUnique = payloads.reduce((sum, payload) => sum + payload.jobs.length, 0);
+    const stable = exact && jobs.length === expectedUnique;
+    const cycleComplete = stable && endPage === totalPages;
+    return {
+      status: jobs.length > 0 ? "succeeded" : "failed",
+      responseStatus,
+      completeListing: stable && startPage === 1 && cycleComplete,
+      jobs,
+      pagination: { nextPage: cycleComplete ? 1 : stable ? endPage : startPage, cycleComplete, totalPages },
+      error: jobs.length > 0 ? null : "Performance Food Group careers contained no usable jobs.",
+    };
+  } catch (error) {
+    const status = typeof error === "object" && error && "responseStatus" in error
+      ? Number((error as { responseStatus: unknown }).responseStatus)
+      : responseStatus;
+    return {
+      status: status != null && isBlockedHttpStatus(status) ? "blocked" : "failed",
+      responseStatus: status,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Performance Food Group crawler error.",
+    };
+  }
+};
+
 const READER_JOB_DETAIL = /(?:\/jobs\/\d{4,}(?:[-/]|$)|\/site\/careers\/jobs\/\d+|\/careers\/(?:job\/\d+|find-your-job\/[^/?#]+-j\d+|jobdetail(?:[/?]|$)|details\/|position\/)|\/[^/?#]+\/[^/?#]+\/[a-f0-9]{24,}\/job\/?(?:[?#]|$)|\/(?:default|[a-z]{2}(?:_[a-z]{2})?|[^/?#]+)\/job\/[^/?#]+\/\d+(?:-[^/?#]+)?(?:[/?#]|$)|[?&](?:jobid|job_id|gh_jid|reqid|pid|opportunityid)=)/i;
 
 const markdownAnchors = (markdown: string, baseUrl: string): BrowserAnchor[] => [...markdown.matchAll(
@@ -8321,6 +8566,8 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   if (source.id === "p5-0752-tiktok" || sourcePage.hostname === "lifeattiktok.com") return crawlTikTok(source, fetcher);
   if (source.id === "p4-0291-houlihan-lokey") return crawlHoulihanLokey(source, fetcher, now);
   if (source.id === "p4-0296-infosys-consulting" || sourcePage.hostname === "digitalcareers.infosys.com") return crawlInfosys(source, fetcher);
+  if (source.id === "p4-0443-hubspot") return crawlHubSpot(source, fetcher);
+  if (source.id === "legacy-row-849") return crawlPerformanceFoodGroup(source, fetcher);
   if (source.id === "p4-0245-cisco") {
     return crawlWorkday(source, "https://cisco.wd5.myworkdayjobs.com/wday/cxs/cisco/Cisco_Careers/jobs", fetcher, now);
   }

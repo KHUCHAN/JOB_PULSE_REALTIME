@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:eaf35fc1f0f79b2ee435b5050d9228875c2faf41342c0d90de8515390782bbdd",
+  "version": "v2:sha256:cd06598910ca978e10258e0ca2b8563e66edf9f4fa258c7e6a5e9c876fd23755",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -12711,7 +12711,7 @@
       "id": "p4-0443-hubspot",
       "masterRow": 2669,
       "company": "HubSpot",
-      "postingUrl": "https://www.hubspot.com/careers",
+      "postingUrl": "https://www.hubspot.com/careers/jobs/all",
       "talentUrl": "https://www.hubspot.com/careers",
       "channel": "공식 Careers/공고 페이지 내 Talent Community",
       "adapter": "custom",

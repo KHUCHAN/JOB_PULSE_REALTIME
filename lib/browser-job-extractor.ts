@@ -78,6 +78,7 @@ export const jobsFromBrowserAnchors = (anchors: BrowserAnchor[], source: CrawlSo
     }
     if (!['http:', 'https:'].includes(url.protocol)) continue;
     if (/\.(?:pdf|docx?|xlsx?|pptx?|zip)(?:$|[?#])/i.test(`${url.pathname}${url.search}`)) continue;
+    if (/\/careers-blog(?:\/|$)/i.test(url.pathname)) continue;
     const path = `${url.pathname}${url.search}`;
     const sourceHost = sourceUrl.hostname.replace(/^www\./, "");
     const targetHost = url.hostname.replace(/^www\./, "");

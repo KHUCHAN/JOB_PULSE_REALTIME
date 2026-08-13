@@ -3732,6 +3732,97 @@ Wrong description.
     }));
   });
 
+  it("uses HubSpot's official GraphQL catalog instead of careers blog articles", async () => {
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      requests.push({ url: String(input), body: JSON.parse(String(init?.body)) as Record<string, unknown> });
+      return Response.json({ data: { jobs: [
+        { id: 1001, title: "Software Engineer Intern", department: { name: "Product, UX & Engineering" }, office: { location: "Remote - USA" }, location: { name: "Remote - USA" } },
+        { id: 1002, title: "Account Executive", department: { name: "Sales" }, office: { location: "Dublin, Ireland" }, location: { name: "Dublin, Ireland" } },
+      ] } });
+    };
+
+    const result = await crawlSource({
+      id: "p4-0443-hubspot",
+      company: "HubSpot",
+      postingUrl: "https://www.hubspot.com/careers/jobs/all",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-12T00:00:00Z"));
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url).toBe("https://wtcfns.hubspot.com/careers/graphql");
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      jobs: [
+        expect.objectContaining({
+          externalId: "1001",
+          title: "Software Engineer Intern",
+          employmentType: "Internship",
+          locationCountry: "United States",
+          officialUrl: "https://www.hubspot.com/careers/jobs/1001",
+        }),
+        expect.objectContaining({ externalId: "1002", title: "Account Executive" }),
+      ],
+    }));
+  });
+
+  it("checkpoints Performance Food Group's full official BrassRing catalog", async () => {
+    const total = 1_051;
+    const pages: number[] = [];
+    const job = (index: number) => ({ Questions: [
+      { QuestionName: "reqid", Value: String(900_000 + index) },
+      { QuestionName: "jobtitle", Value: `Warehouse Engineer ${index}` },
+      { QuestionName: "formtext5", Value: "Richmond, Virginia (VA)" },
+      { QuestionName: "formtext6", Value: "Performance Foodservice" },
+      { QuestionName: "lastupdated", Value: "12-Aug-2026" },
+      { QuestionName: "jobdescription", Value: `<p>Official job description ${index}</p>` },
+    ] });
+    const payload = (page: number) => ({
+      JobsCount: total,
+      Jobs: { Job: Array.from({ length: Math.min(50, total - (page - 1) * 50) }, (_, offset) => job((page - 1) * 50 + offset + 1)) },
+    });
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/Home")) {
+        pages.push(0);
+        return new Response(`<input id="CookieValue" value="encrypted"><input name="__RequestVerificationToken" value="token">`, {
+          status: 200,
+          headers: { "set-cookie": "session=abc; Path=/; HttpOnly" },
+        });
+      }
+      if (url.pathname.endsWith("/CBMatchedJobs")) {
+        pages.push(1);
+        return Response.json(payload(1));
+      }
+      const page = Number((JSON.parse(String(init?.body)) as { pageNumber: number }).pageNumber);
+      pages.push(page);
+      return Response.json(payload(page));
+    };
+
+    const result = await crawlSource({
+      id: "legacy-row-849",
+      company: "Performance Food Group",
+      postingUrl: "https://sjobs.brassring.com/TGnewUI/Search/Home/Home?partnerid=26350&siteid=6930",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-12T00:00:00Z"));
+
+    expect(pages).toEqual([0, 1, ...Array.from({ length: 18 }, (_, index) => index + 1)]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: { nextPage: 18, cycleComplete: false, totalPages: 22 },
+    }));
+    expect(result.jobs).toHaveLength(900);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "900001",
+      title: "Warehouse Engineer 1",
+      location: "Richmond, Virginia (VA)",
+      businessUnit: "Performance Foodservice",
+      publishedAt: "2026-08-12T07:00:00.000Z",
+    }));
+  });
+
   it("preserves a direct Workday URL search query when crawling a subsidiary catalog", async () => {
     const requestBodies: Array<{ searchText?: string }> = [];
     const fetcher: typeof fetch = async (_input, init) => {
