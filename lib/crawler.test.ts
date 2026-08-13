@@ -974,7 +974,9 @@ Wrong description.
       const url = String(input);
       requests.push(url);
       if (url.startsWith("https://delta.avature.net/")) return new Response("", { status: 202 });
-      if (/SearchJobs\/intern\?jobOffset=0/.test(url)) return new Response(markdown, { status: 200 });
+      if (url.includes("r.jina.ai/http://r.jina.ai/") && /SearchJobs\/intern\?jobOffset=0/.test(url)) {
+        return new Response(markdown, { status: 200 });
+      }
       return new Response("", { status: 503 });
     };
 
@@ -988,7 +990,7 @@ Wrong description.
     expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
     expect(result.jobs).toHaveLength(1);
     expect(result.jobs[0]).toEqual(expect.objectContaining({ title: "Data Science Intern", externalId: "7001" }));
-    expect(requests.some((url) => url.includes("r.jina.ai/https://delta.avature.net/en_US/careers/SearchJobs/intern?jobOffset=0"))).toBe(true);
+    expect(requests.some((url) => url.includes("r.jina.ai/http://r.jina.ai/https://delta.avature.net/en_US/careers/SearchJobs/intern?jobOffset=0"))).toBe(true);
   });
 
   it("recovers Wells Fargo's 2027 internship slice from the reader without closing the full catalog", async () => {

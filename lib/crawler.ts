@@ -2418,7 +2418,13 @@ const crawlAvatureReaderPages = async (
 const readerMarkdown = async (
   postingUrl: string,
   fetcher: typeof fetch,
-  options: { querylessFallback?: boolean; richLinks?: boolean; maxConcurrent?: number; timeoutMs?: number } = {},
+  options: {
+    querylessFallback?: boolean;
+    richLinks?: boolean;
+    nestedProxyFallback?: boolean;
+    maxConcurrent?: number;
+    timeoutMs?: number;
+  } = {},
 ): Promise<string | null> => {
   const target = new URL(postingUrl);
   const targets = [target];
@@ -2447,7 +2453,13 @@ const readerMarkdown = async (
   const endpoints = [...new Set(targets.flatMap((value) => {
     const http = new URL(value);
     http.protocol = "http:";
-    return [`https://r.jina.ai/${value.href}`, `https://r.jina.ai/${http.href}`];
+    const direct = [`https://r.jina.ai/${value.href}`, `https://r.jina.ai/${http.href}`];
+    if (!options.nestedProxyFallback) return direct;
+    // Some WAFs reject requests made by Cloudflare Worker egress IPs while
+    // accepting the same URL from the reader's own network. A single nested
+    // reader hop keeps the request bounded and moves the origin fetch onto
+    // that network without requiring browser credentials or a bypass.
+    return [...direct, ...direct.map((endpoint) => `https://r.jina.ai/http://${endpoint.slice("https://".length)}`)];
   }))];
   const readEndpoint = async (endpoint: string): Promise<string | null> => {
     try {
@@ -2500,6 +2512,7 @@ const crawlDeltaAvature = async (
   const markdown = await readerMarkdown(listing.href, fetcher, {
     querylessFallback: true,
     richLinks: false,
+    nestedProxyFallback: true,
     maxConcurrent: 2,
     timeoutMs: 12_000,
   });
