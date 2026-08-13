@@ -2329,7 +2329,10 @@ const crawlAvatureReaderPages = async (
     try {
       const target = new URL(canonical);
       target.searchParams.set("jobOffset", String(offset));
-      const useInitial = offset === 0 && sourceUrl.href === target.href;
+      const useInitial = offset === 0 && (
+        sourceUrl.href === target.href
+        || (sourceUrl.pathname === target.pathname && !sourceUrl.searchParams.has("jobOffset"))
+      );
       const markdown = useInitial
         ? initialMarkdown
         : await (async () => {
@@ -2383,14 +2386,20 @@ const crawlAvatureReaderPages = async (
 const readerMarkdown = async (
   postingUrl: string,
   fetcher: typeof fetch,
+  options: { querylessFallback?: boolean } = {},
 ): Promise<string | null> => {
   const target = new URL(postingUrl);
-  const httpTarget = new URL(target);
-  httpTarget.protocol = "http:";
-  const endpoints = [...new Set([
-    `https://r.jina.ai/${target.href}`,
-    `https://r.jina.ai/${httpTarget.href}`,
-  ])];
+  const targets = [target];
+  if (options.querylessFallback && target.searchParams.has("jobOffset")) {
+    const queryless = new URL(target);
+    queryless.searchParams.delete("jobOffset");
+    targets.push(queryless);
+  }
+  const endpoints = [...new Set(targets.flatMap((value) => {
+    const http = new URL(value);
+    http.protocol = "http:";
+    return [`https://r.jina.ai/${value.href}`, `https://r.jina.ai/${http.href}`];
+  }))];
   const results = await Promise.allSettled(endpoints.map(async (endpoint) => {
     try {
       const response = await fetchWithTimeout(
@@ -2421,7 +2430,7 @@ const crawlDeltaAvature = async (
 ): Promise<SourceCrawlResult> => {
   const listing = new URL(source.postingUrl);
   listing.searchParams.set("jobOffset", "0");
-  const markdown = await readerMarkdown(listing.href, fetcher);
+  const markdown = await readerMarkdown(listing.href, fetcher, { querylessFallback: true });
   if (!markdown) return {
     status: "failed", responseStatus: null, completeListing: false, jobs: [],
     error: "Delta Avature reader listing was unavailable.",
