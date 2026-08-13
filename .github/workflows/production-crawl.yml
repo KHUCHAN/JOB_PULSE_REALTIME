@@ -1,5 +1,8 @@
 name: Job Pulse production crawl
 
+# Keep the workflow revision visible in the Actions history after a runtime
+# deployment so the first post-deploy drain is never mistaken for a stale run.
+
 on:
   # Run once when the scheduler definition or its runner changes so a
   # production deployment cannot wait for the next two-hour tick. The
