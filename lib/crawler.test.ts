@@ -1010,7 +1010,11 @@ Wrong description.
       requestedPages.push(page);
       const start = (page - 1) * 100;
       const jobs = Array.from({ length: 100 }, (_, index) => ({
-        data: { slug: String(start + index), req_id: String(start + index), title: `Role ${start + index}` },
+        data: {
+          slug: String(page === 2 && index === 0 ? 99 : start + index),
+          req_id: String(page === 2 && index === 0 ? 99 : start + index),
+          title: `Role ${page === 2 && index === 0 ? 99 : start + index}`,
+        },
       }));
       return new Response(JSON.stringify({ totalCount: page === 1 ? 19_253 : 19_254, jobs }), {
         status: 200,
@@ -1026,7 +1030,7 @@ Wrong description.
     }, fetcher, new Date());
 
     expect(result.status).toBe("succeeded");
-    expect(result.jobs).toHaveLength(1_500);
+    expect(result.jobs).toHaveLength(1_499);
     expect(result.completeListing).toBe(false);
     expect(result.pagination).toEqual({ nextPage: 15, cycleComplete: false, totalPages: 100 });
     expect(requestedPages).toHaveLength(15);

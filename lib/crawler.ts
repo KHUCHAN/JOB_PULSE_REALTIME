@@ -1189,7 +1189,9 @@ async function crawlDiscoveredFeed(source: CrawlSource, discovered: DiscoveredAt
         if (firstFailedPage === null && failedIndex !== -1) firstFailedPage = batchNumbers[failedIndex];
       }
       const unique = uniqueJobs(jobs);
-      if (unique.length !== jobs.length) throw new Error("Jibe repeated job identities across catalog pages.");
+      if (unique.length !== jobs.length && total <= 10_000) {
+        throw new Error("Jibe repeated job identities across catalog pages.");
+      }
       const boundedCycleComplete = firstFailedPage === null && lastSuccessfulPage === totalPages;
       const cycleComplete = boundedCycleComplete && total <= 10_000;
       const completeListing = startPage === 1 && cycleComplete && totalPages <= maxPagesPerPass && unique.length === total;
