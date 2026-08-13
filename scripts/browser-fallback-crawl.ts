@@ -69,6 +69,20 @@ const d1 = async (args: string[]): Promise<string> => {
 };
 
 const problemSources = async (): Promise<CrawlSource[]> => {
+  if (targetSourceIds.size > 0 && liveUrl) {
+    // Targeted recovery must use the live D1 URL, not the checked-in catalog
+    // snapshot. Source repairs can update posting_url (Delta's keyword route
+    // is one example), and replaying the stale seed would recover the wrong
+    // page and re-ingest navigation links.
+    const response = await fetch(`${liveUrl}/api/pulse?resource=sources`, { headers: { accept: "application/json" } });
+    if (!response.ok) throw new Error(`Live source inventory returned HTTP ${response.status}.`);
+    const sources = await response.json() as Array<{
+      id: string; company: string; postingUrl: string | null; adapter: CrawlSource["adapter"];
+    }>;
+    return sources.flatMap((source): CrawlSource[] => targetSourceIds.has(source.id) && source.postingUrl
+      ? [{ id: source.id, company: source.company, postingUrl: source.postingUrl, adapter: source.adapter }]
+      : []);
+  }
   if (targetSourceIds.size > 0) return catalogSeed.sources.flatMap((source): CrawlSource[] => targetSourceIds.has(source.id) && source.postingUrl
     ? [{ id: source.id, company: source.company, postingUrl: source.postingUrl, adapter: source.adapter as CrawlSource["adapter"] }]
     : []);
