@@ -4,7 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { chromium, type Page } from "playwright";
+import { chromium, type Frame, type Page } from "playwright";
 import catalogSeed from "../db/seed/sources.json" with { type: "json" };
 import { classifyJobAreas, jobAreaClassificationMarker } from "../lib/job-area-classifier.ts";
 import { classifyJobRegion } from "../lib/job-region-classifier.ts";
@@ -136,24 +136,55 @@ const problemSources = async (): Promise<CrawlSource[]> => {
     }));
 };
 
-const anchorsOnPage = async (page: Page): Promise<BrowserAnchor[]> => page.locator("a[href]").evaluateAll((anchors) => anchors.map((anchor) => ({
-  href: (anchor as HTMLAnchorElement).href,
-  text: (anchor.textContent ?? "").replace(/\s+/g, " ").trim(),
-})));
+const anchorsOnPage = async (page: Page): Promise<BrowserAnchor[]> => {
+  // Hosted ATS boards such as iCIMS put the actual job table in an
+  // `in_iframe=1` child document. Read every frame instead of only the
+  // branding shell in the top document.
+  const anchors: BrowserAnchor[] = [];
+  for (const frame of page.frames()) {
+    try {
+      anchors.push(...await frame.locator("a[href]").evaluateAll((nodes) => nodes.map((anchor) => ({
+        href: (anchor as HTMLAnchorElement).href,
+        text: (anchor.textContent ?? "").replace(/\s+/g, " ").trim(),
+      }))));
+    } catch {
+      // A frame can disappear while an ATS page navigates; keep other frames.
+    }
+  }
+  return [...new Map(anchors.map((anchor) => [`${anchor.href}\u0000${anchor.text}`, anchor])).values()];
+};
 
 const jobsOnPage = async (page: Page, source: CrawlSource): Promise<CrawledJob[]> => {
-  const structured = extractJobsFromHtml(await page.content(), source).jobs;
+  const structured: CrawledJob[] = [];
+  for (const frame of page.frames()) {
+    try {
+      structured.push(...extractJobsFromHtml(await frame.content(), source).jobs);
+    } catch {
+      // Ignore a frame that navigated away while its HTML was read.
+    }
+  }
   const linked = jobsFromBrowserAnchors(await anchorsOnPage(page), source);
   const unique = new Map([...structured, ...linked].map((job) => [job.officialUrl, job]));
   return [...unique.values()];
 };
 
-const paginationControls = async (page: Page): Promise<Array<{ index: number; label: string }>> => (
-  page.locator("a, button").evaluateAll((controls) => controls.map((control, index) => ({
-    index,
-    label: (control.getAttribute("aria-label") || control.textContent || "").replace(/\s+/g, " ").trim(),
-  })))
-);
+type PaginationControl = { frame: Frame; index: number; label: string };
+
+const paginationControls = async (page: Page): Promise<PaginationControl[]> => {
+  const controls: PaginationControl[] = [];
+  for (const frame of page.frames()) {
+    try {
+      const values = await frame.locator("a, button").evaluateAll((nodes) => nodes.map((control, index) => ({
+        index,
+        label: (control.getAttribute("aria-label") || control.textContent || "").replace(/\s+/g, " ").trim(),
+      })));
+      controls.push(...values.map((value) => ({ ...value, frame })));
+    } catch {
+      // Ignore a frame replaced during navigation.
+    }
+  }
+  return controls;
+};
 
 const jobsAcrossPages = async (page: Page, source: CrawlSource): Promise<CrawledJob[]> => {
   const unique = new Map<string, CrawledJob>();
@@ -166,7 +197,7 @@ const jobsAcrossPages = async (page: Page, source: CrawlSource): Promise<Crawled
     const controls = await paginationControls(page);
     const control = controls.find((value) => numericPaginationTargets([value.label]).includes(target));
     if (!control) continue;
-    await page.locator("a, button").nth(control.index).click({ timeout: 10_000 }).catch(() => undefined);
+    await control.frame.locator("a, button").nth(control.index).click({ timeout: 10_000 }).catch(() => undefined);
     await page.waitForTimeout(1_500);
     await collect();
   }

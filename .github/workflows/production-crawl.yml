@@ -75,6 +75,8 @@ jobs:
           # crawl_runs and advances next_crawl_at. Selecting the oldest rows
           # therefore rotates fairly without a run-number offset that could
           # skip sources as the queue shrinks.
-          BROWSER_FALLBACK_LIMIT: "60"
+          # The iframe-aware extractor can safely drain a larger slice while
+          # staying below the 25-minute job timeout (4 browser workers).
+          BROWSER_FALLBACK_LIMIT: "120"
           BROWSER_FALLBACK_CONCURRENCY: "4"
         run: npm run crawler:fallback:browser
