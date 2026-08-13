@@ -50,7 +50,8 @@ const database = (): DatabaseSync => {
     );
     CREATE TABLE jobs (
       id TEXT PRIMARY KEY, official_url TEXT NOT NULL, apply_url TEXT, first_seen_at TEXT NOT NULL,
-      reopened_at TEXT, status TEXT NOT NULL, open_generation INTEGER NOT NULL, company TEXT NOT NULL
+      reopened_at TEXT, status TEXT NOT NULL, open_generation INTEGER NOT NULL, company TEXT NOT NULL,
+      location_region TEXT NOT NULL
     );
     CREATE TABLE job_topics (job_id TEXT NOT NULL, topic_key TEXT NOT NULL);
     CREATE TABLE job_matches (
@@ -65,8 +66,8 @@ const database = (): DatabaseSync => {
     CREATE TABLE notifications (id TEXT PRIMARY KEY, status TEXT NOT NULL, keyword_id TEXT);
     CREATE TABLE notification_items (id TEXT PRIMARY KEY, notification_id TEXT NOT NULL, job_match_id TEXT NOT NULL);
     INSERT INTO match_profiles VALUES ('chanyoung-resume', 'resume-keyword-chanyoung', 1, '2026-08-13T10:00:00.000Z', '2026-08-13T20:00:00.000Z', CURRENT_TIMESTAMP);
-    INSERT INTO jobs VALUES ('job-new', 'https://careers.example.com/job-new', 'https://careers.example.com/apply-new', '2026-08-13T12:00:00.000Z', NULL, 'open', 1, 'Acme');
-    INSERT INTO job_topics VALUES ('job-new', 'program:internship');
+    INSERT INTO jobs VALUES ('job-new', 'https://careers.example.com/job-new', 'https://careers.example.com/apply-new', '2026-08-13T12:00:00.000Z', NULL, 'open', 1, 'Acme', 'us');
+    INSERT INTO job_topics VALUES ('job-new', 'program:internship'), ('job-new', 'year:2027');
     INSERT INTO job_matches VALUES ('match-new', 'job-new', 'resume-keyword-chanyoung', 1, 1, 0, NULL);
   `);
   return sqlite;
@@ -83,13 +84,27 @@ describe("Codex review persistence", () => {
       sourceFile: "candidate.json",
     }], "2026-08-13T13:00:00.000Z");
 
-    expect(result).toMatchObject({ accepted: 1, approved: 1, held: 0, rejected: 0, missing: [] });
+    expect(result).toMatchObject({ accepted: 1, approved: 1, rejected: 0, missing: [] });
     expect(sqlite.prepare("SELECT notification_eligible FROM job_matches WHERE id = 'match-new'").get())
       .toEqual({ notification_eligible: 1 });
     expect(sqlite.prepare("SELECT decision, verified_url FROM codex_reviews").get())
       .toEqual({ decision: "approve", verified_url: "https://careers.example.com/job-new" });
     expect(sqlite.prepare("SELECT next_digest_at FROM match_profiles").get())
       .toEqual({ next_digest_at: "2026-08-13T13:00:00.000Z" });
+  });
+
+  it("leaves region and recruiting-year adjudication to Codex", async () => {
+    const sqlite = database();
+    sqlite.prepare("UPDATE jobs SET location_region = 'non_us' WHERE id = 'job-new'").run();
+    sqlite.prepare("DELETE FROM job_topics WHERE job_id = 'job-new' AND topic_key = 'year:2027'").run();
+    const result = await applyCodexReviews(createD1(sqlite), [{
+      officialUrl: "https://careers.example.com/job-new",
+      decision: "reject",
+      rationale: "The reviewed posting is outside the United States and is not a 2027 recruiting cycle.",
+      verifiedUrl: "https://careers.example.com/job-new",
+    }]);
+    expect(result).toMatchObject({ accepted: 1, approved: 0, rejected: 1, missing: [] });
+    expect(sqlite.prepare("SELECT decision FROM codex_reviews").get()).toEqual({ decision: "reject" });
   });
 
   it("fails closed for URL mismatches and pre-activation jobs", async () => {
@@ -113,21 +128,15 @@ describe("Codex review persistence", () => {
     expect(old.missing[0]?.reason).toBe("job_is_before_activation_watermark");
   });
 
-  it("removes unsent notification reservations when a review is held", async () => {
+  it("rejects non-approve/reject decisions and leaves the match pending", async () => {
     const sqlite = database();
-    sqlite.exec(`
-      INSERT INTO notifications VALUES ('notification-1', 'queued', 'resume-keyword-chanyoung');
-      INSERT INTO notification_items VALUES ('item-1', 'notification-1', 'match-new');
-    `);
     const result = await applyCodexReviews(createD1(sqlite), [{
       officialUrl: "https://careers.example.com/job-new",
-      decision: "hold",
+      decision: "hold" as never,
       rationale: "Need to confirm the program year.",
       verifiedUrl: "https://careers.example.com/job-new",
     }]);
-    expect(result.held).toBe(1);
-    expect(sqlite.prepare("SELECT count(*) AS total FROM notification_items").get()).toEqual({ total: 0 });
-    expect(sqlite.prepare("SELECT count(*) AS total FROM notifications").get()).toEqual({ total: 0 });
+    expect(result.missing[0]?.reason).toBe("invalid_review_payload");
     expect(sqlite.prepare("SELECT notification_eligible FROM job_matches").get())
       .toEqual({ notification_eligible: 0 });
   });

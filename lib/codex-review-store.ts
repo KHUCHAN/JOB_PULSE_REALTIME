@@ -1,6 +1,6 @@
 import { canonicalOpenJobNotExists } from "./job-canonical";
 
-export type CodexReviewDecision = "approve" | "hold" | "reject";
+export type CodexReviewDecision = "approve" | "reject";
 
 export interface CodexReviewInput {
   jobId?: string;
@@ -14,7 +14,6 @@ export interface CodexReviewInput {
 export interface CodexReviewResult {
   accepted: number;
   approved: number;
-  held: number;
   rejected: number;
   missing: Array<{ jobId?: string; officialUrl?: string; reason: string }>;
 }
@@ -74,13 +73,15 @@ const targetFor = async (
         SELECT 1 FROM job_topics jt
         WHERE jt.job_id = j.id AND jt.topic_key IN ('program:internship', 'program:coop')
       )
+      -- Region, recruiting year, and profile fit are Codex review decisions.
+      -- The server only admits the crawler's internship/co-op candidate set.
       AND (j.id = ? OR j.official_url = ?)
     LIMIT 1
   `).bind(jobId || null, officialUrl || null).first<ReviewTargetRow>();
 };
 
 const normalizedDecision = (value: unknown): CodexReviewDecision | null => (
-  value === "approve" || value === "hold" || value === "reject" ? value : null
+  value === "approve" || value === "reject" ? value : null
 );
 
 export const applyCodexReviews = async (
@@ -88,7 +89,7 @@ export const applyCodexReviews = async (
   values: CodexReviewInput[],
   now = new Date().toISOString(),
 ): Promise<CodexReviewResult> => {
-  const result: CodexReviewResult = { accepted: 0, approved: 0, held: 0, rejected: 0, missing: [] };
+  const result: CodexReviewResult = { accepted: 0, approved: 0, rejected: 0, missing: [] };
   const boundedValues = values.slice(0, 100);
   for (const raw of boundedValues) {
     const decision = normalizedDecision(raw.decision);
@@ -157,7 +158,6 @@ export const applyCodexReviews = async (
     ]);
     result.accepted += 1;
     if (decision === "approve") result.approved += 1;
-    else if (decision === "hold") result.held += 1;
     else result.rejected += 1;
   }
   return result;
