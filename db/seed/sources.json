@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:cd06598910ca978e10258e0ca2b8563e66edf9f4fa258c7e6a5e9c876fd23755",
+  "version": "v2:sha256:a008a9ec25df5e8aa3ad65e26923ae7be99bfabdeb2bfe3a74488597cf732198",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -13356,10 +13356,10 @@
       "id": "p5-0762-viavi-solutions",
       "masterRow": 2723,
       "company": "VIAVI Solutions",
-      "postingUrl": "https://www.viavisolutions.com/en-us/careers",
+      "postingUrl": "https://viavisolutions.wd1.myworkdayjobs.com/careers",
       "talentUrl": "https://www.viavisolutions.com/en-us/careers",
       "channel": "공식 Career Portal",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "career_page_only",
       "confidence": "high",
       "resumeUpload": "unknown",
