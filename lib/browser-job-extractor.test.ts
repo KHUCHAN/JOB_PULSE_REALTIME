@@ -14,6 +14,23 @@ describe("jobsFromBrowserAnchors", () => {
     expect(jobs[1].arrangement).toBe("remote");
   });
 
+  it("accepts only exact Jobvite detail paths and keeps their requisition id", () => {
+    const jobvite = { ...source, company: "LogRhythm", postingUrl: "https://jobs.jobvite.com/exabeam/#openings" };
+    const jobs = jobsFromBrowserAnchors([
+      { href: "/exabeam/job/oEgCAfwQ", text: "Country Manager" },
+      { href: "/exabeam/jobs/", text: "Careers Home" },
+      { href: "/exabeam/jobs#openings", text: "Search Openings" },
+      { href: "/exabeam/apply", text: "General Application" },
+      { href: "/cdn-cgi/l/email-protection", text: "[email protected]" },
+    ], jobvite);
+
+    expect(jobs).toEqual([expect.objectContaining({
+      externalId: "oEgCAfwQ",
+      title: "Country Manager",
+      officialUrl: "https://jobs.jobvite.com/exabeam/job/oEgCAfwQ",
+    })]);
+  });
+
   it("keeps Rippling job details linked by an official company careers page", () => {
     const jobs = jobsFromBrowserAnchors([{
       href: "https://ats.rippling.com/positron/jobs/6bc9d718-770b-48da-b9ea-d86b70705d39",

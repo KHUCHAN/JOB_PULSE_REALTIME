@@ -5648,6 +5648,29 @@ Wrong description.
     expect(result.jobs[0]).toEqual(expect.objectContaining({ title: "Support Analyst", location: "3 Locations" }));
   });
 
+  it("stores only real LogRhythm Jobvite rows and closes navigation false positives", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({ id: "p4-0455-logrhythm", company: "LogRhythm", postingUrl: "https://jobs.jobvite.com/exabeam/#openings", adapter: "custom" }, async (input) => {
+      requests.push(String(input));
+      return new Response(`
+        <nav><a href="/exabeam/jobs/">Careers Home</a><a href="/exabeam/jobs#openings">Search Openings</a></nav>
+        <div class="jv-job-list"><ul>
+          <li class="row"><a href="/exabeam/job/oEgCAfwQ"><div class="jv-job-list-name">Country Manager</div><div class="jv-job-list-location">Minato City, Tokyo</div></a></li>
+          <li class="row"><a href="/exabeam/job/oPRBAfwB"><div class="jv-job-list-name">Senior Sales Engineer</div><div class="jv-job-list-location">Minato City, Tokyo</div></a></li>
+        </ul></div>
+        <section><div>General Application</div><a href="/exabeam/jobAlerts">Job Alerts</a></section>
+        <footer><a href="/cdn-cgi/l/email-protection">[email protected]</a></footer>
+      `);
+    }, new Date());
+
+    expect(requests).toEqual(["https://jobs.jobvite.com/exabeam/"]);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({ externalId: "oEgCAfwQ", title: "Country Manager", location: "Minato City, Tokyo" }),
+      expect.objectContaining({ externalId: "oPRBAfwB", title: "Senior Sales Engineer", location: "Minato City, Tokyo" }),
+    ]);
+  });
+
   it("checkpoints Ace Hardware's official JSON-backed pages without loading job details", async () => {
     const requests: string[] = [];
     const block = (id: string, title: string, location: string) => `<div class="search--item"><label>${id}</label><p><a href="/posting/${title.toLocaleLowerCase().replaceAll(" ", "-")}/${id}">${title}</a></p><label>Location</label><p>${location}</p><label>Category</label><p>Corporate</p></div>`;

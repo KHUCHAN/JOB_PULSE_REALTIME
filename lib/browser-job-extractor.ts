@@ -9,6 +9,13 @@ const GENERIC_TEXT = /^(?:apply|apply now|form|here\.?|learn more(?: about this 
 const EXTERNAL_BOARDS = /(?:greenhouse\.io|lever\.co|myworkdayjobs\.com|myworkdaysite\.com|smartrecruiters\.com|ashbyhq\.com|icims\.com|jobvite\.com|hirebridge\.com|taleo\.net|selectminds\.com|apply\.workable\.com|bamboohr\.com|pinpointhq\.com|ats\.rippling\.com|dayforcehcm\.com|successfactors\.(?:com|eu)|oraclecloud\.com|eightfold\.ai|avature\.net|(?:myjobs|workforcenow)\.adp\.com|recruiting\.paylocity\.com|recruiting\d*\.ultipro\.com)/i;
 const ROLE_TITLE = /\b(?:accountant|administrator|analyst|architect|associate|consultant|coordinator|counsel|developer|director|engineer|executive|intern|lead|manager|officer|principal|recruiter|representative|researcher|scientist|specialist|supervisor|technician)\b/i;
 
+const isExternalBoardDetail = (url: URL): boolean => {
+  if (/^(?:www\.)?jobs\.jobvite\.com$/i.test(url.hostname)) {
+    return /^\/[^/?#]+\/job\/[^/?#]+\/?$/i.test(url.pathname);
+  }
+  return EXTERNAL_BOARDS.test(url.hostname) && url.pathname.split("/").filter(Boolean).length >= 2;
+};
+
 const titleFromJobUrl = (url: URL): string | null => {
   const ignored = /^(?:job|jobs|career|careers|company|talent|opening|openings|position|positions|role|roles|search|login|userhome|all-jobs|open-roles|current-openings|explore|join|programs?|benefits|culture|teams?|early-career)$/i;
   const segment = url.pathname.split("/").filter(Boolean).reverse().find((value) => {
@@ -28,6 +35,10 @@ const externalIdFromJobUrl = (url: URL): string | null => {
     ?? url.searchParams.get("opportunityId")
     ?? (/\/job\.html$/i.test(url.pathname) ? url.searchParams.get("id") : null);
   if (queryId) return queryId;
+  const jobviteId = /^(?:www\.)?jobs\.jobvite\.com$/i.test(url.hostname)
+    ? url.pathname.match(/^\/[^/?#]+\/job\/([^/?#]+)\/?$/i)?.[1]
+    : null;
+  if (jobviteId) return jobviteId;
   const pathId = url.pathname.match(/\/(?:jobs?|positions?|openings?)\/([^/?#]+)\/?$/i)?.[1];
   return pathId && /^(?:\d{3,}|[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12})$/i.test(pathId)
     ? pathId
@@ -52,7 +63,7 @@ export const jobsFromBrowserAnchors = (anchors: BrowserAnchor[], source: CrawlSo
     const sourceHost = sourceUrl.hostname.replace(/^www\./, "");
     const targetHost = url.hostname.replace(/^www\./, "");
     const externalBoard = EXTERNAL_BOARDS.test(targetHost);
-    const externalDetail = externalBoard && url.pathname.split("/").filter(Boolean).length >= 2;
+    const externalDetail = isExternalBoardDetail(url);
     if (LISTING_ONLY.test(path) || CAREER_CONTENT_ONLY.test(path)) continue;
     const derivedTitle = GENERIC_TEXT.test(anchorTitle) ? titleFromJobUrl(url) : null;
     const title = derivedTitle ?? anchorTitle;

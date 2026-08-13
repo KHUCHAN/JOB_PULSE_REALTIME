@@ -132,7 +132,6 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
   "p5-0564-canon-medical-systems": { listingUrl: "https://cmsu.csod.com/ux/ats/careersite/1/home?c=cmsu", adapter: "custom" },
   "legacy-row-823": { listingUrl: "https://fa-exty-saasfaprod1.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1", adapter: "custom" },
   "legacy-row-826": { listingUrl: "https://jobs.dayforcehcm.com/en-US/ibgllc/CANDIDATEPORTAL", adapter: "custom" },
-  "p4-0455-logrhythm": { listingUrl: "https://jobs.jobvite.com/exabeam/#openings", adapter: "custom" },
   "p4-0470-oliver-wyman": { listingUrl: "https://mmc.phenompeople.com/global/en/oliver-wyman-early-careers-search", adapter: "phenom" },
   "p5-0869-costco": {
     discovered: { kind: "jibe", endpoint: "https://careers.costco.com/api/jobs?page=1&limit=100&sortBy=relevance&descending=false&internal=false" },
@@ -5487,26 +5486,54 @@ const crawlOlympusSuccessFactors = async (
   };
 };
 
-const crawlAbrigoJobvite = async (
+const jobviteRowBlocks = (html: string): string[] => [
+  ...[...html.matchAll(/<li\b[^>]*class=["'][^"']*\brow\b[^"']*["'][^>]*>([\s\S]*?)<\/li>/gi)].map((match) => match[1]),
+  ...[...html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map((match) => match[1]),
+];
+
+const crawlJobviteBoard = async (
   source: CrawlSource,
+  listingUrl: string,
+  tenant: string,
   fetcher: typeof fetch,
 ): Promise<SourceCrawlResult> => {
-  const listingUrl = "https://jobs.jobvite.com/bankerstoolbox";
   try {
     const response = await fetchWithTimeout(fetcher, listingUrl, undefined, true, { attempts: 1, timeoutMs: 10_000 });
-    if (!response.ok) return { status: isBlockedHttpStatus(response.status) ? "blocked" : "failed", responseStatus: response.status, completeListing: false, jobs: [], error: `Abrigo Jobvite board returned HTTP ${response.status}.` };
+    if (!response.ok) return { status: isBlockedHttpStatus(response.status) ? "blocked" : "failed", responseStatus: response.status, completeListing: false, jobs: [], error: `${source.company} Jobvite board returned HTTP ${response.status}.` };
     const html = await response.text();
-    const blocks = [...html.matchAll(/<table\b[^>]*class=["'][^"']*jv-job-list[^"']*["'][^>]*>([\s\S]*?)<\/table>/gi)];
-    const jobs = uniqueJobs(blocks.flatMap((match): CrawledJob[] => {
-      const anchor = anchorsFromHtml(match[1]).find(({ href }) => /\/bankerstoolbox\/job\/[a-z0-9]+/i.test(href));
+    const detailPath = new RegExp(`^/${tenant.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/job/[a-z0-9_-]+/?$`, "i");
+    const detailAnchors = anchorsFromHtml(html).filter(({ href }) => {
+      try {
+        const url = new URL(href, listingUrl);
+        return /^(?:www\.)?jobs\.jobvite\.com$/i.test(url.hostname) && detailPath.test(url.pathname);
+      } catch {
+        return false;
+      }
+    });
+    const blocks = jobviteRowBlocks(html).filter((block) => anchorsFromHtml(block).some(({ href }) => {
+      try {
+        return detailPath.test(new URL(href, listingUrl).pathname);
+      } catch {
+        return false;
+      }
+    }));
+    const jobs = uniqueJobs(blocks.flatMap((block): CrawledJob[] => {
+      const anchor = anchorsFromHtml(block).find(({ href }) => {
+        try {
+          return detailPath.test(new URL(href, listingUrl).pathname);
+        } catch {
+          return false;
+        }
+      });
       if (!anchor?.text) return [];
       const officialUrl = new URL(anchor.href, listingUrl);
       const externalId = officialUrl.pathname.split("/").filter(Boolean).at(-1) ?? null;
-      const location = plainText(match[1].match(/class=["'][^"']*jv-job-list-location[^"']*["'][^>]*>([\s\S]*?)<\/td>/i)?.[1]) ?? null;
-      const programs = classifyJobPrograms(anchor.text).keys;
+      const title = plainText(block.match(/class=["'][^"']*jv-job-list-name[^"']*["'][^>]*>([\s\S]*?)<\/(?:div|td)>/i)?.[1]) ?? anchor.text;
+      const location = plainText(block.match(/class=["'][^"']*jv-job-list-location[^"']*["'][^>]*>([\s\S]*?)<\/(?:div|td)>/i)?.[1]) ?? null;
+      const programs = classifyJobPrograms(title).keys;
       return [{
         externalId,
-        title: anchor.text,
+        title,
         company: source.company,
         location,
         arrangement: /remote/i.test(location ?? "") ? "remote" : "unknown",
@@ -5521,13 +5548,16 @@ const crawlAbrigoJobvite = async (
     return {
       status: jobs.length > 0 ? "succeeded" : "failed",
       responseStatus: response.status,
-      completeListing: jobs.length > 0 && jobs.length === blocks.length && !hasNextPage,
+      completeListing: jobs.length > 0
+        && jobs.length === blocks.length
+        && jobs.length === detailAnchors.length
+        && !hasNextPage,
       jobs,
       resolvedListingUrl: listingUrl,
-      error: jobs.length > 0 ? null : "Abrigo Jobvite board contained no usable jobs.",
+      error: jobs.length > 0 ? null : `${source.company} Jobvite board contained no usable jobs.`,
     };
   } catch (error) {
-    return { status: "failed", responseStatus: null, completeListing: false, jobs: [], error: error instanceof Error ? error.message : "Unknown Abrigo Jobvite error." };
+    return { status: "failed", responseStatus: null, completeListing: false, jobs: [], error: error instanceof Error ? error.message : `Unknown ${source.company} Jobvite error.` };
   }
 };
 
@@ -7952,7 +7982,8 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   if (source.id === "p5-0566-cardinal-health" || sourcePage.hostname === "jobs.cardinalhealth.com") return crawlCardinalHealth(source, fetcher);
   if (source.id === "p5-1095-vanguard" || sourcePage.hostname === "www.vanguardjobs.com") return crawlVanguard(source, fetcher);
   if (source.id === "p5-1005-olympus-medical-systems") return crawlOlympusSuccessFactors(source, fetcher);
-  if (source.id === "p2-0068-abrigo") return crawlAbrigoJobvite(source, fetcher);
+  if (source.id === "p2-0068-abrigo") return crawlJobviteBoard(source, "https://jobs.jobvite.com/bankerstoolbox", "bankerstoolbox", fetcher);
+  if (source.id === "p4-0455-logrhythm") return crawlJobviteBoard(source, "https://jobs.jobvite.com/exabeam/", "exabeam", fetcher);
   if (source.id === "legacy-row-777") return crawlAceJobs(source, fetcher);
   if (source.id === "p5-0808-astronics") return crawlAstronicsRss(source, fetcher);
   if (source.id === "legacy-row-820") return crawlGraphicPackaging(source, fetcher);
