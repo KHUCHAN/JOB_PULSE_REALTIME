@@ -320,6 +320,10 @@ export class D1CrawlStore implements CrawlStore {
     options: { suppressNotifications?: boolean } = {},
   ): Promise<{ created: number; updated: number; closed: number }> {
     const now = new Date().toISOString();
+    const sourceResult = await this.db.prepare(`
+      SELECT company, posting_url FROM sources WHERE id = ? LIMIT 1
+    `).bind(sourceId).all<{ company: string; posting_url: string }>();
+    const source = sourceResult.results[0] ?? { company: null, posting_url: null };
     const existingResult = await this.db.prepare(`
       SELECT id, external_id, title, official_url, status, resume_match_hash FROM jobs WHERE source_id = ?
     `).bind(sourceId).all<ExistingJobRow>();
@@ -344,7 +348,11 @@ export class D1CrawlStore implements CrawlStore {
         score: area.score,
         evidence: area.evidence,
       }));
-      const locationRegion = classifyJobRegion(job);
+      const locationRegion = classifyJobRegion({
+        ...job,
+        sourceCompany: source.company,
+        sourcePostingUrl: source.posting_url,
+      });
       const titlePrograms = classifyJobPrograms(job.title);
       const employmentType = normalizeEmploymentType(job.employmentType)
         ?? (titlePrograms.keys.length > 0 ? "Internship" : null);

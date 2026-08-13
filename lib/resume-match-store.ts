@@ -119,6 +119,11 @@ const jsonChunks = <T>(values: T[], maxBytes = 1_500_000): T[][] => {
   return result;
 };
 
+const isTargetInternship = (candidate: ResumeMatchCandidate): boolean =>
+  candidate.locationRegion === "us"
+  && candidate.programKeys.some((key) => key === "internship" || key === "coop")
+  && candidate.recruitingYears.includes(2027);
+
 const persistDecisions = async (
   database: D1Database,
   profileRow: ProfileRow,
@@ -133,7 +138,7 @@ const persistDecisions = async (
     score: decision.score,
     matchedTerms: decision.evidence.map((item) => `${item.code}|${item.label}|${item.points}`),
     openGeneration: candidate.openGeneration,
-    notificationEligible: baseline ? 0 : typeof notificationEligible === "boolean"
+    notificationEligible: baseline || !isTargetInternship(candidate) ? 0 : typeof notificationEligible === "boolean"
       ? Number(notificationEligible)
       : Number(Boolean(
         profileRow.activation_watermark
@@ -162,6 +167,23 @@ const persistDecisions = async (
         is_active = 1,
         notification_eligible = max(job_matches.notification_eligible, excluded.notification_eligible)
     `).bind(now, JSON.stringify(chunk)).run();
+  }
+
+  // A newly discovered, notification-eligible match should wake the digest
+  // timer immediately. Without this, a successful crawl can leave the match
+  // queued until an old two-hour timer happens to fire (or indefinitely when
+  // the prior timer was already in the past). Existing queued/sent matches are
+  // still deduplicated by notification_items, so waking is idempotent.
+  if (!baseline && active.some(({ notificationEligible }) => notificationEligible === 1)) {
+    await database.prepare(`
+      UPDATE match_profiles
+      SET next_digest_at = CASE
+        WHEN next_digest_at IS NULL OR next_digest_at > ? THEN ?
+        ELSE next_digest_at
+      END,
+      updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND enabled = 1
+    `).bind(now, now, profileRow.id).run();
   }
 
   const inactive = values.filter(({ decision }) => !decision.eligible).map(({ candidate }) => ({

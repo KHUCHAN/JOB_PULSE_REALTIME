@@ -6,6 +6,14 @@ export type JobRegionInput = {
   locationState?: string | null;
   locationCountry?: string | null;
   secondaryLocations?: string[] | null;
+  /**
+   * Optional source metadata used only as a last-resort hint when the feed
+   * omits location data (for example, a US-only career portal rendered as a
+   * generic "Location not specified" card). Explicit job-level country/state
+   * evidence always wins over this hint.
+   */
+  sourceCompany?: string | null;
+  sourcePostingUrl?: string | null;
 };
 
 type RegionEvidence = "us" | "non_us" | null;
@@ -75,6 +83,24 @@ const rawLocation = (value: unknown): RegionEvidence => {
   return null;
 };
 
+const sourceRegionHint = (company: unknown, postingUrl: unknown): RegionEvidence => {
+  const host = typeof postingUrl === "string" ? (() => {
+    try { return new URL(postingUrl).hostname.replace(/^www\./i, "").toLocaleLowerCase(); } catch { return ""; }
+  })() : "";
+  const path = typeof postingUrl === "string" ? (() => {
+    try { return new URL(postingUrl).pathname.toLocaleLowerCase(); } catch { return ""; }
+  })() : "";
+  // These are explicitly US career portals. Keep this list narrow: a source
+  // hint must never override a structured non-US location and must not turn a
+  // multinational company's generic landing page into a US-only feed.
+  if (host === "wellsfargojobs.com") return "us";
+  if (host === "delta.avature.net" && /\/en_us\//i.test(path)) return "us";
+  // Company is intentionally only used to make the intent auditable in
+  // diagnostics; URL matching above is the authoritative guard.
+  void company;
+  return null;
+};
+
 export function classifyJobRegion(input: JobRegionInput): JobRegion {
   let hasUs = false;
   let hasNonUs = false;
@@ -94,5 +120,7 @@ export function classifyJobRegion(input: JobRegionInput): JobRegion {
   if (hasUs && hasNonUs) return "mixed";
   if (hasUs) return "us";
   if (hasNonUs) return "non_us";
+  add(sourceRegionHint(input.sourceCompany, input.sourcePostingUrl));
+  if (hasUs) return "us";
   return "unknown";
 }

@@ -923,6 +923,47 @@ Wrong description.
     expect(result.jobs.map((job) => job.title)).toEqual(["Role 1", "Role 2"]);
   });
 
+  it("repairs a blocked Avature listing to offset zero and paginates the reader copy with locations", async () => {
+    const requests: string[] = [];
+    const page = (offset: number) => {
+      const start = offset + 1;
+      const end = offset + 10;
+      const jobs = Array.from({ length: 10 }, (_, index) => {
+        const number = start + index;
+        return `* [Co-op Data Analyst ${number}](https://delta.avature.net/en_US/careers/JobDetail/Co-op-Data-Analyst-${number}/${10_000 + number}?jobId=${10_000 + number}) United States, Georgia, Atlanta.Ref #${10_000 + number}`;
+      }).join("\n");
+      return `1-${end} of 20 results\n${jobs}`;
+    };
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url.startsWith("https://delta.avature.net/")) return new Response("", { status: 202 });
+      const match = url.match(/jobOffset=(\d+)/);
+      return new Response(page(Number(match?.[1] ?? 0)), { status: 200 });
+    };
+
+    const result = await crawlSource({
+      id: "delta-avature-reader",
+      company: "Delta Air Lines",
+      postingUrl: "https://delta.avature.net/en_US/careers/SearchJobs/?jobOffset=40",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-13T16:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://delta.avature.net/en_US/careers/SearchJobs/?jobOffset=0",
+    }));
+    expect(result.jobs).toHaveLength(20);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      title: "Co-op Data Analyst 1",
+      location: "United States, Georgia, Atlanta",
+      externalId: "10001",
+    }));
+    expect(requests).toContain("https://r.jina.ai/https://delta.avature.net/en_US/careers/SearchJobs/?jobOffset=0");
+    expect(requests).toContain("https://r.jina.ai/https://delta.avature.net/en_US/careers/SearchJobs/?jobOffset=10");
+  });
+
   it("paginates Avature's open-ended 999+ result count until the first empty page", async () => {
     const requestedOffsets: number[] = [];
     const fetcher: typeof fetch = async (input) => {

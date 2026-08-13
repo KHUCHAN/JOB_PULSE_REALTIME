@@ -2262,6 +2262,32 @@ const markdownJobAnchors = (markdown: string, source: CrawlSource): BrowserAncho
   });
 };
 
+const markdownLocationForHref = (markdown: string, href: string): string | null => {
+  const marker = `](${href}`;
+  const markerIndex = markdown.indexOf(marker);
+  if (markerIndex < 0) return null;
+  const linkEnd = markdown.indexOf(")", markerIndex + marker.length);
+  if (linkEnd < 0) return null;
+  const afterLink = markdown.slice(linkEnd + 1, linkEnd + 1_200);
+  const inline = afterLink.match(/^\s+([^[]*?)(?:Ref\s*#|\s+\[Apply\b)/i)?.[1]
+    ?.replace(/\s+/g, " ").trim().replace(/[.]$/, "");
+  if (inline && inline.length >= 2 && !/^save saved$/i.test(inline)) return inline;
+  for (const match of afterLink.matchAll(/(?:^|\n)\s*\*\s+([^\n]+)/g)) {
+    const value = match[1].replace(/\[.*?\]\([^)]*\)/g, "").replace(/\s+/g, " ").trim();
+    if (!value || /^(?:save saved|apply|share|job category|career area|technology|operations)$/i.test(value)) continue;
+    return value;
+  }
+  return null;
+};
+
+const markdownJobs = (markdown: string, source: CrawlSource): CrawledJob[] => {
+  const anchors = markdownJobAnchors(markdown, source);
+  return jobsFromBrowserAnchors(anchors, source).map((job) => {
+    const location = markdownLocationForHref(markdown, job.officialUrl);
+    return location ? { ...job, location } : job;
+  });
+};
+
 const markdownStaticJobs = (markdown: string, source: CrawlSource): CrawledJob[] => {
   if (new URL(source.postingUrl).hostname !== "ase.aseglobal.com") return [];
   return [...markdown.matchAll(/^#{2,4}\s+(?:!\[[^\]]*\]\([^)]*\)\s*)?(.+?)\s+#(\d+)\s*$/gm)].map((match) => ({
@@ -2274,7 +2300,84 @@ const markdownStaticJobs = (markdown: string, source: CrawlSource): CrawledJob[]
     summary: null,
     officialUrl: `${new URL(source.postingUrl).origin}${new URL(source.postingUrl).pathname}#job-${match[2]}`,
     publishedAt: null,
-  }));
+}));
+};
+
+const isAvatureListing = (source: CrawlSource): boolean => {
+  try {
+    const url = new URL(source.postingUrl);
+    return url.hostname.toLocaleLowerCase().endsWith(".avature.net")
+      && /\/careers\/searchjobs\/?$/i.test(url.pathname);
+  } catch {
+    return false;
+  }
+};
+
+const crawlAvatureReaderPages = async (
+  source: CrawlSource,
+  initialMarkdown: string,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult | null> => {
+  if (!isAvatureListing(source)) return null;
+  const canonical = new URL(source.postingUrl);
+  canonical.hash = "";
+  canonical.searchParams.set("jobOffset", "0");
+  const sourceUrl = new URL(source.postingUrl);
+  sourceUrl.hash = "";
+  const baseHeaders = { accept: "text/plain", "x-retain-links": "all", "x-with-links-summary": "all" };
+  const fetchPage = async (offset: number): Promise<{ markdown: string; jobs: CrawledJob[] } | null> => {
+    try {
+      const target = new URL(canonical);
+      target.searchParams.set("jobOffset", String(offset));
+      const useInitial = offset === 0 && sourceUrl.href === target.href;
+      const markdown = useInitial
+        ? initialMarkdown
+        : await (async () => {
+          const response = await fetchWithTimeout(
+            fetcher,
+            `https://r.jina.ai/${target.href}`,
+            { headers: baseHeaders },
+            false,
+            { attempts: 1, timeoutMs: 12_000 },
+          );
+          if (!response.ok) return null;
+          return response.text();
+        })();
+      if (!markdown) return null;
+      const jobs = markdownJobs(markdown, { ...source, postingUrl: target.href });
+      return jobs.length > 0 ? { markdown, jobs } : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const first = await fetchPage(0);
+  if (!first) return null;
+  const range = first.markdown.match(/\b(\d+)\s*-\s*(\d+)\s+of\s+(\d+)(?:\+)?\s+results\b/i);
+  const firstNumber = Number(range?.[1] ?? 1);
+  const lastNumber = Number(range?.[2] ?? first.jobs.length);
+  const total = Number(range?.[3] ?? first.jobs.length);
+  const pageSize = Math.max(1, lastNumber - firstNumber + 1);
+  if (!Number.isFinite(total) || total < 1) return null;
+  const boundedTotal = Math.min(total, 10_000);
+  const offsets = Array.from(
+    { length: Math.max(1, Math.ceil(boundedTotal / pageSize)) },
+    (_, index) => index * pageSize,
+  );
+  const pages: Array<{ markdown: string; jobs: CrawledJob[] } | null> = [];
+  for (let index = 0; index < offsets.length; index += 5) {
+    pages.push(...await Promise.all(offsets.slice(index, index + 5).map(fetchPage)));
+  }
+  const successfulPages = pages.filter((page): page is { markdown: string; jobs: CrawledJob[] } => page !== null);
+  const jobs = uniqueJobs(successfulPages.flatMap((page) => page.jobs));
+  return {
+    status: "succeeded",
+    responseStatus: 200,
+    completeListing: successfulPages.length === offsets.length && jobs.length >= boundedTotal,
+    jobs,
+    resolvedListingUrl: canonical.href,
+    error: null,
+  };
 };
 
 const crawlReaderFallback = async (
@@ -2297,8 +2400,10 @@ const crawlReaderFallback = async (
           : await crawlDiscoveredFeed(source, discovered, fetcher);
         if (result.status === "succeeded") return result;
       }
+      const avature = await crawlAvatureReaderPages(source, markdown, fetcher);
+      if (avature) return avature;
       const jobs = uniqueJobs([
-        ...jobsFromBrowserAnchors(markdownJobAnchors(markdown, source), source),
+        ...markdownJobs(markdown, source),
         ...markdownStaticJobs(markdown, source),
       ]);
       if (jobs.length > 0) return {

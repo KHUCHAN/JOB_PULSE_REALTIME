@@ -56,4 +56,36 @@ describe("classifyJobRegion", () => {
   it("does not let generic raw text override a structured country", () => {
     expect(classifyJobRegion({ locationCountry: "Canada", location: "Remote" })).toBe("non_us");
   });
+
+  it("uses a narrow US source hint only when the feed omits location evidence", () => {
+    expect(classifyJobRegion({
+      location: "Location not specified",
+      sourceCompany: "Wells Fargo",
+      sourcePostingUrl: "https://www.wellsfargojobs.com/en/jobs/",
+    })).toBe("us");
+    expect(classifyJobRegion({
+      location: "Location not specified",
+      sourceCompany: "Delta Air Lines",
+      sourcePostingUrl: "https://delta.avature.net/en_US/careers/SearchJobs/?jobOffset=0",
+    })).toBe("us");
+  });
+
+  it("does not let a source hint override explicit non-US evidence", () => {
+    expect(classifyJobRegion({
+      location: "Dublin, Ireland",
+      sourceCompany: "Wells Fargo",
+      sourcePostingUrl: "https://www.wellsfargojobs.com/en/jobs/",
+    })).toBe("non_us");
+  });
+
+  it("does not infer US from an unrelated or non-US source URL", () => {
+    expect(classifyJobRegion({
+      location: "Location not specified",
+      sourcePostingUrl: "https://careers.example.com/jobs",
+    })).toBe("unknown");
+    expect(classifyJobRegion({
+      location: "Location not specified",
+      sourcePostingUrl: "https://delta.avature.net/fr_FR/careers/SearchJobs",
+    })).toBe("unknown");
+  });
 });
