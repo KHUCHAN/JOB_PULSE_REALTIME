@@ -766,9 +766,9 @@ const WORKDAY_DETAIL_BATCH_SIZE = 8;
 const BLOCKED_HTTP_STATUSES = new Set([401, 403, 429, 520, 521, 522, 523, 524]);
 const RETRYABLE_HTTP_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524]);
 const BROWSER_REQUEST_HEADERS = {
-  accept: "text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7",
+  accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.7",
   "accept-language": "en-US,en;q=0.9",
-  "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+  "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
 };
 
 const isBlockedHttpStatus = (status: number | null): boolean => status != null && BLOCKED_HTTP_STATUSES.has(status);
@@ -1793,6 +1793,110 @@ const hrmDirectJobs = (html: string, source: CrawlSource): SourceCrawlResult | n
     jobs,
     error: jobs.length > 0 ? null : "HRMDirect listing contained no usable jobs.",
   };
+};
+
+const infosysJobs = (html: string, source: CrawlSource): { jobs: CrawledJob[]; total: number } | null => {
+  if (new URL(source.postingUrl).hostname !== "digitalcareers.infosys.com") return null;
+  const total = Number(html.match(/Showing\s+\d+\s+to\s+\d+\s+of\s+([\d,]+)\s+matching jobs/i)?.[1]?.replaceAll(",", ""));
+  const cards = [...html.matchAll(/<a\b[^>]*href=["']([^"']*\/company-job\/description\/reqid\/([^"'/?#]+))[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi)];
+  if (!Number.isInteger(total) || total <= 0 || cards.length === 0) return null;
+  const jobs = uniqueJobs(cards.flatMap((card): CrawledJob[] => {
+    const externalId = card[2]?.trim();
+    const body = card[3] ?? "";
+    const title = decodeHtmlAttribute(body.match(/\bdata-title=["']([^"']+)["']/i)?.[1] ?? "")
+      .replaceAll("&nbsp;", " ").replace(/\s+/g, " ").trim();
+    if (!externalId || !title) return [];
+    const locationBlock = body.split(/\bjs-job-reqid\b/i)[0] ?? body;
+    const locationValues = [...locationBlock.matchAll(/<div\b[^>]*class=["'][^"']*\blocation-inline\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/gi)]
+      .map((match) => decodeHtmlAttribute(plainText(match[1]) ?? "").replaceAll("&nbsp;", " ").trim())
+      .filter((value) => value && value !== "," && value !== "-" && !/^USA$/i.test(value));
+    const location = locationValues.join(", ").replace(/\s+,/g, ",").replace(/,\s*,/g, ",").trim() || null;
+    const programs = classifyJobPrograms(title).keys;
+    return [{
+      externalId,
+      title,
+      company: source.company,
+      location,
+      arrangement: /\bremote\b/i.test(location ?? "") ? "remote" : "unknown",
+      employmentType: programs.some((key) => key === "internship" || key === "coop") ? "Internship" : null,
+      summary: null,
+      locationCountry: "United States",
+      requisitionId: externalId,
+      officialUrl: new URL(card[1], source.postingUrl).href,
+      publishedAt: null,
+    }];
+  }));
+  return { jobs, total };
+};
+
+const crawlInfosys = async (
+  source: CrawlSource,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult> => {
+  try {
+    const listingUrl = new URL(source.postingUrl);
+    const fetchPage = async (page: number): Promise<{ status: number; parsed: { jobs: CrawledJob[]; total: number } }> => {
+      const url = new URL(listingUrl);
+      url.searchParams.set("location", "USA");
+      url.searchParams.set("per_page", "25");
+      if (page > 1) url.searchParams.set("page", String(page));
+      else url.searchParams.delete("page");
+      const response = await fetchWithTimeout(fetcher, url, {}, true, { attempts: 1, timeoutMs: 15_000 });
+      if (!response.ok) throw Object.assign(new Error(`Infosys careers returned HTTP ${response.status}.`), { responseStatus: response.status });
+      const parsed = infosysJobs(await response.text(), source);
+      if (!parsed) throw Object.assign(new Error("Infosys careers returned no usable listing cards."), { responseStatus: response.status });
+      return { status: response.status, parsed };
+    };
+    const first = await fetchPage(1);
+    const total = first.parsed.total;
+    const totalPages = Math.ceil(total / 25);
+    const startPage = Math.min(Math.max(source.crawlPageCursor ?? 1, 1), totalPages);
+    const endPage = Math.min(startPage + (startPage === 1 ? 19 : 18), totalPages);
+    const pages = startPage === 1
+      ? Array.from({ length: Math.max(0, endPage - 1) }, (_, index) => index + 2)
+      : Array.from({ length: endPage - startPage + 1 }, (_, index) => startPage + index);
+    const payloads = [first.parsed];
+    for (let index = 0; index < pages.length; index += 6) {
+      const batch = await Promise.all(pages.slice(index, index + 6).map(fetchPage));
+      payloads.push(...batch.map((page) => page.parsed));
+    }
+    let exact = payloads.every((payload, index) => {
+      const page = index === 0 ? 1 : pages[index - 1];
+      const expected = Math.min(25, total - (page - 1) * 25);
+      return payload.total === total
+        && payload.jobs.length === expected
+        && payload.jobs.every((job) => Boolean(job.externalId))
+        && new Set(payload.jobs.map((job) => job.externalId)).size === payload.jobs.length;
+    });
+    const jobs = uniqueJobs(payloads.flatMap((payload) => payload.jobs));
+    exact = exact && jobs.length === payloads.reduce((sum, payload) => sum + payload.jobs.length, 0);
+    const cycleComplete = exact && endPage === totalPages;
+    return {
+      status: jobs.length > 0 ? "succeeded" : "failed",
+      responseStatus: first.status,
+      completeListing: exact && startPage === 1 && cycleComplete,
+      jobs,
+      ...(totalPages > 20 ? {
+        pagination: {
+          nextPage: cycleComplete ? 1 : endPage,
+          cycleComplete,
+          totalPages,
+        },
+      } : {}),
+      error: jobs.length > 0 ? null : "Infosys careers contained no usable jobs.",
+    };
+  } catch (error) {
+    const responseStatus = typeof error === "object" && error && "responseStatus" in error
+      ? Number((error as { responseStatus: unknown }).responseStatus)
+      : null;
+    return {
+      status: responseStatus != null && isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Infosys crawler error.",
+    };
+  }
 };
 
 const READER_JOB_DETAIL = /(?:\/jobs\/\d{4,}(?:[-/]|$)|\/site\/careers\/jobs\/\d+|\/careers\/(?:job\/\d+|find-your-job\/[^/?#]+-j\d+|jobdetail(?:[/?]|$)|details\/|position\/)|\/[^/?#]+\/[^/?#]+\/[a-f0-9]{24,}\/job\/?(?:[?#]|$)|\/(?:default|[a-z]{2}(?:_[a-z]{2})?|[^/?#]+)\/job\/[^/?#]+\/\d+(?:-[^/?#]+)?(?:[/?#]|$)|[?&](?:jobid|job_id|gh_jid|reqid|pid|opportunityid)=)/i;
@@ -7730,7 +7834,7 @@ async function crawlMetaCareers(source: CrawlSource, fetcher: typeof fetch): Pro
           "x-fb-lsd": lsd,
           ...(sessionCookie ? { cookie: sessionCookie } : {}),
           ...(browserMetadata ? {
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
             "accept-language": "en-US,en;q=0.9",
             "sec-fetch-dest": "empty",
             "sec-fetch-mode": "cors",
@@ -8216,6 +8320,7 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   if (sourcePage.hostname === "www.amazon.jobs" || sourcePage.hostname === "amazon.jobs") return crawlAmazonJobs(source, fetcher);
   if (source.id === "p5-0752-tiktok" || sourcePage.hostname === "lifeattiktok.com") return crawlTikTok(source, fetcher);
   if (source.id === "p4-0291-houlihan-lokey") return crawlHoulihanLokey(source, fetcher, now);
+  if (source.id === "p4-0296-infosys-consulting" || sourcePage.hostname === "digitalcareers.infosys.com") return crawlInfosys(source, fetcher);
   if (source.id === "p4-0245-cisco") {
     return crawlWorkday(source, "https://cisco.wd5.myworkdayjobs.com/wday/cxs/cisco/Cisco_Careers/jobs", fetcher, now);
   }

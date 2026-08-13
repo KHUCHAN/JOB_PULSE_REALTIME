@@ -88,6 +88,66 @@ describe("jobsFromBrowserAnchors", () => {
     })]);
   });
 
+  it("keeps provider-specific job details and case-insensitive query identities", () => {
+    const jobs = jobsFromBrowserAnchors([
+      { href: "/index.php?m=cpcareers&a=show&joborderid=1327234", text: "AI Security Engineer" },
+      { href: "/careersmarketplace/PipelineDetail/Clinical-Transformation/16097", text: "Project Manager - Clinical Transformation" },
+      { href: "/Search/JobDetail/R50033163/director-systems-engineering", text: "Director, Systems Engineering" },
+      { href: "/careersmarketplace/JobDetail?jobId=2929", text: "Software Engineering Director" },
+    ], { ...source, postingUrl: "https://careers.acme.com/search" });
+
+    expect(jobs).toEqual([
+      expect.objectContaining({ externalId: "1327234", title: "AI Security Engineer" }),
+      expect.objectContaining({ title: "Project Manager - Clinical Transformation" }),
+      expect.objectContaining({ title: "Director, Systems Engineering" }),
+      expect.objectContaining({ externalId: "2929", title: "Software Engineering Director" }),
+    ]);
+  });
+
+  it("keeps role-titled career slugs and anchored single-page openings", () => {
+    const careerJobs = jobsFromBrowserAnchors([
+      { href: "/careers/account-executive", text: "Account Executive (Founding)" },
+      { href: "/company/careers/b0570329-6c45-4446-9314-146c9dead90b", text: "Director, Legal Engineering" },
+    ], source);
+    const anchoredJobs = jobsFromBrowserAnchors([
+      { href: "/jobs#senior-backend-developer", text: "Senior backend developer" },
+    ], { ...source, postingUrl: "https://acme.com/jobs" });
+
+    expect(careerJobs).toHaveLength(2);
+    expect(anchoredJobs).toEqual([expect.objectContaining({
+      externalId: "senior-backend-developer",
+      officialUrl: "https://acme.com/jobs#senior-backend-developer",
+    })]);
+  });
+
+  it("rejects same-path sorting and facet links without a job identity", () => {
+    expect(jobsFromBrowserAnchors([
+      { href: "/us/career/jobs/career-jobboard_251573.html", text: "Region" },
+      { href: "/us/career/jobs/career-jobboard_251573.html?sort=region", text: "Region" },
+      { href: "/us/career/jobs/career-jobboard_251573.html?showFavorites=1", text: "Show all favorites" },
+      { href: "/us/career/jobs/career-jobboard_251573.html?term=engineering", text: "Functional area" },
+    ], { ...source, postingUrl: "https://acme.com/us/career/jobs/career-jobboard_251573.html" })).toEqual([]);
+  });
+
+  it("does not mistake editorial career articles for role-titled career children", () => {
+    expect(jobsFromBrowserAnchors([{
+      href: "/en/article/careers/aditya-day-life-data-engineer",
+      text: "Article Aditya: A day in the life of a data engineer",
+    }], { ...source, postingUrl: "https://acme.com/en/careers" })).toEqual([]);
+  });
+
+  it("trims Infosys listing-card prose down to the official role title", () => {
+    const jobs = jobsFromBrowserAnchors([{
+      href: "/global-careers/company-job/description/reqid/152164BR",
+      text: "Process Specialist Austin, TX &nbsp;- USA 152164BR Job Description: lengthy preview Apply",
+    }], { ...source, postingUrl: "https://digitalcareers.infosys.com/infosys/global-careers?location=USA" });
+
+    expect(jobs).toEqual([expect.objectContaining({
+      title: "Process Specialist",
+      officialUrl: "https://digitalcareers.infosys.com/global-careers/company-job/description/reqid/152164BR",
+    })]);
+  });
+
   it("rejects listing links and generic navigation", () => {
     expect(jobsFromBrowserAnchors([
       { href: "https://acme.com/careers/search-jobs", text: "Search jobs" },

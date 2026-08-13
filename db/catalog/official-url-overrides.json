@@ -480,7 +480,9 @@
     "p4-0279-floqast": { "url": "https://jobs.lever.co/floqast", "adapter": "lever" },
     "p4-0454-lightmatter": { "url": "https://job-boards.greenhouse.io/lightmatter", "adapter": "greenhouse" },
     "p4-0326-paxos": { "url": "https://jobs.ashbyhq.com/paxos", "adapter": "ashby" },
-    "p4-0474-poshmark": { "url": "https://jobs.ashbyhq.com/poshmark", "adapter": "ashby" }
+    "p4-0474-poshmark": { "url": "https://jobs.ashbyhq.com/poshmark", "adapter": "ashby" },
+    "legacy-row-849": { "url": "https://sjobs.brassring.com/TGnewUI/Search/Home/Home?partnerid=26350&siteid=6930", "adapter": "custom" },
+    "p4-0349-slalom": { "url": "https://jobs.slalom.com/en_US/careersmarketplace/SearchJobs", "adapter": "custom" }
   },
   "rejectedRecommendations": [
     "https://www.better.co/careers",

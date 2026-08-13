@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:76b504c5034ca0d801dc4fafc66be70a1eec82ab4a6320d9e225dd12643a30a7",
+  "version": "v2:sha256:eaf35fc1f0f79b2ee435b5050d9228875c2faf41342c0d90de8515390782bbdd",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -15246,7 +15246,7 @@
       "id": "legacy-row-849",
       "masterRow": 2849,
       "company": "Performance Food Group",
-      "postingUrl": "https://www.pfgc.com/Careers",
+      "postingUrl": "https://sjobs.brassring.com/TGnewUI/Search/Home/Home?partnerid=26350&siteid=6930",
       "talentUrl": "https://www.pfgc.com/Careers",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -17346,7 +17346,7 @@
       "id": "p4-0349-slalom",
       "masterRow": 2999,
       "company": "Slalom",
-      "postingUrl": "https://jobs.slalom.com/en_US/careersmarketplace",
+      "postingUrl": "https://jobs.slalom.com/en_US/careersmarketplace/SearchJobs",
       "talentUrl": "https://www.slalom.com/us/en/careers",
       "channel": "공식 Career Portal",
       "adapter": "custom",

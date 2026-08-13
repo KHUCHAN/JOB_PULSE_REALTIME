@@ -3693,6 +3693,45 @@ Wrong description.
     ]);
   });
 
+  it("checkpoints Infosys' official USA catalog and parses exact listing-card fields", async () => {
+    const requestedPages: number[] = [];
+    const total = 525;
+    const fetcher: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      const page = Number(url.searchParams.get("page") ?? 1);
+      requestedPages.push(page);
+      const start = (page - 1) * 25;
+      const count = Math.min(25, total - start);
+      const cards = Array.from({ length: count }, (_, index) => {
+        const id = `${start + index + 1}BR`;
+        return `<a href="https://digitalcareers.infosys.com/global-careers/company-job/description/reqid/${id}" class="job"><div class="job-title" data-title="Data Engineer ${id}">Data Engineer ${id}</div><div class="job-location"><div class="location-inline">Austin, TX</div><div class="location-inline">-</div><div class="location-inline">USA</div></div><div class="job-description js-job-reqid"><div class="location-inline">${id}</div></div></a>`;
+      }).join("");
+      return new Response(`<p>Showing ${start + 1} to ${start + count} of ${total} matching jobs</p>${cards}`, { status: 200 });
+    };
+
+    const result = await crawlSource({
+      id: "p4-0296-infosys-consulting",
+      company: "Infosys Consulting",
+      postingUrl: "https://digitalcareers.infosys.com/infosys/global-careers?location=USA",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-12T00:00:00Z"));
+
+    expect(requestedPages.sort((a, b) => a - b)).toEqual(Array.from({ length: 20 }, (_, index) => index + 1));
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: { nextPage: 20, cycleComplete: false, totalPages: 21 },
+    }));
+    expect(result.jobs).toHaveLength(500);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "1BR",
+      title: "Data Engineer 1BR",
+      location: "Austin, TX",
+      locationCountry: "United States",
+      requisitionId: "1BR",
+    }));
+  });
+
   it("preserves a direct Workday URL search query when crawling a subsidiary catalog", async () => {
     const requestBodies: Array<{ searchText?: string }> = [];
     const fetcher: typeof fetch = async (_input, init) => {
