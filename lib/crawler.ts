@@ -2237,7 +2237,7 @@ const crawlPerformanceFoodGroup = async (source: CrawlSource, fetcher: typeof fe
   }
 };
 
-const READER_JOB_DETAIL = /(?:\/jobs\/\d{4,}(?:[-/]|$)|\/site\/careers\/jobs\/\d+|\/careers\/(?:job\/\d+|find-your-job\/[^/?#]+-j\d+|jobdetail(?:[/?]|$)|details\/|position\/)|\/[^/?#]+\/[^/?#]+\/[a-f0-9]{24,}\/job\/?(?:[?#]|$)|\/(?:default|[a-z]{2}(?:_[a-z]{2})?|[^/?#]+)\/job\/[^/?#]+\/\d+(?:-[^/?#]+)?(?:[/?#]|$)|[?&](?:jobid|job_id|gh_jid|reqid|pid|opportunityid)=)/i;
+const READER_JOB_DETAIL = /(?:\/jobs\/(?:r-)?\d{1,}(?:[-/]|$)|\/site\/careers\/jobs\/\d+|\/careers\/(?:job\/\d+|find-your-job\/[^/?#]+-j\d+|jobdetail(?:[/?]|$)|details\/|position\/)|\/[^/?#]+\/[^/?#]+\/[a-f0-9]{24,}\/job\/?(?:[?#]|$)|\/(?:default|[a-z]{2}(?:_[a-z]{2})?|[^/?#]+)\/job\/[^/?#]+\/\d+(?:-[^/?#]+)?(?:[/?#]|$)|[?&](?:jobid|job_id|gh_jid|reqid|pid|opportunityid)=)/i;
 
 const markdownAnchors = (markdown: string, baseUrl: string): BrowserAnchor[] => [...markdown.matchAll(
   /\[([^\]]{2,240})\]\((https?:\/\/[^)\s]+|\/[^)\s]+)\)/g,
@@ -2376,6 +2376,73 @@ const crawlAvatureReaderPages = async (
     completeListing: successfulPages.length === offsets.length && jobs.length >= boundedTotal,
     jobs,
     resolvedListingUrl: canonical.href,
+    error: null,
+  };
+};
+
+const readerMarkdown = async (
+  postingUrl: string,
+  fetcher: typeof fetch,
+): Promise<string | null> => {
+  try {
+    const response = await fetchWithTimeout(
+      fetcher,
+      `https://r.jina.ai/${postingUrl}`,
+      { headers: { accept: "text/plain", "x-retain-links": "all", "x-with-links-summary": "all" } },
+      false,
+      { attempts: 1, timeoutMs: 12_000 },
+    );
+    return response.ok ? await response.text() : null;
+  } catch {
+    return null;
+  }
+};
+
+const crawlDeltaAvature = async (
+  source: CrawlSource,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult> => {
+  const listing = new URL(source.postingUrl);
+  listing.searchParams.set("jobOffset", "0");
+  const markdown = await readerMarkdown(listing.href, fetcher);
+  if (!markdown) return {
+    status: "failed", responseStatus: null, completeListing: false, jobs: [],
+    error: "Delta Avature reader listing was unavailable.",
+  };
+  const result = await crawlAvatureReaderPages({ ...source, postingUrl: listing.href }, markdown, fetcher);
+  return result ?? {
+    status: "failed", responseStatus: 200, completeListing: false, jobs: [],
+    error: "Delta Avature reader listing contained no usable jobs.",
+  };
+};
+
+const crawlWellsFargo = async (
+  source: CrawlSource,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult> => {
+  const listing = new URL(source.postingUrl);
+  // Wells' public search endpoint supports a keyword query even when its
+  // server-rendered landing page is protected by Cloudflare. Restricting this
+  // recovery feed to internship keeps it additive: it cannot close the rest of
+  // the 1,800+ job catalog while still recovering the user's target inventory.
+  listing.searchParams.set("search", "internship");
+  const firstMarkdown = await readerMarkdown(listing.href, fetcher);
+  if (!firstMarkdown) return {
+    status: "failed", responseStatus: null, completeListing: false, jobs: [],
+    error: "Wells Fargo reader listing was unavailable.",
+  };
+  const jobs = markdownJobs(firstMarkdown, { ...source, postingUrl: listing.href });
+  if (jobs.length === 0) return {
+    status: "failed", responseStatus: 200, completeListing: false, jobs: [],
+    error: "Wells Fargo reader listing contained no internship jobs.",
+  };
+  return {
+    status: "succeeded",
+    responseStatus: 200,
+    // This is a keyword slice, not the complete Wells Fargo catalog.
+    completeListing: false,
+    jobs: uniqueJobs(jobs),
+    resolvedListingUrl: listing.href,
     error: null,
   };
 };
@@ -8878,6 +8945,8 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
     source = { ...source, postingUrl: originalPage.href };
   }
   const sourcePage = new URL(source.postingUrl);
+  if (source.id === "audit-row-342") return crawlDeltaAvature(source, fetcher);
+  if (source.id === "p2-0067-wells-fargo") return crawlWellsFargo(source, fetcher);
   if (source.id === "p4-0386-whatnot") return crawlWhatnot(source, fetcher);
   if (source.id === "p5-0812-aurora-innovation") return crawlAurora(source, fetcher);
   if (source.id === "p5-0950-jane-street") return crawlJaneStreet(source, fetcher);

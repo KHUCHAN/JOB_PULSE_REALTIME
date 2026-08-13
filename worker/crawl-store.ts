@@ -461,6 +461,14 @@ export class D1CrawlStore implements CrawlStore {
         const officialUrl = String(record.officialUrl);
         const previous = existingByUrl.get(officialUrl);
         if (!previous && allowNewJobNotifications) notificationEligibleUrls.add(officialUrl);
+        if (previous && allowNewJobNotifications && previous.resume_match_hash !== record.resumeMatchHash
+          && record.locationRegion === "us"
+          && (record.programKeys as string[]).some((key) => key === "internship" || key === "coop")
+          && (record.recruitingYears as number[]).includes(2027)) {
+          // Recovery path: a previously seen posting can become newly
+          // eligible after a crawler fixes missing region/program metadata.
+          notificationEligibleUrls.add(officialUrl);
+        }
         if (!previous || previous.status === "closed" || previous.resume_match_hash !== record.resumeMatchHash) {
           resumeTouchedUrls.add(officialUrl);
         }

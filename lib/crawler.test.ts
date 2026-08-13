@@ -964,6 +964,34 @@ Wrong description.
     expect(requests).toContain("https://r.jina.ai/https://delta.avature.net/en_US/careers/SearchJobs/?jobOffset=10");
   });
 
+  it("recovers Wells Fargo's 2027 internship slice from the reader without closing the full catalog", async () => {
+    const wellsUrl = "https://www.wellsfargojobs.com/en/jobs/?search=internship";
+    const markdown = [
+      "Showing **1** to **2** of **2** matching jobs",
+      "## [2027 Data Science Summer Internship – Early Careers](https://www.wellsfargojobs.com/en/jobs/r-1/2027-data-science-summer-internship/)",
+      "* CHARLOTTE, North Carolina",
+      "## [2027 Software Engineering Internship – Early Careers](https://www.wellsfargojobs.com/en/jobs/r-2/2027-software-engineering-internship/)",
+      "* SAN FRANCISCO, California",
+    ].join("\n");
+    const fetcher: typeof fetch = async (input) => String(input) === `https://r.jina.ai/${wellsUrl}`
+      ? new Response(markdown, { status: 200 })
+      : new Response("blocked", { status: 403 });
+
+    const result = await crawlSource({
+      id: "p2-0067-wells-fargo",
+      company: "Wells Fargo",
+      postingUrl: "https://www.wellsfargojobs.com/en/jobs/",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-13T16:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: false, resolvedListingUrl: wellsUrl }));
+    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      title: "2027 Data Science Summer Internship – Early Careers",
+      location: "CHARLOTTE, North Carolina",
+    }));
+  });
+
   it("paginates Avature's open-ended 999+ result count until the first empty page", async () => {
     const requestedOffsets: number[] = [];
     const fetcher: typeof fetch = async (input) => {
