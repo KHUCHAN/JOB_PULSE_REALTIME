@@ -3654,6 +3654,45 @@ Wrong description.
     }));
   });
 
+  it("combines Houlihan Lokey's three official Workday catalogs", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      const board = url.match(/\/wday\/cxs\/hl\/([^/]+)\/jobs/)?.[1];
+      return Response.json({
+        total: 1,
+        jobPostings: [{
+          title: `${board} Analyst`,
+          externalPath: `/job/New-York/${board}-Analyst_${board}-1`,
+          locationsText: "New York, NY",
+        }],
+      });
+    };
+
+    const result = await crawlSource({
+      id: "p4-0291-houlihan-lokey",
+      company: "Houlihan Lokey",
+      postingUrl: "https://hl.com/careers/",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-12T00:00:00Z"));
+
+    expect(requests.sort()).toEqual([
+      "https://hl.wd1.myworkdayjobs.com/wday/cxs/hl/Campus/jobs",
+      "https://hl.wd1.myworkdayjobs.com/wday/cxs/hl/Corporate/jobs",
+      "https://hl.wd1.myworkdayjobs.com/wday/cxs/hl/Lateral/jobs",
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+    }));
+    expect(result.jobs.map((job) => job.title).sort()).toEqual([
+      "Campus Analyst",
+      "Corporate Analyst",
+      "Lateral Analyst",
+    ]);
+  });
+
   it("preserves a direct Workday URL search query when crawling a subsidiary catalog", async () => {
     const requestBodies: Array<{ searchText?: string }> = [];
     const fetcher: typeof fetch = async (_input, init) => {

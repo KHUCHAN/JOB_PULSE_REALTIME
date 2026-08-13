@@ -8111,6 +8111,44 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
   }
 }
 
+const crawlHoulihanLokey = async (
+  source: CrawlSource,
+  fetcher: typeof fetch,
+  now: Date,
+): Promise<SourceCrawlResult> => {
+  const boards = [
+    "https://hl.wd1.myworkdayjobs.com/Campus",
+    "https://hl.wd1.myworkdayjobs.com/Lateral",
+    "https://hl.wd1.myworkdayjobs.com/Corporate",
+  ];
+  const results = await Promise.all(boards.map(async (postingUrl) => {
+    const endpoint = workdayFeed(postingUrl);
+    if (!endpoint) return {
+      status: "failed" as const,
+      responseStatus: null,
+      completeListing: false,
+      jobs: [],
+      error: "Houlihan Lokey Workday endpoint was invalid.",
+    };
+    return crawlWorkday({ ...source, postingUrl, adapter: "workday" }, endpoint, fetcher, now);
+  }));
+  const jobs = uniqueJobs(results.flatMap((result) => result.jobs));
+  if (jobs.length > 0) return {
+    status: "succeeded",
+    responseStatus: results.find((result) => result.status === "succeeded")?.responseStatus ?? 200,
+    completeListing: results.every((result) => result.status === "succeeded" && result.completeListing),
+    jobs,
+    error: null,
+  };
+  return {
+    status: results.some((result) => result.status === "blocked") ? "blocked" : "failed",
+    responseStatus: results.find((result) => result.responseStatus != null)?.responseStatus ?? null,
+    completeListing: false,
+    jobs: [],
+    error: "Houlihan Lokey's three official Workday catalogs returned no usable jobs.",
+  };
+};
+
 async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
   // Apply an ID-pinned feed only at the root. Redirect/candidate recursion
   // keeps the same source ID, so reapplying it at discovery depth 1 would
@@ -8177,6 +8215,7 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   if (sourcePage.hostname === "www.okta.com" && sourcePage.pathname.includes("/company/careers/job-listing")) return crawlOktaCareers(source, fetcher);
   if (sourcePage.hostname === "www.amazon.jobs" || sourcePage.hostname === "amazon.jobs") return crawlAmazonJobs(source, fetcher);
   if (source.id === "p5-0752-tiktok" || sourcePage.hostname === "lifeattiktok.com") return crawlTikTok(source, fetcher);
+  if (source.id === "p4-0291-houlihan-lokey") return crawlHoulihanLokey(source, fetcher, now);
   if (source.id === "p4-0245-cisco") {
     return crawlWorkday(source, "https://cisco.wd5.myworkdayjobs.com/wday/cxs/cisco/Cisco_Careers/jobs", fetcher, now);
   }

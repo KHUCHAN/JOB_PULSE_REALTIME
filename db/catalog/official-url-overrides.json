@@ -476,7 +476,11 @@
     "audit-row-424": { "url": "https://jobs.sonicautomotive.com/search", "adapter": "custom" },
     "p4-0500-sprinklr": { "url": "https://sprinklr.wd1.myworkdayjobs.com/careers", "adapter": "workday" },
     "legacy-row-869": { "url": "https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=a4c08bd3-eedf-419a-9fb6-5d2ac8a3bafa&ccId=19000101_000001&lang=en_US", "adapter": "custom" },
-    "p2-0180-valley-national-bancorp": { "url": "https://recruiting.adp.com/srccar/public/RTI.home?c=2169307&d=ExternalCareerSite", "adapter": "custom" }
+    "p2-0180-valley-national-bancorp": { "url": "https://recruiting.adp.com/srccar/public/RTI.home?c=2169307&d=ExternalCareerSite", "adapter": "custom" },
+    "p4-0279-floqast": { "url": "https://jobs.lever.co/floqast", "adapter": "lever" },
+    "p4-0454-lightmatter": { "url": "https://job-boards.greenhouse.io/lightmatter", "adapter": "greenhouse" },
+    "p4-0326-paxos": { "url": "https://jobs.ashbyhq.com/paxos", "adapter": "ashby" },
+    "p4-0474-poshmark": { "url": "https://jobs.ashbyhq.com/poshmark", "adapter": "ashby" }
   },
   "rejectedRecommendations": [
     "https://www.better.co/careers",
