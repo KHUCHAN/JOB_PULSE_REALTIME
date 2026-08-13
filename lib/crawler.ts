@@ -1125,7 +1125,10 @@ async function crawlDiscoveredFeed(source: CrawlSource, discovered: DiscoveredAt
       const totalPages = Math.max(1, Math.ceil(boundedTotal / pageSize));
       const requestedStartPage = Math.max(1, Math.trunc(source.crawlPageCursor ?? 1));
       const startPage = requestedStartPage <= totalPages ? requestedStartPage : 1;
-      const maxPagesPerPass = 40;
+      // Jibe pages can carry multi-megabyte descriptions. Keep both network
+      // transfer and D1 upserts safely inside the Sites request deadline; the
+      // persisted cursor resumes the next overlapping window next cycle.
+      const maxPagesPerPass = 15;
       const endPage = Math.min(totalPages, startPage + maxPagesPerPass - 1);
       const expectedPageLength = (page: number): number => boundedTotal === 0
         ? 0

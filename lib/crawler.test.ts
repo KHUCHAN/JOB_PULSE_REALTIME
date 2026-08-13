@@ -1001,11 +1001,11 @@ Wrong description.
     }, fetcher, new Date());
 
     expect(result.status).toBe("succeeded");
-    expect(result.jobs).toHaveLength(4_000);
+    expect(result.jobs).toHaveLength(1_500);
     expect(result.completeListing).toBe(false);
-    expect(result.pagination).toEqual({ nextPage: 40, cycleComplete: false, totalPages: 100 });
-    expect(requestedPages).toHaveLength(40);
-    expect(Math.max(...requestedPages)).toBe(40);
+    expect(result.pagination).toEqual({ nextPage: 15, cycleComplete: false, totalPages: 100 });
+    expect(requestedPages).toHaveLength(15);
+    expect(Math.max(...requestedPages)).toBe(15);
   });
 
   it("fully paginates an Eightfold public jobs API", async () => {
