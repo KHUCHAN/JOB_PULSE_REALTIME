@@ -74,12 +74,16 @@ type GmailEnvironment = {
   GMAIL_REFRESH_TOKEN?: string;
   GMAIL_SENDER?: string;
   CRAWL_INGEST_SECRET?: string;
+  JOB_PULSE_WEBHOOK_SECRET?: string;
 };
 
 const browserIngestAuthorized = async (request: Request): Promise<boolean> => {
-  const secret = (env as typeof env & GmailEnvironment).CRAWL_INGEST_SECRET?.trim();
+  const values = env as typeof env & GmailEnvironment;
   const authorization = request.headers.get("authorization");
-  return (Boolean(secret) && authorization === `Bearer ${secret}`)
+  const secrets = [values.CRAWL_INGEST_SECRET, values.JOB_PULSE_WEBHOOK_SECRET]
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value));
+  return secrets.some((secret) => authorization === `Bearer ${secret}`)
     || verifyGithubActionsOidc(authorization);
 };
 
