@@ -31,7 +31,6 @@ const outputPath = resolve(projectRoot, "output/playwright/browser-fallback/resu
 const sqlPath = resolve(projectRoot, ".codex_tmp/browser-fallback.sql");
 const concurrency = Math.max(1, Number.parseInt(process.env.BROWSER_FALLBACK_CONCURRENCY ?? "12", 10));
 const limit = Number.parseInt(process.env.BROWSER_FALLBACK_LIMIT ?? "500", 10);
-const offset = Math.max(0, Number.parseInt(process.env.BROWSER_FALLBACK_OFFSET ?? "0", 10));
 const headless = process.env.BROWSER_FALLBACK_HEADFUL !== "1";
 const forceAll = process.env.BROWSER_FALLBACK_ALL === "1";
 const targetSourceId = process.env.BROWSER_FALLBACK_SOURCE_ID?.trim() || null;
@@ -77,9 +76,17 @@ const problemSources = async (): Promise<CrawlSource[]> => {
     const response = await fetch(`${liveUrl}/api/pulse?resource=sources`, { headers: { accept: "application/json" } });
     if (!response.ok) throw new Error(`Live source inventory returned HTTP ${response.status}.`);
     const sources = await response.json() as Array<{
-      id: string; company: string; postingUrl: string | null; adapter: CrawlSource["adapter"];
+      id: string; company: string; postingUrl: string | null; talentUrl: string | null;
+      adapter: CrawlSource["adapter"];
       health: string; currentJobs: number; lastCheckedAt: string | null;
     }>;
+    const candidateUrl = (source: { postingUrl: string | null; talentUrl: string | null }): string | null => {
+      if (source.postingUrl) return source.postingUrl;
+      const talentUrl = source.talentUrl;
+      if (!talentUrl || /(?:talent|alert|introduceyourself|sign[_-]?in|\/login|\/apply)(?:[/?#]|$)/i.test(talentUrl)) return null;
+      if (!/(?:jobs?|careers?|opportunities|openings?|positions?|search)/i.test(talentUrl)) return null;
+      return talentUrl;
+    };
     const healthRank = (source: { health: string; currentJobs: number }): number => {
       // Empty feeds are the highest-risk state: they may represent a
       // rendered ATS board that native HTTP parsing missed.  Give those a
@@ -92,13 +99,14 @@ const problemSources = async (): Promise<CrawlSource[]> => {
       return emptyRank * 10 + stateRank;
     };
     return sources
-      .filter((source) => source.postingUrl && (source.health === "failed" || source.health === "blocked"
+      .map((source) => ({ ...source, candidateUrl: candidateUrl(source) }))
+      .filter((source) => source.candidateUrl && (source.health === "failed" || source.health === "blocked"
         || source.health === "inactive" || (source.health === "healthy" && source.currentJobs === 0)))
       .sort((left, right) => healthRank(left) - healthRank(right)
         || Date.parse(left.lastCheckedAt ?? "1970-01-01") - Date.parse(right.lastCheckedAt ?? "1970-01-01")
         || left.company.localeCompare(right.company))
-      .slice(offset, offset + (Number.isFinite(limit) ? Math.max(1, limit) : 500))
-      .map((source) => ({ id: source.id, company: source.company, postingUrl: source.postingUrl!, adapter: source.adapter }));
+      .slice(0, Number.isFinite(limit) ? Math.max(1, limit) : 500)
+      .map((source) => ({ id: source.id, company: source.company, postingUrl: source.candidateUrl!, adapter: source.adapter }));
   }
   const sql = `WITH latest AS (
     SELECT source_id, status, jobs_seen, ROW_NUMBER() OVER (PARTITION BY source_id ORDER BY started_at DESC) row_number
@@ -240,6 +248,32 @@ const inspectWithDeadline = async (page: Page, source: CrawlSource): Promise<Bro
   }
 };
 
+type BrowserResultCode =
+  | "jobs_recovered"
+  | "empty_board"
+  | "http_error"
+  | "blocked_challenge"
+  | "navigation_timeout"
+  | "navigation_error"
+  | "unsafe_listing"
+  | "ingest_error";
+
+const browserResultClassification = (result: BrowserFallbackResult): {
+  status: "succeeded" | "failed" | "blocked";
+  code: BrowserResultCode;
+} => {
+  if (result.error?.startsWith("Rejected unsafe browser listing candidate:")) return { status: "failed", code: "unsafe_listing" };
+  if (result.jobs.length > 0 && result.finalUrl) return { status: "succeeded", code: "jobs_recovered" };
+  if ([401, 403, 429, 520, 521, 522, 523, 524].includes(result.status ?? -1)
+    || /(?:cloudflare|captcha|challenge|blocked|access denied)/i.test(result.error ?? "")) {
+    return { status: "blocked", code: "blocked_challenge" };
+  }
+  if (result.status !== null && result.status >= 400) return { status: "failed", code: "http_error" };
+  if (/exceeded 60 seconds|timeout/i.test(result.error ?? "")) return { status: "failed", code: "navigation_timeout" };
+  if (result.error) return { status: "failed", code: "navigation_error" };
+  return { status: "succeeded", code: "empty_board" };
+};
+
 const quote = (value: string | number | null): string => {
   if (value === null) return "NULL";
   if (typeof value === "number") return String(value);
@@ -319,10 +353,27 @@ async function main(): Promise<void> {
     if (!safe) result.error = `Rejected unsafe browser listing candidate: ${result.finalUrl}`;
     return safe;
   });
-  if (!dryRun && successful.length > 0 && productionIngestUrl) {
-    for (const result of successful) {
+  if (!dryRun && productionIngestUrl) {
+    for (const result of results) {
       const bearer = await githubOidcToken();
       if (!bearer) throw new Error("Production browser ingest authorization is unavailable.");
+      const classification = browserResultClassification(result);
+      if (classification.status !== "succeeded" || classification.code === "empty_board") {
+        const response = await fetch(productionIngestUrl, {
+          method: "POST",
+          headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
+          body: JSON.stringify({
+            action: "recordBrowserCrawlResult",
+            sourceId: result.source.id,
+            status: classification.status,
+            responseStatus: result.status,
+            jobsSeen: result.jobs.length,
+            code: classification.code,
+          }),
+        });
+        if (!response.ok) result.error = `Production browser result returned HTTP ${response.status}.`;
+        continue;
+      }
       const allowedOrigins = [result.finalUrl, ...result.jobs.map((job) => job.officialUrl)]
         .flatMap((value) => {
           try { return value ? [new URL(value).origin] : []; } catch { return []; }
@@ -339,7 +390,22 @@ async function main(): Promise<void> {
           completeListing: false,
         }),
       });
-      if (!response.ok) result.error = `Production browser ingest returned HTTP ${response.status}.`;
+      if (!response.ok) {
+        result.error = `Production browser ingest returned HTTP ${response.status}.`;
+        const retry = await fetch(productionIngestUrl, {
+          method: "POST",
+          headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
+          body: JSON.stringify({
+            action: "recordBrowserCrawlResult",
+            sourceId: result.source.id,
+            status: "failed",
+            responseStatus: response.status,
+            jobsSeen: 0,
+            code: "ingest_error",
+          }),
+        });
+        if (!retry.ok) result.error += ` Result recording returned HTTP ${retry.status}.`;
+      }
     }
   } else if (!dryRun && successful.length > 0) {
     await writeFile(sqlPath, persistenceSql(successful));

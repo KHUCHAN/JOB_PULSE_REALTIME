@@ -56,7 +56,7 @@ import {
   type GmailRuntimeConfig,
 } from "../../../lib/resume-alert-service";
 import { verifyGithubActionsOidc } from "../../../lib/github-actions-oidc";
-import { isSafeCareerListingUrl } from "../../../lib/url-remediation";
+import { detectUrlAdapter, isSafeCareerListingUrl } from "../../../lib/url-remediation";
 
 export const dynamic = "force-dynamic";
 
@@ -150,9 +150,9 @@ type UrlRepairSourceRow = BrowserIngestSourceRow;
 
 async function browserIngestSource(database: D1Database, sourceId: string): Promise<PersistedSource | null> {
   const row = await database.prepare(`
-    SELECT id, company, posting_url, adapter, next_crawl_at
+    SELECT id, company, COALESCE(posting_url, talent_url) AS posting_url, adapter, next_crawl_at
     FROM sources
-    WHERE id = ? AND enabled = 1 AND posting_url IS NOT NULL
+    WHERE id = ? AND (posting_url IS NOT NULL OR talent_url IS NOT NULL)
   `).bind(sourceId).first<BrowserIngestSourceRow>();
   return row ? {
     id: row.id,
@@ -163,18 +163,73 @@ async function browserIngestSource(database: D1Database, sourceId: string): Prom
   } : null;
 }
 
+type BrowserCrawlStatus = "succeeded" | "failed" | "blocked";
+type BrowserCrawlCode =
+  | "jobs_recovered"
+  | "empty_board"
+  | "http_error"
+  | "blocked_challenge"
+  | "navigation_timeout"
+  | "navigation_error"
+  | "unsafe_listing"
+  | "ingest_error";
+
+const browserCrawlBackoffHours = (status: BrowserCrawlStatus): number => (
+  status === "succeeded" ? 2 : status === "failed" ? 6 : 24
+);
+
+async function recordBrowserCrawlResult(
+  database: D1Database,
+  sourceId: string,
+  status: BrowserCrawlStatus,
+  responseStatus: number | null,
+  jobsSeen: number,
+  code: BrowserCrawlCode,
+): Promise<{ sourceId: string; status: BrowserCrawlStatus; jobsSeen: number; nextCrawlAt: string }> {
+  const source = await browserIngestSource(database, sourceId);
+  if (!source) throw new Error("Browser crawl source is unavailable.");
+  const now = new Date();
+  const startedAt = now.toISOString();
+  const nextCrawlAt = new Date(now.getTime() + browserCrawlBackoffHours(status) * 60 * 60 * 1_000).toISOString();
+  const store = new D1CrawlStore(database);
+  const runId = await store.startRun(source, startedAt);
+  await store.finishRun(runId, {
+    status,
+    responseStatus,
+    jobsSeen,
+    jobsCreated: 0,
+    jobsUpdated: 0,
+    jobsClosed: 0,
+    // Only fixed, low-cardinality codes are persisted. Browser pages are
+    // untrusted input and must never write arbitrary HTML/error text to D1.
+    error: code,
+    finishedAt: new Date().toISOString(),
+  });
+  await store.scheduleNext(source.id, nextCrawlAt);
+  return { sourceId, status, jobsSeen, nextCrawlAt };
+}
+
 async function persistBrowserSnapshot(
   database: D1Database,
   source: PersistedSource,
   jobs: CrawledJob[],
   facets?: CrawledFacet[],
   completeListing = false,
+  listingUrl?: string,
 ): Promise<{ sourceId: string; jobs: number; created: number; updated: number; closed: number }> {
   const store = new D1CrawlStore(database);
   const now = new Date();
   const runId = await store.startRun(source, now.toISOString());
   try {
     const changes = await store.syncJobs(source.id, jobs, completeListing, facets);
+    if (listingUrl && listingUrl !== source.postingUrl && isSafeCareerListingUrl(source.company, source.postingUrl, listingUrl)) {
+      await store.updateResolvedListing(source.id, source.postingUrl, listingUrl, detectUrlAdapter(listingUrl));
+    }
+    // A disabled source is allowed through browser verification so an
+    // official board found by Chrome can be promoted back to the active queue.
+    if (jobs.length > 0) {
+      await database.prepare("UPDATE sources SET enabled = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(source.id).run();
+    }
     await store.finishRun(runId, {
       status: "succeeded",
       responseStatus: 200,
@@ -411,7 +466,7 @@ export async function POST(request: Request): Promise<Response> {
         : [];
       const snapshot = normalizeBrowserJobSnapshot(source, body.jobs, allowedOrigins);
       if (snapshot.jobs.length === 0) return json({ error: "Browser snapshot contained no valid jobs." }, 400);
-      return json(await persistBrowserSnapshot(database, source, snapshot.jobs, snapshot.facets, body.completeListing === true));
+      return json(await persistBrowserSnapshot(database, source, snapshot.jobs, snapshot.facets, body.completeListing === true, listingUrl));
     }
     if (body.action === "ingestTeslaState") {
       const sourceId = typeof body.sourceId === "string" ? body.sourceId : "";
@@ -424,6 +479,30 @@ export async function POST(request: Request): Promise<Response> {
       const jobs = jobsFromTeslaState(source, body.state as TeslaState);
       if (jobs.length === 0) return json({ error: "Tesla browser state contained no US jobs." }, 400);
       return json(await persistBrowserSnapshot(database, source, jobs));
+    }
+    if (body.action === "recordBrowserCrawlResult") {
+      if (!await browserIngestAuthorized(request)) return json({ error: "Browser crawl authorization is required." }, 401);
+      const sourceId = typeof body.sourceId === "string" ? body.sourceId.trim() : "";
+      const status = body.status;
+      const code = body.code;
+      const responseStatus = body.responseStatus === null || body.responseStatus === undefined
+        ? null
+        : Number.isInteger(body.responseStatus) && Number(body.responseStatus) >= 100 && Number(body.responseStatus) <= 599
+          ? Number(body.responseStatus) : null;
+      const jobsSeen = Number.isInteger(body.jobsSeen) && Number(body.jobsSeen) >= 0 && Number(body.jobsSeen) <= 10_000
+        ? Number(body.jobsSeen) : null;
+      const allowedStatuses = new Set<BrowserCrawlStatus>(["succeeded", "failed", "blocked"]);
+      const allowedCodes = new Set<BrowserCrawlCode>([
+        "jobs_recovered", "empty_board", "http_error", "blocked_challenge", "navigation_timeout",
+        "navigation_error", "unsafe_listing", "ingest_error",
+      ]);
+      if (!sourceId || !allowedStatuses.has(status as BrowserCrawlStatus)
+        || !allowedCodes.has(code as BrowserCrawlCode) || jobsSeen === null) {
+        return json({ error: "A bounded browser crawl result is required." }, 400);
+      }
+      return json(await recordBrowserCrawlResult(
+        db(), sourceId, status as BrowserCrawlStatus, responseStatus, jobsSeen, code as BrowserCrawlCode,
+      ));
     }
     if (body.action === "crawlBatch") {
       const requested = typeof body.limit === "number" ? body.limit : 4;

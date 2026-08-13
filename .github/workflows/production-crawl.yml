@@ -44,11 +44,10 @@ jobs:
         env:
           BROWSER_FALLBACK_LIVE_URL: https://job-pulse-realtime.autodev61.chatgpt.site
           BROWSER_FALLBACK_INGEST_URL: https://job-pulse-realtime.autodev61.chatgpt.site/api/pulse
-          # Rotate the browser queue across scheduled runs so a persistent
-          # Cloudflare/JS source cannot starve the remaining 0-job and failed
-          # sources. Six 60-source windows cover the full problem queue.
+          # The browser action records every empty/failed/blocked result in
+          # crawl_runs and advances next_crawl_at. Selecting the oldest rows
+          # therefore rotates fairly without a run-number offset that could
+          # skip sources as the queue shrinks.
           BROWSER_FALLBACK_LIMIT: "60"
           BROWSER_FALLBACK_CONCURRENCY: "4"
-        run: |
-          export BROWSER_FALLBACK_OFFSET=$(( (GITHUB_RUN_NUMBER - 1) % 6 * 60 ))
-          npm run crawler:fallback:browser
+        run: npm run crawler:fallback:browser
