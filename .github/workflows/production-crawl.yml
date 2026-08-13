@@ -1,6 +1,18 @@
 name: Job Pulse production crawl
 
 on:
+  # Run once when the scheduler definition or its runner changes so a
+  # production deployment cannot wait for the next two-hour tick. The
+  # recurring schedule remains the source of normal operation.
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/production-crawl.yml
+      - scripts/run-production-crawl.mjs
+      - scripts/browser-fallback-crawl.ts
+      - lib/**
+      - app/api/pulse/**
   schedule:
     - cron: "17 */2 * * *"
   workflow_dispatch:
