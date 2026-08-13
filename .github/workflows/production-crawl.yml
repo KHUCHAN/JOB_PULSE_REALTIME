@@ -48,6 +48,7 @@ jobs:
           # Cloudflare/JS source cannot starve the remaining 0-job and failed
           # sources. Six 60-source windows cover the full problem queue.
           BROWSER_FALLBACK_LIMIT: "60"
-          BROWSER_FALLBACK_OFFSET: ${{ ((github.run_number - 1) % 6) * 60 }}
           BROWSER_FALLBACK_CONCURRENCY: "4"
-        run: npm run crawler:fallback:browser
+        run: |
+          export BROWSER_FALLBACK_OFFSET=$(( (GITHUB_RUN_NUMBER - 1) % 6 * 60 ))
+          npm run crawler:fallback:browser
