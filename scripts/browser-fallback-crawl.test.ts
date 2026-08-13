@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CrawledJob, CrawlSource } from "../lib/crawler";
-import { persistenceSql, type BrowserFallbackResult } from "./browser-fallback-crawl";
+import { browserResultClassification, persistenceSql, type BrowserFallbackResult } from "./browser-fallback-crawl";
 
 describe("browser fallback persistenceSql", () => {
   it("persists location region and replaces direct managed job areas", () => {
@@ -38,5 +38,22 @@ describe("browser fallback persistenceSql", () => {
     expect(sql).toContain("location_region=CASE WHEN excluded.location_region='unknown'");
     expect(sql).toContain("DELETE FROM job_topics WHERE topic_key LIKE 'area:%'");
     expect(sql).toContain("area:software-engineering");
+  });
+});
+
+describe("browser fallback result classification", () => {
+  it("keeps a 2xx page with no verified jobs retryable instead of healthy", () => {
+    expect(browserResultClassification({
+      source: {
+        id: "source-empty",
+        company: "Acme",
+        postingUrl: "https://jobs.example.com",
+        adapter: "custom",
+      },
+      status: 200,
+      finalUrl: "https://jobs.example.com",
+      jobs: [],
+      error: null,
+    })).toEqual({ status: "failed", code: "empty_board" });
   });
 });

@@ -11,7 +11,7 @@ import { classifyJobRegion } from "../lib/job-region-classifier.ts";
 import { jobsFromBrowserAnchors, type BrowserAnchor } from "../lib/browser-job-extractor.ts";
 import { needsBrowserFallback, type LatestCrawlSummary } from "../lib/browser-fallback-selection.ts";
 import { numericPaginationTargets } from "../lib/browser-pagination.ts";
-import { anchorsFromHtml, crawlSource, extractJobsFromHtml, jobsFromTeslaState, type CrawledFacet, type CrawledJob, type CrawlSource, type TeslaState } from "../lib/crawler.ts";
+import { anchorsFromHtml, extractJobsFromHtml, jobsFromTeslaState, type CrawledFacet, type CrawledJob, type CrawlSource, type TeslaState } from "../lib/crawler.ts";
 import { careerCandidates, isSafeCareerListingUrl } from "../lib/url-remediation.ts";
 
 export type BrowserFallbackResult = {
@@ -235,10 +235,12 @@ const jobsViaHttp1 = async (source: CrawlSource): Promise<CrawledJob[]> => {
 
 const inspect = async (page: Page, source: CrawlSource): Promise<BrowserFallbackResult> => {
   try {
-    const direct = await crawlSource(source, fetch, new Date());
-    if (direct.status === "succeeded" && direct.jobs.length > 0) {
-      return { source, status: direct.responseStatus, finalUrl: direct.resolvedListingUrl ?? source.postingUrl, jobs: direct.jobs, ...(direct.facets?.length ? { facets: direct.facets } : {}), error: null };
-    }
+    // These sources have already failed the native pass and were selected for
+    // browser recovery for precisely that reason. Re-running crawlSource here
+    // can consume its full 32-second source budget before Chrome gets a chance
+    // to render the board; with the 60-second per-source guard that made many
+    // recoverable pages end as navigation_timeout. Try a short HTTP/1.1 pass
+    // first, then give the browser the remaining budget for client rendering.
     const http1Jobs = await jobsViaHttp1(source);
     if (http1Jobs.length > 0) {
       return { source, status: 200, finalUrl: source.postingUrl, jobs: http1Jobs, error: null };
@@ -304,7 +306,7 @@ type BrowserResultCode =
   | "unsafe_listing"
   | "ingest_error";
 
-const browserResultClassification = (result: BrowserFallbackResult): {
+export const browserResultClassification = (result: BrowserFallbackResult): {
   status: "succeeded" | "failed" | "blocked";
   code: BrowserResultCode;
 } => {
@@ -317,7 +319,10 @@ const browserResultClassification = (result: BrowserFallbackResult): {
   if (result.status !== null && result.status >= 400) return { status: "failed", code: "http_error" };
   if (/exceeded 60 seconds|timeout/i.test(result.error ?? "")) return { status: "failed", code: "navigation_timeout" };
   if (result.error) return { status: "failed", code: "navigation_error" };
-  return { status: "succeeded", code: "empty_board" };
+  // A 2xx page with no verified job identity is not an authoritative empty
+  // catalog. Keep it retryable and visible as a failed recovery so a transient
+  // shell/challenge cannot silently turn a source healthy with zero jobs.
+  return { status: "failed", code: "empty_board" };
 };
 
 const quote = (value: string | number | null): string => {
