@@ -103,6 +103,11 @@ type VerifiedSourceFeed = {
 // every pass. Keep the verified, first-party board identity here and promote
 // the canonical listing URL after the first successful sync.
 const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
+  "audit-row-345": {
+    discovered: { kind: "jibe", endpoint: "https://careers.dollargeneral.com/api/jobs?page=1&limit=100&sortBy=relevance&descending=false&internal=false" },
+    listingUrl: "https://careers.dollargeneral.com/jobs?page=1",
+    adapter: "custom",
+  },
   "audit-row-370": { listingUrl: "https://careers.hfsinclair.com/search/?q=&locationsearch=&sortColumn=referencedate&sortDirection=desc", adapter: "custom" },
   "audit-row-373": { listingUrl: "https://careers.irco.com/search/?q=&locationsearch=&sortColumn=referencedate&sortDirection=desc", adapter: "custom" },
   "audit-row-406": { listingUrl: "https://jobs.nucor.com/search/?q=&locationsearch=&sortColumn=referencedate&sortDirection=desc", adapter: "custom" },
@@ -129,6 +134,11 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
   "legacy-row-826": { listingUrl: "https://jobs.dayforcehcm.com/en-US/ibgllc/CANDIDATEPORTAL", adapter: "custom" },
   "p4-0455-logrhythm": { listingUrl: "https://jobs.jobvite.com/exabeam/#openings", adapter: "custom" },
   "p4-0470-oliver-wyman": { listingUrl: "https://mmc.phenompeople.com/global/en/oliver-wyman-early-careers-search", adapter: "phenom" },
+  "p5-0869-costco": {
+    discovered: { kind: "jibe", endpoint: "https://careers.costco.com/api/jobs?page=1&limit=100&sortBy=relevance&descending=false&internal=false" },
+    listingUrl: "https://careers.costco.com/jobs",
+    adapter: "custom",
+  },
   "p1-0011-trm-labs": {
     discovered: { kind: "ashby", endpoint: "https://api.ashbyhq.com/posting-api/job-board/trm-labs" },
     listingUrl: "https://jobs.ashbyhq.com/trm-labs",

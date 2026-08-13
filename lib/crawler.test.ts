@@ -754,6 +754,31 @@ Wrong description.
     expect(requests).toContain("https://careers.acme.example/api/jobs?page=2&limit=100&sortBy=relevance&descending=false&internal=false");
   });
 
+  it("uses a verified Jibe endpoint without refetching a client-rendered landing page", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      return new Response(JSON.stringify({ totalCount: 0, jobs: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+
+    const result = await crawlSource({
+      id: "p5-0869-costco",
+      company: "Costco",
+      postingUrl: "https://careers.costco.com/jobs",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result.status).toBe("succeeded");
+    expect(result.completeListing).toBe(true);
+    expect(requests).toEqual([
+      "https://careers.costco.com/api/jobs?page=1&limit=100&sortBy=relevance&descending=false&internal=false",
+    ]);
+  });
+
   it("fully paginates a Radancy TalentBrew job search", async () => {
     const requests: Array<{ url: string; method: string }> = [];
     let pageAttempts = 0;
