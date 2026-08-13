@@ -48,6 +48,8 @@ export function normalizeBrowserJobSnapshot(
   input: unknown,
   allowedOrigins?: string[],
 ): { jobs: CrawledJob[]; facets: CrawledFacet[] } {
+  const sourcePath = new URL(source.postingUrl).pathname;
+  const avatureListing = /\/careers\/SearchJobs\/?$/i.test(sourcePath);
   const officialOrigins = new Set([new URL(source.postingUrl).origin, ...(allowedOrigins ?? [])].flatMap((value) => {
     try {
       const url = new URL(value);
@@ -76,7 +78,9 @@ export function normalizeBrowserJobSnapshot(
       || !officialOrigins.has(officialUrl.origin)) {
       throw new Error("Browser job URL is outside the official careers origin.");
     }
+    if (avatureListing && !/\/careers\/JobDetail\//i.test(officialUrl.pathname)) continue;
     const externalId = officialUrl.pathname.match(/\/jobs\/(\d+)/i)?.[1]
+      ?? officialUrl.pathname.match(/\/JobDetail\/[^/]+\/([^/?#]+)/i)?.[1]
       ?? officialUrl.pathname.match(/\/jobs?\/([^/?#]+)/i)?.[1]
       ?? officialUrl.searchParams.get("jobid")
       ?? officialUrl.searchParams.get("jobId")

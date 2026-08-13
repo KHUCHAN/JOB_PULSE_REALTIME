@@ -77,4 +77,18 @@ describe("browser crawl ingestion", () => {
     ]);
     expect(result.jobs).toEqual([]);
   });
+
+  it("drops Avature navigation links from a rendered SearchJobs snapshot", () => {
+    const result = normalizeBrowserJobSnapshot({
+      id: "audit-row-342",
+      company: "Delta Air Lines",
+      postingUrl: "https://delta.avature.net/en_US/careers/SearchJobs/?jobOffset=40",
+      adapter: "custom",
+    }, [
+      { officialUrl: "https://delta.avature.net/en_US/careers/SearchJobs/?jobOffset=50", title: "Next >>" },
+      { officialUrl: "https://delta.avature.net/en_US/careers/JobDetail/Data-Science-Intern/7001", title: "Data Science Intern" },
+    ]);
+    expect(result.jobs).toHaveLength(1);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({ externalId: "7001" }));
+  });
 });
