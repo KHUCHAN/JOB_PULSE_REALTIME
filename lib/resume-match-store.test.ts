@@ -103,6 +103,7 @@ const migratedSqlite = (): DatabaseSync => {
   `);
   sqlite.exec(readFileSync(resolve(process.cwd(), "drizzle/0046_resume_match_gmail_alerts.sql"), "utf8"));
   sqlite.exec(readFileSync(resolve(process.cwd(), "drizzle/0047_resume_alert_correctness.sql"), "utf8"));
+  sqlite.exec(readFileSync(resolve(process.cwd(), "drizzle/0078_codex_reviews.sql"), "utf8"));
   return sqlite;
 };
 
@@ -116,6 +117,8 @@ describe("resume match persistence migration", () => {
       "is_active",
       "notification_eligible",
     ]));
+    expect(sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'codex_reviews'").get())
+      .toEqual({ name: "codex_reviews" });
     expect(sqlite.prepare("SELECT recipient FROM profile_recipients ORDER BY recipient").all()).toEqual([
       { recipient: "kimchany@usc.edu" },
       { recipient: "lupeter@usc.edu" },
@@ -147,7 +150,7 @@ describe("resume match persistence migration", () => {
     ).get()).toEqual({ is_active: 1, notification_eligible: 0 });
   });
 
-  it("marks a post-watermark new match eligible exactly once", async () => {
+  it("keeps a post-watermark new match pending until Codex approves it", async () => {
     const sqlite = migratedSqlite();
     sqlite.exec(`
       INSERT INTO sources (id) VALUES ('source');
@@ -174,7 +177,7 @@ describe("resume match persistence migration", () => {
     expect(sqlite.prepare("SELECT count(*) AS total FROM job_matches WHERE job_id = 'new'").get()).toEqual({ total: 1 });
     expect(sqlite.prepare(
       "SELECT notification_eligible FROM job_matches WHERE job_id = 'new'",
-    ).get()).toEqual({ notification_eligible: 1 });
+    ).get()).toEqual({ notification_eligible: 0 });
   });
 
   it("does not notify a post-watermark job unless the current crawl inserted it", async () => {
@@ -209,12 +212,12 @@ describe("resume match persistence migration", () => {
     expect(sqlite.prepare(
       "SELECT job_id, is_active, notification_eligible FROM job_matches ORDER BY job_id",
     ).all()).toEqual([
-      { job_id: "inserted", is_active: 1, notification_eligible: 1 },
+      { job_id: "inserted", is_active: 1, notification_eligible: 0 },
       { job_id: "updated", is_active: 1, notification_eligible: 0 },
     ]);
   });
 
-  it("wakes the digest timer when a current crawl creates an eligible match", async () => {
+  it("does not wake the digest timer before Codex review", async () => {
     const sqlite = migratedSqlite();
     sqlite.exec(`
       INSERT INTO sources (id) VALUES ('source');
@@ -236,10 +239,10 @@ describe("resume match persistence migration", () => {
     );
 
     expect(sqlite.prepare("SELECT job_id, score, notification_eligible FROM job_matches").all()).toEqual([
-      { job_id: "wake", score: 60, notification_eligible: 1 },
+      { job_id: "wake", score: 60, notification_eligible: 0 },
     ]);
     expect(sqlite.prepare("SELECT next_digest_at FROM match_profiles WHERE id = 'chanyoung-resume'").get())
-      .toEqual({ next_digest_at: "2026-08-13T16:01:00.000Z" });
+      .toEqual({ next_digest_at: "2026-08-13T20:00:00.000Z" });
   });
 
   it("queues every newly seen US 2027 internship even when resume scoring has no role evidence", async () => {
@@ -264,9 +267,9 @@ describe("resume match persistence migration", () => {
     );
 
     expect(sqlite.prepare("SELECT is_active, notification_eligible FROM job_matches WHERE job_id = 'target'").get())
-      .toEqual({ is_active: 1, notification_eligible: 1 });
+      .toEqual({ is_active: 1, notification_eligible: 0 });
     expect(sqlite.prepare("SELECT next_digest_at FROM match_profiles WHERE id = 'chanyoung-resume'").get())
-      .toEqual({ next_digest_at: "2026-08-13T16:01:00.000Z" });
+      .toEqual({ next_digest_at: "2026-08-13T20:00:00.000Z" });
   });
 
   it("creates a new eligible match generation for a genuinely reopened job", async () => {
@@ -296,7 +299,7 @@ describe("resume match persistence migration", () => {
 
     expect(sqlite.prepare(
       "SELECT open_generation, notification_eligible FROM job_matches WHERE job_id = 'reopened'",
-    ).get()).toEqual({ open_generation: 2, notification_eligible: 1 });
+    ).get()).toEqual({ open_generation: 2, notification_eligible: 0 });
   });
 
   it("does not notify a reopen that happened before activation", async () => {

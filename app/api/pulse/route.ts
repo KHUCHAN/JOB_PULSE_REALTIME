@@ -44,6 +44,7 @@ import {
 } from "../../../lib/pulse-mappers";
 import { D1CrawlStore } from "../../../worker/crawl-store";
 import { backfillResumeMatches } from "../../../lib/resume-match-store";
+import { applyCodexReviews, type CodexReviewInput } from "../../../lib/codex-review-store";
 import {
   clearResumeAlertBacklog,
   getResumeAlertStatus,
@@ -75,6 +76,7 @@ type GmailEnvironment = {
   GMAIL_SENDER?: string;
   CRAWL_INGEST_SECRET?: string;
   JOB_PULSE_WEBHOOK_SECRET?: string;
+  CODEX_REVIEW_TOKEN?: string;
 };
 
 const browserIngestAuthorized = async (request: Request): Promise<boolean> => {
@@ -85,6 +87,12 @@ const browserIngestAuthorized = async (request: Request): Promise<boolean> => {
     .filter((value): value is string => Boolean(value));
   return secrets.some((secret) => authorization === `Bearer ${secret}`)
     || verifyGithubActionsOidc(authorization);
+};
+
+const codexReviewAuthorized = (request: Request): boolean => {
+  const values = env as typeof env & GmailEnvironment;
+  const secret = values.CODEX_REVIEW_TOKEN?.trim();
+  return Boolean(secret && request.headers.get("authorization") === `Bearer ${secret}`);
 };
 
 const gmailRuntimeConfig = (): GmailRuntimeConfig | null => {
@@ -539,6 +547,24 @@ export async function POST(request: Request): Promise<Response> {
         ? body.afterId.trim().slice(0, 200)
         : null;
       return json(await backfillResumeMatches(db(), { afterId, limit }));
+    }
+    if (body.action === "submitCodexReview") {
+      if (!codexReviewAuthorized(request)) return json({ error: "Codex review authorization is required." }, 401);
+      const rawReviews = Array.isArray(body.reviews) ? body.reviews : [body];
+      const reviews = rawReviews.slice(0, 100).filter((value): value is CodexReviewInput => (
+        Boolean(value && typeof value === "object")
+      )).map((value) => ({
+        jobId: typeof value.jobId === "string" ? value.jobId : undefined,
+        officialUrl: typeof value.officialUrl === "string" ? value.officialUrl : undefined,
+        decision: value.decision,
+        rationale: value.rationale,
+        verifiedUrl: value.verifiedUrl,
+        sourceFile: typeof value.sourceFile === "string" ? value.sourceFile : undefined,
+      }));
+      if (reviews.length === 0) return json({ error: "At least one Codex review is required." }, 400);
+      const result = await applyCodexReviews(db(), reviews);
+      const alerts = body.dispatch === true ? await runResumeAlerts(db()) : null;
+      return json({ ...result, alerts });
     }
     if (body.action === "setResumeAlertEnabled") {
       const config = gmailRuntimeConfig();

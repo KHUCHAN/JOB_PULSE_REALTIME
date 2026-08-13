@@ -252,6 +252,23 @@ export const jobMatches = sqliteTable("job_matches", {
   index("job_matches_keyword_active_score_idx").on(table.keywordId, table.isActive, table.score),
 ]);
 
+export const codexReviews = sqliteTable("codex_reviews", {
+  id: text("id").primaryKey(),
+  jobMatchId: text("job_match_id").notNull().references(() => jobMatches.id, { onDelete: "cascade" }),
+  profileId: text("profile_id").notNull().references(() => matchProfiles.id, { onDelete: "cascade" }),
+  decision: text("decision", { enum: ["approve", "hold", "reject"] }).notNull(),
+  rationale: text("rationale").notNull(),
+  verifiedUrl: text("verified_url").notNull(),
+  sourceFile: text("source_file"),
+  reviewer: text("reviewer").notNull().default("codex"),
+  reviewedAt: text("reviewed_at").notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (table) => [
+  uniqueIndex("codex_reviews_job_match_unique").on(table.jobMatchId),
+  index("codex_reviews_profile_decision_idx").on(table.profileId, table.decision, table.reviewedAt),
+]);
+
 export const notifications = sqliteTable("notifications", {
   id: text("id").primaryKey(),
   keywordId: text("keyword_id").references(() => keywords.id, { onDelete: "set null" }),

@@ -119,24 +119,22 @@ const jsonChunks = <T>(values: T[], maxBytes = 1_500_000): T[][] => {
   return result;
 };
 
-const isTargetInternship = (candidate: ResumeMatchCandidate): boolean =>
-  candidate.locationRegion === "us"
-  && candidate.programKeys.some((key) => key === "internship" || key === "coop")
-  && candidate.recruitingYears.includes(2027);
+// The crawler owns only the coarse program gate. Codex reviews region, year,
+// role, authorization, and profile fit before a notification is enabled.
+const isProgramCandidate = (candidate: ResumeMatchCandidate): boolean =>
+  candidate.programKeys.some((key) => key === "internship" || key === "coop");
 
 const persistDecisions = async (
   database: D1Database,
   profileRow: ProfileRow,
   values: Array<{ candidate: ResumeMatchCandidate; decision: ResumeMatchDecision; notificationEligible?: boolean }>,
   now: string,
-  baseline: boolean,
 ): Promise<{ matched: number; deactivated: number }> => {
   const active = values
-    .filter(({ candidate, decision }) => decision.eligible || isTargetInternship(candidate))
-    .map(({ candidate, decision, notificationEligible }) => {
-      const target = isTargetInternship(candidate);
+    .filter(({ candidate }) => isProgramCandidate(candidate))
+    .map(({ candidate, decision }) => {
       const matchedTerms = decision.evidence.map((item) => `${item.code}|${item.label}|${item.points}`);
-      if (target) matchedTerms.push("target:2027-us-internship|US 2027 internship or co-op|0");
+      matchedTerms.push("candidate:internship-or-coop|Server program gate: internship or co-op|0");
       return {
         id: crypto.randomUUID(),
         jobId: candidate.id,
@@ -144,15 +142,9 @@ const persistDecisions = async (
         score: decision.score,
         matchedTerms,
         openGeneration: candidate.openGeneration,
-        notificationEligible: baseline || !target ? 0 : typeof notificationEligible === "boolean"
-          ? Number(notificationEligible)
-          : Number(Boolean(
-            profileRow.activation_watermark
-            && (candidate.firstSeenAt > profileRow.activation_watermark
-              || (candidate.openGeneration > 1
-                && candidate.reopenedAt !== null
-                && candidate.reopenedAt > profileRow.activation_watermark)),
-          )),
+        // Never auto-send a crawler match. A Codex review with decision=approve
+        // is the only path that enables the Gmail notification queue.
+        notificationEligible: 0,
       };
     });
   for (const chunk of jsonChunks(active)) {
@@ -176,25 +168,8 @@ const persistDecisions = async (
     `).bind(now, JSON.stringify(chunk)).run();
   }
 
-  // A newly discovered, notification-eligible match should wake the digest
-  // timer immediately. Without this, a successful crawl can leave the match
-  // queued until an old two-hour timer happens to fire (or indefinitely when
-  // the prior timer was already in the past). Existing queued/sent matches are
-  // still deduplicated by notification_items, so waking is idempotent.
-  if (!baseline && active.some(({ notificationEligible }) => notificationEligible === 1)) {
-    await database.prepare(`
-      UPDATE match_profiles
-      SET next_digest_at = CASE
-        WHEN next_digest_at IS NULL OR next_digest_at > ? THEN ?
-        ELSE next_digest_at
-      END,
-      updated_at = CURRENT_TIMESTAMP
-      WHERE id = ? AND enabled = 1
-    `).bind(now, now, profileRow.id).run();
-  }
-
   const inactive = values
-    .filter(({ candidate, decision }) => !decision.eligible && !isTargetInternship(candidate))
+    .filter(({ candidate }) => !isProgramCandidate(candidate))
     .map(({ candidate }) => ({
     jobId: candidate.id,
     keywordId: profileRow.keyword_id,
@@ -226,7 +201,7 @@ export const syncResumeMatches = async (
   return persistDecisions(database, profileRow, candidates.map((candidate) => ({
     candidate,
     decision: evaluateResumeMatch(candidate),
-  })), now, false);
+  })), now);
 };
 
 export const loadResumeCandidatesForUrls = async (
@@ -278,7 +253,7 @@ export const syncResumeMatchesForUrls = async (
       candidate,
       decision: evaluateResumeMatch(candidate),
       notificationEligible: eligibleUrls.has(candidate.officialUrl),
-    })), now, false);
+    })), now);
     totals.matched += persisted.matched;
     totals.deactivated += persisted.deactivated;
   }
@@ -310,7 +285,7 @@ export const backfillResumeMatches = async (
   const hasMore = result.results.length > limit;
   const rows = result.results.slice(0, limit).map(asCandidate);
   const decisions = rows.map((candidate) => ({ candidate, decision: evaluateResumeMatch(candidate) }));
-  await persistDecisions(database, profileRow, decisions, new Date().toISOString(), true);
+  await persistDecisions(database, profileRow, decisions, new Date().toISOString());
   return {
     processed: rows.length,
     matched: decisions.filter(({ decision }) => decision.eligible).length,
