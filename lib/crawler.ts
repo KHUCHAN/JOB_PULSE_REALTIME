@@ -2455,8 +2455,13 @@ const readerMarkdown = async (
         fetcher,
         endpoint,
         { headers: options.richLinks === false
-          ? { accept: "text/plain" }
-          : { accept: "text/plain", "x-retain-links": "all", "x-with-links-summary": "all" } },
+          ? { accept: "text/plain", "user-agent": "Mozilla/5.0 (compatible; JobPulseCrawler/1.0)" }
+          : {
+            accept: "text/plain",
+            "user-agent": "Mozilla/5.0 (compatible; JobPulseCrawler/1.0)",
+            "x-retain-links": "all",
+            "x-with-links-summary": "all",
+          } },
         false,
         // Avature's WAF can make the reader take longer from a Worker than
         // from a desktop request. The caller can cap concurrency so a
