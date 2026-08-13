@@ -327,6 +327,18 @@ export class D1CrawlStore implements CrawlStore {
     const existingResult = await this.db.prepare(`
       SELECT id, external_id, title, official_url, status, resume_match_hash FROM jobs WHERE source_id = ?
     `).bind(sourceId).all<ExistingJobRow>();
+    const canonicalProtocolUrl = (value: string): string => {
+      try {
+        const url = new URL(value);
+        const sourceUrl = source.posting_url ? new URL(source.posting_url) : null;
+        if (sourceUrl?.protocol === "https:" && url.hostname.toLowerCase() === sourceUrl.hostname.toLowerCase()) {
+          url.protocol = "https:";
+        }
+        return url.href;
+      } catch {
+        return value;
+      }
+    };
     const existingByUrl = new Map(existingResult.results.map((row) => [row.official_url, row]));
     const existingByExternalId = new Map(existingResult.results.flatMap((row) =>
       row.external_id ? [[row.external_id, row] as const] : [],
@@ -335,6 +347,13 @@ export class D1CrawlStore implements CrawlStore {
       .filter((row) => row.status === "open")
       .map((row) => row.official_url));
     const visibleUrls = new Set(jobs.map((job) => job.officialUrl));
+    const canonicalVisibleUrls = new Set([...visibleUrls].map(canonicalProtocolUrl));
+    const protocolDuplicateIds = new Set(existingResult.results
+      .filter((row) => row.status === "open")
+      .filter((row) => row.official_url !== canonicalProtocolUrl(row.official_url))
+      .filter((row) => canonicalVisibleUrls.has(canonicalProtocolUrl(row.official_url)))
+      .filter((row) => existingByUrl.has(canonicalProtocolUrl(row.official_url)))
+      .map((row) => row.id));
     const resumeTouchedUrls = new Set<string>();
     const notificationEligibleUrls = new Set<string>();
     // A source with no real catalog rows is being initialized. Its first
@@ -813,6 +832,14 @@ export class D1CrawlStore implements CrawlStore {
       `).bind(sourceId, now, sourceId, facetGeneration).run();
     }
 
+    if (protocolDuplicateIds.size > 0) {
+      await this.db.prepare(`
+        UPDATE jobs
+        SET status = 'closed', closed_at = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE source_id = ? AND id IN (SELECT value FROM json_each(?)) AND status = 'open'
+      `).bind(now, sourceId, JSON.stringify([...protocolDuplicateIds])).run();
+    }
+
     const artifactUrls = existingResult.results
       .filter((row) => row.status === "open" && isNavigationArtifact(row) && !visibleUrls.has(row.official_url))
       .map((row) => row.official_url);
@@ -828,7 +855,7 @@ export class D1CrawlStore implements CrawlStore {
     }
 
     const created = jobs.filter((job) => !existingByUrl.has(job.officialUrl)).length;
-    return { created, updated: jobs.length - created, closed: closedUrls.length };
+    return { created, updated: jobs.length - created, closed: closedUrls.length + protocolDuplicateIds.size };
   }
 
   async finishRun(runId: string, values: Record<string, unknown>): Promise<void> {

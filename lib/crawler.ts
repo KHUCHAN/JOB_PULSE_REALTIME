@@ -2282,9 +2282,19 @@ const markdownLocationForHref = (markdown: string, href: string): string | null 
 
 const markdownJobs = (markdown: string, source: CrawlSource): CrawledJob[] => {
   const anchors = markdownJobAnchors(markdown, source);
+  const sourceUrl = new URL(source.postingUrl);
   return jobsFromBrowserAnchors(anchors, source).map((job) => {
-    const location = markdownLocationForHref(markdown, job.officialUrl);
-    return location ? { ...job, location } : job;
+    const location = markdownLocationForHref(markdown, job.officialUrl)
+      ?? markdownLocationForHref(markdown, job.officialUrl.replace(/^https:/i, "http:"));
+    const official = new URL(job.officialUrl);
+    // Reader mirrors sometimes preserve the origin page's HTTP links even
+    // when the official board is HTTPS. Keep one canonical URL so a recovery
+    // pass updates the existing row instead of creating an HTTP duplicate.
+    if (official.hostname.toLowerCase() === sourceUrl.hostname.toLowerCase() && sourceUrl.protocol === "https:") {
+      official.protocol = "https:";
+    }
+    const normalized = { ...job, officialUrl: official.href };
+    return location ? { ...normalized, location } : normalized;
   });
 };
 
@@ -2324,7 +2334,7 @@ const crawlAvatureReaderPages = async (
   canonical.searchParams.set("jobOffset", "0");
   const sourceUrl = new URL(source.postingUrl);
   sourceUrl.hash = "";
-  const baseHeaders = { accept: "text/plain", "x-retain-links": "all", "x-with-links-summary": "all" };
+  const baseHeaders = { accept: "text/plain" };
   const fetchPage = async (offset: number): Promise<{ markdown: string; jobs: CrawledJob[] } | null> => {
     try {
       const target = new URL(canonical);
@@ -2363,22 +2373,44 @@ const crawlAvatureReaderPages = async (
   const pageSize = Math.max(1, lastNumber - firstNumber + 1);
   if (!Number.isFinite(total) || total < 1) return null;
   const boundedTotal = Math.min(total, 10_000);
-  const offsets = Array.from(
-    { length: Math.max(1, Math.ceil(boundedTotal / pageSize)) },
-    (_, index) => index * pageSize,
-  );
-  const pages: Array<{ markdown: string; jobs: CrawledJob[] } | null> = [];
-  for (let index = 0; index < offsets.length; index += 5) {
-    pages.push(...await Promise.all(offsets.slice(index, index + 5).map(fetchPage)));
+  const totalPages = Math.max(1, Math.ceil(boundedTotal / pageSize));
+  const requestedStartPage = Math.max(1, Math.trunc(source.crawlPageCursor ?? 1));
+  const startPage = requestedStartPage <= totalPages ? requestedStartPage : 1;
+  const maxPagesPerPass = 5;
+  const endPage = Math.min(totalPages, startPage + maxPagesPerPass - 1);
+  const pageNumbers = Array.from({ length: endPage - startPage + 1 }, (_, index) => startPage + index);
+  const pages = new Map<number, { markdown: string; jobs: CrawledJob[] } | null>();
+  if (startPage === 1) pages.set(1, first);
+  for (let index = startPage === 1 ? 1 : 0; index < pageNumbers.length; index += 5) {
+    const batch = pageNumbers.slice(index, index + 5);
+    const fetched = await Promise.all(batch.map((page) => fetchPage((page - 1) * pageSize)));
+    batch.forEach((page, offset) => pages.set(page, fetched[offset] ?? null));
   }
-  const successfulPages = pages.filter((page): page is { markdown: string; jobs: CrawledJob[] } => page !== null);
+  let firstFailedPage: number | null = null;
+  const successfulPages: Array<{ markdown: string; jobs: CrawledJob[] }> = [];
+  for (const page of pageNumbers) {
+    const value = pages.get(page) ?? null;
+    if (!value) {
+      firstFailedPage = page;
+      break;
+    }
+    successfulPages.push(value);
+  }
   const jobs = uniqueJobs(successfulPages.flatMap((page) => page.jobs));
+  const cycleComplete = firstFailedPage === null && endPage === totalPages;
   return {
     status: "succeeded",
     responseStatus: 200,
-    completeListing: successfulPages.length === offsets.length && jobs.length >= boundedTotal,
+    completeListing: startPage === 1 && cycleComplete && jobs.length >= boundedTotal,
     jobs,
     resolvedListingUrl: canonical.href,
+    ...(totalPages > 1 ? {
+      pagination: {
+        nextPage: cycleComplete ? 1 : firstFailedPage ?? endPage + 1,
+        cycleComplete,
+        totalPages,
+      },
+    } : {}),
     error: null,
   };
 };
@@ -2386,7 +2418,7 @@ const crawlAvatureReaderPages = async (
 const readerMarkdown = async (
   postingUrl: string,
   fetcher: typeof fetch,
-  options: { querylessFallback?: boolean } = {},
+  options: { querylessFallback?: boolean; richLinks?: boolean } = {},
 ): Promise<string | null> => {
   const target = new URL(postingUrl);
   const targets = [target];
@@ -2405,7 +2437,9 @@ const readerMarkdown = async (
       const response = await fetchWithTimeout(
         fetcher,
         endpoint,
-        { headers: { accept: "text/plain", "x-retain-links": "all", "x-with-links-summary": "all" } },
+        { headers: options.richLinks === false
+          ? { accept: "text/plain" }
+          : { accept: "text/plain", "x-retain-links": "all", "x-with-links-summary": "all" } },
         false,
         // Avature's WAF can make the reader take longer from a Worker than
         // from a desktop request. Try both protocol variants concurrently so
@@ -2429,8 +2463,13 @@ const crawlDeltaAvature = async (
   fetcher: typeof fetch,
 ): Promise<SourceCrawlResult> => {
   const listing = new URL(source.postingUrl);
+  // Delta exposes a keyword route that puts the internship/co-op inventory
+  // first. Keep this additive and paged: it recovers the target inventory
+  // quickly without claiming the filtered route is the complete company
+  // catalog (which would make unrelated roles eligible for closure).
+  listing.searchParams.set("search", "intern");
   listing.searchParams.set("jobOffset", "0");
-  const markdown = await readerMarkdown(listing.href, fetcher, { querylessFallback: true });
+  const markdown = await readerMarkdown(listing.href, fetcher, { querylessFallback: true, richLinks: false });
   if (!markdown) return {
     status: "failed", responseStatus: null, completeListing: false, jobs: [],
     error: "Delta Avature reader listing was unavailable.",
