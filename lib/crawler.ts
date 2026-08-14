@@ -146,6 +146,11 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
     listingUrl: "https://careers.costco.com/jobs",
     adapter: "custom",
   },
+  "p5-0760-veeva-systems": {
+    discovered: { kind: "lever", endpoint: "https://api.lever.co/v0/postings/veeva?mode=json" },
+    listingUrl: "https://careers.veeva.com/job-search-results/",
+    adapter: "custom",
+  },
   "p1-0011-trm-labs": {
     discovered: { kind: "ashby", endpoint: "https://api.ashbyhq.com/posting-api/job-board/trm-labs" },
     listingUrl: "https://jobs.ashbyhq.com/trm-labs",
@@ -667,6 +672,7 @@ type PhenomJob = {
   category?: string;
   multi_category?: string[];
   externalTeamName?: string;
+  businessUnit?: string;
   ml_skills?: string[];
   checkRemote?: string;
   city?: string;
@@ -980,6 +986,248 @@ const smartRecruitersFeed = (postingUrl: string): string | null => {
   if (!/^(?:jobs|careers)\.smartrecruiters\.com$/i.test(url.hostname)) return null;
   const company = url.pathname.split("/").filter(Boolean)[0];
   return company ? `https://api.smartrecruiters.com/v1/companies/${company}/postings` : null;
+};
+
+const icimsText = (value: string | null | undefined): string | null => {
+  const text = plainText(value);
+  if (!text) return null;
+  const decoded = decodeHtmlAttribute(text)
+    .replace(/&nbsp;|&#160;/gi, " ")
+    .replace(/&ndash;/gi, "–")
+    .replace(/&mdash;/gi, "—")
+    .replace(/&rsquo;/gi, "’")
+    .replace(/&lsquo;/gi, "‘")
+    .replace(/&ldquo;/gi, "“")
+    .replace(/&rdquo;/gi, "”")
+    .replace(/&#x([0-9a-f]+);/gi, (_match, code: string) => String.fromCodePoint(Number.parseInt(code, 16)))
+    .replace(/&#(\d+);/g, (_match, code: string) => String.fromCodePoint(Number(code)))
+    .replace(/\s+/g, " ")
+    .trim();
+  return decoded || null;
+};
+
+type IcimsPage = {
+  status: number;
+  page: number;
+  totalPages: number;
+  finalUrl: string;
+  rawCount: number;
+  jobs: CrawledJob[];
+};
+
+const icimsSearchUrl = (postingUrl: string, page: number): URL => {
+  const url = new URL(postingUrl);
+  if (url.pathname === "/") {
+    url.pathname = "/jobs/search";
+  } else if (/\/jobs(?:\/(?:intro|search))?\/?$/i.test(url.pathname)) {
+    url.pathname = url.pathname.replace(/\/jobs(?:\/(?:intro|search))?\/?$/i, "/jobs/search");
+  }
+  url.searchParams.set("ss", "1");
+  url.searchParams.set("in_iframe", "1");
+  url.searchParams.set("pr", String(Math.max(0, page - 1)));
+  url.searchParams.delete("mobile");
+  url.searchParams.delete("needsRedirect");
+  url.searchParams.delete("schemaId");
+  url.searchParams.delete("o");
+  url.hash = "";
+  return url;
+};
+
+const icimsCanonicalListingUrl = (value: string): string => {
+  const url = new URL(value);
+  url.searchParams.delete("in_iframe");
+  url.searchParams.delete("pr");
+  url.searchParams.delete("mobile");
+  url.searchParams.delete("needsRedirect");
+  url.searchParams.delete("schemaId");
+  url.searchParams.delete("o");
+  url.searchParams.set("ss", "1");
+  url.hash = "";
+  return url.href;
+};
+
+const icimsLocationParts = (location: string | null): {
+  locationCity?: string;
+  locationState?: string;
+  locationCountry?: string;
+} => {
+  const match = location?.match(/^([A-Z]{2})-([A-Z]{2})-(.+)$/);
+  if (!match) return {};
+  return {
+    locationCountry: match[1],
+    locationState: match[2],
+    locationCity: match[3],
+  };
+};
+
+const icimsJobsFromHtml = (html: string, source: CrawlSource): { rawCount: number; jobs: CrawledJob[] } => {
+  const cards = [...html.matchAll(
+    /<li\b[^>]*class=["'][^"']*\biCIMS_JobCardItem\b[^"']*["'][^>]*>([\s\S]*?)<\/li>/gi,
+  )].map((match) => match[0]);
+  const jobs = cards.flatMap((card): CrawledJob[] => {
+    const anchor = card.match(/<a\b[^>]*href=["']([^"']*\/jobs\/(\d+)\/[^"']+\/job(?:\?[^"']*)?)["'][^>]*>/i);
+    const title = icimsText(card.match(/<h3\b[^>]*>([\s\S]*?)<\/h3>/i)?.[1]);
+    if (!anchor || !title) return [];
+    let official: URL;
+    try {
+      official = new URL(decodeHtmlAttribute(anchor[1]), source.postingUrl);
+    } catch {
+      return [];
+    }
+    if (official.origin !== new URL(source.postingUrl).origin) return [];
+    official.searchParams.delete("in_iframe");
+    official.searchParams.delete("mobile");
+    official.searchParams.delete("needsRedirect");
+    official.hash = "";
+
+    const location = icimsText(card.match(
+      /<span\b[^>]*class=["'][^"']*field-label[^"']*["'][^>]*>\s*Job Locations?\s*<\/span>\s*<span\b[^>]*>([\s\S]*?)<\/span>/i,
+    )?.[1]) ?? icimsText(card.match(
+      /<div\b[^>]*class=["'][^"']*\bheader\s+left\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/i,
+    )?.[1]);
+    const description = icimsText(card.match(
+      /<div\b[^>]*class=["'][^"']*\bdescription\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/i,
+    )?.[1]);
+    const fields = new Map<string, string>();
+    for (const field of card.matchAll(
+      /<dt\b[^>]*>([\s\S]*?)<\/dt>\s*<dd\b[^>]*>([\s\S]*?)<\/dd>/gi,
+    )) {
+      const key = icimsText(field[1])?.toLocaleLowerCase();
+      const value = icimsText(field[2]);
+      if (key && value) fields.set(key, value);
+    }
+    const employmentType = normalizeEmploymentType(fields.get("type"))
+      ?? (classifyJobPrograms(title).keys.some((key) => key === "internship" || key === "coop") ? "Internship" : null);
+    const publishedText = fields.get("posted date") ?? fields.get("date posted") ?? null;
+    return [{
+      externalId: anchor[2],
+      title,
+      company: source.company,
+      location,
+      arrangement: /\bremote\b/i.test(location ?? "") ? "remote" : /\bhybrid\b/i.test(location ?? "") ? "hybrid" : "unknown",
+      employmentType,
+      summary: description,
+      ...(description ? { description } : {}),
+      ...(fields.get("category") ? { department: fields.get("category") } : {}),
+      ...icimsLocationParts(location),
+      requisitionId: fields.get("id") ?? anchor[2],
+      ...(publishedText ? { sourcePostedText: publishedText } : {}),
+      officialUrl: official.href,
+      publishedAt: normalizedDate(publishedText),
+    }];
+  });
+  return { rawCount: cards.length, jobs };
+};
+
+const crawlIcims = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const fetchPage = async (page: number, baseUrl = source.postingUrl): Promise<IcimsPage | null> => {
+    try {
+      const requestedUrl = icimsSearchUrl(baseUrl, page);
+      const response = await fetchWithTimeout(fetcher, requestedUrl, {
+        headers: { accept: "text/html,application/xhtml+xml" },
+      }, true, { attempts: 1, timeoutMs: 12_000 });
+      if (!response.ok) return null;
+      const html = await response.text();
+      const pageMatch = html.match(/\bPage\s+(\d+)\s+of\s+(\d+)\b/i);
+      const parsedPage = Number(pageMatch?.[1]);
+      const totalPages = Number(pageMatch?.[2]);
+      if (!Number.isInteger(parsedPage) || parsedPage !== page || !Number.isInteger(totalPages) || totalPages < page) return null;
+      const parsed = icimsJobsFromHtml(html, source);
+      if (parsed.rawCount === 0 || parsed.jobs.length !== parsed.rawCount) return null;
+      return { status: response.status, page, totalPages, finalUrl: response.url || requestedUrl.href, ...parsed };
+    } catch {
+      return null;
+    }
+  };
+
+  const index = await fetchPage(1);
+  if (!index) return {
+    status: "failed",
+    responseStatus: null,
+    completeListing: false,
+    jobs: [],
+    error: "iCIMS did not return a usable first catalog page.",
+  };
+  const totalPages = index.totalPages;
+  const requestedStart = Math.max(1, Math.trunc(source.crawlPageCursor ?? 1));
+  const startPage = requestedStart <= totalPages ? requestedStart : 1;
+  // One request is reserved for page one and one for an end-of-cycle stability
+  // check. This still covers the largest current iCIMS source (43 pages) in a
+  // single invocation while remaining below the 50-request source ceiling.
+  const maxWindowPages = 44;
+  const endPage = Math.min(totalPages, startPage + maxWindowPages - 1);
+  const baseUrl = index.finalUrl;
+  const pages = new Map<number, IcimsPage>([[1, index]]);
+  const pageNumbers = Array.from(
+    { length: Math.max(0, endPage - Math.max(2, startPage) + 1) },
+    (_, offset) => Math.max(2, startPage) + offset,
+  );
+  if (startPage > 1) pageNumbers.unshift(startPage);
+  const uniquePageNumbers = [...new Set(pageNumbers)];
+  for (let offset = 0; offset < uniquePageNumbers.length; offset += 8) {
+    const batch = uniquePageNumbers.slice(offset, offset + 8);
+    const results = await Promise.all(batch.map((page) => fetchPage(page, baseUrl)));
+    results.forEach((result, indexInBatch) => {
+      if (result) pages.set(batch[indexInBatch], result);
+    });
+  }
+
+  const jobs: CrawledJob[] = [];
+  const seen = new Set<string>();
+  let firstFailedPage: number | null = null;
+  for (let page = startPage; page <= endPage; page += 1) {
+    const result = pages.get(page);
+    const validCount = result
+      && result.totalPages === totalPages
+      && result.jobs.length === result.rawCount
+      && result.rawCount > 0
+      && (page === totalPages ? result.rawCount <= index.rawCount : result.rawCount === index.rawCount);
+    const identities = result?.jobs.map((job) => job.externalId ?? job.officialUrl) ?? [];
+    if (!validCount || identities.some((identity) => seen.has(identity))) {
+      firstFailedPage = page;
+      break;
+    }
+    identities.forEach((identity) => seen.add(identity));
+    jobs.push(...result!.jobs);
+  }
+
+  let cycleComplete = firstFailedPage === null && endPage === totalPages;
+  if (cycleComplete) {
+    const verification = await fetchPage(1, baseUrl);
+    const initialIds = index.jobs.map((job) => job.externalId ?? job.officialUrl);
+    const verificationIds = verification?.jobs.map((job) => job.externalId ?? job.officialUrl) ?? [];
+    if (!verification || verification.totalPages !== totalPages
+      || verificationIds.length !== initialIds.length
+      || initialIds.some((identity, position) => verificationIds[position] !== identity)) {
+      cycleComplete = false;
+      firstFailedPage = startPage;
+    }
+  }
+
+  if (jobs.length === 0) return {
+    status: "failed",
+    responseStatus: index.status,
+    completeListing: false,
+    jobs: [],
+    error: "iCIMS returned an incomplete or unstable catalog page.",
+  };
+  const canonicalListingUrl = icimsCanonicalListingUrl(index.finalUrl);
+  const completeListing = startPage === 1 && cycleComplete;
+  return {
+    status: "succeeded",
+    responseStatus: index.status,
+    completeListing,
+    jobs: uniqueJobs(jobs),
+    ...(totalPages > 1 || source.crawlPageCursor != null ? {
+      pagination: {
+        nextPage: cycleComplete ? 1 : firstFailedPage ?? endPage + 1,
+        cycleComplete,
+        totalPages,
+      },
+    } : {}),
+    resolvedListingUrl: canonicalListingUrl,
+    error: null,
+  };
 };
 
 export function discoverAts(html: string, _pageUrl: string): DiscoveredAts | null {
@@ -1762,6 +2010,7 @@ const phenomJobs = (html: string, source: CrawlSource): PhenomPage | null => {
       ...(job.ml_skills?.length ? { skills: job.ml_skills } : {}),
       ...(job.category || job.multi_category?.length ? { department: job.category ?? job.multi_category?.join("; ") ?? null } : {}),
       ...(job.externalTeamName ? { team: job.externalTeamName } : {}),
+      ...(job.businessUnit ? { businessUnit: job.businessUnit } : {}),
       ...(job.industry ? { industry: job.industry } : {}),
       ...(job.multi_location?.length ? { secondaryLocations: job.multi_location } : {}),
       ...(job.city ? { locationCity: job.city } : {}),
@@ -1855,6 +2104,162 @@ const crawlPhenomPages = async (source: CrawlSource, first: PhenomPage, fetcher:
     jobs,
     ...(first.facets?.length ? { facets: first.facets } : {}),
     error: null,
+  };
+};
+
+const phenomWidgetPage = (payload: unknown, source: CrawlSource): PhenomPage | null => {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const refineSearch = (payload as { refineSearch?: unknown }).refineSearch;
+  if (!refineSearch || typeof refineSearch !== "object" || Array.isArray(refineSearch)) return null;
+  return phenomJobs(`<script>phApp.ddo = ${JSON.stringify({ eagerLoadRefineSearch: refineSearch })};</script>`, source);
+};
+
+const phenomWidgetLocale = (postingUrl: string): { country: string; lang: string; listingUrl: string } => {
+  const listing = new URL(postingUrl);
+  const segments = listing.pathname.split("/").filter(Boolean);
+  const country = segments[0]?.toLocaleLowerCase() || "global";
+  const language = segments.find((segment) => /^[a-z]{2}(?:-[A-Z]{2})?$/i.test(segment))?.split("-")[0].toLocaleLowerCase() || "en";
+  listing.pathname = `/${country}/search-results`;
+  listing.search = "";
+  listing.hash = "";
+  return { country, lang: `${language}_${country}`, listingUrl: listing.href };
+};
+
+/**
+ * Phenom's public `/widgets` endpoint is independent of the branded HTML
+ * edge. Some tenants (notably RTX) challenge the listing page while their
+ * first-party catalog endpoint remains available to ordinary server fetches.
+ */
+const crawlPhenomWidgets = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const { country, lang, listingUrl } = phenomWidgetLocale(source.postingUrl);
+  const endpoint = new URL("/widgets", source.postingUrl).href;
+  const requestedPageSize = 500;
+  let responseStatus: number | null = null;
+  const fetchPage = async (offset: number): Promise<PhenomPage | null> => {
+    try {
+      const response = await fetchWithTimeout(fetcher, endpoint, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+          referer: listingUrl,
+        },
+        body: JSON.stringify({
+          lang,
+          deviceType: "desktop",
+          country,
+          pageName: "search-results",
+          ddoKey: "refineSearch",
+          sortBy: "",
+          subsearch: "",
+          from: offset,
+          jobs: true,
+          counts: true,
+          all_fields: ["category", "country", "state", "city"],
+          size: requestedPageSize,
+          clearAll: false,
+          jdsource: "facets",
+          isSliderEnable: false,
+          keywords: "",
+          global: true,
+          selected_fields: {},
+          // A string `sortBy` is ignored by RTX and produces overlapping,
+          // relevance-ranked offsets. Phenom's structured sort provides a
+          // monotonic posted-date order; overlapping windows below absorb
+          // ties at page boundaries.
+          sort: { order: "desc", field: "postedDate" },
+          locationData: {},
+        }),
+      }, false, { attempts: 1, timeoutMs: 12_000 });
+      responseStatus = response.status;
+      if (!response.ok) return null;
+      return phenomWidgetPage(await response.json(), source);
+    } catch {
+      return null;
+    }
+  };
+
+  const index = await fetchPage(0);
+  if (!index || index.totalHits === null || index.pageHits === null || index.totalHits <= 0) return {
+    status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+    responseStatus,
+    completeListing: false,
+    jobs: [],
+    error: "Phenom widgets did not return a usable catalog page.",
+  };
+  const boundedTotal = Math.min(index.totalHits, 10_000);
+  const pageSize = index.pageHits;
+  const step = Math.max(1, Math.floor(pageSize * 0.8));
+  const lastOffset = Math.max(0, Math.ceil(Math.max(0, boundedTotal - pageSize) / step) * step);
+  const offsets = Array.from({ length: Math.floor(lastOffset / step) }, (_, index) => (index + 1) * step);
+  // Leave request-budget headroom for the challenged HTML attempt, a stable
+  // first-window verification, and optional internship detail enrichment.
+  if (offsets.length > 35) return {
+    status: "succeeded",
+    responseStatus,
+    completeListing: false,
+    jobs: uniqueJobs(index.jobs),
+    ...(index.facets?.length ? { facets: index.facets } : {}),
+    resolvedListingUrl: listingUrl,
+    error: "Phenom widget catalog exceeds the bounded overlap window.",
+  };
+  const pages = new Map<number, PhenomPage>([[0, index]]);
+  for (let batchStart = 0; batchStart < offsets.length; batchStart += 4) {
+    const batch = offsets.slice(batchStart, batchStart + 4);
+    const results = await Promise.all(batch.map(fetchPage));
+    results.forEach((result, indexInBatch) => {
+      if (result) pages.set(batch[indexInBatch], result);
+    });
+  }
+
+  const jobs: CrawledJob[] = [];
+  let invalidOffset: number | null = null;
+  for (const offset of [0, ...offsets]) {
+    const result = pages.get(offset);
+    const expected = Math.min(pageSize, Math.max(0, boundedTotal - offset));
+    const identities = result?.jobs.map((job) => job.externalId ?? job.officialUrl) ?? [];
+    const valid = result
+      && result.totalHits === index.totalHits
+      && result.pageHits === expected
+      && result.jobs.length === expected
+      && identities.every(Boolean)
+      && new Set(identities).size === expected;
+    if (!valid) {
+      invalidOffset = offset;
+      break;
+    }
+    jobs.push(...result!.jobs);
+  }
+
+  const unique = uniqueJobs(jobs);
+  let completeListing = invalidOffset === null
+    && index.totalHits <= 10_000
+    && unique.length === index.totalHits;
+  if (completeListing) {
+    const verification = await fetchPage(0);
+    const initialIds = index.jobs.map((job) => job.externalId ?? job.officialUrl);
+    const verificationIds = verification?.jobs.map((job) => job.externalId ?? job.officialUrl) ?? [];
+    if (!verification || verification.totalHits !== index.totalHits
+      || verificationIds.length !== initialIds.length
+      || initialIds.some((identity, position) => verificationIds[position] !== identity)) {
+      completeListing = false;
+    }
+  }
+  if (unique.length === 0) return {
+    status: "failed",
+    responseStatus,
+    completeListing: false,
+    jobs: [],
+    error: "Phenom widgets returned an incomplete or unstable catalog page.",
+  };
+  return {
+    status: "succeeded",
+    responseStatus,
+    completeListing,
+    jobs: unique,
+    ...(index.facets?.length ? { facets: index.facets } : {}),
+    resolvedListingUrl: listingUrl,
+    error: completeListing ? null : `Phenom widgets returned an incomplete or unstable catalog window${invalidOffset === null ? "" : ` at offset ${invalidOffset}`}.`,
   };
 };
 
@@ -4966,6 +5371,10 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
     const response = await fetchWithTimeout(fetcher, source.postingUrl);
     if (!response.ok) {
       if (isBlockedHttpStatus(response.status)) {
+        if (source.adapter === "phenom") {
+          const widgets = await crawlPhenomWidgets(source, fetcher);
+          if (widgets.status === "succeeded") return widgets;
+        }
         const talemetry = await crawlTalemetryJson(source, fetcher);
         if (talemetry) return talemetry;
         const fallback = discoveryDepth === 0 ? await crawlReaderFallback(source, fetcher, now) : null;
@@ -9406,6 +9815,71 @@ const crawlCapgemini = async (source: CrawlSource, fetcher: typeof fetch): Promi
   return { status: jobs.length ? "succeeded" : "failed", responseStatus: first.status, completeListing: exact, jobs, resolvedListingUrl: listingUrl, error: jobs.length ? null : "Capgemini jobs API contained no usable jobs." };
 };
 
+/**
+ * Rain's official careers page currently links to an Ashby tenant that Ashby
+ * has deactivated.  A deactivated, still-official board is an authoritative
+ * zero-job state, not a crawler failure.  Keep checking the official landing
+ * page so a future replacement or reactivated board is discovered normally.
+ */
+const crawlRainAi = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const listingUrl = "https://rain.ai/careers";
+  try {
+    const landing = await fetchWithTimeout(fetcher, listingUrl, undefined, true, { attempts: 1, timeoutMs: 10_000 });
+    if (!landing.ok) return {
+      status: isBlockedHttpStatus(landing.status) ? "blocked" : "failed",
+      responseStatus: landing.status,
+      completeListing: false,
+      jobs: [],
+      error: `Rain AI careers returned HTTP ${landing.status}.`,
+    };
+    const html = await landing.text();
+    const boardUrl = anchorsFromHtml(html).flatMap(({ href }) => {
+      try {
+        const url = new URL(href, listingUrl);
+        return url.hostname === "jobs.ashbyhq.com" ? [url] : [];
+      } catch {
+        return [];
+      }
+    }).at(0);
+    const slug = boardUrl?.pathname.split("/").filter(Boolean).at(0);
+    if (!boardUrl || !slug) return {
+      status: "failed",
+      responseStatus: landing.status,
+      completeListing: false,
+      jobs: [],
+      error: "Rain AI careers did not expose an official ATS board.",
+    };
+
+    const feed = await crawlDiscoveredFeed(source, {
+      kind: "ashby",
+      endpoint: `https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(slug)}`,
+    }, fetcher);
+    if (feed.status === "succeeded") return { ...feed, resolvedListingUrl: listingUrl };
+    if (feed.responseStatus !== 404) return feed;
+
+    const board = await fetchWithTimeout(fetcher, boardUrl, undefined, true, { attempts: 1, timeoutMs: 10_000 });
+    if (!board.ok) return feed;
+    const state = embeddedJsonObject(await board.text(), "window.__appData = ");
+    if (state && state.organization === null && state.jobBoard === null) return {
+      status: "succeeded",
+      responseStatus: board.status,
+      completeListing: true,
+      jobs: [],
+      resolvedListingUrl: listingUrl,
+      error: null,
+    };
+    return feed;
+  } catch (error) {
+    return {
+      status: "failed",
+      responseStatus: null,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Rain AI crawler error.",
+    };
+  }
+};
+
 async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
   // Apply an ID-pinned feed only at the root. Redirect/candidate recursion
   // keeps the same source ID, so reapplying it at discovery depth 1 would
@@ -9447,6 +9921,7 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   if (source.id === "p5-0921-guardant-health") return crawlGuardantHealth(source, fetcher);
   if (source.id === "p2-0143-occ") return crawlOcc(source, fetcher, now);
   if (source.id === "p4-0234-capgemini") return crawlCapgemini(source, fetcher);
+  if (source.id === "p4-0479-rain-ai" || sourcePage.hostname === "rain.ai") return crawlRainAi(source, fetcher);
   if (source.id === "audit-row-364") return crawlGraybar(source, fetcher);
   if (source.id === "audit-row-354" || sourcePage.hostname === "careers.eogresources.com") return crawlEogJobs(source, fetcher);
   if (source.id === "p2-0076-ameriprise-financial" || sourcePage.hostname === "careers.ameriprise.com") return crawlAmeripriseJobs(source, fetcher);
@@ -9523,6 +9998,14 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   }
   if (new URL(source.postingUrl).hostname === "myjobs.adp.com") return crawlAdpMyJobs(source, fetcher);
   if (new URL(source.postingUrl).hostname === "workforcenow.adp.com") return crawlAdpWorkforceNow(source, fetcher);
+  if (sourcePage.hostname.endsWith(".icims.com")) return crawlIcims(source, fetcher);
+  if (sourcePage.hostname === "jobs.lever.co") {
+    const slug = sourcePage.pathname.split("/").filter(Boolean).at(0);
+    if (slug) return crawlDiscoveredFeed(source, {
+      kind: "lever",
+      endpoint: `https://api.lever.co/v0/postings/${encodeURIComponent(slug)}?mode=json`,
+    }, fetcher);
+  }
   const smartRecruiters = smartRecruitersFeed(source.postingUrl);
   if (smartRecruiters) return crawlDiscoveredFeed(source, { kind: "smartrecruiters", endpoint: smartRecruiters }, fetcher);
   const board = source.adapter === "greenhouse" ? greenhouseBoard(source.postingUrl) : null;

@@ -14,6 +14,7 @@ import type {
 import { runDueCrawls, runSpecificCrawls, type PersistedSource } from "../../../lib/crawl-runner";
 import { jobsFromTeslaState, type CrawledFacet, type CrawledJob, type TeslaState } from "../../../lib/crawler";
 import { normalizeBrowserJobSnapshot } from "../../../lib/browser-crawl-ingest";
+import { shouldRecordBrowserResult } from "../../../lib/browser-fallback-selection";
 import { ensureCatalogSeeded, type CatalogSeed } from "../../../lib/catalog-bootstrap";
 import { crawlBatchOptions, jobAreaRegionBackfillLimit, jobProgramBackfillLimit, jobTopicBackfillLimit, recrawlSourceIds } from "../../../lib/crawl-batch-options";
 import { backfillJobAreasAndRegions } from "../../../lib/job-area-region-backfill";
@@ -202,6 +203,21 @@ async function recordBrowserCrawlResult(
 ): Promise<{ sourceId: string; status: BrowserCrawlStatus; jobsSeen: number; nextCrawlAt: string }> {
   const source = await browserIngestSource(database, sourceId);
   if (!source) throw new Error("Browser crawl source is unavailable.");
+  const previous = await database.prepare(`
+    SELECT status, jobs_seen
+    FROM crawl_runs
+    WHERE source_id = ? AND status <> 'running'
+    ORDER BY started_at DESC, id DESC
+    LIMIT 1
+  `).bind(sourceId).first<{ status: "succeeded" | "failed" | "blocked"; jobs_seen: number }>();
+  if (!shouldRecordBrowserResult(previous?.status ?? null, status)) {
+    return {
+      sourceId,
+      status: previous!.status,
+      jobsSeen: previous!.jobs_seen,
+      nextCrawlAt: source.nextCrawlAt ?? new Date().toISOString(),
+    };
+  }
   const now = new Date();
   const startedAt = now.toISOString();
   const nextCrawlAt = new Date(now.getTime() + browserCrawlBackoffHours(status) * 60 * 60 * 1_000).toISOString();

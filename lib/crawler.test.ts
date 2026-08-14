@@ -680,6 +680,119 @@ Wrong description.
     expect(requests).not.toContain("https://careers.unitedhealthgroup.com/search-jobs");
   });
 
+  const icimsPage = (page: number, totalPages: number, jobs: Array<{
+    id: string;
+    title: string;
+    location?: string;
+    category?: string;
+    type?: string;
+  }>) => `
+    <h2 class="iCIMS_SubHeader iCIMS_SubHeader_Jobs">Search Results Page ${page} of ${totalPages}</h2>
+    <ul class="container-fluid iCIMS_JobsTable">
+      ${jobs.map((job) => `<li class="iCIMS_JobCardItem">
+        <div class="row">
+          <div class="col-xs-6 header left">
+            <span class="sr-only field-label">Job Locations</span><span>${job.location ?? "US-CA-Marina"}</span>
+          </div>
+          <div class="col-xs-12 title"><a href="https://careers-acme.icims.com/jobs/${job.id}/${job.title.toLowerCase().replaceAll(" ", "-")}/job?in_iframe=1">
+            <span class="sr-only field-label">Title</span><h3>${job.title}</h3>
+          </a></div>
+          <div class="col-xs-12 description">Build data &amp; AI systems.</div>
+          <dl><dt>Category</dt><dd><span>${job.category ?? "Engineering"}</span></dd>
+            <dt>ID</dt><dd><span>2026-${job.id}</span></dd>
+            ${job.type ? `<dt>Type</dt><dd><span>${job.type}</span></dd>` : ""}
+          </dl>
+        </div>
+      </li>`).join("")}
+    </ul>`;
+
+  it("paginates an iCIMS board and preserves rich listing fields", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.href);
+      const page = Number(url.searchParams.get("pr")) + 1;
+      return new Response(icimsPage(page, 2, page === 1
+        ? [{ id: "101", title: "AI &amp; Data Intern", type: "Internship" }]
+        : [{ id: "102", title: "Software Engineer", location: "US-NY-New York" }]), {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      });
+    };
+
+    const result = await crawlSource({
+      id: "acme-icims",
+      company: "Acme",
+      postingUrl: "https://careers-acme.icims.com/jobs/search?ss=1",
+      adapter: "icims",
+    }, fetcher, new Date("2026-08-14T00:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      responseStatus: 200,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 2 },
+      resolvedListingUrl: "https://careers-acme.icims.com/jobs/search?ss=1",
+    }));
+    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "101",
+      title: "AI & Data Intern",
+      location: "US-CA-Marina",
+      locationCountry: "US",
+      locationState: "CA",
+      locationCity: "Marina",
+      department: "Engineering",
+      employmentType: "Internship",
+      requisitionId: "2026-101",
+      officialUrl: "https://careers-acme.icims.com/jobs/101/ai-&-data-intern/job",
+    }));
+    expect(requests).toHaveLength(3);
+    expect(requests.filter((url) => new URL(url).searchParams.get("pr") === "0")).toHaveLength(2);
+  });
+
+  it("does not complete an iCIMS cycle when a tenant repeats a page", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const page = Number(new URL(String(input)).searchParams.get("pr")) + 1;
+      return new Response(icimsPage(page, 2, [{ id: "101", title: "Engineer" }]), { status: 200 });
+    };
+
+    const result = await crawlSource({
+      id: "acme-icims",
+      company: "Acme",
+      postingUrl: "https://careers-acme.icims.com/jobs/search?ss=1",
+      adapter: "icims",
+    }, fetcher, new Date("2026-08-14T00:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: { nextPage: 2, cycleComplete: false, totalPages: 2 },
+    }));
+    expect(result.jobs.map((job) => job.externalId)).toEqual(["101"]);
+  });
+
+  it("fully crawls the largest current iCIMS catalog within the source request budget", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.href);
+      const page = Number(url.searchParams.get("pr")) + 1;
+      return new Response(icimsPage(page, 43, [{ id: String(10_000 + page), title: `Role ${page}` }]), { status: 200 });
+    };
+
+    const result = await crawlSource({
+      id: "large-icims",
+      company: "Large Co",
+      postingUrl: "https://careers-acme.icims.com/jobs/search?ss=1",
+      adapter: "icims",
+    }, fetcher, new Date("2026-08-14T00:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toHaveLength(43);
+    expect(requests).toHaveLength(44);
+  });
+
   it("paginates a discovered SmartRecruiters feed and emits public job URLs", async () => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input) => {
@@ -4346,6 +4459,169 @@ Wrong description.
       completeListing: false,
       jobs: [expect.objectContaining({ title: "Data Analyst" })],
     }));
+  });
+
+  it("uses Phenom's public widget catalog when the branded RTX page is edge-blocked", async () => {
+    const widgetBodies: Array<Record<string, unknown>> = [];
+    const makeJobs = (from: number, count: number) => Array.from({ length: count }, (_, index) => ({
+      title: `RTX Role ${from + index}`,
+      jobId: `R${from + index}`,
+      reqId: `R${from + index}`,
+      location: "Tucson, Arizona, United States of America",
+      city: "Tucson",
+      state: "Arizona",
+      country: "United States of America",
+      category: "Engineering",
+      businessUnit: "Raytheon",
+      type: "Full time",
+      applyUrl: `https://globalhr.wd5.myworkdayjobs.com/REC_RTX_Ext_Gateway/job/Tucson/RTX-Role-${from + index}_R${from + index}/apply`,
+      postedDate: "2026-08-14T00:00:00.000+0000",
+    }));
+    const fetcher: typeof fetch = async (input, init) => {
+      if (String(input) !== "https://careers.rtx.com/widgets") return new Response("challenge", { status: 403 });
+      const body = JSON.parse(String(init?.body)) as { from: number; size: number; lang: string; country: string };
+      widgetBodies.push(body);
+      const jobs = makeJobs(body.from, Math.min(body.size, 150 - body.from));
+      return Response.json({ refineSearch: {
+        status: 200,
+        hits: jobs.length,
+        totalHits: 150,
+        data: { jobs, aggregations: [{ field: "country", value: { "United States of America": 150 } }] },
+      } });
+    };
+
+    const result = await crawlSource({
+      id: "rtx",
+      company: "RTX",
+      postingUrl: "https://careers.rtx.com/global/en",
+      adapter: "phenom",
+    }, fetcher, new Date("2026-08-14T00:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      responseStatus: 200,
+      completeListing: true,
+      resolvedListingUrl: "https://careers.rtx.com/global/search-results",
+    }));
+    expect(result.jobs).toHaveLength(150);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "R0",
+      businessUnit: "Raytheon",
+      department: "Engineering",
+      locationCountry: "United States of America",
+      requisitionId: "R0",
+    }));
+    expect(widgetBodies).toEqual([
+      expect.objectContaining({
+        from: 0,
+        size: 500,
+        lang: "en_global",
+        country: "global",
+        sort: { order: "desc", field: "postedDate" },
+      }),
+      expect.objectContaining({ from: 0, size: 500 }),
+    ]);
+  });
+
+  it("uses a direct Lever API for an official Lever board", async () => {
+    const calls: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      calls.push(String(input));
+      return Response.json([{
+        id: "sword-1",
+        text: "Software Engineering Intern",
+        categories: { location: "New York, NY", commitment: "Internship", team: "Engineering" },
+        descriptionPlain: "Build production software.",
+        hostedUrl: "https://jobs.lever.co/swordhealth/sword-1",
+        createdAt: Date.parse("2026-08-14T00:00:00Z"),
+      }]);
+    };
+
+    const result = await crawlSource({
+      id: "sword",
+      company: "Sword Health",
+      postingUrl: "https://jobs.lever.co/swordhealth",
+      adapter: "lever",
+    }, fetcher, new Date("2026-08-14T00:00:00Z"));
+
+    expect(calls).toEqual(["https://api.lever.co/v0/postings/swordhealth?mode=json"]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      jobs: [expect.objectContaining({
+        externalId: "sword-1",
+        employmentType: "Internship",
+        title: "Software Engineering Intern",
+      })],
+    }));
+  });
+
+  it("records Rain AI's officially linked deactivated Ashby board as an authoritative empty catalog", async () => {
+    const calls: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      calls.push(url);
+      if (url === "https://rain.ai/careers") return new Response(
+        '<a href="https://jobs.ashbyhq.com/rain-ai-jobs">Open roles</a>',
+        { status: 200 },
+      );
+      if (url === "https://api.ashbyhq.com/posting-api/job-board/rain-ai-jobs") {
+        return new Response("not found", { status: 404 });
+      }
+      if (url === "https://jobs.ashbyhq.com/rain-ai-jobs") return new Response(
+        '<script>window.__appData = {"organization":null,"posting":null,"jobBoard":null};</script>',
+        { status: 200 },
+      );
+      return new Response("unexpected", { status: 500 });
+    };
+
+    const result = await crawlSource({
+      id: "p4-0479-rain-ai",
+      company: "Rain AI",
+      postingUrl: "https://rain.ai/careers",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-14T00:00:00Z"));
+
+    expect(calls).toEqual([
+      "https://rain.ai/careers",
+      "https://api.ashbyhq.com/posting-api/job-board/rain-ai-jobs",
+      "https://jobs.ashbyhq.com/rain-ai-jobs",
+    ]);
+    expect(result).toEqual({
+      status: "succeeded",
+      responseStatus: 200,
+      completeListing: true,
+      jobs: [],
+      resolvedListingUrl: "https://rain.ai/careers",
+      error: null,
+    });
+  });
+
+  it("keeps a Phenom widget cycle incomplete when a page repeats job identities", async () => {
+    const fetcher: typeof fetch = async (input, init) => {
+      if (String(input) !== "https://careers.rtx.com/widgets") return new Response("challenge", { status: 403 });
+      const body = JSON.parse(String(init?.body)) as { from: number };
+      const jobs = Array.from({ length: body.from === 0 ? 100 : 50 }, (_, index) => ({
+        title: `Repeated Role ${index}`,
+        jobId: `R${index}`,
+        applyUrl: `https://jobs.example/R${index}`,
+      }));
+      return Response.json({ refineSearch: { hits: jobs.length, totalHits: 150, data: { jobs } } });
+    };
+
+    const result = await crawlSource({
+      id: "rtx",
+      company: "RTX",
+      postingUrl: "https://careers.rtx.com/global/en",
+      adapter: "phenom",
+    }, fetcher, new Date("2026-08-14T00:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      error: expect.stringContaining("offset 80"),
+    }));
+    expect(result.jobs).toHaveLength(100);
   });
 
   it("extracts public Phenom jobs and rejects malformed non-string titles", async () => {
