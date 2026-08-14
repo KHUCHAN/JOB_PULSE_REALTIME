@@ -405,7 +405,7 @@ async function listSources(): Promise<SourceRecord[]> {
     id: string; company: string; posting_url: string | null; talent_url: string | null;
     adapter: SourceRecord["adapter"]; enabled: number; checked_at: string; last_crawled_at: string | null;
     next_crawl_at: string | null; latest_status: string | null; response_status: number | null;
-    current_jobs: number; last_changed_at: string | null;
+    latest_error: string | null; current_jobs: number; last_changed_at: string | null;
   };
   const result = await db().prepare(`
     WITH latest AS (
@@ -419,7 +419,7 @@ async function listSources(): Promise<SourceRecord[]> {
     )
     SELECT s.id, s.company, s.posting_url, s.talent_url, s.adapter, s.enabled,
            s.checked_at, s.last_crawled_at, s.next_crawl_at,
-           l.status AS latest_status, l.response_status,
+           l.status AS latest_status, l.response_status, l.error AS latest_error,
            coalesce(c.current_jobs, 0) AS current_jobs, ch.last_changed_at
     FROM sources s
     LEFT JOIN latest l ON l.source_id = s.id AND l.rn = 1
@@ -436,6 +436,7 @@ async function listSources(): Promise<SourceRecord[]> {
     adapter: row.adapter,
     health: sourceHealth(Boolean(row.enabled), row.latest_status),
     httpStatus: row.response_status,
+    lastError: row.latest_error,
     currentJobs: row.current_jobs,
     lastCheckedAt: row.last_crawled_at || row.checked_at,
     lastChangedAt: row.last_changed_at,

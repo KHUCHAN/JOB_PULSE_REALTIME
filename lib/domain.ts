@@ -137,6 +137,7 @@ export interface SourceRecord {
   adapter: "greenhouse" | "lever" | "workday" | "ashby" | "icims" | "phenom" | "dayforce" | "custom";
   health: SourceHealth;
   httpStatus: number | null;
+  lastError?: string | null;
   currentJobs: number;
   lastCheckedAt: string;
   lastChangedAt: string | null;
