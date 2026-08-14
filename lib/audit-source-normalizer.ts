@@ -23,7 +23,7 @@ export interface NormalizedSourceRecord {
   postingUrl: string | null;
   talentUrl: string | null;
   channel: string;
-  adapter: "greenhouse" | "lever" | "workday" | "ashby" | "icims" | "phenom" | "custom";
+  adapter: "greenhouse" | "lever" | "workday" | "ashby" | "icims" | "phenom" | "dayforce" | "custom";
   verification: string;
   confidence: string;
   resumeUpload: "available" | "job_only" | "unknown";
@@ -51,6 +51,7 @@ function detectAdapter(...urls: Array<string | null>): NormalizedSourceRecord["a
     if (hostname.endsWith("ashbyhq.com")) return "ashby";
     if (hostname.includes("icims")) return "icims";
     if (hostname.includes("phenom") || href.includes("jointalentcommunity")) return "phenom";
+    if (hostname === "dayforcehcm.com" || hostname.endsWith(".dayforcehcm.com")) return "dayforce";
   }
   return "custom";
 }

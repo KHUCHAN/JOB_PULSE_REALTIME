@@ -8,7 +8,7 @@ export type CrawlSource = {
   id: string;
   company: string;
   postingUrl: string;
-  adapter: "greenhouse" | "lever" | "workday" | "ashby" | "icims" | "phenom" | "custom";
+  adapter: "greenhouse" | "lever" | "workday" | "ashby" | "icims" | "phenom" | "dayforce" | "custom";
   crawlPageCursor?: number;
   crawlCycleStartedAt?: string | null;
   crawlPreviousCycleStartedAt?: string | null;
@@ -182,7 +182,7 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
   "p5-0589-electronic-arts": { listingUrl: "https://jobs.ea.com/en_US/careers/SearchJobs", adapter: "custom" },
   "p2-0048-metlife": { listingUrl: "https://www.metlifecareers.com/en_US/ml/SearchJobs", adapter: "custom" },
   "legacy-row-823": { listingUrl: "https://fa-exty-saasfaprod1.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1", adapter: "custom" },
-  "legacy-row-826": { listingUrl: "https://jobs.dayforcehcm.com/en-US/ibgllc/CANDIDATEPORTAL", adapter: "custom" },
+  "legacy-row-826": { listingUrl: "https://jobs.dayforcehcm.com/en-US/ibgllc/CANDIDATEPORTAL", adapter: "dayforce" },
   "p4-0470-oliver-wyman": { listingUrl: "https://mmc.phenompeople.com/global/en/oliver-wyman-early-careers-search", adapter: "phenom" },
   "p5-0869-costco": {
     discovered: { kind: "jibe", endpoint: "https://careers.costco.com/api/jobs?page=1&limit=100&sortBy=relevance&descending=false&internal=false" },
@@ -199,7 +199,7 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
     listingUrl: "https://jobs.ashbyhq.com/trm-labs",
     adapter: "ashby",
   },
-  "p5-1082-trinetx": { listingUrl: "https://jobs.dayforcehcm.com/en-US/trinetx1/CANDIDATEPORTAL", adapter: "custom" },
+  "p5-1082-trinetx": { listingUrl: "https://jobs.dayforcehcm.com/en-US/trinetx1/CANDIDATEPORTAL", adapter: "dayforce" },
   "p4-0207-8am": {
     discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/affinipay1/jobs?content=true" },
     listingUrl: "https://job-boards.greenhouse.io/affinipay1",

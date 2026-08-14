@@ -75,6 +75,28 @@ describe("normalizeAuditRecord", () => {
     expect(normalized.adapter).toBe("ashby");
   });
 
+  it("classifies official Dayforce boards for the native search API", () => {
+    const normalized = normalizeAuditRecord({
+      masterRow: 903,
+      Company: "Dayforce Example",
+      "Ledger ID": "p5-0903-dayforce-example",
+      postingUrl: "https://jobs.dayforcehcm.com/en-US/example/CANDIDATEPORTAL",
+      talentPoolUrl: null,
+      channel: "official careers",
+      resumeUpload: "미확인",
+      jobAlerts: "미확인",
+      verification: "CAREER_ONLY",
+      confidence: "HIGH",
+      recommendedAction: "CAREER_ONLY",
+      evidenceUrl: "https://jobs.dayforcehcm.com/en-US/example/CANDIDATEPORTAL",
+      evidenceNote: "verified",
+      checkedAt: "2026-08-14",
+      adapter: "custom",
+    });
+
+    expect(normalized.adapter).toBe("dayforce");
+  });
+
   it("does not classify a company careers page from an unrelated Talent form host", () => {
     const normalized = normalizeAuditRecord({
       masterRow: 901,
