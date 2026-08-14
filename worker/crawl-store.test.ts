@@ -390,6 +390,12 @@ describe("D1CrawlStore enriched job persistence", () => {
       }, {
         id: "real", external_id: "REQ-1", title: "Home Lending Advisor",
         official_url: "https://careers.example/jobs/REQ-1", status: "open", resume_match_hash: null,
+      }, {
+        id: "fake-oracle-event", external_id: null, title: "Events 2",
+        official_url: "https://example.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/events", status: "open", resume_match_hash: null,
+      }, {
+        id: "fake-oracle-employee", external_id: null, title: "I am an employee",
+        official_url: "https://example.oraclecloud.com/fscmUI/faces/deeplink?objType=ICE_JOB_SEARCH_RESP", status: "open", resume_match_hash: null,
       }],
     });
     const store = new D1CrawlStore(db);
@@ -400,8 +406,10 @@ describe("D1CrawlStore enriched job persistence", () => {
     expect(JSON.parse(String(close?.values[2]))).toEqual([
       "https://careers.example/home",
       "https://careers.example/saved-jobs",
+      "https://example.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/events",
+      "https://example.oraclecloud.com/fscmUI/faces/deeplink?objType=ICE_JOB_SEARCH_RESP",
     ]);
-    expect(result.closed).toBe(2);
+    expect(result.closed).toBe(4);
   });
 
   it("keeps the previous facet snapshot when replacement inserts fail", async () => {

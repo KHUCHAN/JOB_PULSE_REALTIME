@@ -36,7 +36,8 @@ const pagedCrawlStateKey = (sourceId: string): string => `crawl_page_checkpoint:
 const isNavigationArtifact = (job: ExistingJobRow): boolean => {
   const title = job.title.replace(/\s+/g, " ").trim();
   if (/\.(?:pdf|docx?)(?:[?#]|$)/i.test(job.official_url)) return true;
-  return /^(?:home|sites|university|university overview|recruitment fraud|saved jobs(?:\s*0)?|go to saved jobs(?:\s*0)?|know your rights|job listing|students and graduates)$/i.test(title);
+  if (/^(?:home|sites|university|university overview|recruitment fraud|saved jobs(?:\s*0)?|go to saved jobs(?:\s*0)?|know your rights|job listing|students and graduates|events?(?:\s*\d+)?|sitemap|i am an employee|skip to main content\.?)$/i.test(title)) return true;
+  return /\/hcmUI\/CandidateExperience\/sitemaps(?:\/|$)|\/sites\/[^/]+\/events(?:\/|$)|\/fscmUI\/faces\/deeplink[^#]*ICE_JOB_SEARCH_RESP/i.test(job.official_url);
 };
 
 export const chunksOf = <T>(values: T[], size: number): T[][] => {

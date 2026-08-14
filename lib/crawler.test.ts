@@ -811,6 +811,27 @@ Wrong description.
     ]);
   });
 
+  it("extracts Radancy card titles, locations, and requisition identities without concatenating UI text", async () => {
+    const html = [
+      '<script src="https://tbcdn.talentbrew.com/js/client/search.js"></script>',
+      '<section data-total-results="1" data-total-pages="1" data-records-per-page="15" data-ajax-post-url="/search-jobs/resultspost">',
+      '<li><a href="/job/las-vegas/data-science-intern/34088/99215938720" data-job-id="99215938720">',
+      '<div><h2>Data Science Intern</h2><span class="job-id job-info">2379943</span><span class="job-location 1">Las Vegas, Nevada</span></div>',
+      '</a></li></section>',
+    ].join("");
+    const result = await crawlSource({
+      id: "radancy-rich", company: "Acme", postingUrl: "https://jobs.acme.example/search-jobs", adapter: "custom",
+    }, async () => new Response(html), new Date());
+
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "99215938720",
+      requisitionId: "2379943",
+      title: "Data Science Intern",
+      location: "Las Vegas, Nevada",
+    })]);
+  });
+
   it("fully paginates a SuccessFactors HTML job search", async () => {
     const requests: string[] = [];
     const page = (start: number) => [
@@ -3643,6 +3664,63 @@ Wrong description.
     expect(result.completeListing).toBe(true);
   });
 
+  it("confirms Oracle's stable short final page before trusting its visible count", async () => {
+    const offsets: number[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.includes("/hcmUI/CandidateExperience/")) {
+        return new Response('<script src="https://acme.fa.us2.oraclecloud.com/hcmUI/app.js"></script>');
+      }
+      const finder = new URL(url).searchParams.get("finder") ?? "";
+      const offset = Number(finder.match(/offset=(\d+)/)?.[1] ?? 0);
+      offsets.push(offset);
+      const count = offset === 100 ? 8 : 25;
+      return Response.json({ items: [{
+        TotalJobsCount: 110,
+        requisitionList: Array.from({ length: count }, (_, index) => ({ Id: offset + index + 1, Title: `Role ${offset + index + 1}` })),
+      }] });
+    };
+
+    const result = await crawlSource({
+      id: "oracle-visible-count", company: "Acme",
+      postingUrl: "https://acme.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/jobs",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(offsets.filter((offset) => offset === 100)).toHaveLength(2);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toHaveLength(108);
+  });
+
+  it("does not authorize Oracle closures when the short final page changes on confirmation", async () => {
+    let finalCalls = 0;
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.includes("/hcmUI/CandidateExperience/")) {
+        return new Response('<script src="https://acme.fa.us2.oraclecloud.com/hcmUI/app.js"></script>');
+      }
+      const finder = new URL(url).searchParams.get("finder") ?? "";
+      const offset = Number(finder.match(/offset=(\d+)/)?.[1] ?? 0);
+      const count = offset === 100 ? (finalCalls++ === 0 ? 8 : 7) : 25;
+      return Response.json({ items: [{
+        TotalJobsCount: 110,
+        requisitionList: Array.from({ length: count }, (_, index) => ({ Id: offset + index + 1, Title: `Role ${offset + index + 1}` })),
+      }] });
+    };
+
+    const result = await crawlSource({
+      id: "oracle-changing-final", company: "Acme",
+      postingUrl: "https://acme.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/jobs",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      completeListing: false,
+      pagination: { nextPage: 5, cycleComplete: false, totalPages: 5 },
+    }));
+    expect(result.jobs).toHaveLength(100);
+  });
+
   it("checkpoints very large Oracle catalogs within the 50-request source budget", async () => {
     const total = 2_334;
     const run = async (crawlPageCursor?: number) => {
@@ -3669,24 +3747,24 @@ Wrong description.
     };
 
     const first = await run();
-    expect(first.offsets).toHaveLength(49);
+    expect(first.offsets).toHaveLength(48);
     expect(first.offsets.at(0)).toBe(0);
-    expect(first.offsets.at(-1)).toBe(1_200);
+    expect(first.offsets.at(-1)).toBe(1_175);
     expect(first.result).toEqual(expect.objectContaining({
       status: "succeeded", completeListing: false,
-      pagination: { nextPage: 50, cycleComplete: false, totalPages: 94 },
+      pagination: { nextPage: 49, cycleComplete: false, totalPages: 94 },
     }));
-    expect(first.result.jobs).toHaveLength(1_225);
+    expect(first.result.jobs).toHaveLength(1_200);
 
-    const second = await run(50);
-    expect(second.offsets).toHaveLength(45);
-    expect(second.offsets.at(0)).toBe(1_225);
+    const second = await run(49);
+    expect(second.offsets).toHaveLength(46);
+    expect(second.offsets.at(0)).toBe(1_200);
     expect(second.offsets.at(-1)).toBe(2_325);
     expect(second.result).toEqual(expect.objectContaining({
       status: "succeeded", completeListing: false,
       pagination: { nextPage: 1, cycleComplete: true, totalPages: 94 },
     }));
-    expect(second.result.jobs).toHaveLength(1_109);
+    expect(second.result.jobs).toHaveLength(1_134);
   });
 
   it("follows a discovered Lever feed and treats its response as a complete listing", async () => {
@@ -6442,5 +6520,123 @@ Wrong description.
     expect(results.map((result) => result.jobs[0].title)).toEqual([
       "AI Intern", "Software Engineering Intern", "Data Science Intern", "Machine Learning Intern", "Data Engineer Intern",
     ]);
+  });
+
+  it("reads OCC's complete official OCC and USAJobs catalogs with the runtime-published key", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === "https://www.occ.gov/includes/occjobs.json") return Response.json([{
+        ObjectID: "occ-1", PositionID: "OCC-1", PositionTitle: "Data Science Intern",
+        Url: "https://www.usajobs.gov/job/occ-1", PositionLocationName: "Washington, DC",
+        StartDate: "Aug 14, 2026", EndDate: "Sep 30, 2026", PositionSchedule: "Full-time",
+      }]);
+      if (url === "https://www.occ.gov/scripts/careers-openings.js") {
+        return new Response('const options={headers:{"Authorization-Key":"runtime-public-key"}};');
+      }
+      if (url.startsWith("https://data.usajobs.gov/api/search?")) {
+        expect(new Headers(init?.headers).get("authorization-key")).toBe("runtime-public-key");
+        expect(new Headers(init?.headers).get("user-agent")).toContain("Job Pulse Realtime");
+        return Response.json({ SearchResult: {
+          SearchResultCount: "1",
+          SearchResultCountAll: "1",
+          SearchResultItems: [{
+            MatchedObjectId: "usa-1",
+            MatchedObjectDescriptor: {
+              PositionID: "TRAJ-1",
+              PositionTitle: "Financial Data Analyst",
+              PositionURI: "https://www.usajobs.gov/job/usa-1",
+              ApplyURI: ["https://www.usajobs.gov/job/usa-1/apply"],
+              PositionSchedule: [{ Name: "Full-time" }],
+              PositionLocation: [{ LocationName: "New York, NY", CityName: "New York", CountrySubDivisionCode: "NY", CountryCode: "US" }],
+              PositionStartDate: "2026-08-13T00:00:00Z",
+              PositionEndDate: "2026-08-30T00:00:00Z",
+              UserArea: { Details: { JobSummary: "Analyze national bank data." } },
+            },
+          }],
+        } });
+      }
+      return new Response("missing", { status: 404 });
+    };
+
+    const result = await crawlSource({
+      id: "p2-0143-occ",
+      company: "OCC (Treasury)",
+      postingUrl: "https://www.occ.gov/about/careers/index-careers.html",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-14T12:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://www.occ.gov/about/careers/index-careers.html",
+    }));
+    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs).toContainEqual(expect.objectContaining({
+      externalId: "usa-1",
+      requisitionId: "TRAJ-1",
+      title: "Financial Data Analyst",
+      locationCountry: "US",
+    }));
+    expect(requests).toHaveLength(3);
+  });
+
+  it("keeps OCC incomplete when USAJobs is unavailable instead of closing older jobs", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.endsWith("occjobs.json")) return Response.json([{
+        ObjectID: "occ-1", PositionID: "OCC-1", PositionTitle: "Bank Examiner Intern",
+        Url: "https://www.usajobs.gov/job/occ-1", EndDate: "Sep 30, 2026",
+      }]);
+      if (url.endsWith("careers-openings.js")) return new Response('{"Authorization-Key":"runtime-public-key"}');
+      return new Response("temporary", { status: 503 });
+    };
+
+    const result = await crawlSource({
+      id: "p2-0143-occ", company: "OCC (Treasury)",
+      postingUrl: "https://www.occ.gov/about/careers/index-careers.html", adapter: "custom",
+    }, fetcher, new Date("2026-08-14T12:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: false }));
+    expect(result.jobs.map((job) => job.title)).toEqual(["Bank Examiner Intern"]);
+  });
+
+  it("checkpoints UnitedHealth's large Radancy catalog with a bounded 100-row page size", async () => {
+    const requests: string[] = [];
+    const total = 1_900;
+    const first = [
+      '<script src="https://tbcdn.talentbrew.com/js/client/search.js"></script>',
+      `<section data-total-results="${total}" data-total-pages="127" data-records-per-page="15" data-ajax-post-url="/search-jobs/resultspost"></section>`,
+    ].join("");
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      requests.push(url);
+      if ((init?.method ?? "GET") === "GET") return new Response(first);
+      const body = JSON.parse(String(init?.body)) as { CurrentPage: number; RecordsPerPage: number; TotalPages: number };
+      expect(body.RecordsPerPage).toBe(100);
+      expect(body.TotalPages).toBe(19);
+      const start = (body.CurrentPage - 1) * body.RecordsPerPage;
+      const results = Array.from({ length: Math.min(body.RecordsPerPage, total - start) }, (_, index) => {
+        const id = start + index + 1;
+        return `<a href="/job/software-engineer/${id}/${id}">Software Engineer ${id}</a>`;
+      }).join("");
+      return Response.json({ results });
+    };
+
+    const result = await crawlSource({
+      id: "p2-0064-unitedhealth-group",
+      company: "UnitedHealth Group (Optum)",
+      postingUrl: "https://careers.unitedhealthgroup.com/us/en/jointalentcommunity",
+      adapter: "phenom",
+    }, fetcher, new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: { nextPage: 19, cycleComplete: false, totalPages: 19 },
+    }));
+    expect(result.jobs).toHaveLength(1_800);
+    expect(requests).toHaveLength(19);
   });
 });

@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:719ed438696c945d876ca22e88f789ed18a6512a47a6aa84807af537aca4789d",
+  "version": "v2:sha256:5dce4ef04ba96646caea8603bde028374f3b3b55f885e491505b831c187e68d2",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -4191,7 +4191,7 @@
       "id": "p2-0143-occ",
       "masterRow": 1022,
       "company": "OCC (Treasury)",
-      "postingUrl": "https://careers.occ.gov/",
+      "postingUrl": "https://www.occ.gov/about/careers/index-careers.html",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
       "adapter": "custom",
@@ -4199,7 +4199,7 @@
       "confidence": "medium",
       "resumeUpload": "job_only",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-08",
+      "checkedAt": "2026-08-14",
       "enabled": true
     },
     {
@@ -18726,15 +18726,15 @@
       "id": "p2-0064-unitedhealth-group",
       "masterRow": 3110,
       "company": "UnitedHealth Group (Optum)",
-      "postingUrl": "https://careers.unitedhealthgroup.com/us/en/jointalentcommunity",
+      "postingUrl": "https://careers.unitedhealthgroup.com/search-jobs",
       "talentUrl": "https://careers.unitedhealthgroup.com/us/en/jointalentcommunity",
       "channel": "UnitedHealth Group Talent Community",
-      "adapter": "phenom",
+      "adapter": "custom",
       "verification": "valid_direct_talent_form",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-14",
       "enabled": true
     },
     {
@@ -19266,7 +19266,7 @@
       "id": "p4-0209-aci-worldwide",
       "masterRow": 3191,
       "company": "ACI Worldwide",
-      "postingUrl": "https://ebwg.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/join-talent-community",
+      "postingUrl": "https://ebwg.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/jobs",
       "talentUrl": "https://ebwg.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/join-talent-community",
       "channel": "Oracle Recruiting Talent Community",
       "adapter": "custom",
@@ -19274,7 +19274,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-14",
       "enabled": true
     },
     {
@@ -29075,7 +29075,7 @@
       "officialUrl": "https://careers.unitedhealthgroup.com/us/en/jointalentcommunity",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-14"
     },
     {
       "id": "talent-p2-0067-wells-fargo",
@@ -29363,7 +29363,7 @@
       "officialUrl": "https://ebwg.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/join-talent-community",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-14"
     },
     {
       "id": "talent-p4-0211-aig",

@@ -88,17 +88,17 @@ const postAction = async (action, timeoutMs) => {
   }
 };
 
-// Leave a margin below the Sites Worker cancellation window. A timed-out
-// source is recorded and handed to browser recovery rather than allowing the
-// platform to cancel both concurrent requests at the hard edge.
-const crawlOne = () => postAction("scheduledCrawlBatch", 42_000);
+// The prior 42-second client abort canceled otherwise healthy Sites Workers
+// at 41-42 seconds. Source fetches are already internally bounded, so leave
+// enough time for the final D1 sync while staying below the edge request cap.
+const crawlOne = () => postAction("scheduledCrawlBatch", 55_000);
 
 const isRecoverableRequestError = (error) => {
   const message = error instanceof Error ? error.message : String(error);
   return /aborted|abort|exceeded|timed out|fetch failed|network|socket|ECONN|HTTP 5\d\d/i.test(message);
 };
 
-let consecutiveDoubleErrors = 0;
+let consecutiveRequestErrorRounds = 0;
 while (Date.now() < deadline) {
   summary.rounds += 1;
   const settled = await Promise.allSettled([crawlOne(), crawlOne()]);
@@ -116,14 +116,14 @@ while (Date.now() < deadline) {
     summary.drained = true;
     break;
   }
-  consecutiveDoubleErrors = rejected.length === 2 ? consecutiveDoubleErrors + 1 : 0;
-  if (consecutiveDoubleErrors >= 3) {
+  if (rejected.some((error) => !isRecoverableRequestError(error))) {
+    throw new Error("Production crawl API authorization or configuration failed.");
+  }
+  consecutiveRequestErrorRounds = rejected.length > 0 ? consecutiveRequestErrorRounds + 1 : 0;
+  if (consecutiveRequestErrorRounds >= 3) {
     // Browser recovery is the independent safety net for slow/edge-blocked
     // sources. Stop this bounded native drain cleanly so the recovery job can
     // run instead of marking the whole scheduled workflow as a hard failure.
-    if (rejected.some((error) => !isRecoverableRequestError(error))) {
-      throw new Error("Production crawl API authorization or configuration failed three consecutive rounds.");
-    }
     summary.stopReason = "consecutive-request-errors";
     break;
   }
@@ -132,9 +132,18 @@ while (Date.now() < deadline) {
 const alertDispatch = await postAction("scheduledProcessAlerts", 110_000);
 
 const getJson = async (resource) => {
-  const response = await fetch(`${apiUrl}?resource=${encodeURIComponent(resource)}`, { headers: { accept: "application/json" } });
-  if (!response.ok) throw new Error(`${resource} verification returned HTTP ${response.status}.`);
-  return response.json();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(new Error(`${resource} verification exceeded 30 seconds.`)), 30_000);
+  try {
+    const response = await fetch(`${apiUrl}?resource=${encodeURIComponent(resource)}`, {
+      headers: { accept: "application/json" },
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`${resource} verification returned HTTP ${response.status}.`);
+    return response.json();
+  } finally {
+    clearTimeout(timeout);
+  }
 };
 const [overview, sources] = await Promise.all([getJson("overview"), getJson("sources")]);
 const sourceCounts = {};

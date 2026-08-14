@@ -120,6 +120,14 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
     listingUrl: "https://morganstanley.eightfold.ai/careers?domain=morganstanley.com",
     adapter: "custom",
   },
+  "p2-0064-unitedhealth-group": {
+    listingUrl: "https://careers.unitedhealthgroup.com/search-jobs",
+    adapter: "custom",
+  },
+  "p4-0209-aci-worldwide": {
+    listingUrl: "https://ebwg.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/jobs",
+    adapter: "custom",
+  },
   "p4-0289-hcltech": {
     listingUrl: "https://careers.hcltech.com/search/?locale=en_US",
     adapter: "custom",
@@ -1415,7 +1423,9 @@ async function crawlOracle(
     const pageSize = 25;
     // One request is spent discovering Oracle from the public listing page.
     // Keep the remaining API work inside the source-wide 50-request budget.
-    const maxPagesPerPass = 49;
+    // Reserve one request for confirming a stable short final page. Some
+    // Oracle tenants advertise a count that includes hidden requisitions.
+    const maxPagesPerPass = 48;
     let apiRequests = 0;
     const fetchPage = async (pageNumber: number): Promise<{ responseStatus: number; total: number; page: OracleJob[] }> => {
       apiRequests += 1;
@@ -1454,6 +1464,35 @@ async function crawlOracle(
         }];
       });
 
+    const validatePage = async (
+      pageNumber: number,
+      result: Awaited<ReturnType<typeof fetchPage>>,
+      advertisedTotal: number,
+      advertisedTotalPages: number,
+    ): Promise<{ jobs: CrawledJob[]; effectiveTotal: number } | null> => {
+      const expected = advertisedTotal === 0
+        ? 0
+        : Math.min(pageSize, Math.max(0, advertisedTotal - (pageNumber - 1) * pageSize));
+      const normalized = normalizePage(result.page);
+      if (normalized.length !== result.page.length) return null;
+      if (result.page.length === expected) return { jobs: normalized, effectiveTotal: advertisedTotal };
+      if (pageNumber !== advertisedTotalPages || result.page.length >= expected) return null;
+
+      // A short final page is authoritative only after an identical second
+      // response. This handles Oracle's visible-count mismatch without
+      // turning a transient truncation into mass stale-job closure.
+      const retry = await fetchPage(pageNumber);
+      const identities = result.page.map((job) => String(job.Id ?? ""));
+      const retryIdentities = retry.page.map((job) => String(job.Id ?? ""));
+      if (retry.total !== advertisedTotal || identities.some((id) => !id)
+        || identities.length !== retryIdentities.length
+        || identities.some((id, index) => id !== retryIdentities[index])) return null;
+      const retriedJobs = normalizePage(retry.page);
+      return retriedJobs.length === retry.page.length
+        ? { jobs: retriedJobs, effectiveTotal: (pageNumber - 1) * pageSize + retry.page.length }
+        : null;
+    };
+
     let startPage = Math.max(1, Math.trunc(source.crawlPageCursor ?? 1));
     let first = await fetchPage(startPage);
     let total = first.total;
@@ -1464,14 +1503,13 @@ async function crawlOracle(
       total = first.total;
       totalPages = Math.max(1, Math.ceil(total / pageSize));
     }
-    const expectedPageLength = (pageNumber: number): number => total === 0
-      ? 0
-      : Math.min(pageSize, Math.max(0, total - (pageNumber - 1) * pageSize));
-    const firstJobs = normalizePage(first.page);
-    if (first.page.length !== expectedPageLength(startPage) || firstJobs.length !== first.page.length) {
+    const firstPage = await validatePage(startPage, first, total, totalPages);
+    if (!firstPage) {
       throw new Error("Oracle Recruiting returned an incomplete or unusable catalog page.");
     }
-    const jobs = [...firstJobs];
+    total = firstPage.effectiveTotal;
+    totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const jobs = [...firstPage.jobs];
     const availableAdditionalPages = Math.max(0, maxPagesPerPass - apiRequests);
     const endPage = Math.min(totalPages, startPage + availableAdditionalPages);
     const pageNumbers = Array.from({ length: Math.max(0, endPage - startPage) }, (_, index) => startPage + index + 1);
@@ -1482,16 +1520,20 @@ async function crawlOracle(
       const pages = await Promise.all(batchNumbers.map(async (pageNumber) => {
         try {
           const result = await fetchPage(pageNumber);
-          if (result.total !== total || result.page.length !== expectedPageLength(pageNumber)) return null;
-          const normalized = normalizePage(result.page);
-          return normalized.length === result.page.length ? normalized : null;
+          if (result.total !== total) return null;
+          return validatePage(pageNumber, result, total, totalPages);
         } catch {
           return null;
         }
       }));
       const failedIndex = pages.findIndex((page) => page === null);
       const usableCount = failedIndex === -1 ? pages.length : failedIndex;
-      jobs.push(...pages.slice(0, usableCount).flatMap((page) => page ?? []));
+      for (const page of pages.slice(0, usableCount)) {
+        if (!page) continue;
+        total = page.effectiveTotal;
+        totalPages = Math.max(1, Math.ceil(total / pageSize));
+        jobs.push(...page.jobs);
+      }
       lastSuccessfulPage += usableCount;
       if (failedIndex !== -1) firstFailedPage = batchNumbers[failedIndex];
     }
@@ -3038,6 +3080,32 @@ const crawlCornerstone = async (
   };
 };
 
+const radancyJobsFromHtml = (html: string, source: CrawlSource): CrawledJob[] => {
+  const structured = [...html.matchAll(/<li\b[^>]*>([\s\S]*?)<\/li>/gi)].flatMap((match): CrawledJob[] => {
+    const block = match[0];
+    const anchor = anchorsFromHtml(block).find(({ href }) => /\/job\/(?:[^/?#]+\/)+\d+\/\d+\/?(?:[?#]|$)/i.test(href));
+    const title = plainText(block.match(/<h2\b[^>]*>([\s\S]*?)<\/h2>/i)?.[1]);
+    if (!anchor || !title) return [];
+    const officialUrl = new URL(anchor.href, source.postingUrl).href;
+    const externalId = block.match(/\bdata-job-id=["']([^"']+)["']/i)?.[1] ?? null;
+    const requisitionId = plainText(block.match(/<span\b[^>]*class=["'][^"']*\bjob-id\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1]);
+    const location = plainText(block.match(/<span\b[^>]*class=["'][^"']*\bjob-location\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1]);
+    return [{
+      externalId,
+      title,
+      company: source.company,
+      location,
+      arrangement: /\bremote\b/i.test(location ?? "") ? "remote" : "unknown",
+      employmentType: null,
+      summary: null,
+      ...(requisitionId ? { requisitionId } : {}),
+      officialUrl,
+      publishedAt: null,
+    }];
+  });
+  return structured.length > 0 ? uniqueJobs(structured) : jobsFromBrowserAnchors(anchorsFromHtml(html), source);
+};
+
 const crawlRadancyPages = async (
   source: CrawlSource,
   html: string,
@@ -3045,45 +3113,68 @@ const crawlRadancyPages = async (
 ): Promise<SourceCrawlResult | null> => {
   if (!/tbcdn\.talentbrew\.com/i.test(html)) return null;
   const postPath = dataAttribute(html, "data-ajax-post-url");
-  const totalPages = Number(dataAttribute(html, "data-total-pages"));
+  const advertisedTotalPages = Number(dataAttribute(html, "data-total-pages"));
   const totalResults = Number(dataAttribute(html, "data-total-job-results") ?? dataAttribute(html, "data-total-results"));
-  const recordsPerPage = Number(dataAttribute(html, "data-records-per-page"));
-  if (!postPath || !Number.isFinite(totalPages) || totalPages < 1 || !Number.isFinite(totalResults)) return null;
+  const advertisedPageSize = Number(dataAttribute(html, "data-records-per-page"));
+  if (!postPath || !Number.isInteger(advertisedTotalPages) || advertisedTotalPages < 1
+    || !Number.isInteger(totalResults) || totalResults < 0
+    || !Number.isInteger(advertisedPageSize) || advertisedPageSize < 1
+    || advertisedTotalPages !== Math.max(1, Math.ceil(totalResults / advertisedPageSize))) return null;
 
-  const jobs = jobsFromBrowserAnchors(anchorsFromHtml(html), source);
-  const pageNumbers = Array.from({ length: Math.min(totalPages, 1_000) - 1 }, (_, index) => index + 2);
-  let successfulPages = 0;
-  for (let index = 0; index < pageNumbers.length; index += 10) {
-    const pages = await Promise.all(pageNumbers.slice(index, index + 10).map(async (currentPage) => {
+  // UnitedHealth's public Radancy endpoint accepts a larger page size than
+  // the 15-row browser UI. Use it to reduce 368 network pages to 56, but keep
+  // every invocation bounded so upstream latency and D1 sync stay below the
+  // Worker/request deadline. Other tenants retain their advertised page size.
+  const pageSize = source.id === "p2-0064-unitedhealth-group"
+    ? Math.max(advertisedPageSize, 100)
+    : advertisedPageSize;
+  const totalPages = Math.max(1, Math.ceil(totalResults / pageSize));
+  const maximumPages = 18;
+  const requestedStart = Math.max(1, Math.trunc(source.crawlPageCursor ?? 1));
+  const startPage = Math.min(requestedStart, totalPages);
+  const endPage = Math.min(startPage + maximumPages - 1, totalPages);
+  const canUseInitialPage = startPage === 1 && pageSize === advertisedPageSize;
+  const pagesByNumber = new Map<number, CrawledJob[]>();
+  if (canUseInitialPage) pagesByNumber.set(1, radancyJobsFromHtml(html, source));
+  const firstFetchedPage = canUseInitialPage ? 2 : startPage;
+  const pageNumbers = Array.from(
+    { length: Math.max(0, endPage - firstFetchedPage + 1) },
+    (_, index) => firstFetchedPage + index,
+  );
+  // TalentBrew throttles larger bursts with 429s. Three concurrent page
+  // requests stays fast while avoiding the partial 12/18-page responses seen
+  // with nine-way fan-out in production.
+  for (let index = 0; index < pageNumbers.length; index += 3) {
+    const pages = await Promise.all(pageNumbers.slice(index, index + 3).map(async (currentPage) => {
       for (let attempt = 0; attempt < 3; attempt += 1) {
         try {
           const response = await fetchWithTimeout(fetcher, new URL(postPath, source.postingUrl), {
             method: "POST",
             headers: { "content-type": "application/json; charset=utf-8", "x-requested-with": "XMLHttpRequest" },
             body: JSON.stringify({
-            ActiveFacetID: Number(dataAttribute(html, "data-active-facet-id") ?? 0),
-            CurrentPage: currentPage,
-            RecordsPerPage: recordsPerPage,
-            TotalPages: totalPages,
-            TotalResults: totalResults,
-            Distance: Number(dataAttribute(html, "data-distance") ?? 0),
-            Keywords: dataAttribute(html, "data-keywords") ?? "",
-            Location: dataAttribute(html, "data-location") ?? "",
-            ShowRadius: dataAttribute(html, "data-show-radius") === "True",
-            IsPagination: "True",
-            FacetFilters: [],
-            StaticFacets: [],
-            SearchResultsModuleName: dataAttribute(html, "data-search-results-module-name") ?? "Search Results",
-            SortCriteria: Number(dataAttribute(html, "data-sort-criteria") ?? 0),
-            SortDirection: Number(dataAttribute(html, "data-sort-direction") ?? 0),
-            SearchType: Number(dataAttribute(html, "data-search-type") ?? 0),
-            RefinedKeywords: [],
-            ResultsType: Number(dataAttribute(html, "data-results-type") ?? 0),
+              ActiveFacetID: Number(dataAttribute(html, "data-active-facet-id") ?? 0),
+              CurrentPage: currentPage,
+              RecordsPerPage: pageSize,
+              TotalPages: totalPages,
+              TotalResults: totalResults,
+              Distance: Number(dataAttribute(html, "data-distance") ?? 0),
+              Keywords: dataAttribute(html, "data-keywords") ?? "",
+              Location: dataAttribute(html, "data-location") ?? "",
+              ShowRadius: dataAttribute(html, "data-show-radius") === "True",
+              IsPagination: "True",
+              FacetFilters: [],
+              StaticFacets: [],
+              SearchResultsModuleName: dataAttribute(html, "data-search-results-module-name") ?? "Search Results",
+              SortCriteria: Number(dataAttribute(html, "data-sort-criteria") ?? 0),
+              SortDirection: Number(dataAttribute(html, "data-sort-direction") ?? 0),
+              SearchType: Number(dataAttribute(html, "data-search-type") ?? 0),
+              RefinedKeywords: [],
+              ResultsType: Number(dataAttribute(html, "data-results-type") ?? 0),
             }),
           });
           if (response.ok) {
             const payload = await response.json() as { results?: string };
-            return typeof payload.results === "string" ? jobsFromBrowserAnchors(anchorsFromHtml(payload.results), source) : null;
+            return typeof payload.results === "string" ? radancyJobsFromHtml(payload.results, source) : null;
           }
         } catch {
           // Retry transient page failures before keeping the listing incomplete.
@@ -3092,15 +3183,39 @@ const crawlRadancyPages = async (
       }
       return null;
     }));
-    successfulPages += pages.filter((page): page is CrawledJob[] => page !== null).length;
-    jobs.push(...pages.flatMap((page) => page ?? []));
+    pages.forEach((page, pageIndex) => {
+      if (page) pagesByNumber.set(pageNumbers[index + pageIndex], page);
+    });
+  }
+  const jobs: CrawledJob[] = [];
+  const seen = new Set<string>();
+  let firstFailedPage: number | null = null;
+  for (let pageNumber = startPage; pageNumber <= endPage; pageNumber += 1) {
+    const pageJobs = pagesByNumber.get(pageNumber);
+    const expected = Math.min(pageSize, Math.max(0, totalResults - (pageNumber - 1) * pageSize));
+    const identities = pageJobs?.map((job) => job.externalId ?? job.officialUrl) ?? [];
+    if (!pageJobs || pageJobs.length !== expected || new Set(identities).size !== identities.length
+      || identities.some((identity) => seen.has(identity))) {
+      firstFailedPage ??= pageNumber;
+      continue;
+    }
+    identities.forEach((identity) => seen.add(identity));
+    jobs.push(...pageJobs);
   }
   const normalized = uniqueJobs(jobs);
+  const cycleComplete = firstFailedPage === null && endPage === totalPages;
   return {
     status: "succeeded",
     responseStatus: 200,
-    completeListing: totalPages <= 1_000 && successfulPages === pageNumbers.length && normalized.length >= totalResults,
+    completeListing: startPage === 1 && cycleComplete && normalized.length === totalResults,
     jobs: normalized,
+    ...(totalPages > maximumPages || source.crawlPageCursor != null ? {
+      pagination: {
+        nextPage: cycleComplete ? 1 : firstFailedPage ?? endPage + 1,
+        cycleComplete,
+        totalPages,
+      },
+    } : {}),
     error: null,
   };
 };
@@ -9042,6 +9157,226 @@ const crawlGuardantHealth = async (source: CrawlSource, fetcher: typeof fetch): 
   }
 };
 
+type OccPositionLocation = {
+  LocationName?: unknown;
+  CityName?: unknown;
+  CountrySubDivisionCode?: unknown;
+  CountryCode?: unknown;
+  PostalCode?: unknown;
+  Latitude?: unknown;
+  Longitude?: unknown;
+};
+
+type OccPositionDescriptor = {
+  PositionID?: unknown;
+  PositionTitle?: unknown;
+  PositionURI?: unknown;
+  ApplyURI?: unknown;
+  PositionSchedule?: unknown;
+  PositionOfferingType?: unknown;
+  PositionRemuneration?: unknown;
+  PositionLocation?: unknown;
+  PositionStartDate?: unknown;
+  PositionEndDate?: unknown;
+  QualificationSummary?: unknown;
+  UserArea?: unknown;
+};
+
+type OccPositionRecord = {
+  MatchedObjectId?: unknown;
+  MatchedObjectDescriptor?: OccPositionDescriptor;
+};
+
+const activeThrough = (value: unknown, now: Date): boolean => {
+  const date = normalizedDate(value);
+  return !date || new Date(date).getTime() + 24 * 60 * 60 * 1_000 > now.getTime();
+};
+
+const crawlOcc = async (source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> => {
+  const listingUrl = "https://www.occ.gov/about/careers/index-careers.html";
+  const staticUrl = "https://www.occ.gov/includes/occjobs.json";
+  const scriptUrl = "https://www.occ.gov/scripts/careers-openings.js";
+  const usaJobsUrl = "https://data.usajobs.gov/api/search?Organization=TRAJ&WhoMayApply=All&customwhomayapply=15509&ResultsPerPage=500";
+
+  let staticStatus: number | null = null;
+  let scriptStatus: number | null = null;
+  let usaJobsStatus: number | null = null;
+  let staticValid = false;
+  let usaJobsValid = false;
+  let staticRecords: OccPositionRecord[] = [];
+  let usaJobsRecords: OccPositionRecord[] = [];
+  const [staticResult, scriptResult] = await Promise.allSettled([
+    fetchWithTimeout(fetcher, staticUrl, { headers: { accept: "application/json" } }, true, { attempts: 2, timeoutMs: 10_000 }),
+    fetchWithTimeout(fetcher, scriptUrl, { headers: { accept: "application/javascript,text/javascript" } }, true, { attempts: 2, timeoutMs: 10_000 }),
+  ]);
+  if (staticResult.status === "fulfilled") {
+    const staticResponse = staticResult.value;
+    staticStatus = staticResponse.status;
+    if (staticResponse.ok) {
+      try {
+        const payload = await staticResponse.json() as Array<Record<string, unknown>>;
+        if (Array.isArray(payload)) {
+          staticValid = true;
+          staticRecords = payload
+            .filter((record) => activeThrough(record.EndDate, now))
+            .map((record): OccPositionRecord => ({
+              MatchedObjectId: record.ObjectID,
+              MatchedObjectDescriptor: {
+                PositionID: record.PositionID,
+                PositionTitle: record.PositionTitle,
+                PositionURI: record.Url,
+                ApplyURI: [record.Url],
+                PositionSchedule: [{ Name: record.PositionSchedule }],
+                PositionRemuneration: [{ MinimumRange: record.SalaryMin, MaximumRange: record.SalaryMax, RateIntervalCode: record.SalaryBasis }],
+                PositionLocation: [{
+                  LocationName: record.PositionLocationName,
+                  CountrySubDivisionCode: record.PositionState,
+                  Latitude: record.Latitude,
+                  Longitude: record.Longitude,
+                }],
+                PositionStartDate: record.StartDate,
+                PositionEndDate: record.EndDate,
+              },
+            }));
+        }
+      } catch {
+        staticValid = false;
+      }
+    }
+  }
+
+  if (scriptResult.status === "fulfilled") {
+    const scriptResponse = scriptResult.value;
+    scriptStatus = scriptResponse.status;
+    if (scriptResponse.ok) {
+      let authorizationKey: string | undefined;
+      try {
+        const script = await scriptResponse.text();
+        authorizationKey = script.match(/["']Authorization-Key["']\s*:\s*["']([^"']+)["']/i)?.[1];
+      } catch {
+        authorizationKey = undefined;
+      }
+      if (authorizationKey) try {
+        const response = await fetchWithTimeout(fetcher, usaJobsUrl, {
+          headers: {
+            accept: "application/json",
+            "authorization-key": authorizationKey,
+            "user-agent": "Job Pulse Realtime (kimchany@usc.edu)",
+          },
+        }, true, { attempts: 2, timeoutMs: 12_000 });
+        usaJobsStatus = response.status;
+        if (response.ok) {
+          const payload = await response.json() as {
+            SearchResult?: {
+              SearchResultCount?: unknown;
+              SearchResultCountAll?: unknown;
+              SearchResultItems?: OccPositionRecord[];
+            };
+          };
+          const items = payload.SearchResult?.SearchResultItems;
+          const pageCount = Number(payload.SearchResult?.SearchResultCount ?? items?.length);
+          const totalCount = Number(payload.SearchResult?.SearchResultCountAll ?? pageCount);
+          if (Array.isArray(items) && Number.isInteger(pageCount) && pageCount === items.length
+            && Number.isInteger(totalCount) && totalCount === items.length && totalCount <= 500) {
+            usaJobsValid = true;
+            usaJobsRecords = items.filter((record) => activeThrough(record.MatchedObjectDescriptor?.PositionEndDate, now));
+          }
+        }
+      } catch {
+        usaJobsValid = false;
+      }
+    }
+  }
+
+  const records = [...staticRecords, ...usaJobsRecords];
+  const jobs = uniqueJobs(records.flatMap((record): CrawledJob[] => {
+    const descriptor = record.MatchedObjectDescriptor;
+    const externalId = asText(record.MatchedObjectId) ?? asText(descriptor?.PositionID);
+    const title = asText(descriptor?.PositionTitle);
+    const officialUrl = asText(descriptor?.PositionURI);
+    if (!descriptor || !externalId || !title || !officialUrl) return [];
+    const locations = Array.isArray(descriptor.PositionLocation)
+      ? descriptor.PositionLocation as OccPositionLocation[]
+      : [];
+    const primary = locations[0];
+    const locationText = (location: OccPositionLocation): string | null => {
+      const fallback = [asText(location.CityName), asText(location.CountrySubDivisionCode), asText(location.CountryCode)]
+        .filter(Boolean)
+        .join(", ");
+      return asText(location.LocationName) ?? (fallback || null);
+    };
+    const schedules = Array.isArray(descriptor.PositionSchedule)
+      ? (descriptor.PositionSchedule as Array<Record<string, unknown>>).map((value) => asText(value.Name)).filter(Boolean)
+      : [];
+    const remuneration = Array.isArray(descriptor.PositionRemuneration)
+      ? descriptor.PositionRemuneration[0] as Record<string, unknown> | undefined
+      : undefined;
+    const details = descriptor.UserArea && typeof descriptor.UserArea === "object"
+      ? (descriptor.UserArea as { Details?: Record<string, unknown> }).Details
+      : undefined;
+    const description = plainText([
+      asText(descriptor.QualificationSummary),
+      asText(details?.JobSummary),
+      asText(details?.MajorDuties),
+      asText(details?.Education),
+      asText(details?.Requirements),
+    ].filter(Boolean).join(" "));
+    const salaryMin = Number(remuneration?.MinimumRange);
+    const salaryMax = Number(remuneration?.MaximumRange);
+    const latitude = Number(primary?.Latitude);
+    const longitude = Number(primary?.Longitude);
+    const applyUrl = Array.isArray(descriptor.ApplyURI)
+      ? descriptor.ApplyURI.map(asText).find((value): value is string => Boolean(value)) ?? null
+      : null;
+    return [{
+      externalId,
+      title,
+      company: source.company,
+      location: primary ? locationText(primary) : null,
+      arrangement: /\bremote|anywhere\b/i.test(locations.map((location) => locationText(location)).join(" ")) ? "remote" : "unknown",
+      employmentType: normalizeEmploymentType(schedules.join(" / ") || asText(descriptor.PositionOfferingType)),
+      summary: description,
+      ...(description ? { description } : {}),
+      ...(locations.length > 1 ? { secondaryLocations: locations.slice(1).map(locationText).filter((value): value is string => Boolean(value)) } : {}),
+      ...(asText(primary?.CityName) ? { locationCity: asText(primary?.CityName) } : {}),
+      ...(asText(primary?.CountrySubDivisionCode) ? { locationState: asText(primary?.CountrySubDivisionCode) } : {}),
+      ...(asText(primary?.CountryCode) ? { locationCountry: asText(primary?.CountryCode) } : {}),
+      ...(asText(primary?.PostalCode) ? { locationPostalCode: asText(primary?.PostalCode) } : {}),
+      ...(Number.isFinite(latitude) ? { latitude } : {}),
+      ...(Number.isFinite(longitude) ? { longitude } : {}),
+      ...(Number.isFinite(salaryMin) ? { salaryMin } : {}),
+      ...(Number.isFinite(salaryMax) ? { salaryMax } : {}),
+      ...(Number.isFinite(salaryMin) || Number.isFinite(salaryMax) ? { salaryCurrency: "USD" } : {}),
+      ...(asText(remuneration?.RateIntervalCode) ? { salaryInterval: asText(remuneration?.RateIntervalCode) } : {}),
+      requisitionId: asText(descriptor.PositionID) ?? externalId,
+      ...(applyUrl ? { applyUrl } : {}),
+      ...(normalizedDate(descriptor.PositionEndDate) ? { validThrough: normalizedDate(descriptor.PositionEndDate) } : {}),
+      officialUrl,
+      publishedAt: normalizedDate(descriptor.PositionStartDate),
+    }];
+  }));
+  const rawIdentities = records.map((record) => asText(record.MatchedObjectDescriptor?.PositionURI));
+  const exact = staticValid && usaJobsValid
+    && rawIdentities.every((identity): identity is string => Boolean(identity))
+    && jobs.length === new Set(rawIdentities).size;
+  if (jobs.length > 0 || exact) return {
+    status: "succeeded",
+    responseStatus: usaJobsStatus ?? staticStatus ?? scriptStatus,
+    completeListing: exact,
+    jobs,
+    resolvedListingUrl: listingUrl,
+    error: exact ? null : "One OCC catalog component was unavailable; retained usable jobs without closing older rows.",
+  };
+  const responseStatus = usaJobsStatus ?? scriptStatus ?? staticStatus;
+  return {
+    status: responseStatus != null && isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+    responseStatus,
+    completeListing: false,
+    jobs: [],
+    error: "OCC's official careers feeds returned no usable current jobs.",
+  };
+};
+
 const crawlCapgemini = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
   const listingUrl = "https://www.capgemini.com/us-en/careers/?country_code=us-en";
   const pageSize = 100;
@@ -9110,6 +9445,7 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   if (source.id === "p5-0812-aurora-innovation") return crawlAurora(source, fetcher);
   if (source.id === "p5-0950-jane-street") return crawlJaneStreet(source, fetcher);
   if (source.id === "p5-0921-guardant-health") return crawlGuardantHealth(source, fetcher);
+  if (source.id === "p2-0143-occ") return crawlOcc(source, fetcher, now);
   if (source.id === "p4-0234-capgemini") return crawlCapgemini(source, fetcher);
   if (source.id === "audit-row-364") return crawlGraybar(source, fetcher);
   if (source.id === "audit-row-354" || sourcePage.hostname === "careers.eogresources.com") return crawlEogJobs(source, fetcher);

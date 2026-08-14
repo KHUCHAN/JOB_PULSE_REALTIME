@@ -104,6 +104,51 @@ describe("jobsFromBrowserAnchors", () => {
     ]);
   });
 
+  it("keeps real Oracle Candidate Experience jobs and rejects Oracle navigation controls", () => {
+    const oracle = {
+      ...source,
+      company: "Oracle",
+      postingUrl: "https://eeho.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/jobs",
+    };
+    const jobs = jobsFromBrowserAnchors([
+      {
+        href: "https://eeho.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/job/28625",
+        text: "Software Engineer Intern",
+      },
+      {
+        href: "https://eeho.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/events",
+        text: "Events 2",
+      },
+      {
+        href: "https://eeho.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/sitemaps/CX/en-US",
+        text: "sitemap",
+      },
+      {
+        href: "https://eeho.fa.us2.oraclecloud.com/fscmUI/faces/deeplink?objType=ICE_JOB_SEARCH_RESP",
+        text: "I am an employee",
+      },
+      {
+        href: "#main-content",
+        text: "Skip to main content.",
+      },
+    ], oracle);
+
+    expect(jobs).toEqual([expect.objectContaining({
+      externalId: "28625",
+      title: "Software Engineer Intern",
+      officialUrl: "https://eeho.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/job/28625",
+    })]);
+  });
+
+  it("extracts stable Workday requisition ids without loosening ATS navigation admission", () => {
+    const jobs = jobsFromBrowserAnchors([{
+      href: "https://motorolasolutions.wd5.myworkdayjobs.com/en-US/Careers/job/Chicago-IL/Supply-Chain-Applied-AI-Engineering-Intern_R67461",
+      text: "Supply Chain Applied AI Engineering Intern",
+    }], source);
+
+    expect(jobs).toEqual([expect.objectContaining({ externalId: "R67461" })]);
+  });
+
   it("keeps role-titled career slugs and anchored single-page openings", () => {
     const careerJobs = jobsFromBrowserAnchors([
       { href: "/careers/account-executive", text: "Account Executive (Founding)" },
