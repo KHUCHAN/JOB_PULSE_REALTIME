@@ -111,6 +111,14 @@ export const listResumeReviewCandidates = async (
       AND jm.open_generation = j.open_generation AND j.status = 'open'
       AND ${canonicalOpenJobNotExists("j")}
       AND ${internshipOnlySql("j")}
+      -- Keep the feed aligned with applyCodexReviews: candidates that existed
+      -- before the profile was activated are not reviewable and must not be
+      -- returned on every scheduled pass. A later reopen makes them eligible.
+      AND (
+        mp.activation_watermark IS NULL
+        OR j.first_seen_at > mp.activation_watermark
+        OR (j.reopened_at IS NOT NULL AND j.reopened_at > mp.activation_watermark)
+      )
       AND NOT EXISTS (
         SELECT 1 FROM codex_reviews reviewed
         WHERE reviewed.job_match_id = jm.id

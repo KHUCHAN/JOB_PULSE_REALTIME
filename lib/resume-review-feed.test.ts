@@ -38,15 +38,26 @@ const databaseWithCandidates = (): DatabaseSync => {
        'https://careers.acme.example/jobs/coop-pending', NULL, NULL, NULL, NULL, NULL,
        '[]', NULL, NULL, NULL, NULL, 'Co-Op', NULL, NULL, NULL,
        '2026-08-14T20:00:00.000Z', '2026-08-14T20:00:00.000Z', '2026-08-14T20:00:00.000Z', 'open', 1);
+    ALTER TABLE jobs ADD COLUMN reopened_at TEXT;
+    ALTER TABLE match_profiles ADD COLUMN activation_watermark TEXT;
+    UPDATE match_profiles SET activation_watermark = '2026-08-13T00:00:00.000Z';
+    INSERT INTO jobs VALUES
+      ('job-old', 'Acme', 'Old Data Intern 2027', 'Los Angeles, CA', 'us',
+       'https://careers.acme.example/jobs/old', NULL, NULL, NULL, NULL, NULL,
+       '[]', NULL, NULL, NULL, NULL, 'Internship', NULL, NULL, NULL,
+       '2026-08-12T20:00:00.000Z', '2026-08-12T20:00:00.000Z', '2026-08-12T20:00:00.000Z', 'open', 1, NULL);
     INSERT INTO job_matches VALUES
       ('match-new', 'job-new', 'resume-keyword', 80, '["role|Data"]', 1, 1, 0),
       ('match-reviewed', 'job-reviewed', 'resume-keyword', 90, '[]', 1, 1, 0);
       INSERT INTO job_matches VALUES
       ('match-coop-pending', 'job-coop-pending', 'resume-keyword', 95, '[]', 1, 1, 0);
+    INSERT INTO job_matches VALUES
+      ('match-old', 'job-old', 'resume-keyword', 70, '[]', 1, 1, 0);
     INSERT INTO job_topics VALUES
       ('job-new', 'program:internship'), ('job-new', 'year:2027'),
       ('job-reviewed', 'program:coop'),
       ('job-coop-pending', 'program:internship');
+    INSERT INTO job_topics VALUES ('job-old', 'program:internship');
     INSERT INTO codex_reviews VALUES ('match-reviewed');
   `);
   return sqlite;
