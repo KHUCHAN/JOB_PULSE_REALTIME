@@ -6196,19 +6196,27 @@ Wrong description.
 
   it("does not re-enter an ID-pinned feed while following its canonical catalog link", async () => {
     const requests: string[] = [];
-    const fetcher: typeof fetch = async (input) => {
+    const fetcher: typeof fetch = async (input, init) => {
       const url = String(input);
       requests.push(url);
-      if (requests.length === 1) {
-        const response = new Response("", { status: 200, headers: { "content-type": "text/html" } });
-        Object.defineProperty(response, "url", { value: "https://jobs.dayforcehcm.com/trinetx1/CANDIDATEPORTAL" });
-        return response;
+      if (url.endsWith("/api/auth/csrf")) {
+        return Response.json({ csrfToken: "csrf" }, {
+          headers: { "set-cookie": "__Host-next-auth.csrf-token=cookie; Path=/; Secure" },
+        });
       }
-      return new Response(`<script type="application/ld+json">${JSON.stringify({
-        "@type": "JobPosting",
-        title: "AI Engineering Intern",
-        url: "https://jobs.dayforcehcm.com/trinetx1/CANDIDATEPORTAL/jobs/101",
-      })}</script>`, { status: 200, headers: { "content-type": "text/html" } });
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      expect(body).toEqual({
+        clientNamespace: "trinetx1",
+        jobBoardCode: "CANDIDATEPORTAL",
+        cultureCode: "en-US",
+        paginationStart: 0,
+      });
+      return Response.json({
+        maxCount: 1,
+        offset: 0,
+        count: 1,
+        jobPostings: [{ jobPostingId: 101, jobReqId: 202, jobTitle: "AI Engineering Intern" }],
+      });
     };
 
     const result = await crawlSource({
@@ -6219,11 +6227,12 @@ Wrong description.
     }, fetcher, new Date());
 
     expect(requests).toEqual([
-      "https://globaleur241.dayforcehcm.com/CandidatePortal/en-US/trinetx1",
-      "https://jobs.dayforcehcm.com/trinetx1/CANDIDATEPORTAL",
+      "https://jobs.dayforcehcm.com/api/auth/csrf",
+      "https://jobs.dayforcehcm.com/api/geo/trinetx1/jobposting/search",
     ]);
     expect(result.status).toBe("succeeded");
     expect(result.jobs.map((job) => job.title)).toEqual(["AI Engineering Intern"]);
+    expect(result.resolvedListingUrl).toBe("https://jobs.dayforcehcm.com/en-US/trinetx1/CANDIDATEPORTAL");
   });
 
   it.each([
@@ -7367,5 +7376,221 @@ Wrong description.
     }));
     expect(result.jobs).toHaveLength(1_800);
     expect(requests).toHaveLength(19);
+  });
+
+  it("reads every Dayforce posting through the official paged search API", async () => {
+    const requests: Array<{ url: string; offset: number | null; headers: Headers }> = [];
+    const posting = (id: number) => ({
+      jobPostingId: id,
+      jobReqId: 8_000 + id,
+      jobTitle: id === 1 ? "Data Science Intern" : `Software Engineer ${id}`,
+      jobDescription: `<p>Build <strong>production systems</strong> for role ${id}.</p>`,
+      hasVirtualLocation: id === 1,
+      postingStartTimestampUTC: "2026-08-13T10:00:00+00:00",
+      postingExpiryTimestampUTC: "2026-09-01T10:00:00+00:00",
+      postingLocations: [{
+        formattedAddress: "8945 Cal Center Dr, Sacramento, CA 95826, USA",
+        isoCountryCode: "US",
+        stateCode: "CA",
+        cityName: "Sacramento",
+        coordinates: "lat:38.5570286;lng:-121.374278",
+      }],
+    });
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      if (url === "https://jobs.dayforcehcm.com/api/auth/csrf") {
+        requests.push({ url, offset: null, headers: new Headers(init?.headers) });
+        return Response.json({ csrfToken: "public-csrf-token" }, {
+          headers: { "set-cookie": "__Host-next-auth.csrf-token=public-cookie; Path=/; Secure; HttpOnly" },
+        });
+      }
+      const headers = new Headers(init?.headers);
+      const body = JSON.parse(String(init?.body)) as {
+        clientNamespace: string;
+        jobBoardCode: string;
+        cultureCode: string;
+        paginationStart: number;
+      };
+      requests.push({ url, offset: body.paginationStart, headers });
+      expect(body).toEqual(expect.objectContaining({
+        clientNamespace: "golden1",
+        jobBoardCode: "CANDIDATEPORTAL",
+        cultureCode: "en-US",
+      }));
+      const ids = body.paginationStart === 0
+        ? Array.from({ length: 25 }, (_, index) => index + 1)
+        : Array.from({ length: 5 }, (_, index) => 26 + index);
+      return Response.json({
+        jobPostings: ids.map(posting),
+        maxCount: 30,
+        offset: body.paginationStart,
+        count: ids.length,
+      });
+    };
+
+    const result = await crawlSource({
+      id: "dayforce-golden1-test",
+      company: "Golden 1 Credit Union",
+      postingUrl: "https://jobs.dayforcehcm.com/en-US/golden1/CANDIDATEPORTAL",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-14T12:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      responseStatus: 200,
+      resolvedListingUrl: "https://jobs.dayforcehcm.com/en-US/golden1/CANDIDATEPORTAL",
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 2 },
+    }));
+    expect(result.jobs).toHaveLength(30);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "1",
+      requisitionId: "8001",
+      title: "Data Science Intern",
+      description: "Build production systems for role 1.",
+      location: "Virtual • 8945 Cal Center Dr, Sacramento, CA 95826, USA",
+      arrangement: "remote",
+      locationCity: "Sacramento",
+      locationState: "CA",
+      locationCountry: "US",
+      latitude: 38.5570286,
+      longitude: -121.374278,
+      officialUrl: "https://jobs.dayforcehcm.com/en-US/golden1/CANDIDATEPORTAL/jobs/1",
+      publishedAt: "2026-08-13T10:00:00.000Z",
+      validThrough: "2026-09-01T10:00:00.000Z",
+    }));
+    expect(requests).toHaveLength(3);
+    expect(requests[1].headers.get("cookie")).toBe("__Host-next-auth.csrf-token=public-cookie");
+    expect(requests[1].headers.get("x-csrf-token")).toBe("public-csrf-token");
+    expect(requests.map(({ offset }) => offset)).toEqual([null, 0, 25]);
+  });
+
+  it("checkpoints a large legacy Dayforce board and never closes from a partial pass", async () => {
+    const requestedOffsets: number[] = [];
+    const total = 526;
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/auth/csrf")) {
+        return Response.json({ csrfToken: "csrf" }, {
+          headers: { "set-cookie": "__Host-next-auth.csrf-token=cookie; Path=/; Secure" },
+        });
+      }
+      expect(url).toBe("https://jobs.dayforcehcm.com/api/geo/trinetx1/jobposting/search");
+      const body = JSON.parse(String(init?.body)) as { paginationStart: number; jobBoardCode: string };
+      expect(body.jobBoardCode).toBe("CANDIDATEPORTAL");
+      requestedOffsets.push(body.paginationStart);
+      const length = Math.min(25, Math.max(0, total - body.paginationStart));
+      return Response.json({
+        maxCount: total,
+        offset: body.paginationStart,
+        count: length,
+        jobPostings: Array.from({ length }, (_, index) => {
+          const id = body.paginationStart + index + 1;
+          return { jobPostingId: id, jobTitle: `Clinical Data Engineer ${id}`, postingLocations: [] };
+        }),
+      });
+    };
+
+    const first = await crawlSource({
+      id: "dayforce-large-test",
+      company: "TriNetX",
+      postingUrl: "https://globaleur241.dayforcehcm.com/CandidatePortal/en-US/trinetx1",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-14T12:00:00Z"));
+    expect(first).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: { nextPage: 20, cycleComplete: false, totalPages: 22 },
+      resolvedListingUrl: "https://jobs.dayforcehcm.com/en-US/trinetx1/CANDIDATEPORTAL",
+    }));
+    expect(first.jobs).toHaveLength(500);
+    expect(requestedOffsets).toHaveLength(20);
+
+    requestedOffsets.length = 0;
+    const final = await crawlSource({
+      id: "dayforce-large-test",
+      company: "TriNetX",
+      postingUrl: "https://globaleur241.dayforcehcm.com/CandidatePortal/en-US/trinetx1",
+      adapter: "custom",
+      crawlPageCursor: 20,
+    }, fetcher, new Date("2026-08-14T14:00:00Z"));
+    expect(final).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 22 },
+    }));
+    expect(final.jobs).toHaveLength(51);
+    expect(requestedOffsets.sort((left, right) => left - right)).toEqual([0, 475, 500, 525]);
+  });
+
+  it("keeps Dayforce incomplete when a catalog page is unavailable", async () => {
+    const fetcher: typeof fetch = async (input, init) => {
+      if (String(input).endsWith("/api/auth/csrf")) {
+        return Response.json({ csrfToken: "csrf" }, {
+          headers: { "set-cookie": "__Host-next-auth.csrf-token=cookie; Path=/; Secure" },
+        });
+      }
+      const body = JSON.parse(String(init?.body)) as { paginationStart: number };
+      if (body.paginationStart === 25) return new Response("temporary", { status: 503 });
+      return Response.json({
+        maxCount: 30,
+        offset: 0,
+        count: 25,
+        jobPostings: Array.from({ length: 25 }, (_, index) => ({
+          jobPostingId: index + 1,
+          jobTitle: `Role ${index + 1}`,
+        })),
+      });
+    };
+
+    const result = await crawlSource({
+      id: "dayforce-partial-test",
+      company: "Example",
+      postingUrl: "https://jobs.dayforcehcm.com/example/CAREERS",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-14T12:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: { nextPage: 2, cycleComplete: false, totalPages: 2 },
+      error: "Dayforce catalog page 2 was unavailable.",
+    }));
+    expect(result.jobs).toHaveLength(25);
+  });
+
+  it("requires a second matching Dayforce response before accepting an empty catalog", async () => {
+    let searches = 0;
+    const fetcher: typeof fetch = async (input) => {
+      if (String(input).endsWith("/api/auth/csrf")) {
+        return Response.json({ csrfToken: "csrf" }, {
+          headers: { "set-cookie": "__Host-next-auth.csrf-token=cookie; Path=/; Secure" },
+        });
+      }
+      searches += 1;
+      return Response.json(searches === 1
+        ? { maxCount: 0, offset: 0, count: 0, jobPostings: [] }
+        : {
+            maxCount: 1,
+            offset: 0,
+            count: 1,
+            jobPostings: [{ jobPostingId: 1, jobTitle: "Recovered role" }],
+          });
+    };
+
+    const result = await crawlSource({
+      id: "dayforce-empty-test",
+      company: "Example",
+      postingUrl: "https://jobs.dayforcehcm.com/en-us/example/CAREERS",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-14T12:00:00Z"));
+
+    expect(searches).toBe(2);
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed",
+      completeListing: false,
+      jobs: [],
+      error: "Dayforce returned an unstable empty catalog.",
+    }));
   });
 });

@@ -199,7 +199,7 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
     listingUrl: "https://jobs.ashbyhq.com/trm-labs",
     adapter: "ashby",
   },
-  "p5-1082-trinetx": { listingUrl: "https://globaleur241.dayforcehcm.com/CandidatePortal/en-US/trinetx1", adapter: "custom" },
+  "p5-1082-trinetx": { listingUrl: "https://jobs.dayforcehcm.com/en-US/trinetx1/CANDIDATEPORTAL", adapter: "custom" },
   "p4-0207-8am": {
     discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/affinipay1/jobs?content=true" },
     listingUrl: "https://job-boards.greenhouse.io/affinipay1",
@@ -10604,16 +10604,275 @@ const crawlRainAi = async (source: CrawlSource, fetcher: typeof fetch): Promise<
   }
 };
 
+type DayforceLocation = {
+  formattedAddress?: unknown;
+  isoCountryCode?: unknown;
+  stateCode?: unknown;
+  cityName?: unknown;
+  coordinates?: unknown;
+};
+
+type DayforcePosting = {
+  jobPostingId?: unknown;
+  jobReqId?: unknown;
+  jobTitle?: unknown;
+  jobDescription?: unknown;
+  hasVirtualLocation?: unknown;
+  postingStartTimestampUTC?: unknown;
+  postingExpiryTimestampUTC?: unknown;
+  postingLocations?: unknown;
+};
+
+type DayforceSearchPayload = {
+  count?: unknown;
+  maxCount?: unknown;
+  offset?: unknown;
+  jobPostings?: unknown;
+};
+
+const dayforceScalarText = (value: unknown): string | null => {
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return asText(value);
+};
+
+const dayforceBoardIdentity = (value: string): {
+  clientNamespace: string;
+  jobBoardCode: string;
+  cultureCode: string;
+} | null => {
+  try {
+    const url = new URL(value);
+    if (!url.hostname.toLowerCase().endsWith(".dayforcehcm.com")
+      && url.hostname.toLowerCase() !== "dayforcehcm.com") return null;
+    const segments = url.pathname.split("/").filter(Boolean);
+    const localePattern = /^[a-z]{2}-[a-z]{2}$/i;
+    const normalizeLocale = (value: string): string => {
+      const [language, region] = value.split("-");
+      return `${language.toLowerCase()}-${region.toUpperCase()}`;
+    };
+    let clientNamespace: string | undefined;
+    let jobBoardCode: string | undefined;
+    let cultureCode = "en-US";
+    if (url.hostname.toLowerCase() === "jobs.dayforcehcm.com") {
+      if (localePattern.test(segments[0] ?? "")) cultureCode = normalizeLocale(segments.shift()!);
+      [clientNamespace, jobBoardCode] = segments;
+    } else if (segments[0]?.toLowerCase() === "candidateportal") {
+      segments.shift();
+      if (localePattern.test(segments[0] ?? "")) cultureCode = normalizeLocale(segments.shift()!);
+      clientNamespace = segments[0];
+      jobBoardCode = "CANDIDATEPORTAL";
+    }
+    const safeSegment = /^[a-z0-9_-]{1,100}$/i;
+    if (!clientNamespace || !jobBoardCode
+      || !safeSegment.test(clientNamespace) || !safeSegment.test(jobBoardCode)) return null;
+    return { clientNamespace, jobBoardCode, cultureCode };
+  } catch {
+    return null;
+  }
+};
+
+const dayforceCoordinates = (value: unknown): { latitude?: number; longitude?: number } => {
+  const match = asText(value)?.match(/lat\s*:\s*(-?\d+(?:\.\d+)?)\s*;\s*lng\s*:\s*(-?\d+(?:\.\d+)?)/i);
+  if (!match) return {};
+  const latitude = Number(match[1]);
+  const longitude = Number(match[2]);
+  return Number.isFinite(latitude) && Number.isFinite(longitude) ? { latitude, longitude } : {};
+};
+
+const crawlDayforce = async (
+  source: CrawlSource,
+  identity: NonNullable<ReturnType<typeof dayforceBoardIdentity>>,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult> => {
+  const origin = "https://jobs.dayforcehcm.com";
+  const pageSize = 25;
+  const maximumPagesPerPass = 20;
+  let responseStatus: number | null = null;
+  try {
+    const csrfResponse = await fetchWithTimeout(fetcher, `${origin}/api/auth/csrf`, {
+      headers: { accept: "application/json" },
+    }, true, { attempts: 1, timeoutMs: 10_000 });
+    responseStatus = csrfResponse.status;
+    if (!csrfResponse.ok) throw Object.assign(
+      new Error(`Dayforce CSRF endpoint returned HTTP ${csrfResponse.status}.`),
+      { responseStatus: csrfResponse.status },
+    );
+    const csrfPayload = await csrfResponse.json() as { csrfToken?: unknown };
+    const csrfToken = asText(csrfPayload.csrfToken);
+    const setCookies = typeof csrfResponse.headers.getSetCookie === "function"
+      ? csrfResponse.headers.getSetCookie().join(", ")
+      : csrfResponse.headers.get("set-cookie") ?? "";
+    const csrfCookie = setCookies.match(/(?:^|,\s*)(__Host-next-auth\.csrf-token=[^;,\s]+)/i)?.[1] ?? null;
+    if (!csrfToken || csrfToken.length > 512 || !csrfCookie) {
+      throw new Error("Dayforce CSRF response was unusable.");
+    }
+
+    const endpoint = `${origin}/api/geo/${encodeURIComponent(identity.clientNamespace)}/jobposting/search`;
+    const referer = `${origin}/${encodeURIComponent(identity.cultureCode)}/${encodeURIComponent(identity.clientNamespace)}/${encodeURIComponent(identity.jobBoardCode)}`;
+    const fetchPage = async (page: number): Promise<{
+      status: number;
+      total: number;
+      offset: number;
+      postings: DayforcePosting[];
+      valid: boolean;
+    }> => {
+      const offset = (page - 1) * pageSize;
+      const response = await fetchWithTimeout(fetcher, endpoint, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+          cookie: csrfCookie,
+          origin,
+          referer,
+          "x-csrf-token": csrfToken,
+        },
+        body: JSON.stringify({
+          clientNamespace: identity.clientNamespace,
+          jobBoardCode: identity.jobBoardCode,
+          cultureCode: identity.cultureCode,
+          paginationStart: offset,
+        }),
+      }, true, { attempts: 1, timeoutMs: 12_000 });
+      responseStatus = response.status;
+      if (!response.ok) throw Object.assign(
+        new Error(`Dayforce job search returned HTTP ${response.status}.`),
+        { responseStatus: response.status },
+      );
+      const payload = await response.json() as DayforceSearchPayload;
+      const total = Number(payload.maxCount);
+      const returnedOffset = Number(payload.offset);
+      const count = Number(payload.count);
+      const postings = Array.isArray(payload.jobPostings) ? payload.jobPostings as DayforcePosting[] : [];
+      const expectedCount = Number.isInteger(total) && total >= 0
+        ? Math.min(pageSize, Math.max(0, total - offset))
+        : -1;
+      const valid = Number.isInteger(total) && total >= 0
+        && returnedOffset === offset
+        && count === postings.length
+        && postings.length === expectedCount
+        && postings.every((posting) => Boolean(dayforceScalarText(posting.jobPostingId) && asText(posting.jobTitle)));
+      return { status: response.status, total, offset: returnedOffset, postings, valid };
+    };
+
+    const catalog = await fetchPage(1);
+    if (!catalog.valid) throw new Error("Dayforce returned an unusable first catalog page.");
+    if (catalog.total === 0) {
+      const confirmation = await fetchPage(1);
+      if (!confirmation.valid || confirmation.total !== 0 || confirmation.postings.length !== 0) {
+        throw new Error("Dayforce returned an unstable empty catalog.");
+      }
+    }
+    const totalPages = Math.max(1, Math.ceil(catalog.total / pageSize));
+    const requestedStart = Math.max(1, Math.trunc(source.crawlPageCursor ?? 1));
+    const startPage = requestedStart > totalPages ? 1 : requestedStart;
+    const first = startPage === 1 ? catalog : await fetchPage(startPage);
+    if (!first.valid || first.total !== catalog.total) {
+      throw new Error("Dayforce returned an unstable checkpoint page.");
+    }
+    const endPage = Math.min(totalPages, startPage + maximumPagesPerPass - 1);
+    const pages = new Map<number, DayforcePosting[]>([[startPage, first.postings]]);
+    let firstFailedPage: number | null = null;
+    for (let page = startPage + 1; page <= endPage && firstFailedPage === null; page += 4) {
+      const pageNumbers = Array.from({ length: Math.min(4, endPage - page + 1) }, (_, index) => page + index);
+      const settled = await Promise.all(pageNumbers.map(async (pageNumber) => {
+        try {
+          return { pageNumber, result: await fetchPage(pageNumber) };
+        } catch {
+          return { pageNumber, result: null };
+        }
+      }));
+      for (const { pageNumber, result } of settled) {
+        if (!result?.valid || result.total !== catalog.total) {
+          firstFailedPage = firstFailedPage == null ? pageNumber : Math.min(firstFailedPage, pageNumber);
+          continue;
+        }
+        pages.set(pageNumber, result.postings);
+      }
+    }
+    const lastCompletePage = firstFailedPage == null ? endPage : firstFailedPage - 1;
+    const raw = [...pages.entries()]
+      .filter(([page]) => page <= lastCompletePage)
+      .sort(([left], [right]) => left - right)
+      .flatMap(([, postings]) => postings);
+    const canonicalListingUrl = referer;
+    const jobs = uniqueJobs(raw.flatMap((posting): CrawledJob[] => {
+      const externalId = dayforceScalarText(posting.jobPostingId);
+      const title = asText(posting.jobTitle);
+      if (!externalId || !title) return [];
+      const locations = Array.isArray(posting.postingLocations)
+        ? posting.postingLocations as DayforceLocation[]
+        : [];
+      const primary = locations[0];
+      const addresses = locations.map((location) => asText(location.formattedAddress)).filter((value): value is string => Boolean(value));
+      const virtual = posting.hasVirtualLocation === true;
+      const location = [...(virtual ? ["Virtual"] : []), ...addresses].join(" • ") || null;
+      const description = icimsText(asText(posting.jobDescription));
+      const coordinates = dayforceCoordinates(primary?.coordinates);
+      return [{
+        externalId,
+        title,
+        company: source.company,
+        location,
+        arrangement: virtual ? "remote" : "unknown",
+        employmentType: null,
+        summary: description?.slice(0, 500) ?? null,
+        ...(description ? { description } : {}),
+        ...(addresses.length > 1 ? { secondaryLocations: addresses.slice(1) } : {}),
+        ...(asText(primary?.cityName) ? { locationCity: asText(primary?.cityName) } : {}),
+        ...(asText(primary?.stateCode) ? { locationState: asText(primary?.stateCode) } : {}),
+        ...(asText(primary?.isoCountryCode) ? { locationCountry: asText(primary?.isoCountryCode) } : {}),
+        ...coordinates,
+        ...(dayforceScalarText(posting.jobReqId) ? { requisitionId: dayforceScalarText(posting.jobReqId) } : {}),
+        ...(normalizedDate(posting.postingExpiryTimestampUTC) ? { validThrough: normalizedDate(posting.postingExpiryTimestampUTC) } : {}),
+        officialUrl: `${canonicalListingUrl}/jobs/${encodeURIComponent(externalId)}`,
+        publishedAt: normalizedDate(posting.postingStartTimestampUTC),
+      }];
+    }));
+    if (jobs.length !== raw.length) throw new Error("Dayforce returned duplicate or unusable job identities.");
+    const cycleComplete = firstFailedPage === null && endPage === totalPages;
+    return {
+      status: "succeeded",
+      responseStatus: responseStatus ?? catalog.status,
+      completeListing: startPage === 1 && cycleComplete && jobs.length === catalog.total,
+      jobs,
+      ...(totalPages > 1 || source.crawlPageCursor != null ? {
+        pagination: {
+          nextPage: cycleComplete ? 1 : firstFailedPage ?? Math.max(startPage + 1, endPage),
+          cycleComplete,
+          totalPages,
+        },
+      } : {}),
+      resolvedListingUrl: canonicalListingUrl,
+      error: firstFailedPage == null ? null : `Dayforce catalog page ${firstFailedPage} was unavailable.`,
+    };
+  } catch (error) {
+    const status = typeof error === "object" && error && "responseStatus" in error
+      ? Number((error as { responseStatus: unknown }).responseStatus)
+      : responseStatus;
+    return {
+      status: isBlockedHttpStatus(status) ? "blocked" : "failed",
+      responseStatus: status,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Dayforce crawler error.",
+    };
+  }
+};
+
 async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
   // Apply an ID-pinned feed only at the root. Redirect/candidate recursion
   // keeps the same source ID, so reapplying it at discovery depth 1 would
   // loop back to the root feed until the request/deadline budget is spent.
   const verifiedFeed = (source.discoveryDepth ?? 0) === 0 ? VERIFIED_SOURCE_FEEDS[source.id] : undefined;
   if (verifiedFeed) {
+    const verifiedDayforceIdentity = dayforceBoardIdentity(verifiedFeed.listingUrl);
     const result = verifiedFeed.discovered
       ? verifiedFeed.discovered.kind === "workday"
         ? await crawlWorkday(source, verifiedFeed.discovered.endpoint, fetcher, now)
         : await crawlDiscoveredFeed(source, verifiedFeed.discovered, fetcher)
+      : verifiedDayforceIdentity
+        ? await crawlDayforce({ ...source, postingUrl: verifiedFeed.listingUrl }, verifiedDayforceIdentity, fetcher)
       : new URL(verifiedFeed.listingUrl).hostname.endsWith("eightfold.ai")
         ? await crawlEightfold({ ...source, postingUrl: verifiedFeed.listingUrl, adapter: verifiedFeed.adapter }, fetcher)
         : await crawlJsonLd({
@@ -10623,7 +10882,12 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
             discoveryDepth: 1,
           }, fetcher, now);
     return result.status === "succeeded"
-      ? { ...result, resolvedListingUrl: verifiedFeed.listingUrl }
+      ? {
+          ...result,
+          resolvedListingUrl: verifiedDayforceIdentity
+            ? result.resolvedListingUrl ?? verifiedFeed.listingUrl
+            : verifiedFeed.listingUrl,
+        }
       : result;
   }
   const originalPage = new URL(source.postingUrl);
@@ -10688,6 +10952,8 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
     return crawlDow(source, fetcher);
   }
   if (sourcePage.hostname === "apply.workable.com") return crawlWorkable(source, fetcher);
+  const dayforceIdentity = dayforceBoardIdentity(source.postingUrl);
+  if (dayforceIdentity) return crawlDayforce(source, dayforceIdentity, fetcher);
   if (sourcePage.hostname.endsWith(".bamboohr.com")) return crawlBambooHr(source, fetcher);
   if (sourcePage.hostname.endsWith(".pinpointhq.com")) return crawlPinpoint(source, fetcher);
   if (sourcePage.hostname === "recruit.hirebridge.com") return crawlHirebridge(source, fetcher);

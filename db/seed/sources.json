@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:29fe4a19ac7bb652c95ccce4553b3ed109f8d08c6dd719162f6540a4b1b2b7b8",
+  "version": "v2:sha256:0c8615ae1be1e6fd2749f839b406bd41603119904f714c47adb2d82dbc60acf1",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -12411,7 +12411,7 @@
       "id": "p2-0117-hanover-insurance",
       "masterRow": 2632,
       "company": "Hanover Insurance",
-      "postingUrl": "https://jobs.dayforcehcm.com/thg/ALLCAREERS",
+      "postingUrl": "https://jobs.dayforcehcm.com/en-US/thg/ALLCAREERS",
       "talentUrl": "https://www.hanover.com/careers",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -13896,7 +13896,7 @@
       "id": "p5-1082-trinetx",
       "masterRow": 2759,
       "company": "TriNetX",
-      "postingUrl": "https://globaleur241.dayforcehcm.com/CandidatePortal/en-US/trinetx1",
+      "postingUrl": "https://jobs.dayforcehcm.com/en-US/trinetx1/CANDIDATEPORTAL",
       "talentUrl": "https://trinetx.com/careers/",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -14316,7 +14316,7 @@
       "id": "legacy-row-787",
       "masterRow": 2787,
       "company": "Asbury Automotive Group",
-      "postingUrl": "https://jobs.dayforcehcm.com/asburyauto/ASBURYCAREERSITE",
+      "postingUrl": "https://jobs.dayforcehcm.com/en-US/asburyauto/ASBURYCAREERSITE",
       "talentUrl": "https://www.asburycareers.com/",
       "channel": "공식 Career Portal",
       "adapter": "custom",
