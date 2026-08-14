@@ -4684,7 +4684,7 @@ Wrong description.
     const job = (index: number) => ({ Questions: [
       { QuestionName: "reqid", Value: String(900_000 + index) },
       { QuestionName: "jobtitle", Value: `Warehouse Engineer ${index}` },
-      { QuestionName: "formtext5", Value: "Richmond, Virginia (VA)" },
+      { QuestionName: "formtext5", Value: index === 1 ? "Portland, Oregon" : "Richmond, Virginia (VA)" },
       { QuestionName: "formtext6", Value: "Performance Foodservice" },
       { QuestionName: "lastupdated", Value: "12-Aug-2026" },
       { QuestionName: "jobdescription", Value: `<p>Official job description ${index}</p>` },
@@ -4728,9 +4728,127 @@ Wrong description.
     expect(result.jobs[0]).toEqual(expect.objectContaining({
       externalId: "900001",
       title: "Warehouse Engineer 1",
-      location: "Richmond, Virginia (VA)",
+      location: "Portland, Oregon",
+      locationCity: "Portland",
+      locationState: "Oregon",
+      locationCountry: "United States",
       businessUnit: "Performance Foodservice",
+      officialUrl: "https://sjobs.brassring.com/TGnewUI/Search/home/HomeWithPreLoad?partnerid=26350&siteid=6930&PageType=JobDetails&jobid=900001",
       publishedAt: "2026-08-12T07:00:00.000Z",
+    }));
+    expect(result.jobs[1]).toEqual(expect.objectContaining({
+      location: "Richmond, Virginia (VA)",
+      locationCity: "Richmond",
+      locationState: "VA",
+    }));
+  });
+
+  it("crawls ADM's complete official US BrassRing catalog from its board identity", async () => {
+    const total = 536;
+    const pages: number[] = [];
+    const requestIdentities: Array<{ partnerId: string | number; siteId: string | number }> = [];
+    const job = (index: number) => ({ Questions: [
+      { QuestionName: "reqid", Value: String(3_300_000 + index) },
+      { QuestionName: "clientid", Value: "25416" },
+      { QuestionName: "siteid", Value: "5998" },
+      { QuestionName: "jobtitle", Value: `Data Platform Engineer ${index}` },
+      { QuestionName: "department", Value: "Information Technology" },
+      { QuestionName: "formtext8", Value: "Chicago                                  " },
+      { QuestionName: "formtext9", Value: "IL - Illinois " },
+      { QuestionName: "lastupdated", Value: "14-Aug-2026" },
+      { QuestionName: "jobdescription", Value: `<p>Build ADM data platforms for role ${index}.</p>` },
+      { QuestionName: "latitude", Value: "41.8781" },
+      { QuestionName: "longitude", Value: "-87.6298" },
+    ] });
+    const payload = (page: number) => ({
+      JobsCount: total,
+      Jobs: { Job: Array.from(
+        { length: Math.min(50, total - (page - 1) * 50) },
+        (_, offset) => job((page - 1) * 50 + offset + 1),
+      ) },
+    });
+    const result = await crawlSource({
+      id: "legacy-row-786",
+      company: "Archer Daniels Midland",
+      postingUrl: "https://sjobs.brassring.com/TGnewUI/Search/Home/Home?partnerid=25416&siteid=5998#home",
+      adapter: "custom",
+    }, async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/Home")) {
+        pages.push(0);
+        return new Response('<input id="CookieValue" value="encrypted"><input name="__RequestVerificationToken" value="token">', {
+          status: 200,
+          headers: { "set-cookie": "session=adm; Path=/; HttpOnly" },
+        });
+      }
+      const body = JSON.parse(String(init?.body)) as {
+        PartnerId?: string; SiteId?: string; partnerId?: number; siteId?: number; pageNumber?: number;
+      };
+      requestIdentities.push({
+        partnerId: body.PartnerId ?? body.partnerId!,
+        siteId: body.SiteId ?? body.siteId!,
+      });
+      if (url.pathname.endsWith("/CBMatchedJobs")) {
+        pages.push(1);
+        return Response.json(payload(1));
+      }
+      pages.push(body.pageNumber!);
+      return Response.json(payload(body.pageNumber!));
+    }, new Date("2026-08-14T22:00:00Z"));
+
+    expect(pages).toEqual([0, 1, ...Array.from({ length: 11 }, (_, index) => index + 1)]);
+    expect(requestIdentities).toEqual([
+      { partnerId: "25416", siteId: "5998" },
+      ...Array.from({ length: 11 }, () => ({ partnerId: 25416, siteId: 5998 })),
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 11 },
+    }));
+    expect(result.jobs).toHaveLength(total);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "3300001",
+      requisitionId: "3300001",
+      title: "Data Platform Engineer 1",
+      department: "Information Technology",
+      location: "Chicago, IL",
+      locationCity: "Chicago",
+      locationState: "IL",
+      locationCountry: "United States",
+      latitude: 41.8781,
+      longitude: -87.6298,
+      officialUrl: "https://sjobs.brassring.com/TGnewUI/Search/home/HomeWithPreLoad?partnerid=25416&siteid=5998&PageType=JobDetails&jobid=3300001",
+      publishedAt: "2026-08-14T07:00:00.000Z",
+    }));
+  });
+
+  it("fails closed when BrassRing job identities belong to another board", async () => {
+    const foreignPayload = {
+      JobsCount: 1,
+      Jobs: { Job: [{ Questions: [
+        { QuestionName: "reqid", Value: "100" },
+        { QuestionName: "clientid", Value: "99999" },
+        { QuestionName: "siteid", Value: "5998" },
+        { QuestionName: "jobtitle", Value: "Foreign Role" },
+      ] }] },
+    };
+    const result = await crawlSource({
+      id: "brassring-foreign",
+      company: "Acme",
+      postingUrl: "https://sjobs.brassring.com/TGnewUI/Search/Home/Home?partnerid=25416&siteid=5998",
+      adapter: "custom",
+    }, async (input) => new URL(String(input)).pathname.endsWith("/Home")
+      ? new Response('<input id="CookieValue" value="encrypted"><input name="__RequestVerificationToken" value="token">', {
+          headers: { "set-cookie": "session=abc; Path=/" },
+        })
+      : Response.json(foreignPayload), new Date("2026-08-14T22:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed",
+      completeListing: false,
+      jobs: [],
+      error: "BrassRing job API returned no authoritative first page.",
     }));
   });
 

@@ -2833,6 +2833,23 @@ type BrassRingPayload = {
   Jobs?: { Job?: BrassRingJob[] } | null;
   JobsCount?: number;
 };
+type BrassRingIdentity = { partnerId: string; siteId: string };
+
+const brassRingBoardIdentity = (value: string): BrassRingIdentity | null => {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.hostname.toLocaleLowerCase() !== "sjobs.brassring.com"
+      || url.username || url.password || url.port
+      || !/^\/tgnewui\/search\/home\/home\/?$/i.test(url.pathname)) return null;
+    const parameters = new Map([...url.searchParams].map(([key, parameterValue]) => [key.toLocaleLowerCase(), parameterValue]));
+    const partnerId = parameters.get("partnerid") ?? "";
+    const siteId = parameters.get("siteid") ?? "";
+    if (!/^\d{3,10}$/.test(partnerId) || !/^\d{3,10}$/.test(siteId)) return null;
+    return { partnerId, siteId };
+  } catch {
+    return null;
+  }
+};
 
 const responseCookies = (response: Response): string[] => {
   const headers = response.headers as Headers & { getSetCookie?: () => string[] };
@@ -2850,7 +2867,14 @@ const mergeCookies = (jar: Map<string, string>, response: Response): void => {
   }
 };
 
-const brassRingJobs = (payload: BrassRingPayload, source: CrawlSource): CrawledJob[] => {
+const brassRingValue = (fields: Map<string, string>, key: string): string | null =>
+  fields.get(key)?.replace(/\s+/g, " ").trim() || null;
+
+const brassRingJobs = (
+  payload: BrassRingPayload,
+  source: CrawlSource,
+  identity: BrassRingIdentity,
+): CrawledJob[] => {
   const raw = payload.Jobs?.Job;
   if (!Array.isArray(raw)) return [];
   return raw.flatMap((job): CrawledJob[] => {
@@ -2858,12 +2882,40 @@ const brassRingJobs = (payload: BrassRingPayload, source: CrawlSource): CrawledJ
       const key = question.QuestionName?.trim().toLowerCase();
       return key ? [[key, question.Value?.trim() ?? ""] as const] : [];
     }));
-    const id = fields.get("reqid") ?? "";
-    const title = fields.get("jobtitle")?.replace(/\s+/g, " ").trim() ?? "";
+    const id = brassRingValue(fields, "reqid") ?? "";
+    const title = brassRingValue(fields, "jobtitle") ?? "";
     if (!id || !title) return [];
-    const location = fields.get("formtext5")?.replace(/\s+/g, " ").trim() || null;
+    const payloadPartnerId = brassRingValue(fields, "clientid");
+    const payloadSiteId = brassRingValue(fields, "siteid");
+    if ((payloadPartnerId && payloadPartnerId !== identity.partnerId)
+      || (payloadSiteId && payloadSiteId !== identity.siteId)) return [];
+    const cityField = brassRingValue(fields, "formtext8");
+    const stateField = brassRingValue(fields, "formtext9");
+    const stateMatch = stateField?.match(/^([A-Z]{2})(?:\s*-\s*(.+))?$/);
+    const stateCode = stateMatch?.[1] ?? null;
+    const configuredLocation = brassRingValue(fields, "formtext5");
+    const location = configuredLocation
+      ?? ([cityField, stateCode ?? stateField].filter(Boolean).join(", ") || null);
+    const configuredLocationMatch = configuredLocation?.match(/^(.+?),\s*.+?\(([A-Z]{2})\)$/);
+    const simpleConfiguredLocation = configuredLocation?.match(/^(.+?),\s*([^,]+)$/);
+    const locationCity = cityField
+      ?? configuredLocationMatch?.[1]?.trim()
+      ?? simpleConfiguredLocation?.[1]?.trim()
+      ?? null;
+    const locationState = stateCode
+      ?? configuredLocationMatch?.[2]
+      ?? simpleConfiguredLocation?.[2]?.trim()
+      ?? null;
+    const locationRegion = classifyJobRegion({ location, locationCity, locationState });
     const description = plainText(fields.get("jobdescription")) ?? null;
     const programs = classifyJobPrograms(title).keys;
+    const detailUrl = new URL("/TGnewUI/Search/home/HomeWithPreLoad", "https://sjobs.brassring.com");
+    detailUrl.searchParams.set("partnerid", identity.partnerId);
+    detailUrl.searchParams.set("siteid", identity.siteId);
+    detailUrl.searchParams.set("PageType", "JobDetails");
+    detailUrl.searchParams.set("jobid", id);
+    const latitude = Number.parseFloat(brassRingValue(fields, "latitude") ?? "");
+    const longitude = Number.parseFloat(brassRingValue(fields, "longitude") ?? "");
     return [{
       externalId: id,
       title,
@@ -2873,29 +2925,38 @@ const brassRingJobs = (payload: BrassRingPayload, source: CrawlSource): CrawledJ
       employmentType: programs.some((key) => key === "internship" || key === "coop") ? "Internship" : null,
       summary: description?.slice(0, 1_200) ?? null,
       description,
-      businessUnit: fields.get("formtext6")?.replace(/\s+/g, " ").trim() || null,
-      locationCountry: "United States",
+      department: brassRingValue(fields, "department"),
+      businessUnit: brassRingValue(fields, "formtext6"),
+      ...(locationCity ? { locationCity } : {}),
+      ...(locationState ? { locationState } : {}),
+      ...(locationRegion === "us" ? { locationCountry: "United States" } : {}),
+      ...(Number.isFinite(latitude) && latitude !== 0 ? { latitude } : {}),
+      ...(Number.isFinite(longitude) && longitude !== 0 ? { longitude } : {}),
       requisitionId: id,
       sourcePostedText: fields.get("lastupdated") || null,
-      officialUrl: `https://sjobs.brassring.com/TGnewUI/Search/home/HomeWithPreLoad?partnerid=26350&siteid=6930&PageType=JobDetails&jobid=${encodeURIComponent(id)}`,
+      officialUrl: detailUrl.href,
       publishedAt: normalizedDate(fields.get("lastupdated")),
     }];
   });
 };
 
-const crawlPerformanceFoodGroup = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+const crawlBrassRing = async (
+  source: CrawlSource,
+  identity: BrassRingIdentity,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult> => {
   let responseStatus: number | null = null;
   try {
     const listingUrl = new URL(source.postingUrl);
     const initial = await fetchWithTimeout(fetcher, listingUrl, {}, true, { attempts: 1, timeoutMs: 15_000 });
     responseStatus = initial.status;
-    if (!initial.ok) throw Object.assign(new Error(`Performance Food Group careers returned HTTP ${initial.status}.`), { responseStatus: initial.status });
+    if (!initial.ok) throw Object.assign(new Error(`BrassRing careers returned HTTP ${initial.status}.`), { responseStatus: initial.status });
     const cookies = new Map<string, string>();
     mergeCookies(cookies, initial);
     const html = await initial.text();
     const token = decodeHtmlAttribute(html.match(/name=["']__RequestVerificationToken["'][^>]*value=["']([^"']+)/i)?.[1] ?? "");
     const encryptedSessionValue = decodeHtmlAttribute(html.match(/id=["']CookieValue["'][^>]*value=["']([^"']+)/i)?.[1] ?? "");
-    if (!token || !encryptedSessionValue || cookies.size === 0) throw new Error("Performance Food Group careers did not establish a crawl session.");
+    if (!token || !encryptedSessionValue || cookies.size === 0) throw new Error("BrassRing careers did not establish a crawl session.");
     const requestHeaders = () => ({
       "content-type": "application/json;charset=UTF-8",
       accept: "application/json, text/plain, */*",
@@ -2907,8 +2968,8 @@ const crawlPerformanceFoodGroup = async (source: CrawlSource, fetcher: typeof fe
       method: "POST",
       headers: requestHeaders(),
       body: JSON.stringify({
-        PartnerId: "26350",
-        SiteId: "6930",
+        PartnerId: identity.partnerId,
+        SiteId: identity.siteId,
         ListKeyword: [],
         Location: "",
         UserGivenKeyWords: "",
@@ -2920,13 +2981,13 @@ const crawlPerformanceFoodGroup = async (source: CrawlSource, fetcher: typeof fe
       }),
     }, true, { attempts: 1, timeoutMs: 15_000 });
     responseStatus = firstResponse.status;
-    if (!firstResponse.ok) throw Object.assign(new Error(`Performance Food Group job API returned HTTP ${firstResponse.status}.`), { responseStatus: firstResponse.status });
+    if (!firstResponse.ok) throw Object.assign(new Error(`BrassRing job API returned HTTP ${firstResponse.status}.`), { responseStatus: firstResponse.status });
     mergeCookies(cookies, firstResponse);
     const bootstrap = await firstResponse.json() as BrassRingPayload;
     const total = Number(bootstrap.JobsCount);
-    const bootstrapJobs = brassRingJobs(bootstrap, source);
+    const bootstrapJobs = brassRingJobs(bootstrap, source, identity);
     if (!Number.isInteger(total) || total <= 0 || bootstrapJobs.length !== Math.min(50, total)) {
-      throw new Error("Performance Food Group job API returned no authoritative first page.");
+      throw new Error("BrassRing job API returned no authoritative first page.");
     }
     const totalPages = Math.ceil(total / 50);
     const startPage = Math.min(Math.max(source.crawlPageCursor ?? 1, 1), totalPages);
@@ -2941,8 +3002,8 @@ const crawlPerformanceFoodGroup = async (source: CrawlSource, fetcher: typeof fe
         method: "POST",
         headers: requestHeaders(),
         body: JSON.stringify({
-          partnerId: 26350,
-          siteId: 6930,
+          partnerId: Number(identity.partnerId),
+          siteId: Number(identity.siteId),
           keyword: "",
           location: "",
           keywordCustomSolrFields: "JobTitle,FORMTEXT4,FORMTEXT6,FORMTEXT7",
@@ -2959,10 +3020,10 @@ const crawlPerformanceFoodGroup = async (source: CrawlSource, fetcher: typeof fe
         }),
       }, true, { attempts: 1, timeoutMs: 15_000 });
       responseStatus = response.status;
-      if (!response.ok) throw Object.assign(new Error(`Performance Food Group page ${page} returned HTTP ${response.status}.`), { responseStatus: response.status });
+      if (!response.ok) throw Object.assign(new Error(`BrassRing page ${page} returned HTTP ${response.status}.`), { responseStatus: response.status });
       mergeCookies(cookies, response);
       const payload = await response.json() as BrassRingPayload;
-      payloads.push({ page, payload, jobs: brassRingJobs(payload, source) });
+      payloads.push({ page, payload, jobs: brassRingJobs(payload, source, identity) });
     }
     const exact = payloads.every(({ page, payload, jobs }) => {
       const expected = Math.min(50, total - (page - 1) * 50);
@@ -2978,7 +3039,7 @@ const crawlPerformanceFoodGroup = async (source: CrawlSource, fetcher: typeof fe
       completeListing: stable && startPage === 1 && cycleComplete,
       jobs,
       pagination: { nextPage: cycleComplete ? 1 : stable ? endPage : startPage, cycleComplete, totalPages },
-      error: jobs.length > 0 ? null : "Performance Food Group careers contained no usable jobs.",
+      error: jobs.length > 0 ? null : "BrassRing careers contained no usable jobs.",
     };
   } catch (error) {
     const status = typeof error === "object" && error && "responseStatus" in error
@@ -2989,7 +3050,7 @@ const crawlPerformanceFoodGroup = async (source: CrawlSource, fetcher: typeof fe
       responseStatus: status,
       completeListing: false,
       jobs: [],
-      error: error instanceof Error ? error.message : "Unknown Performance Food Group crawler error.",
+      error: error instanceof Error ? error.message : "Unknown BrassRing crawler error.",
     };
   }
 };
@@ -11911,7 +11972,8 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   if (source.id === "p4-0291-houlihan-lokey") return crawlHoulihanLokey(source, fetcher, now);
   if (source.id === "p4-0296-infosys-consulting" || sourcePage.hostname === "digitalcareers.infosys.com") return crawlInfosys(source, fetcher);
   if (source.id === "p4-0443-hubspot") return crawlHubSpot(source, fetcher);
-  if (source.id === "legacy-row-849") return crawlPerformanceFoodGroup(source, fetcher);
+  const brassRingIdentity = brassRingBoardIdentity(source.postingUrl);
+  if (brassRingIdentity) return crawlBrassRing(source, brassRingIdentity, fetcher);
   if (source.id === "p4-0245-cisco") {
     return crawlWorkday(source, "https://cisco.wd5.myworkdayjobs.com/wday/cxs/cisco/Cisco_Careers/jobs", fetcher, now);
   }
