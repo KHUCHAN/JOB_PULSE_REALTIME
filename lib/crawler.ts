@@ -115,6 +115,7 @@ const US_SCOPED_LARGE_CATALOGS = new Set([
   "p2-0041-jpmorgan-chase",
   "p2-0048-metlife",
   "p2-0064-unitedhealth-group",
+  "p4-0225-barclays-us",
   "p4-0285-google",
   "p4-0313-nbcuniversal",
   "p4-0325-oracle",
@@ -4305,7 +4306,14 @@ const crawlCornerstone = async (
 };
 
 const radancyJobsFromHtml = (html: string, source: CrawlSource): CrawledJob[] => {
-  const structured = [...html.matchAll(/<li\b[^>]*>([\s\S]*?)<\/li>/gi)].flatMap((match): CrawledJob[] => {
+  const listItemBlocks = [
+    ...html.matchAll(/<li\b[^>]*>([\s\S]*?)<\/li>/gi),
+    // Some TalentBrew themes (including Barclays) render result cards as
+    // sibling divs instead of list items. Stop at the next card rather than
+    // the first nested closing div so location/date metadata stays attached.
+    ...html.matchAll(/<div\b[^>]*class=["'][^"']*\blist-item\b[^"']*["'][^>]*>[\s\S]*?(?=<div\b[^>]*class=["'][^"']*\blist-item\b|<\/section>|$)/gi),
+  ];
+  const structured = listItemBlocks.flatMap((match): CrawledJob[] => {
     const block = match[0];
     const anchor = anchorsFromHtml(block).find(({ href, text }) =>
       /\/job\/(?:[^/?#]+\/)+\d+\/\d+\/?(?:[?#]|$)/i.test(href) && Boolean(text.trim()));
@@ -4317,14 +4325,12 @@ const radancyJobsFromHtml = (html: string, source: CrawlSource): CrawledJob[] =>
       ?? official.pathname.split("/").filter(Boolean).at(-1)
       ?? null;
     const requisitionId = icimsText(block.match(/<span\b[^>]*class=["'][^"']*\bjob-id\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1]);
-    const location = icimsText(
-      block.match(/<span\b[^>]*class=["']search-results__job-location["'][^>]*>([\s\S]*?)<\/span>/i)?.[1]
-        ?? block.match(/<span\b[^>]*class=["'][^"']*\bjob-location\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1],
-    );
-    const posted = icimsText(
-      block.match(/<span\b[^>]*class=["']search-results__job-date-posted["'][^>]*>([\s\S]*?)<\/span>/i)?.[1]
-        ?? block.match(/<span\b[^>]*class=["'][^"']*\bjob-date-posted\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1],
-    );
+    const location = icimsText(block.match(
+      /<(?:span|div|p)\b[^>]*class=["'][^"']*\b(?:search-results__job-location|job-location)\b[^"']*["'][^>]*>([\s\S]*?)<\/(?:span|div|p)>/i,
+    )?.[1]);
+    const posted = icimsText(block.match(
+      /<(?:span|div|p)\b[^>]*class=["'][^"']*\b(?:search-results__job-date-posted|job-date-posted|job-date)\b[^"']*["'][^>]*>([\s\S]*?)<\/(?:span|div|p)>/i,
+    )?.[1]);
     const locationParts = location?.split(",").map((value) => value.trim()).filter(Boolean) ?? [];
     const locationState = locationParts.length > 1 && /^[A-Z]{2}$/.test(locationParts.at(-1)!)
       ? locationParts.at(-1)!
@@ -4397,6 +4403,15 @@ const talentBrewSearchResultsUrl = (html: string, pageUrl: string): string | nul
   }
 };
 
+const talentBrewResultsModuleName = (html: string): string => {
+  const names = [...html.matchAll(/\bdata-search-results-module-name=["']([^"']+)["']/gi)]
+    .map((match) => decodeHtmlAttribute(match[1]).trim())
+    .filter(Boolean);
+  return names.find((name) => /^search results$/i.test(name))
+    ?? names.find((name) => !/\bheading\b/i.test(name))
+    ?? "Search Results";
+};
+
 const crawlRadancyPages = async (
   source: CrawlSource,
   html: string,
@@ -4425,6 +4440,7 @@ const crawlRadancyPages = async (
   const startPage = Math.min(requestedStart, totalPages);
   const endPage = Math.min(startPage + maximumPages - 1, totalPages);
   const canUseInitialPage = startPage === 1 && pageSize === advertisedPageSize;
+  const searchResultsModuleName = talentBrewResultsModuleName(html);
   const pagesByNumber = new Map<number, CrawledJob[]>();
   if (canUseInitialPage) pagesByNumber.set(1, radancyJobsFromHtml(html, source));
   const firstFetchedPage = canUseInitialPage ? 2 : startPage;
@@ -4455,7 +4471,7 @@ const crawlRadancyPages = async (
               IsPagination: "True",
               FacetFilters: [],
               StaticFacets: [],
-              SearchResultsModuleName: dataAttribute(html, "data-search-results-module-name") ?? "Search Results",
+              SearchResultsModuleName: searchResultsModuleName,
               SortCriteria: Number(dataAttribute(html, "data-sort-criteria") ?? 0),
               SortDirection: Number(dataAttribute(html, "data-sort-direction") ?? 0),
               SearchType: Number(dataAttribute(html, "data-search-type") ?? 0),
@@ -5142,6 +5158,16 @@ const asText = (value: unknown): string | null => typeof value === "string" && v
 const normalizedDate = (value: unknown): string | null => {
   const text = asText(value);
   if (!text) return null;
+  const dateOnly = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (dateOnly) {
+    const year = Number(dateOnly[1]);
+    const month = Number(dateOnly[2]);
+    const day = Number(dateOnly[3]);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+      ? date.toISOString()
+      : null;
+  }
   const date = new Date(text);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 };
@@ -5600,9 +5626,14 @@ const crawlMcKinsey = async (source: CrawlSource, fetcher: typeof fetch): Promis
   }
 };
 
+const primaryJobLocation = (value: unknown): JsonLdValue | null => {
+  const candidate = Array.isArray(value) ? value.find((item) => item && typeof item === "object") : value;
+  return candidate && typeof candidate === "object" ? candidate as JsonLdValue : null;
+};
+
 const jobLocation = (value: unknown): string | null => {
-  if (!value || typeof value !== "object") return null;
-  const location = value as JsonLdValue;
+  const location = primaryJobLocation(value);
+  if (!location) return null;
   const address = location.address;
   if (!address || typeof address !== "object") return null;
   const normalizedAddress = address as JsonLdValue;
@@ -5612,8 +5643,9 @@ const jobLocation = (value: unknown): string | null => {
 };
 
 const jobLocationAddress = (value: unknown): JsonLdValue | null => {
-  if (!value || typeof value !== "object") return null;
-  const address = (value as JsonLdValue).address;
+  const location = primaryJobLocation(value);
+  if (!location) return null;
+  const address = location.address;
   return address && typeof address === "object" ? address as JsonLdValue : null;
 };
 
@@ -11924,6 +11956,7 @@ const officialApplyUrl = (html: string, pageUrl: string): string | null => ancho
 // returned by already-rich ATS feeds.
 const VERIFIED_JSON_LD_DETAIL_HOSTS = new Set([
   "jobs.citi.com",
+  "search.jobs.barclays",
 ]);
 
 const supportsJsonLdDetailEnrichment = (jobUrl: string): boolean => {

@@ -955,17 +955,19 @@ Wrong description.
   });
 
   it("fully paginates a Radancy TalentBrew job search", async () => {
-    const requests: Array<{ url: string; method: string }> = [];
+    const requests: Array<{ url: string; method: string; moduleName?: string }> = [];
     let pageAttempts = 0;
     const first = [
       '<script src="https://tbcdn.talentbrew.com/js/client/search.js"></script>',
+      '<div data-search-results-module-name="Search Results Heading"></div>',
       '<section id="search-results" data-total-results="2" data-total-pages="2" data-current-page="1" data-records-per-page="1" data-ajax-post-url="/search-jobs/resultspost" data-search-results-module-name="Search Results" data-sort-criteria="5" data-sort-direction="1" data-search-type="5">',
       '<a href="/job/analyst/1/1">Analyst</a>',
       '</section>',
     ].join("");
     const fetcher: typeof fetch = async (input, init) => {
       const url = String(input);
-      requests.push({ url, method: init?.method ?? "GET" });
+      const requestBody = typeof init?.body === "string" ? JSON.parse(init.body) as { SearchResultsModuleName?: string } : null;
+      requests.push({ url, method: init?.method ?? "GET", ...(requestBody?.SearchResultsModuleName ? { moduleName: requestBody.SearchResultsModuleName } : {}) });
       if (url === "https://jobs.acme.example/search-jobs") return new Response(first, { status: 200 });
       pageAttempts += 1;
       if (pageAttempts === 1) return new Response("rate limited", { status: 429 });
@@ -977,7 +979,11 @@ Wrong description.
 
     const result = await crawlSource({ id: "radancy", company: "Acme", postingUrl: "https://jobs.acme.example/search-jobs", adapter: "custom" }, fetcher, new Date());
 
-    expect(requests).toContainEqual({ url: "https://jobs.acme.example/search-jobs/resultspost", method: "POST" });
+    expect(requests).toContainEqual({
+      url: "https://jobs.acme.example/search-jobs/resultspost",
+      method: "POST",
+      moduleName: "Search Results",
+    });
     expect(pageAttempts).toBe(2);
     expect(result.completeListing).toBe(true);
     expect(result.jobs.map((job) => job.officialUrl)).toEqual([
@@ -1004,6 +1010,56 @@ Wrong description.
       requisitionId: "2379943",
       title: "Data Science Intern",
       location: "Las Vegas, Nevada",
+    })]);
+  });
+
+  it("reads div-based Barclays cards and enriches new internships from official JSON-LD", async () => {
+    const jobUrl = "https://search.jobs.barclays/job/new-york/quantitative-finance-associate-summer-internship-program-2027-new-york/13015/99217260160";
+    const applyUrl = "https://barclays.wd3.myworkdayjobs.com/External_Career_Site_Barclays/job/New-York-745-7th-Avenue/Quantitative-Finance-Associate-Summer-Internship-Program-2027-New-York_JR-0000128099/apply";
+    const title = "Quantitative Finance Associate Summer Internship Program 2027 New York";
+    const listing = [
+      '<script src="https://tbcdn.talentbrew.com/js/client/search.js"></script>',
+      '<section data-total-job-results="2" data-total-results="2" data-total-pages="1" data-records-per-page="16" data-ajax-post-url="/search-jobs/resultspost">',
+      `<div class="list-item list-item--card"><a href="${jobUrl}" data-job-id="99217260160"><strong>${title}</strong></a>`,
+      '<div class="job-location">New York, United States</div><div class="job-date"><span>13 Aug</span></div></div>',
+      '<div class="list-item list-item--card"><a href="/job/london/rates-analyst/13015/99217260161" data-job-id="99217260161"><strong>Rates Analyst</strong></a>',
+      '<div class="job-location">London, United Kingdom</div><div class="job-date"><span>13 Aug</span></div></div>',
+      '</section>',
+    ].join("");
+    const fetcher: typeof fetch = async (input) => {
+      if (String(input) !== jobUrl) return new Response(listing);
+      return new Response(`
+        <script type="application/ld+json">${JSON.stringify({
+          "@context": "https://schema.org", "@type": "JobPosting", title,
+          url: jobUrl, identifier: "JR-0000128099", datePosted: "2026-8-14",
+          employmentType: "Intern", description: "Use AI tools, quantitative models, software engineering, and data science.",
+          jobLocation: [{ address: {
+            addressLocality: "New York", addressRegion: "New York",
+            addressCountry: "United States of America", postalCode: "10019",
+          } }],
+        })}</script>
+        <a href="${applyUrl}">Apply for job</a>
+      `);
+    };
+
+    const result = await crawlSource({
+      id: "p4-0225-barclays-us", company: "Barclays US",
+      postingUrl: "https://search.jobs.barclays/search-jobs", adapter: "custom",
+    }, fetcher, new Date("2026-08-14T22:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "99217260160",
+      officialUrl: jobUrl,
+      applyUrl,
+      requisitionId: "JR-0000128099",
+      location: "New York, New York, United States of America",
+      locationCity: "New York",
+      locationState: "New York",
+      locationCountry: "United States of America",
+      employmentType: "Internship",
+      publishedAt: "2026-08-14T00:00:00.000Z",
+      description: expect.stringContaining("software engineering"),
     })]);
   });
 

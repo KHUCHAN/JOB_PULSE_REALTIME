@@ -80,4 +80,21 @@ describe("resume review feed", () => {
     expect(await listResumeReviewCandidates(createD1ForSqlite(databaseWithCandidates()), 0)).toHaveLength(1);
     expect(await listResumeReviewCandidates(createD1ForSqlite(databaseWithCandidates()), 500)).toHaveLength(1);
   });
+
+  it("prioritizes likely US 2027 candidates ahead of a fresher global backlog", async () => {
+    const sqlite = databaseWithCandidates();
+    sqlite.exec(`
+      INSERT INTO jobs VALUES
+        ('job-global-newer', 'Global Co', 'Marketing Intern', NULL, 'unknown',
+         'https://careers.global.example/jobs/newer', NULL, NULL, NULL, NULL, NULL,
+         '[]', NULL, NULL, NULL, NULL, 'Internship', NULL, NULL, NULL,
+         NULL, '2026-08-14T23:00:00.000Z', '2026-08-14T23:00:00.000Z', 'open', 1, NULL);
+      INSERT INTO job_matches VALUES
+        ('match-global-newer', 'job-global-newer', 'resume-keyword', 99, '[]', 1, 1, 0);
+      INSERT INTO job_topics VALUES ('job-global-newer', 'program:internship');
+    `);
+
+    const candidates = await listResumeReviewCandidates(createD1ForSqlite(sqlite), 1);
+    expect(candidates.map((candidate) => candidate.jobId)).toEqual(["job-new"]);
+  });
 });

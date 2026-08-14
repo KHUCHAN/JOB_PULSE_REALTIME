@@ -123,7 +123,23 @@ export const listResumeReviewCandidates = async (
         SELECT 1 FROM codex_reviews reviewed
         WHERE reviewed.job_match_id = jm.id
       )
-    ORDER BY COALESCE(j.published_at, j.first_seen_at) DESC, jm.id
+    -- The feed remains an internship-only candidate set; Codex still makes
+    -- every region/year/fit decision. Prioritize records whose extracted
+    -- signals indicate the user's target so a 100-row global influx cannot
+    -- delay a newly published US 2027 role for another review interval.
+    ORDER BY CASE
+      WHEN j.location_region = 'us' AND EXISTS (
+        SELECT 1 FROM job_topics priority_year
+        WHERE priority_year.job_id = j.id AND priority_year.topic_key = 'year:2027'
+      ) THEN 0
+      WHEN EXISTS (
+        SELECT 1 FROM job_topics priority_year
+        WHERE priority_year.job_id = j.id AND priority_year.topic_key = 'year:2027'
+      ) THEN 1
+      WHEN j.location_region = 'us' THEN 2
+      ELSE 3
+    END,
+    COALESCE(j.published_at, j.first_seen_at) DESC, jm.score DESC, jm.id
     LIMIT ?
   `).bind(boundedLimit(limit)).all<Row>();
 
