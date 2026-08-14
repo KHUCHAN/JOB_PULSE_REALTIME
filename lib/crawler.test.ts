@@ -1021,6 +1021,33 @@ Wrong description.
     })]);
   });
 
+  it("separates Amgen's h3 title from its date and location before US scoping", async () => {
+    const card = (id: string, title: string, location: string, posted: string) => [
+      `<li><a href="/en/job/test/${title.replaceAll(" ", "-")}/87/${id}" data-job-id="${id}">`,
+      `<div class="date-button-container"><span class="job-date-posted">${posted}</span></div>`,
+      `<h3>${title}</h3><span class="job-location">${location}</span></a></li>`,
+    ].join("");
+    const html = [
+      '<script src="https://tbcdn.talentbrew.com/js/client/search.js"></script>',
+      '<section data-total-job-results="2" data-total-results="2" data-total-pages="1" data-records-per-page="15" data-ajax-post-url="/en/search-jobs/resultspost">',
+      card("2001", "Manufacturing Programs Senior Manager", "US - North Carolina - Holly Springs", "Aug. 13, 2026"),
+      card("2002", "Medical Representative", "Japan - Tokyo", "Aug. 13, 2026"),
+      '</section>',
+    ].join("");
+    const result = await crawlSource({
+      id: "p5-0543-amgen", company: "Amgen", postingUrl: "https://careers.amgen.com/en/search-jobs", adapter: "custom",
+    }, async () => new Response(html), new Date());
+
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "2001",
+      title: "Manufacturing Programs Senior Manager",
+      location: "US - North Carolina - Holly Springs",
+      sourcePostedText: "Aug. 13, 2026",
+      publishedAt: expect.stringMatching(/^2026-08-13T/),
+    })]);
+  });
+
   it("accepts Avature SearchJobs pages and paginates the complete official listing", async () => {
     const page = (offset: number) => [
       '<meta name="avature.portal.page" content="SearchJobs">',

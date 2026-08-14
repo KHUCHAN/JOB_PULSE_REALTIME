@@ -121,6 +121,7 @@ const US_SCOPED_LARGE_CATALOGS = new Set([
   "p5-0523-abb-us",
   "p5-0524-abbott-laboratories",
   "p5-0538-amazon-2",
+  "p5-0543-amgen",
   "p5-0545-anduril-industries",
   "p5-0589-electronic-arts",
   "p5-0662-mckesson",
@@ -3666,7 +3667,7 @@ const radancyJobsFromHtml = (html: string, source: CrawlSource): CrawledJob[] =>
     const block = match[0];
     const anchor = anchorsFromHtml(block).find(({ href, text }) =>
       /\/job\/(?:[^/?#]+\/)+\d+\/\d+\/?(?:[?#]|$)/i.test(href) && Boolean(text.trim()));
-    const title = icimsText(block.match(/<h2\b[^>]*>([\s\S]*?)<\/h2>/i)?.[1]) ?? icimsText(anchor?.text);
+    const title = icimsText(block.match(/<h[23]\b[^>]*>([\s\S]*?)<\/h[23]>/i)?.[1]) ?? icimsText(anchor?.text);
     if (!anchor || !title) return [];
     const official = new URL(anchor.href, source.postingUrl);
     if (official.origin !== new URL(source.postingUrl).origin) return [];
@@ -3679,7 +3680,8 @@ const radancyJobsFromHtml = (html: string, source: CrawlSource): CrawledJob[] =>
         ?? block.match(/<span\b[^>]*class=["'][^"']*\bjob-location\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1],
     );
     const posted = icimsText(
-      block.match(/<span\b[^>]*class=["']search-results__job-date-posted["'][^>]*>([\s\S]*?)<\/span>/i)?.[1],
+      block.match(/<span\b[^>]*class=["']search-results__job-date-posted["'][^>]*>([\s\S]*?)<\/span>/i)?.[1]
+        ?? block.match(/<span\b[^>]*class=["'][^"']*\bjob-date-posted\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1],
     );
     const locationParts = location?.split(",").map((value) => value.trim()).filter(Boolean) ?? [];
     const locationState = locationParts.length > 1 && /^[A-Z]{2}$/.test(locationParts.at(-1)!)
