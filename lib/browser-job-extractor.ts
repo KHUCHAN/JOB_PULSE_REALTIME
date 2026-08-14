@@ -6,7 +6,7 @@ const JOB_DETAIL = /(?:\/(?:jobs?|positions?|openings?|vacanc(?:y|ies))\/[^/?#]{
 const LISTING_ONLY = /(?:search-jobs?|search-results|viewalljobs|job-opportunities|join(?:talent|[-_/]our[-_/]team)|talent-community|jobcart|jobs?\/(?:search|login)|positions?\/{1,2}filter)(?:[/?#]|$)/i;
 const CAREER_CONTENT_ONLY = /\/careers?\/(?:open-positions|view-jobs(?:\.html)?|jobs|culture|benefits)\/?(?:[?#].*)?$/i;
 const GENERIC_TEXT = /^(?:apply|apply now|form|here\.?|learn more(?: about this position)?\s*[>›»]?|read more|view .+|see .+|explore .+|join .+|details|search .+ jobs?|careers?|career website|jobs?|benefits|student programs|open (?:positions?|roles)|skip to (?:main )?(?:jobs search results|content)\.?|click here|(?:first|previous|next|last) page of results(?: first| last)?|page \d+ of \d+(?:\s*,\s*current page)?|your privacy choices|privacy notice|manage cookie preferences|notify me of new jobs|create (?:an? )?(?:job )?alert|share your information|get in touch!?|join (?:our )?talent (?:community|network)|candidate (?:pool|profile)|internal careers site|returning applicant login|i am an employee|sign in|log in|view profile|stay connected|terms of use|total rewards|events?(?: \d+)?|sitemap|job search tool|chinese \((?:simplified|traditional)\)|french|german|italian|japanese|portuguese|spanish|next|previous)$/i;
-const EXTERNAL_BOARDS = /(?:greenhouse\.io|lever\.co|myworkdayjobs\.com|myworkdaysite\.com|smartrecruiters\.com|ashbyhq\.com|icims\.com|jobvite\.com|hirebridge\.com|taleo\.net|selectminds\.com|apply\.workable\.com|bamboohr\.com|pinpointhq\.com|ats\.rippling\.com|dayforcehcm\.com|successfactors\.(?:com|eu)|oraclecloud\.com|eightfold\.ai|avature\.net|(?:myjobs|workforcenow)\.adp\.com|recruiting\.paylocity\.com|recruiting\d*\.ultipro\.com)/i;
+const EXTERNAL_BOARDS = /(?:greenhouse\.io|lever\.co|myworkdayjobs\.com|myworkdaysite\.com|smartrecruiters\.com|ashbyhq\.com|icims\.com|jobvite\.com|hirebridge\.com|taleo\.net|selectminds\.com|apply\.workable\.com|bamboohr\.com|pinpointhq\.com|teamtailor\.com|jobs\.gusto\.com|ats\.rippling\.com|dayforcehcm\.com|successfactors\.(?:com|eu)|oraclecloud\.com|eightfold\.ai|avature\.net|(?:myjobs|workforcenow)\.adp\.com|recruiting\.paylocity\.com|recruiting\d*\.ultipro\.com)/i;
 const ROLE_TITLE = /\b(?:accountant|administrator|analyst|architect|associate|consultant|coordinator|counsel|developer|director|engineer|executive|intern|lead|manager|officer|principal|recruiter|representative|researcher|scientist|specialist|supervisor|technician)\b/i;
 
 const isOracleCandidateJob = (url: URL): boolean => (
@@ -33,6 +33,9 @@ const isExternalBoardDetail = (url: URL): boolean => {
   }
   if (/smartrecruiters\.com$/i.test(url.hostname)) {
     return /^\/[^/?#]+\/\d+(?:[-/][^/?#]+)?\/?$/i.test(url.pathname);
+  }
+  if (url.hostname === "jobs.gusto.com") {
+    return /^\/postings\/[^/?#]+-[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}\/?$/i.test(url.pathname);
   }
   if (isOracleCandidateJob(url)) return true;
   return EXTERNAL_BOARDS.test(url.hostname) && (JOB_DETAIL.test(`${url.pathname}${url.search}`) || externalIdFromJobUrl(url) !== null);
@@ -79,6 +82,10 @@ const externalIdFromJobUrl = (url: URL): string | null => {
   if (workdayId && /myworkday(?:jobs|site)\.com$/i.test(url.hostname)) return workdayId;
   const oracleId = isOracleCandidateJob(url) ? url.pathname.match(/\/job\/([^/?#]+)\/?$/i)?.[1] : null;
   if (oracleId) return oracleId;
+  const gustoId = url.hostname === "jobs.gusto.com"
+    ? url.pathname.match(/-([a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12})\/?$/i)?.[1]
+    : null;
+  if (gustoId) return gustoId;
   const pathId = url.pathname.match(/\/(?:jobs?|positions?|openings?)\/([^/?#]+)\/?$/i)?.[1];
   return pathId && /^(?:\d{3,}|[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12})$/i.test(pathId)
     ? pathId

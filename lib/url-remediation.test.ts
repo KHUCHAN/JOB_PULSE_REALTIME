@@ -19,6 +19,8 @@ describe("career URL remediation", () => {
     expect(isPublicAtsCatalogUrl("https://career8.successfactors.com/career?company=amkor")).toBe(true);
     expect(isPublicAtsCatalogUrl("https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=tenant")).toBe(true);
     expect(isPublicAtsCatalogUrl("https://employee-alaskaair.icims.com/jobs/login")).toBe(false);
+    expect(isPublicAtsCatalogUrl("https://silenteight.teamtailor.com/jobs")).toBe(true);
+    expect(isPublicAtsCatalogUrl("https://jobs.gusto.com/boards/closedloop-board-id")).toBe(true);
   });
 
   it("recognizes a company-branded .jobs catalog even when the CTA text is generic", () => {

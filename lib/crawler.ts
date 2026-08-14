@@ -138,6 +138,9 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
   "p5-0642-kia-motors-america": { listingUrl: "https://careers-americas.kia.com/kus/search/?q=&locationsearch=&sortColumn=referencedate&sortDirection=desc", adapter: "custom" },
   "p5-1001-oak-ridge-national-lab": { listingUrl: "https://jobs.ornl.gov/search/?q=&locationsearch=&sortColumn=referencedate&sortDirection=desc", adapter: "custom" },
   "p5-0564-canon-medical-systems": { listingUrl: "https://cmsu.csod.com/ux/ats/careersite/1/home?c=cmsu", adapter: "custom" },
+  "p5-0860-coherent": { listingUrl: "https://hcwp.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/jobs", adapter: "custom" },
+  "p5-0589-electronic-arts": { listingUrl: "https://jobs.ea.com/en_US/careers/SearchJobs", adapter: "custom" },
+  "p2-0048-metlife": { listingUrl: "https://www.metlifecareers.com/en_US/ml/SearchJobs", adapter: "custom" },
   "legacy-row-823": { listingUrl: "https://fa-exty-saasfaprod1.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1", adapter: "custom" },
   "legacy-row-826": { listingUrl: "https://jobs.dayforcehcm.com/en-US/ibgllc/CANDIDATEPORTAL", adapter: "custom" },
   "p4-0470-oliver-wyman": { listingUrl: "https://mmc.phenompeople.com/global/en/oliver-wyman-early-careers-search", adapter: "phenom" },
@@ -444,6 +447,12 @@ type MCloudJob = {
 type MCloudPayload = {
   totalHits?: number;
   searchResults?: Array<{ job?: MCloudJob }>;
+};
+
+type MCloudConfig = {
+  apiUrl: string;
+  organization: string;
+  filters: Array<{ key: string; value: string }>;
 };
 
 type JobsynJob = {
@@ -1046,6 +1055,35 @@ const icimsCanonicalListingUrl = (value: string): string => {
   return url.href;
 };
 
+const icimsCatalogUrl = (html: string): string | null => {
+  const searchable = html.replaceAll("\\/", "/").replaceAll("&amp;", "&");
+  for (const match of searchable.matchAll(/https?:\/\/[a-z0-9-]+\.icims\.com[^\s"'<>\\]*/gi)) {
+    try {
+      const url = new URL(decodeHtmlAttribute(match[0]));
+      if (!/^\/(?:jobs(?:\/(?:search|intro))?)?\/?$/i.test(url.pathname)) continue;
+      url.hash = "";
+      return url.href;
+    } catch {
+      // Keep looking for a public catalog rather than an account/login URL.
+    }
+  }
+  return null;
+};
+
+const gustoCatalogUrl = (html: string): string | null => {
+  const searchable = html.replaceAll("\\/", "/").replaceAll("&amp;", "&");
+  const match = searchable.match(/https:\/\/jobs\.gusto\.com\/boards\/[a-z0-9-]+/i);
+  if (!match) return null;
+  try {
+    const url = new URL(match[0]);
+    return url.hostname === "jobs.gusto.com" && /^\/boards\/[a-z0-9-]+\/?$/i.test(url.pathname)
+      ? url.href
+      : null;
+  } catch {
+    return null;
+  }
+};
+
 const icimsLocationParts = (location: string | null): {
   locationCity?: string;
   locationState?: string;
@@ -1074,7 +1112,7 @@ const icimsJobsFromHtml = (html: string, source: CrawlSource): { rawCount: numbe
     } catch {
       return [];
     }
-    if (official.origin !== new URL(source.postingUrl).origin) return [];
+    if (official.protocol !== "https:" || !official.hostname.endsWith(".icims.com")) return [];
     official.searchParams.delete("in_iframe");
     official.searchParams.delete("mobile");
     official.searchParams.delete("needsRedirect");
@@ -2687,7 +2725,7 @@ const crawlPerformanceFoodGroup = async (source: CrawlSource, fetcher: typeof fe
   }
 };
 
-const READER_JOB_DETAIL = /(?:\/jobs\/(?:r-)?\d{1,}(?:[-/]|$)|\/site\/careers\/jobs\/\d+|\/careers\/(?:job\/\d+|find-your-job\/[^/?#]+-j\d+|jobdetail(?:[/?]|$)|details\/|position\/)|\/[^/?#]+\/[^/?#]+\/[a-f0-9]{24,}\/job\/?(?:[?#]|$)|\/(?:default|[a-z]{2}(?:_[a-z]{2})?|[^/?#]+)\/job\/[^/?#]+\/\d+(?:-[^/?#]+)?(?:[/?#]|$)|[?&](?:jobid|job_id|gh_jid|reqid|pid|opportunityid)=)/i;
+const READER_JOB_DETAIL = /(?:\/jobs\/(?:r-)?\d{1,}(?:[-/]|$)|\/postings\/[^/?#]+-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\/?(?:[?#]|$)|\/site\/careers\/jobs\/\d+|\/careers\/(?:job\/\d+|find-your-job\/[^/?#]+-j\d+|jobdetail(?:[/?]|$)|details\/|position\/)|\/[^/?#]+\/[^/?#]+\/[a-f0-9]{24,}\/job\/?(?:[?#]|$)|\/(?:default|[a-z]{2}(?:_[a-z]{2})?|[^/?#]+)\/job\/[^/?#]+\/\d+(?:-[^/?#]+)?(?:[/?#]|$)|[?&](?:jobid|job_id|gh_jid|reqid|pid|opportunityid)=)/i;
 
 const markdownAnchors = (markdown: string, baseUrl: string): BrowserAnchor[] => [...markdown.matchAll(
   /\[([^\]]{2,240})\]\((https?:\/\/[^)\s]+|\/[^)\s]+)\)/g,
@@ -3037,6 +3075,19 @@ const crawlReaderFallback = async (
       "x-with-links-summary": "all",
     };
     const resultFromMarkdown = async (markdown: string): Promise<SourceCrawlResult | null> => {
+      const icimsListing = icimsCatalogUrl(markdown);
+      if (icimsListing) {
+        const icims = await crawlIcims({
+          ...source,
+          postingUrl: icimsListing,
+          adapter: "icims",
+          discoveryDepth: 1,
+        }, fetcher);
+        if (icims.status === "succeeded") return {
+          ...icims,
+          resolvedListingUrl: icims.resolvedListingUrl ?? icimsListing,
+        };
+      }
       const discovered = discoverAts(markdown, source.postingUrl);
       if (discovered) {
         const result = discovered.kind === "workday"
@@ -3193,42 +3244,55 @@ const crawlTalemetryJson = async (
     endpoint.searchParams.set("page", String(page));
     return endpoint;
   };
-  const fetchPage = async (page: number): Promise<TalemetryPayload | null> => {
+  let directUnavailable = false;
+  const fetchPage = async (page: number, allowReaderRetry = false): Promise<TalemetryPayload | null> => {
     const endpoint = endpointFor(page);
-    try {
-      const direct = await fetchWithTimeout(fetcher, endpoint, { headers: { accept: "application/json" } }, false, { attempts: 1, timeoutMs: 10_000 });
-      if (direct.ok) {
-        const parsed = parseTalemetryPayload(await direct.text());
-        if (parsed) return parsed;
+    if (!directUnavailable) {
+      try {
+        const direct = await fetchWithTimeout(fetcher, endpoint, { headers: { accept: "application/json" } }, false, { attempts: 1, timeoutMs: 10_000 });
+        if (direct.ok) {
+          const parsed = parseTalemetryPayload(await direct.text());
+          if (parsed) return parsed;
+        }
+        directUnavailable = true;
+      } catch {
+        directUnavailable = true;
       }
-    } catch {
-      // The public JSON route is commonly protected by the same edge as the HTML page.
     }
     try {
       const reader = await fetchWithTimeout(fetcher, `https://r.jina.ai/${endpoint.href}`, {
         headers: { accept: "text/plain" },
-      }, false, { attempts: 2, timeoutMs: 12_000 });
+      }, false, { attempts: allowReaderRetry ? 2 : 1, timeoutMs: 12_000 });
       return reader.ok ? parseTalemetryPayload(await reader.text()) : null;
     } catch {
       return null;
     }
   };
 
-  const first = await fetchPage(1);
+  const first = await fetchPage(1, true);
   if (!first) return null;
   const perPage = Math.max(1, first.per_page ?? first.entries?.length ?? 100);
   const totalEntries = Math.max(0, first.total_entries ?? first.entries?.length ?? 0);
+  if (totalEntries <= 0) return null;
   const totalPages = Math.ceil(totalEntries / perPage);
-  const boundedPages = Math.min(totalPages, 100);
-  const pages: Array<TalemetryPayload | null> = [first];
-  for (let page = 2; page <= boundedPages; page += 4) {
-    pages.push(...await Promise.all(Array.from(
-      { length: Math.min(4, boundedPages - page + 1) },
-      (_, index) => fetchPage(page + index),
-    )));
+  const requestedStart = Math.max(1, Math.trunc(source.crawlPageCursor ?? 1));
+  const startPage = requestedStart <= totalPages ? requestedStart : 1;
+  // The outer careers request, one direct capability probe and a possible
+  // first-page reader retry leave room for 46 reader pages without crossing
+  // the 50-request source ceiling. Later cursor windows also reserve the
+  // page-one metadata probe, so they carry at most 45 new pages.
+  const maxTargetPages = startPage === 1 ? 46 : 45;
+  const endPage = Math.min(totalPages, startPage + maxTargetPages - 1);
+  const pageNumbers = Array.from({ length: endPage - startPage + 1 }, (_, index) => startPage + index);
+  const pages = new Map<number, TalemetryPayload | null>();
+  if (startPage === 1) pages.set(1, first);
+  const pagesToFetch = pageNumbers.filter((page) => page !== 1);
+  for (let index = 0; index < pagesToFetch.length; index += 4) {
+    const batch = pagesToFetch.slice(index, index + 4);
+    const fetched = await Promise.all(batch.map((page) => fetchPage(page)));
+    batch.forEach((page, offset) => pages.set(page, fetched[offset] ?? null));
   }
-  const successful = pages.filter((page): page is TalemetryPayload => page !== null);
-  const jobs = uniqueJobs(successful.flatMap((page) => page.entries ?? []).flatMap((job): CrawledJob[] => {
+  const jobsFromEntries = (entries: TalemetryEntry[]): CrawledJob[] => entries.flatMap((job): CrawledJob[] => {
     const externalId = asText(job.talemetry_job_id) ?? asText(job.id);
     const title = asText(job.title);
     const permalink = asText(job.permalink);
@@ -3253,13 +3317,46 @@ const crawlTalemetryJson = async (
       officialUrl,
       publishedAt: normalizedDate(job.date_posted ?? job.posted_at ?? job.updated_at),
     }];
-  }));
+  });
+  const jobs: CrawledJob[] = [];
+  const seen = new Set<string>();
+  let firstFailedPage: number | null = null;
+  for (const pageNumber of pageNumbers) {
+    const page = pages.get(pageNumber) ?? null;
+    const entries = page?.entries ?? [];
+    const expected = Math.min(perPage, totalEntries - (pageNumber - 1) * perPage);
+    const normalized = jobsFromEntries(entries);
+    const identities = normalized.map((job) => job.externalId ?? job.officialUrl);
+    const valid = page
+      && page.total_entries === totalEntries
+      && (page.per_page ?? perPage) === perPage
+      && entries.length === expected
+      && normalized.length === expected
+      && new Set(identities).size === expected
+      && identities.every((identity) => !seen.has(identity));
+    if (!valid) {
+      firstFailedPage = pageNumber;
+      break;
+    }
+    identities.forEach((identity) => seen.add(identity));
+    jobs.push(...normalized);
+  }
+  const unique = uniqueJobs(jobs);
+  const stable = firstFailedPage === null && unique.length === jobs.length;
+  const cycleComplete = stable && endPage === totalPages;
   return {
-    status: "succeeded",
+    status: unique.length > 0 ? "succeeded" : "failed",
     responseStatus: 200,
-    completeListing: totalPages <= 100 && successful.length === totalPages && jobs.length >= totalEntries,
-    jobs,
-    error: null,
+    completeListing: startPage === 1 && cycleComplete,
+    jobs: unique,
+    ...(totalPages > 1 || source.crawlPageCursor != null ? {
+      pagination: {
+        nextPage: cycleComplete ? 1 : firstFailedPage ?? endPage + 1,
+        cycleComplete,
+        totalPages,
+      },
+    } : {}),
+    error: unique.length > 0 ? null : "Talemetry returned no consecutive usable catalog pages.",
   };
 };
 
@@ -3311,6 +3408,46 @@ const embeddedRipplingJobs = (html: string, source: CrawlSource): { jobs: Crawle
       && new Set(rows.map((row) => row[5].toLocaleLowerCase())).size === jobs.length
       && linkedIds.every((id) => byId.has(id)),
   } : null;
+};
+
+const embeddedWorkableCards = (html: string, source: CrawlSource): CrawledJob[] | null => {
+  if (!/\bjob-info-wrapper\b/i.test(html) || !/https:\/\/apply\.workable\.com\/j\/[a-f\d]{10}/i.test(html)) return null;
+  const field = (block: string, className: string): string | null => icimsText(
+    block.match(new RegExp(`<div\\b[^>]*class=["'][^"']*\\b${className}\\b[^"']*["'][^>]*>([\\s\\S]*?)<\\/div>`, "i"))?.[1],
+  );
+  const jobs = [...html.matchAll(
+    /<div\b[^>]*role=["']listitem["'][^>]*class=["'][^"']*\bw-dyn-item\b[^"']*["'][^>]*>([\s\S]*?)(?=<div\b[^>]*role=["']listitem["'][^>]*class=["'][^"']*\bw-dyn-item\b|<div\b[^>]*id=["']no-results["']|$)/gi,
+  )].flatMap((match): CrawledJob[] => {
+    const block = match[1];
+    const link = block.match(/<a\b[^>]*href=["'](https:\/\/apply\.workable\.com\/j\/([a-f\d]{10})\/?)["'][^>]*>/i);
+    const title = field(block, "job-title");
+    if (!link || !title) return [];
+    const officialUrl = decodeHtmlAttribute(link[1]);
+    const externalId = link[2].toLocaleUpperCase();
+    const location = field(block, "job-location");
+    const workplace = field(block, "workplace-type");
+    const workType = field(block, "job-work-type");
+    const department = field(block, "job-dept");
+    const programs = classifyJobPrograms(`${title} ${workType ?? ""}`);
+    return [{
+      externalId,
+      title,
+      company: source.company,
+      location,
+      arrangement: /remote/i.test(workplace ?? "") ? "remote" : /hybrid/i.test(workplace ?? "") ? "hybrid" : /on.?site/i.test(workplace ?? "") ? "onsite" : "unknown",
+      employmentType: programs.keys.some((key) => key === "internship" || key === "coop")
+        ? "Internship"
+        : normalizeEmploymentType(workType) ?? workType,
+      summary: null,
+      ...(department ? { department } : {}),
+      ...(location && /(?:United States|\bUS\b)/i.test(location) ? { locationCountry: "US" } : {}),
+      requisitionId: externalId,
+      officialUrl,
+      publishedAt: null,
+    }];
+  });
+  const unique = uniqueJobs(jobs);
+  return unique.length > 0 ? unique : null;
 };
 
 type CornerstoneContext = {
@@ -3509,6 +3646,37 @@ const radancyJobsFromHtml = (html: string, source: CrawlSource): CrawledJob[] =>
     }];
   });
   return structured.length > 0 ? uniqueJobs(structured) : jobsFromBrowserAnchors(anchorsFromHtml(html), source);
+};
+
+const talentBrewSearchResultsUrl = (html: string, pageUrl: string): string | null => {
+  // A generic TalentBrew asset is embedded by some non-Radancy career sites
+  // (including marketing/video widgets). Only derive a catalog URL when the
+  // landing page exposes the first-party job-search analytics/site identity.
+  if (!/(?:jobs-search-analytics\.prod\.use1\.radancy\.net|\bdata-company-site-id\s*=)/i.test(html)) return null;
+  try {
+    const current = new URL(pageUrl);
+    if (/\/search-jobs\/?$/i.test(current.pathname)) return null;
+    const linked = anchorsFromHtml(html).flatMap(({ href }): URL[] => {
+      try {
+        const candidate = new URL(href, current);
+        return candidate.origin === current.origin && /\/search-jobs\/?$/i.test(candidate.pathname)
+          ? [candidate]
+          : [];
+      } catch {
+        return [];
+      }
+    })[0];
+    if (linked) {
+      linked.search = "";
+      linked.hash = "";
+      return linked.href;
+    }
+    const locale = current.pathname.match(/^\/([a-z]{2}(?:-[a-z]{2})?)(?:\/|$)/i)?.[1];
+    const derived = new URL(locale ? `/${locale}/search-jobs` : "/search-jobs", current.origin);
+    return derived.href;
+  } catch {
+    return null;
+  }
 };
 
 const crawlRadancyPages = async (
@@ -4070,7 +4238,7 @@ const crawlAvaturePages = async (
   html: string,
   fetcher: typeof fetch,
 ): Promise<SourceCrawlResult | null> => {
-  if (!/avature\.portal\.page["']?\s+content=["']SearchCareer/i.test(html)) return null;
+  if (!/avature\.portal\.page["']?\s+content=["']Search(?:Career|Jobs)/i.test(html)) return null;
   const text = plainText(html) ?? "";
   const range = text.match(/\b[\d,]+\s*-\s*([\d,]+)\s+of\s+([\d,]+)(\+)?\s+results\b/i);
   if (!range) return null;
@@ -4079,10 +4247,33 @@ const crawlAvaturePages = async (
   const openEndedTotal = range[3] === "+";
   if (!Number.isFinite(pageSize) || pageSize < 1 || !Number.isFinite(total)) return null;
 
-  const jobsOnPage = (pageHtml: string) => jobsFromBrowserAnchors(
-    anchorsFromHtml(pageHtml).filter(({ href }) => /\/careers\/JobDetail\//i.test(href)),
-    source,
-  );
+  const jobsOnPage = (pageHtml: string) => uniqueJobs(anchorsFromHtml(pageHtml)
+    .filter(({ href, text }) => /\/JobDetail\//i.test(href) && Boolean(text.trim()))
+    .flatMap(({ href, text }): CrawledJob[] => {
+      let officialUrl: URL;
+      try {
+        officialUrl = new URL(href, source.postingUrl);
+        if (officialUrl.origin !== new URL(source.postingUrl).origin) return [];
+      } catch {
+        return [];
+      }
+      const externalId = officialUrl.pathname.split("/").filter(Boolean).at(-1) ?? null;
+      const title = icimsText(text);
+      if (!externalId || !title) return [];
+      const programs = classifyJobPrograms(title).keys;
+      return [{
+        externalId,
+        title,
+        company: source.company,
+        location: null,
+        arrangement: "unknown",
+        employmentType: programs.some((key) => key === "internship" || key === "coop") ? "Internship" : null,
+        summary: null,
+        requisitionId: externalId,
+        officialUrl: officialUrl.href,
+        publishedAt: null,
+      }];
+    }));
   const jobs = jobsOnPage(html);
   const paginationHref = anchorsFromHtml(html).find(({ href }) => /[?&]jobOffset=\d+/i.test(href))?.href;
   if (total <= pageSize) return {
@@ -4093,6 +4284,70 @@ const crawlAvaturePages = async (
     error: null,
   };
   if (!paginationHref) return null;
+
+  const totalPages = Math.ceil(total / pageSize);
+  const maximumPages = 40;
+  if (!openEndedTotal && (totalPages > maximumPages || source.crawlPageCursor != null)) {
+    const requestedStart = Math.max(1, Math.trunc(source.crawlPageCursor ?? 1));
+    const startPage = requestedStart <= totalPages ? requestedStart : 1;
+    const endPage = Math.min(totalPages, startPage + maximumPages - 1);
+    const pages = new Map<number, CrawledJob[]>([[1, jobs]]);
+    const pageNumbers = Array.from({ length: endPage - startPage + 1 }, (_, index) => startPage + index)
+      .filter((pageNumber) => pageNumber !== 1);
+    for (let index = 0; index < pageNumbers.length; index += 8) {
+      const batch = pageNumbers.slice(index, index + 8);
+      const fetched = await Promise.all(batch.map(async (pageNumber) => {
+        try {
+          const url = new URL(paginationHref, source.postingUrl);
+          url.searchParams.set("jobRecordsPerPage", String(pageSize));
+          url.searchParams.set("jobOffset", String((pageNumber - 1) * pageSize));
+          const response = await fetchWithTimeout(fetcher, url, undefined, true, { attempts: 1, timeoutMs: 10_000 });
+          if (!response.ok) return null;
+          const pageHtml = await response.text();
+          const pageRange = (plainText(pageHtml) ?? "").match(/\b[\d,]+\s*-\s*[\d,]+\s+of\s+([\d,]+)\s+results\b/i);
+          if (Number(pageRange?.[1]?.replaceAll(",", "")) !== total) return null;
+          return jobsOnPage(pageHtml);
+        } catch {
+          return null;
+        }
+      }));
+      batch.forEach((pageNumber, offset) => {
+        const pageJobs = fetched[offset];
+        if (pageJobs) pages.set(pageNumber, pageJobs);
+      });
+    }
+    let firstFailedPage: number | null = null;
+    const segmentJobs: CrawledJob[] = startPage === 1 ? [] : [...jobs];
+    const seen = new Set(segmentJobs.map((job) => job.externalId ?? job.officialUrl));
+    for (let pageNumber = startPage; pageNumber <= endPage; pageNumber += 1) {
+      const pageJobs = pages.get(pageNumber);
+      const expected = Math.min(pageSize, total - (pageNumber - 1) * pageSize);
+      const ids = pageJobs?.map((job) => job.externalId ?? job.officialUrl) ?? [];
+      const progresses = ids.length === new Set(ids).size
+        && (pageNumber === 1 || ids.some((id) => !seen.has(id)));
+      if (!pageJobs || pageJobs.length !== expected || !progresses) {
+        firstFailedPage ??= pageNumber;
+        continue;
+      }
+      segmentJobs.push(...pageJobs);
+      ids.forEach((id) => seen.add(id));
+    }
+    const cycleComplete = firstFailedPage === null && endPage === totalPages;
+    return {
+      status: "succeeded",
+      responseStatus: 200,
+      // Large Avature catalogs close only after CrawlStore observes two full
+      // checkpoint cycles; a single segment is never authoritative.
+      completeListing: false,
+      jobs: uniqueJobs(segmentJobs),
+      pagination: {
+        nextPage: cycleComplete ? 1 : firstFailedPage ?? endPage + 1,
+        cycleComplete,
+        totalPages,
+      },
+      error: null,
+    };
+  }
 
   const boundedTotal = openEndedTotal ? 10_000 : Math.min(total, 10_000);
   const offsets = Array.from({ length: Math.max(0, Math.ceil(boundedTotal / pageSize) - 1) }, (_, index) => (index + 1) * pageSize);
@@ -4141,6 +4396,141 @@ const normalizedDate = (value: unknown): string | null => {
   if (!text) return null;
   const date = new Date(text);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
+};
+
+const hologicTotal = (html: string): number | null => {
+  const value = html.match(/<h2[^>]*>\s*([\d,]+)\s+Jobs?\s+found\s*<\/h2>/i)?.[1];
+  if (!value) return null;
+  const total = Number(value.replaceAll(",", ""));
+  return Number.isSafeInteger(total) && total >= 0 ? total : null;
+};
+
+const hologicJobsFromHtml = (html: string, source: CrawlSource): CrawledJob[] => [...html.matchAll(
+  /<div\b[^>]*class=["'][^"']*\bresult-list-box\b[^"']*["'][^>]*>([\s\S]*?)(?=<div\b[^>]*class=["'][^"']*\bresult-list-box\b|<div><ul\b[^>]*class=["'][^"']*\bpagination\b|<\/div>\s*<\/div>\s*<script|$)/gi,
+)].flatMap((match): CrawledJob[] => {
+  const block = match[1];
+  const detail = block.match(/<a\b[^>]*class=["'][^"']*\blnkJobDetails\b[^"']*["'][^>]*href=["']([^"']+)["']/i);
+  const title = icimsText(block.match(/<h4\b[^>]*>([\s\S]*?)<\/h4>/i)?.[1]);
+  if (!detail || !title) return [];
+  let officialUrl: URL;
+  try {
+    officialUrl = new URL(decodeHtmlAttribute(detail[1]), source.postingUrl);
+  } catch {
+    return [];
+  }
+  const identity = officialUrl.pathname.match(/\/search\/(\d+)\//i)?.[1];
+  if (!identity || officialUrl.origin !== "https://careers.hologic.com") return [];
+  const locationBlock = block.match(/<div\b[^>]*class=["'][^"']*\bbasicinfo\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/i)?.[1] ?? "";
+  const locations = [...locationBlock.matchAll(/<span\b[^>]*>([\s\S]*?)<\/span>/gi)]
+    .map((entry) => icimsText(entry[1]))
+    .filter((value): value is string => Boolean(value));
+  const location = locations.join("; ") || null;
+  const summary = icimsText(block
+    .replace(/<h4\b[^>]*>[\s\S]*?<\/h4>/i, " ")
+    .replace(/<div\b[^>]*class=["'][^"']*\bbasicinfo\b[^"']*["'][^>]*>[\s\S]*?<\/div>/i, " ")
+    .replace(/<a\b[^>]*class=["'][^"']*\blnkJobDetails\b[^"']*["'][^>]*>[\s\S]*?<\/a>/i, " "));
+  const programs = classifyJobPrograms(title);
+  return [{
+    externalId: identity,
+    title,
+    company: source.company,
+    location,
+    arrangement: /remote/i.test(location ?? "") ? "remote" : "unknown",
+    employmentType: programs.keys.some((key) => key === "internship" || key === "coop") ? "Internship" : null,
+    summary,
+    ...(location && /United States/i.test(location) ? { locationCountry: "US" } : {}),
+    officialUrl: officialUrl.href,
+    publishedAt: null,
+  }];
+});
+
+const crawlHologic = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const listingUrl = "https://careers.hologic.com/en/search";
+  try {
+    const first = await fetchWithTimeout(fetcher, listingUrl, undefined, true, { attempts: 1, timeoutMs: 10_000 });
+    if (!first.ok) return {
+      status: isBlockedHttpStatus(first.status) ? "blocked" : "failed",
+      responseStatus: first.status,
+      completeListing: false,
+      jobs: [],
+      error: `Hologic careers returned HTTP ${first.status}.`,
+    };
+    const firstHtml = await first.text();
+    const total = hologicTotal(firstHtml);
+    if (total === null) return {
+      status: "failed",
+      responseStatus: first.status,
+      completeListing: false,
+      jobs: [],
+      error: "Hologic careers did not expose an authoritative result count.",
+    };
+    const jobs = hologicJobsFromHtml(firstHtml, { ...source, postingUrl: listingUrl });
+    if (total === 0) return {
+      status: "succeeded",
+      responseStatus: first.status,
+      completeListing: jobs.length === 0,
+      jobs: [],
+      resolvedListingUrl: listingUrl.replace(/\/$/, ""),
+      error: null,
+    };
+    const pageSize = jobs.length;
+    if (pageSize < 1) return {
+      status: "failed",
+      responseStatus: first.status,
+      completeListing: false,
+      jobs: [],
+      error: "Hologic careers returned a nonempty count without usable jobs.",
+    };
+    const totalPages = Math.ceil(total / pageSize);
+    if (totalPages > 30) return {
+      status: "succeeded",
+      responseStatus: first.status,
+      completeListing: false,
+      jobs: uniqueJobs(jobs),
+      resolvedListingUrl: listingUrl,
+      error: null,
+    };
+    let exactPages = true;
+    for (let page = 2; page <= totalPages; page += 6) {
+      const pages = await Promise.all(Array.from(
+        { length: Math.min(6, totalPages - page + 1) },
+        (_, index) => page + index,
+      ).map(async (pageNumber) => {
+        try {
+          const pageUrl = new URL(listingUrl);
+          pageUrl.searchParams.set("page", String(pageNumber));
+          const response = await fetchWithTimeout(fetcher, pageUrl, undefined, true, { attempts: 1, timeoutMs: 10_000 });
+          if (!response.ok) return null;
+          const html = await response.text();
+          if (hologicTotal(html) !== total) return null;
+          const pageJobs = hologicJobsFromHtml(html, { ...source, postingUrl: listingUrl });
+          const expected = pageNumber === totalPages ? total - pageSize * (totalPages - 1) : pageSize;
+          return pageJobs.length === expected ? pageJobs : null;
+        } catch {
+          return null;
+        }
+      }));
+      if (pages.some((pageJobs) => pageJobs === null)) exactPages = false;
+      jobs.push(...pages.flatMap((pageJobs) => pageJobs ?? []));
+    }
+    const unique = uniqueJobs(jobs);
+    return {
+      status: "succeeded",
+      responseStatus: first.status,
+      completeListing: exactPages && jobs.length === total && unique.length === total,
+      jobs: unique,
+      resolvedListingUrl: listingUrl,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: "failed",
+      responseStatus: null,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Hologic crawler error.",
+    };
+  }
 };
 
 const crawlMediaTek = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
@@ -5422,16 +5812,23 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
         : redirected;
     }
     if (finalPage.href !== source.postingUrl && discoveryDepth === 0) {
-      await response.body?.cancel().catch(() => undefined);
-      const redirected = await crawlSourceBase({
-        ...source,
-        postingUrl: finalPage.href,
-        adapter: detectUrlAdapter(finalPage.href),
-        discoveryDepth: 1,
-      }, fetcher, now);
-      return redirected.status === "succeeded"
-        ? { ...redirected, resolvedListingUrl: redirected.resolvedListingUrl ?? finalPage.href }
-        : redirected;
+      if (finalPage.origin === new URL(source.postingUrl).origin) {
+        // Locale and trailing-path redirects are still the same careers page.
+        // Continue with the response already in hand and preserve the one
+        // discovery hop for its actual all-jobs link.
+        source = { ...source, postingUrl: finalPage.href };
+      } else {
+        await response.body?.cancel().catch(() => undefined);
+        const redirected = await crawlSourceBase({
+          ...source,
+          postingUrl: finalPage.href,
+          adapter: detectUrlAdapter(finalPage.href),
+          discoveryDepth: 1,
+        }, fetcher, now);
+        return redirected.status === "succeeded"
+          ? { ...redirected, resolvedListingUrl: redirected.resolvedListingUrl ?? finalPage.href }
+          : redirected;
+      }
     }
     const html = await response.text();
     const decodedApplicationState = html
@@ -5439,8 +5836,21 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
       .replaceAll("&quot;", '"')
       .replaceAll("&#39;", "'")
       .replaceAll("&amp;", "&");
+    if (source.id === "p4-0293-hummingbird" && /\bFuture openings\b/i.test(plainText(html) ?? "")) return {
+      status: "succeeded",
+      responseStatus: response.status,
+      completeListing: true,
+      jobs: [],
+      resolvedListingUrl: source.postingUrl,
+      error: null,
+    };
     const hrmDirect = hrmDirectJobs(html, source);
     if (hrmDirect) return hrmDirect;
+    const mCloudConfig = mCloudConfigFromHtml(html);
+    if (mCloudConfig) {
+      const mCloud = await crawlMCloudCatalog(source, mCloudConfig, fetcher);
+      if (mCloud.status === "succeeded") return mCloud;
+    }
     const activate = await crawlActivateJobSearch(source, html, fetcher);
     if (activate) return activate;
     const cornerstone = await crawlCornerstone(source, html, fetcher);
@@ -5481,12 +5891,37 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
       jobs: rippling.jobs,
       error: null,
     };
+    const workableCards = embeddedWorkableCards(html, source);
+    if (workableCards) return {
+      status: "succeeded",
+      responseStatus: response.status,
+      // An employer page with embedded detail links is a trustworthy source
+      // of additions, but it has no atomic listing count for safe closure.
+      completeListing: false,
+      jobs: workableCards,
+      error: null,
+    };
     const ukg = await crawlUkgPages(source, html, fetcher);
     if (ukg) return ukg;
     const oracle = oracleCareerSite(html, source.postingUrl);
     if (oracle) return crawlOracle(source, oracle, fetcher);
     const radancy = await crawlRadancyPages(source, html, fetcher);
     if (radancy) return radancy;
+    if (discoveryDepth <= 1) {
+      const radancyListingUrl = talentBrewSearchResultsUrl(html, source.postingUrl);
+      if (radancyListingUrl) {
+        const listingResult = await crawlSourceBase({
+          ...source,
+          postingUrl: radancyListingUrl,
+          adapter: "custom",
+          discoveryDepth: 1,
+        }, fetcher, now);
+        if (listingResult.status === "succeeded" && listingResult.jobs.length > 0) return {
+          ...listingResult,
+          resolvedListingUrl: radancyListingUrl,
+        };
+      }
+    }
     const successFactorsUnified = await crawlSuccessFactorsUnified(source, html, fetcher);
     if (successFactorsUnified) return successFactorsUnified;
     const successFactors = await crawlSuccessFactorsPages(source, html, fetcher);
@@ -5527,6 +5962,33 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
           resolvedListingUrl: phenomListingUrl,
         };
       }
+    }
+    const icimsListing = icimsCatalogUrl(html);
+    if (icimsListing) {
+      const icims = await crawlIcims({
+        ...source,
+        postingUrl: icimsListing,
+        adapter: "icims",
+        discoveryDepth: 1,
+      }, fetcher);
+      if (icims.status === "succeeded") return {
+        ...icims,
+        resolvedListingUrl: icims.resolvedListingUrl ?? icimsListing,
+      };
+    }
+    const gustoListing = gustoCatalogUrl(html);
+    if (gustoListing) {
+      const gusto = await crawlReaderFallback({
+        ...source,
+        postingUrl: gustoListing,
+        adapter: "custom",
+        discoveryDepth: 1,
+      }, fetcher, now);
+      if (gusto?.status === "succeeded" && gusto.jobs.length > 0) return {
+        ...gusto,
+        completeListing: false,
+        resolvedListingUrl: gustoListing,
+      };
     }
     const discovered = discoverAts(html, source.postingUrl);
     if (discovered) {
@@ -6723,6 +7185,161 @@ const crawlActivateJobSearch = async (
   }
 };
 
+const mCloudConfigFromHtml = (html: string): MCloudConfig | null => {
+  const searchable = html.replaceAll("\\/", "/").replaceAll("&quot;", '"').replaceAll("&#34;", '"');
+  const apiMatch = searchable.match(
+    /(?:set_api\(\s*|["']api["']\s*:\s*)["']\s*(https:\/\/jobsapi-google\.m-cloud\.io\/api\/?)\s*["']/i,
+  );
+  const organization = searchable.match(
+    /(?:\borg_id\b|["']org["'])\s*:\s*["'](companies\/[a-z0-9-]+)["']/i,
+  )?.[1];
+  if (!apiMatch || !organization) return null;
+  let apiUrl: URL;
+  try {
+    apiUrl = new URL(apiMatch[1]);
+  } catch {
+    return null;
+  }
+  if (apiUrl.origin !== "https://jobsapi-google.m-cloud.io" || !/^\/api\/?$/i.test(apiUrl.pathname)) return null;
+  apiUrl.pathname = "/api/";
+  apiUrl.search = "";
+  apiUrl.hash = "";
+
+  const filterBody = searchable.match(/["']?filters["']?\s*:\s*\[([\s\S]{0,2000}?)\]/i)?.[1] ?? "";
+  const filters = [...filterBody.matchAll(/["']([A-Za-z0-9_.-]+):([^"']+)["']/g)]
+    .map((match) => ({ key: match[1], value: match[2].trim() }))
+    .filter(({ value }) => value.length > 0);
+  return { apiUrl: apiUrl.href, organization, filters };
+};
+
+const crawlMCloudCatalog = async (
+  source: CrawlSource,
+  config: MCloudConfig,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult> => {
+  const listingUrl = new URL(source.postingUrl);
+  const pageSize = 100;
+  // The landing-page request plus 48 API pages and one stability check keeps
+  // the complete source invocation at the hard 50-request ceiling.
+  const maxPages = 48;
+  const customAttributeFilter = config.filters
+    .map(({ key, value }) => `${key}="${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`)
+    .join(" AND ");
+  const fetchPage = async (offset: number): Promise<{ status: number; payload: MCloudPayload } | null> => {
+    try {
+      const endpoint = new URL("job/search", config.apiUrl);
+      endpoint.searchParams.set("pageSize", String(pageSize));
+      endpoint.searchParams.set("offset", String(offset));
+      endpoint.searchParams.set("companyName", config.organization);
+      if (customAttributeFilter) endpoint.searchParams.set("customAttributeFilter", customAttributeFilter);
+      endpoint.searchParams.set("orderBy", "posting_publish_time desc");
+      const response = await fetchWithTimeout(fetcher, endpoint, {
+        headers: { accept: "application/json", referer: listingUrl.href },
+      }, true, { attempts: 1, timeoutMs: 8_000 });
+      if (!response.ok) return null;
+      const payload = await response.json() as MCloudPayload;
+      if (!Number.isInteger(payload.totalHits) || !Array.isArray(payload.searchResults)) return null;
+      return { status: response.status, payload };
+    } catch {
+      return null;
+    }
+  };
+
+  const first = await fetchPage(0);
+  const total = first?.payload.totalHits ?? 0;
+  if (!first || total <= 0) return {
+    status: "failed",
+    responseStatus: first?.status ?? null,
+    completeListing: false,
+    jobs: [],
+    error: "M-Cloud did not return a nonempty usable first catalog page.",
+  };
+  const totalPages = Math.ceil(total / pageSize);
+  const fetchedPages = Math.min(totalPages, maxPages);
+  const offsets = Array.from({ length: fetchedPages - 1 }, (_, index) => (index + 1) * pageSize);
+  const pages: Array<{ status: number; payload: MCloudPayload } | null> = [first];
+  for (let index = 0; index < offsets.length; index += 8) {
+    pages.push(...await Promise.all(offsets.slice(index, index + 8).map(fetchPage)));
+  }
+
+  const rawJobs = pages.flatMap((page) => page?.payload.searchResults?.flatMap((result) => result.job ? [result.job] : []) ?? []);
+  const expectedHost = listingUrl.hostname.replace(/^www\./i, "");
+  const jobs = uniqueJobs(rawJobs.flatMap((job): CrawledJob[] => {
+    const externalId = job.id == null ? null : String(job.id);
+    const title = asText(job.title);
+    const rawOfficialUrl = asText(job.url);
+    if (!externalId || !title || !rawOfficialUrl) return [];
+    let officialUrl: URL;
+    try {
+      officialUrl = new URL(rawOfficialUrl, listingUrl);
+      if (officialUrl.hostname.replace(/^www\./i, "") !== expectedHost) return [];
+      officialUrl.protocol = "https:";
+      officialUrl.hash = "";
+    } catch {
+      return [];
+    }
+    const primaryLocation = [job.primary_city, job.primary_state, job.primary_country].filter(Boolean).join(", ") || null;
+    const secondaryLocations = (job.addtnl_locations ?? []).map((location) =>
+      [location.addtnl_city, location.addtnl_state, location.addtnl_country].filter(Boolean).join(", "))
+      .filter(Boolean);
+    const description = plainText(job.description);
+    const programs = classifyJobPrograms(title).keys;
+    return [{
+      externalId,
+      title,
+      company: source.company,
+      location: primaryLocation,
+      arrangement: /work from home|remote/i.test(job.compliment ?? "")
+        ? "remote"
+        : /hybrid/i.test(job.compliment ?? "") ? "hybrid" : /office|on.?site/i.test(job.compliment ?? "") ? "onsite" : "unknown",
+      employmentType: programs.some((key) => key === "internship" || key === "coop")
+        ? "Internship"
+        : normalizeEmploymentType(job.employment_type),
+      summary: description,
+      description,
+      department: asText(job.department),
+      jobFamily: asText(job.primary_category),
+      experienceLevel: asText(job.level),
+      secondaryLocations,
+      locationCity: asText(job.primary_city),
+      locationState: asText(job.primary_state),
+      locationCountry: asText(job.primary_country),
+      requisitionId: asText(job.ref) ?? externalId,
+      applyUrl: asText(job.seo_url),
+      officialUrl: officialUrl.href,
+      publishedAt: normalizedDate(job.open_date),
+      validThrough: normalizedDate(job.close_date),
+    }];
+  }));
+  const rawIds = rawJobs.map((job) => job.id == null ? null : String(job.id)).filter((id): id is string => Boolean(id));
+  const everyPageUsable = pages.every((page, index) => page
+    && page.payload.totalHits === total
+    && page.payload.searchResults?.length === Math.min(pageSize, total - index * pageSize)
+    && page.payload.searchResults.every(({ job }) => Boolean(job?.id != null && asText(job.title) && asText(job.url))));
+  let completeListing = totalPages <= maxPages
+    && everyPageUsable
+    && rawJobs.length === total
+    && rawIds.length === total
+    && new Set(rawIds).size === total
+    && jobs.length === total;
+  if (completeListing) {
+    const verification = await fetchPage(0);
+    const initialIds = first.payload.searchResults!.map(({ job }) => job?.id == null ? null : String(job.id));
+    const verificationIds = verification?.payload.searchResults?.map(({ job }) => job?.id == null ? null : String(job.id)) ?? [];
+    if (!verification || verification.payload.totalHits !== total
+      || verificationIds.length !== initialIds.length
+      || initialIds.some((identity, index) => identity !== verificationIds[index])) completeListing = false;
+  }
+  return {
+    status: jobs.length > 0 ? "succeeded" : "failed",
+    responseStatus: first.status,
+    completeListing,
+    jobs,
+    resolvedListingUrl: listingUrl.href,
+    error: jobs.length > 0 ? null : "M-Cloud catalog contained no usable jobs.",
+  };
+};
+
 const crawlVanguard = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
   const listingUrl = "https://www.vanguardjobs.com/job-search-results/";
   const pageSize = 10;
@@ -7009,17 +7626,18 @@ const crawlJobviteBoard = async (
         publishedAt: null,
       }];
     }));
+    const explicitlyEmpty = /\b(?:there are currently no open jobs|no current (?:job )?openings)\b/i.test(plainText(html) ?? "");
     const hasNextPage = anchorsFromHtml(html).some(({ href, text }) => /(?:[?&](?:p|page)=\d+|\/page\/\d+)/i.test(href) && /next|\d+/i.test(text));
     return {
-      status: jobs.length > 0 ? "succeeded" : "failed",
+      status: jobs.length > 0 || explicitlyEmpty ? "succeeded" : "failed",
       responseStatus: response.status,
-      completeListing: jobs.length > 0
+      completeListing: explicitlyEmpty || (jobs.length > 0
         && jobs.length === blocks.length
         && jobs.length === detailAnchors.length
-        && !hasNextPage,
+        && !hasNextPage),
       jobs,
-      resolvedListingUrl: listingUrl,
-      error: jobs.length > 0 ? null : `${source.company} Jobvite board contained no usable jobs.`,
+      resolvedListingUrl: listingUrl.replace(/\/$/, ""),
+      error: jobs.length > 0 || explicitlyEmpty ? null : `${source.company} Jobvite board contained no usable jobs.`,
     };
   } catch (error) {
     return { status: "failed", responseStatus: null, completeListing: false, jobs: [], error: error instanceof Error ? error.message : `Unknown ${source.company} Jobvite error.` };
@@ -9913,6 +10531,32 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
     source = { ...source, postingUrl: originalPage.href };
   }
   const sourcePage = new URL(source.postingUrl);
+  // These official boards currently need the reader fallback when their edge
+  // blocks Worker egress. Keep them at discovery depth zero so that fallback
+  // remains available, while still bypassing obsolete corporate landing URLs.
+  if (source.id === "p5-0560-booking-holdings") {
+    const listingUrl = "https://careers.priceline.com/?s=&post_type=job";
+    const result = await crawlJsonLd({ ...source, postingUrl: listingUrl, adapter: "custom", discoveryDepth: 0 }, fetcher, now);
+    return result.status === "succeeded" ? { ...result, resolvedListingUrl: listingUrl } : result;
+  }
+  if (source.id === "p5-0857-closedloop") {
+    const listingUrl = "https://jobs.gusto.com/boards/closedloop-6c781f0b-0e21-4a98-9ba5-4b9dd44265e8";
+    const result = await crawlJsonLd({ ...source, postingUrl: listingUrl, adapter: "custom", discoveryDepth: 0 }, fetcher, now);
+    return result.status === "succeeded" ? { ...result, resolvedListingUrl: listingUrl } : result;
+  }
+  if (source.id === "p5-0935-hologic") return crawlHologic(source, fetcher);
+  if (source.id === "p4-0457-match-group") {
+    const listingUrl = "https://join.matchgroupcareers.com/careers?domain=gotinder.com";
+    const result = await crawlEightfold({ ...source, postingUrl: listingUrl, adapter: "custom" }, fetcher);
+    return result.status === "succeeded" ? { ...result, resolvedListingUrl: listingUrl } : result;
+  }
+  if (/^(?:www\.)?jobs\.jobvite\.com$/i.test(sourcePage.hostname)) {
+    const segments = sourcePage.pathname.split("/").filter(Boolean);
+    const tenant = segments[0]?.toLocaleLowerCase() === "careers" ? segments[1] : segments[0];
+    if (tenant && /^[a-z0-9_-]+$/i.test(tenant)) {
+      return crawlJobviteBoard(source, `https://jobs.jobvite.com/${tenant}/`, tenant, fetcher);
+    }
+  }
   if (source.id === "audit-row-342") return crawlDeltaAvature(source, fetcher);
   if (source.id === "p2-0067-wells-fargo") return crawlWellsFargo(source, fetcher);
   if (source.id === "p4-0386-whatnot") return crawlWhatnot(source, fetcher);

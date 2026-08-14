@@ -751,6 +751,58 @@ Wrong description.
     expect(requests.filter((url) => new URL(url).searchParams.get("pr") === "0")).toHaveLength(2);
   });
 
+  it("follows a public iCIMS catalog embedded in a corporate careers page", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === "https://www.acme.example/careers") return new Response(`
+        <a href="https://employee-acme.icims.com/jobs/login">Employee login</a>
+        <a href="https://careers-acme.icims.com/">Search open jobs</a>
+      `, { status: 200 });
+      return new Response(icimsPage(1, 1, [{ id: "101", title: "Data Science Intern" }])
+        .replaceAll("careers-acme.icims.com", "jobs-acme.icims.com"), { status: 200 });
+    };
+
+    const result = await crawlSource({
+      id: "acme", company: "Acme", postingUrl: "https://www.acme.example/careers", adapter: "custom",
+    }, fetcher, new Date("2026-08-14T00:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: true,
+      resolvedListingUrl: "https://careers-acme.icims.com/jobs/search?ss=1",
+    }));
+    expect(result.jobs.map((job) => job.externalId)).toEqual(["101"]);
+    expect(result.jobs[0].officialUrl).toBe("https://jobs-acme.icims.com/jobs/101/data-science-intern/job");
+    expect(requests.some((url) => url.startsWith("https://employee-acme.icims.com"))).toBe(false);
+  });
+
+  it("recovers a Gusto board linked only from corporate page data", async () => {
+    const board = "https://jobs.gusto.com/boards/acme-12345678-1234-1234-1234-123456789abc";
+    const posting = "https://jobs.gusto.com/postings/acme-data-science-intern-a17a24b6-06ad-4c12-856d-0b15a7c12101";
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url === "https://www.acme.example/careers") {
+        return new Response(`<script>window.board = "${board}"</script>`, { status: 200 });
+      }
+      if (url === `https://r.jina.ai/${board}`) {
+        return new Response(`# Open Positions\n\n* ### [Data Science Intern](${posting})\n\nAustin, TX`, { status: 200 });
+      }
+      return new Response("blocked", { status: 403 });
+    };
+
+    const result = await crawlSource({
+      id: "acme-gusto", company: "Acme", postingUrl: "https://www.acme.example/careers", adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: false, resolvedListingUrl: board,
+    }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "a17a24b6-06ad-4c12-856d-0b15a7c12101", title: "Data Science Intern", officialUrl: posting,
+    })]);
+  });
+
   it("does not complete an iCIMS cycle when a tenant repeats a page", async () => {
     const fetcher: typeof fetch = async (input) => {
       const page = Number(new URL(String(input)).searchParams.get("pr")) + 1;
@@ -943,6 +995,255 @@ Wrong description.
       title: "Data Science Intern",
       location: "Las Vegas, Nevada",
     })]);
+  });
+
+  it("accepts Avature SearchJobs pages and paginates the complete official listing", async () => {
+    const page = (offset: number) => [
+      '<meta name="avature.portal.page" content="SearchJobs">',
+      '<p>1-1 of 2 results</p>',
+      '<a href="?jobOffset=1">Next</a>',
+      `<a href="/en_US/careers/JobDetail/Role-${offset + 1}/${100 + offset}">Role ${offset + 1}</a>`,
+    ].join("");
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "avature-search-jobs",
+      company: "Acme",
+      postingUrl: "https://jobs.acme.avature.net/en_US/careers/SearchJobs",
+      adapter: "custom",
+    }, async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.href);
+      return new Response(page(Number(url.searchParams.get("jobOffset") ?? 0)), { status: 200 });
+    }, new Date());
+
+    expect(requests).toContain("https://jobs.acme.avature.net/en_US/careers/SearchJobs?jobOffset=1&jobRecordsPerPage=1");
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs.map((job) => job.externalId)).toEqual(["100", "101"]);
+  });
+
+  it("checkpoints large Avature catalogs below the source request budget", async () => {
+    const requests: string[] = [];
+    const total = 246;
+    const pageSize = 6;
+    const fetcher: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.href);
+      const offset = Number(url.searchParams.get("jobOffset") ?? 0);
+      const rows = Array.from({ length: Math.min(pageSize, total - offset) }, (_, index) => {
+        const id = offset + index + 1;
+        return `<a href="/en_US/ml/JobDetail/Role-${id}/${id}">Role ${id}</a>`;
+      }).join("");
+      return new Response([
+        '<meta name="avature.portal.page" content="SearchJobs">',
+        `<p>${offset + 1}-${Math.min(offset + pageSize, total)} of ${total} results</p>`,
+        '<a href="?jobRecordsPerPage=6&amp;jobOffset=6">Next</a>',
+        rows,
+      ].join(""));
+    };
+
+    const first = await crawlSource({
+      id: "large-avature", company: "Acme", postingUrl: "https://jobs.acme.example/en_US/ml/SearchJobs", adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests).toHaveLength(40);
+    expect(first).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: false,
+      pagination: { nextPage: 41, cycleComplete: false, totalPages: 41 },
+    }));
+    expect(first.jobs).toHaveLength(240);
+
+    requests.length = 0;
+    const last = await crawlSource({
+      id: "large-avature", company: "Acme", postingUrl: "https://jobs.acme.example/en_US/ml/SearchJobs",
+      adapter: "custom", crawlPageCursor: 41,
+    }, fetcher, new Date());
+    expect(requests).toHaveLength(2);
+    expect(last).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: false,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 41 },
+    }));
+  });
+
+  it("does not advance a large Avature checkpoint across a repeated page", async () => {
+    const total = 246;
+    const firstRows = Array.from({ length: 6 }, (_, index) => `<a href="/en_US/ml/JobDetail/Role-${index + 1}/${index + 1}">Role ${index + 1}</a>`).join("");
+    const result = await crawlSource({
+      id: "repeating-avature", company: "Acme", postingUrl: "https://jobs.acme.example/en_US/ml/SearchJobs", adapter: "custom",
+    }, async () => new Response(`<meta name="avature.portal.page" content="SearchJobs"><p>1-6 of ${total} results</p><a href="?jobRecordsPerPage=6&amp;jobOffset=6">Next</a>${firstRows}`), new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: false,
+      pagination: { nextPage: 2, cycleComplete: false, totalPages: 41 },
+    }));
+  });
+
+  it("treats an explicit empty Jobvite board as a healthy authoritative catalog", async () => {
+    const result = await crawlSource({
+      id: "jobvite-empty",
+      company: "Acme",
+      postingUrl: "https://jobs.jobvite.com/careers/acme/jobs",
+      adapter: "custom",
+    }, async () => new Response("<main>There are currently no open jobs.</main>", { status: 200 }), new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      jobs: [],
+      resolvedListingUrl: "https://jobs.jobvite.com/acme",
+    }));
+  });
+
+  it("derives a locale-scoped Radancy search catalog only from a strong landing-page marker", async () => {
+    const requests: string[] = [];
+    const landing = [
+      '<script src="https://jobs-search-analytics.prod.use1.radancy.net/analytics.js"></script>',
+      '<main data-company-site-id="1234"><h1>Careers</h1></main>',
+    ].join("");
+    const listing = [
+      '<script src="https://tbcdn.talentbrew.com/js/client/search.js"></script>',
+      '<section data-total-results="1" data-total-pages="1" data-records-per-page="15" data-ajax-post-url="/en/search-jobs/resultspost">',
+      '<li><a href="/job/irving/software-engineer/123/456" data-job-id="456"><h2>Software Engineer</h2></a></li>',
+      '</section>',
+    ].join("");
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === "https://careers.acme.example/en") return new Response(landing, {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      });
+      if (url === "https://careers.acme.example/en/search-jobs") return new Response(listing, {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      });
+      return new Response("missing", { status: 404 });
+    };
+
+    const result = await crawlSource({
+      id: "radancy-landing",
+      company: "Acme",
+      postingUrl: "https://careers.acme.example/en",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests).toEqual([
+      "https://careers.acme.example/en",
+      "https://careers.acme.example/en/search-jobs",
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://careers.acme.example/en/search-jobs",
+    }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "456",
+      title: "Software Engineer",
+    })]);
+  });
+
+  it("does not invent a Radancy catalog from an unrelated TalentBrew asset", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "talentbrew-marketing-only",
+      company: "Acme",
+      postingUrl: "https://careers.acme.example/en",
+      adapter: "custom",
+    }, async (input) => {
+      requests.push(String(input));
+      return new Response('<script src="https://tbcdn.talentbrew.com/video-player.js"></script>', { status: 200 });
+    }, new Date());
+
+    expect(requests).not.toContain("https://careers.acme.example/en/search-jobs");
+    expect(result.status).toBe("failed");
+  });
+
+  it("paginates Hologic's official server-rendered catalog with exact identities", async () => {
+    const requests: string[] = [];
+    const page = (id: string, title: string, location: string) => [
+      "<h2>2 Jobs found</h2>",
+      '<div class="result-list-box row"><div class="col-sm-10">',
+      `<h4>${title}</h4><div class="basicinfo"><span><i></i>${location}</span></div>Build products.`,
+      `</div><div class="col"><a class="lnkJobDetails" href="/search/${id}/role-${id}"><span>View details</span></a></div></div>`,
+      '<div><ul class="pagination"></ul></div>',
+    ].join("");
+    const result = await crawlSource({
+      id: "p5-0935-hologic", company: "Hologic", postingUrl: "https://careers.hologic.com/", adapter: "custom",
+    }, async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.href);
+      return new Response(url.searchParams.get("page") === "2"
+        ? page("300000000000002", "Software Intern", "San Diego, CA, United States")
+        : page("300000000000001", "Data Scientist", "Marlborough, MA, United States"));
+    }, new Date());
+
+    expect(requests).toEqual([
+      "https://careers.hologic.com/en/search",
+      "https://careers.hologic.com/en/search?page=2",
+    ]);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({ externalId: "300000000000001", locationCountry: "US" }),
+      expect.objectContaining({ externalId: "300000000000002", employmentType: "Internship" }),
+    ]);
+  });
+
+  it("keeps Hologic incomplete when a paginated identity repeats", async () => {
+    const row = '<h2>2 Jobs found</h2><div class="result-list-box row"><h4>Data Scientist</h4><div class="basicinfo"><span>Boston, MA, United States</span></div><a class="lnkJobDetails" href="/search/300000000000001/data-scientist">View details</a></div><div><ul class="pagination"></ul></div>';
+    const result = await crawlSource({
+      id: "p5-0935-hologic", company: "Hologic", postingUrl: "https://careers.hologic.com/", adapter: "custom",
+    }, async () => new Response(row), new Date());
+
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: false }));
+    expect(result.jobs).toHaveLength(1);
+  });
+
+  it("extracts Innovaccer's embedded official Workable cards without granting closure", async () => {
+    const html = '<div role="listitem" class="w-dyn-item"><div class="job-info-wrapper"><a href="https://apply.workable.com/j/098986DE37"><div class="job-title">4262-Data Ops -Intern</div></a><div class="workplace-type">Remote</div><div class="job-location">United States</div><div class="job-dept">Customer Success</div><div class="job-work-type">intern</div></div></div><div id="no-results"></div>';
+    const result = await crawlSource({
+      id: "p5-0962-innovaccer", company: "Innovaccer", postingUrl: "https://innovaccer.com/careers/jobs", adapter: "custom",
+    }, async () => new Response(html), new Date());
+
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: false }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "098986DE37", title: "4262-Data Ops -Intern", arrangement: "remote",
+      employmentType: "Internship", department: "Customer Success", locationCountry: "US",
+    })]);
+  });
+
+  it("routes MetLife to its verified Avature SearchJobs listing", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p2-0048-metlife", company: "MetLife", postingUrl: "https://www.metlife.com/careers/", adapter: "custom",
+    }, async (input) => {
+      requests.push(String(input));
+      return new Response('<meta name="avature.portal.page" content="SearchJobs"><p>1-1 of 1 results</p><a href="/en_US/ml/careers/JobDetail/Data-Intern/123">Data Intern</a>');
+    }, new Date());
+
+    expect(requests).toEqual(["https://www.metlifecareers.com/en_US/ml/SearchJobs"]);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true, resolvedListingUrl: "https://www.metlifecareers.com/en_US/ml/SearchJobs" }));
+    expect(result.jobs.map((job) => job.title)).toEqual(["Data Intern"]);
+  });
+
+  it("routes Match Group to its official branded Eightfold catalog", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p4-0457-match-group", company: "Match Group", postingUrl: "https://join.matchgroupcareers.com/", adapter: "custom",
+    }, async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.href);
+      return Response.json({ data: { count: 1, positions: [{ id: 101, name: "Software Engineering Intern", positionUrl: "/careers/job/101" }] } });
+    }, new Date());
+
+    expect(requests[0]).toBe("https://join.matchgroupcareers.com/api/pcsx/search?domain=gotinder.com&query=&location=&start=0");
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true, resolvedListingUrl: "https://join.matchgroupcareers.com/careers?domain=gotinder.com" }));
+  });
+
+  it("treats Hummingbird's explicit future-openings page as a healthy empty board", async () => {
+    const result = await crawlSource({
+      id: "p4-0293-hummingbird", company: "Hummingbird", postingUrl: "https://www.hummingbird.co/careers", adapter: "custom",
+    }, async () => new Response("<main><h2>Future openings</h2><p>Send us your resume for later.</p></main>"), new Date());
+
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true, jobs: [] }));
   });
 
   it("fully paginates a SuccessFactors HTML job search", async () => {
@@ -5685,12 +5986,9 @@ Wrong description.
       const url = String(input);
       requests.push(url);
       if (url === "https://careers.acme.example/") {
-        const response = new Response("redirected", { status: 200 });
+        const response = new Response('<script src="https://assets.phenompeople.com/app.js"></script>', { status: 200 });
         Object.defineProperty(response, "url", { value: "https://careers.acme.example/global/en" });
         return response;
-      }
-      if (url === "https://careers.acme.example/global/en") {
-        return new Response('<script src="https://assets.phenompeople.com/app.js"></script>');
       }
       if (url === "https://careers.acme.example/global/en/search-results") {
         return new Response(`<script>phApp.ddo = ${JSON.stringify({
@@ -5711,9 +6009,8 @@ Wrong description.
       adapter: "custom",
     }, fetcher, new Date());
 
-    expect(requests.slice(0, 3)).toEqual([
+    expect(requests.slice(0, 2)).toEqual([
       "https://careers.acme.example/",
-      "https://careers.acme.example/global/en",
       "https://careers.acme.example/global/en/search-results",
     ]);
     expect(result).toEqual(expect.objectContaining({
@@ -6032,6 +6329,50 @@ Wrong description.
       secondaryLocations: ["Charlotte, NC, US"], department: "Application Engineering", jobFamily: "Technology",
       experienceLevel: "Early career", requisitionId: "REQ-1", officialUrl: "https://www.vanguardjobs.com/job/1/application-engineer-1-malvern-pa/",
     }));
+  });
+
+  it("discovers and paginates a corporate M-Cloud catalog", async () => {
+    const offsets: number[] = [];
+    const total = 205;
+    const fetcher: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      if (url.hostname === "careers.acme.example") return new Response(`
+        <script>var cws_opts = {"org":"companies/acme-catalog","api":"https:\\/\\/jobsapi-google.m-cloud.io\\/api\\/"};</script>
+        <script>CWS.jobs.set_api("https://jobsapi-google.m-cloud.io/api/"); CWS.jobs.set_options({
+          org_id: "companies/acme-catalog", filters: ["is_internal:Posted", "education:No"]
+        });</script>
+      `, { status: 200 });
+      expect(url.origin + url.pathname).toBe("https://jobsapi-google.m-cloud.io/api/job/search");
+      expect(url.searchParams.get("pageSize")).toBe("100");
+      expect(url.searchParams.get("companyName")).toBe("companies/acme-catalog");
+      expect(url.searchParams.get("customAttributeFilter")).toBe('is_internal="Posted" AND education="No"');
+      const offset = Number(url.searchParams.get("offset"));
+      offsets.push(offset);
+      return Response.json({
+        totalHits: total,
+        searchResults: Array.from({ length: Math.min(100, total - offset) }, (_, index) => {
+          const id = offset + index + 1;
+          return { job: {
+            id, ref: `REQ-${id}`, title: id === 1 ? "2027 Software Engineering Intern" : `Role ${id}`,
+            description: `<p>Build products ${id}.</p>`, primary_city: "Austin", primary_state: "TX",
+            primary_country: "US", employment_type: "Full Time", compliment: "Hybrid",
+            open_date: "2026-08-14T00:00:00Z", url: `http://careers.acme.example/job/${id}/role-${id}/`,
+          } };
+        }),
+      });
+    };
+
+    const result = await crawlSource({
+      id: "acme-mcloud", company: "Acme", postingUrl: "https://careers.acme.example/job-search-results/", adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toHaveLength(total);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      title: "2027 Software Engineering Intern", employmentType: "Internship", locationCountry: "US",
+      officialUrl: "https://careers.acme.example/job/1/role-1/",
+    }));
+    expect(offsets.sort((a, b) => a - b)).toEqual([0, 0, 100, 200]);
   });
 
   it("caps a Vanguard catalog above 500 jobs without falsely closing unseen jobs", async () => {
