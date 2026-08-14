@@ -4442,7 +4442,12 @@ const crawlRadancyPages = async (
   const canUseInitialPage = startPage === 1 && pageSize === advertisedPageSize;
   const searchResultsModuleName = talentBrewResultsModuleName(html);
   const pagesByNumber = new Map<number, CrawledJob[]>();
-  if (canUseInitialPage) pagesByNumber.set(1, radancyJobsFromHtml(html, source));
+  const initialPageJobs = radancyJobsFromHtml(html, source);
+  const initialPageIdentities = initialPageJobs.map((job) => job.externalId ?? job.officialUrl);
+  const expectedInitialPageJobs = Math.min(advertisedPageSize, totalResults);
+  const initialPageIsExact = initialPageJobs.length === expectedInitialPageJobs
+    && initialPageIdentities.length === new Set(initialPageIdentities).size;
+  if (canUseInitialPage) pagesByNumber.set(1, initialPageJobs);
   const firstFetchedPage = canUseInitialPage ? 2 : startPage;
   const pageNumbers = Array.from(
     { length: Math.max(0, endPage - firstFetchedPage + 1) },
@@ -4494,7 +4499,13 @@ const crawlRadancyPages = async (
       if (page) pagesByNumber.set(pageNumbers[index + pageIndex], page);
     });
   }
-  const jobs: CrawledJob[] = [];
+  // TalentBrew always returns its newest first page with the catalog shell.
+  // Keep that free freshness window while continuing a later checkpoint so a
+  // new page-one role is visible during the current two-hour pass instead of
+  // waiting for the multi-pass cursor to wrap. The page is admitted only when
+  // its advertised cardinality and identities are exact, and it never makes a
+  // checkpoint segment eligible for authoritative closure.
+  const jobs: CrawledJob[] = startPage > 1 && initialPageIsExact ? [...initialPageJobs] : [];
   const seen = new Set<string>();
   let firstFailedPage: number | null = null;
   for (let pageNumber = startPage; pageNumber <= endPage; pageNumber += 1) {

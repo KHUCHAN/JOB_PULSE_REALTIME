@@ -992,6 +992,70 @@ Wrong description.
     ]);
   });
 
+  it("keeps an exact newest Radancy page while continuing a later checkpoint", async () => {
+    const total = 40;
+    const first = [
+      '<script src="https://tbcdn.talentbrew.com/js/client/search.js"></script>',
+      `<section data-total-results="${total}" data-total-pages="${total}" data-records-per-page="1" data-ajax-post-url="/search-jobs/resultspost">`,
+      '<div class="list-item list-item--card"><a href="/job/new-york/new-data-intern/1/100" data-job-id="100"><strong>New Data Intern 2027</strong></a>',
+      '<div class="job-location">New York, United States</div><div class="job-date"><span>14 Aug</span></div></div>',
+      '</section>',
+    ].join("");
+    const requestedPages: number[] = [];
+    const result = await crawlSource({
+      id: "radancy-checkpoint", company: "Acme", postingUrl: "https://jobs.acme.example/search-jobs",
+      adapter: "custom", crawlPageCursor: 20,
+    }, async (input, init) => {
+      if ((init?.method ?? "GET") === "GET") return new Response(first);
+      const body = JSON.parse(String(init?.body)) as { CurrentPage: number };
+      requestedPages.push(body.CurrentPage);
+      return Response.json({
+        results: `<a href="/job/engineer/1/${body.CurrentPage}">Engineer ${body.CurrentPage}</a>`,
+      });
+    }, new Date("2026-08-14T22:00:00Z"));
+
+    expect(requestedPages).toEqual(Array.from({ length: 18 }, (_, index) => index + 20));
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: { nextPage: 38, cycleComplete: false, totalPages: 40 },
+    }));
+    expect(result.jobs).toContainEqual(expect.objectContaining({
+      externalId: "100",
+      title: "New Data Intern 2027",
+      location: "New York, United States",
+      locationCountry: "US",
+    }));
+  });
+
+  it("does not admit a truncated Radancy freshness page during a later checkpoint", async () => {
+    const total = 80;
+    const first = [
+      '<script src="https://tbcdn.talentbrew.com/js/client/search.js"></script>',
+      `<section data-total-results="${total}" data-total-pages="40" data-records-per-page="2" data-ajax-post-url="/search-jobs/resultspost">`,
+      '<a href="/job/new-york/incomplete-intern/1/100">Incomplete Intern 2027</a>',
+      '</section>',
+    ].join("");
+    const result = await crawlSource({
+      id: "radancy-truncated-checkpoint", company: "Acme", postingUrl: "https://jobs.acme.example/search-jobs",
+      adapter: "custom", crawlPageCursor: 20,
+    }, async (_input, init) => {
+      if ((init?.method ?? "GET") === "GET") return new Response(first);
+      const page = (JSON.parse(String(init?.body)) as { CurrentPage: number }).CurrentPage;
+      return Response.json({ results: [
+        `<a href="/job/engineer/1/${page * 2 - 1}">Engineer ${page * 2 - 1}</a>`,
+        `<a href="/job/engineer/1/${page * 2}">Engineer ${page * 2}</a>`,
+      ].join("") });
+    }, new Date("2026-08-14T22:00:00Z"));
+
+    expect(result.jobs.some((job) => job.externalId === "100")).toBe(false);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: { nextPage: 38, cycleComplete: false, totalPages: 40 },
+    }));
+  });
+
   it("extracts Radancy card titles, locations, and requisition identities without concatenating UI text", async () => {
     const html = [
       '<script src="https://tbcdn.talentbrew.com/js/client/search.js"></script>',
