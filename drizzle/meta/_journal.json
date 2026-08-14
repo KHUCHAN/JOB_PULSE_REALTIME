@@ -582,6 +582,13 @@
       "when": 1786739565373,
       "tag": "0082_refresh_sources_20260814203245",
       "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "6",
+      "when": 1786740115142,
+      "tag": "0083_requeue_repaired_dayforce_sources",
+      "breakpoints": true
     }
   ]
 }
