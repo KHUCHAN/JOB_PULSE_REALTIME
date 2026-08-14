@@ -7559,6 +7559,48 @@ Wrong description.
     expect(result.jobs).toHaveLength(25);
   });
 
+  it("recovers once from a transient repeated Dayforce offset page", async () => {
+    const requestedOffsets: number[] = [];
+    let secondPageAttempts = 0;
+    const posting = (id: number) => ({ jobPostingId: id, jobTitle: `Role ${id}` });
+    const fetcher: typeof fetch = async (input, init) => {
+      if (String(input).endsWith("/api/auth/csrf")) {
+        return Response.json({ csrfToken: "csrf" }, {
+          headers: { "set-cookie": "__Host-next-auth.csrf-token=cookie; Path=/; Secure" },
+        });
+      }
+      const body = JSON.parse(String(init?.body)) as { paginationStart: number };
+      requestedOffsets.push(body.paginationStart);
+      if (body.paginationStart === 25) secondPageAttempts += 1;
+      const ids = body.paginationStart === 0
+        ? Array.from({ length: 25 }, (_, index) => index + 1)
+        : secondPageAttempts === 1
+          ? Array.from({ length: 5 }, (_, index) => index + 1)
+          : Array.from({ length: 5 }, (_, index) => index + 26);
+      return Response.json({
+        maxCount: 30,
+        offset: body.paginationStart,
+        count: ids.length,
+        jobPostings: ids.map(posting),
+      });
+    };
+
+    const result = await crawlSource({
+      id: "dayforce-repeated-page-test",
+      company: "Example",
+      postingUrl: "https://jobs.dayforcehcm.com/en-US/example/CAREERS",
+      adapter: "dayforce",
+    }, fetcher, new Date("2026-08-14T12:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      error: null,
+    }));
+    expect(result.jobs).toHaveLength(30);
+    expect(requestedOffsets).toEqual([0, 25, 0, 25]);
+  });
+
   it("requires a second matching Dayforce response before accepting an empty catalog", async () => {
     let searches = 0;
     const fetcher: typeof fetch = async (input) => {

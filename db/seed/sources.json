@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:4c4088c76b2db892fa0f225d5a72bb2656e0fc1b1c8ef0486cf7375e58eb40cf",
+  "version": "v2:sha256:ba41f726b5ac87185424412186ae6ea98294ef386de1f4eb44da9570b5027fe1",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -14901,7 +14901,7 @@
       "id": "legacy-row-826",
       "masterRow": 2826,
       "company": "Interactive Brokers Group",
-      "postingUrl": "https://jobs.dayforcehcm.com/en-US/ibgllc/CANDIDATEPORTAL",
+      "postingUrl": "https://jobs.dayforcehcm.com/en-US/ibgllc/CANDIDATEPORTAL/",
       "talentUrl": "https://www.interactivebrokers.com/en/general/about/careers.php",
       "channel": "공식 Career Portal",
       "adapter": "dayforce",

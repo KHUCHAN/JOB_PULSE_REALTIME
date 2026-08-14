@@ -10791,10 +10791,33 @@ const crawlDayforce = async (
       }
     }
     const lastCompletePage = firstFailedPage == null ? endPage : firstFailedPage - 1;
-    const raw = [...pages.entries()]
+    const flattenPages = (catalogPages: Map<number, DayforcePosting[]>): DayforcePosting[] => [...catalogPages.entries()]
       .filter(([page]) => page <= lastCompletePage)
       .sort(([left], [right]) => left - right)
       .flatMap(([, postings]) => postings);
+    const hasStableIdentities = (postings: DayforcePosting[]): boolean => {
+      const identities = postings.map((posting) => dayforceScalarText(posting.jobPostingId));
+      return identities.every((identity): identity is string => Boolean(identity))
+        && new Set(identities).size === identities.length;
+    };
+    let raw = flattenPages(pages);
+    if (!hasStableIdentities(raw)) {
+      // Some Dayforce tenants occasionally repeat an offset page while several
+      // pages are requested concurrently. Retry the bounded segment once in
+      // order, then still fail closed if the catalog remains inconsistent.
+      const retriedPages = new Map<number, DayforcePosting[]>();
+      for (let page = startPage; page <= lastCompletePage; page += 1) {
+        const retried = await fetchPage(page);
+        if (!retried.valid || retried.total !== catalog.total) {
+          throw new Error("Dayforce returned duplicate or unusable job identities.");
+        }
+        retriedPages.set(page, retried.postings);
+      }
+      raw = flattenPages(retriedPages);
+      if (!hasStableIdentities(raw)) {
+        throw new Error("Dayforce returned duplicate or unusable job identities.");
+      }
+    }
     const canonicalListingUrl = referer;
     const jobs = uniqueJobs(raw.flatMap((posting): CrawledJob[] => {
       const externalId = dayforceScalarText(posting.jobPostingId);
