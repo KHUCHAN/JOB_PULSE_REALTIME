@@ -1,10 +1,10 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 type SeedSource = { id: string; postingUrl: string | null; adapter: string };
 
-const expectedOfficialBoards: Record<string, [string, string]> = {
+const previousOfficialBoards: Record<string, [string, string]> = {
   "audit-row-369": ["https://fa-evlf-saasfaprod1.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/jobs", "custom"],
   "p1-0007-kroll": ["https://hcxs.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/jobs", "custom"],
   "p2-0116-hancock-whitney": ["https://hancockwhitney.wd5.myworkdayjobs.com/Careers", "workday"],
@@ -22,6 +22,16 @@ const expectedOfficialBoards: Record<string, [string, string]> = {
   "p5-1107-welldoc": ["https://welldoc.bamboohr.com/careers", "custom"],
 };
 
+const currentOfficialBoards: Record<string, [string, string]> = {
+  "audit-row-342": ["https://delta.avature.net/en_US/careers/SearchJobs", "custom"],
+  "p2-0067-wells-fargo": ["https://www.wellsfargojobs.com/en/jobs/", "custom"],
+  "p4-0450-jfrog": ["https://join.jfrog.com/positions", "custom"],
+  "p4-0451-k2-integrity": ["https://k2integrity.careers.hibob.com/jobs", "custom"],
+  "p5-1041-rippling": ["https://www.rippling.com/careers/open-roles", "custom"],
+};
+
+const expectedOfficialBoards = { ...previousOfficialBoards, ...currentOfficialBoards };
+
 describe("verified official source catalog", () => {
   it("uses the first-party ATS boards instead of stale corporate landing pages", () => {
     const seed = JSON.parse(readFileSync(join(process.cwd(), "db/seed/sources.json"), "utf8")) as { sources: SeedSource[] };
@@ -33,8 +43,15 @@ describe("verified official source catalog", () => {
   });
 
   it("requeues every repaired source in the immutable catalog migration", () => {
-    const migration = readFileSync(join(process.cwd(), "drizzle/0087_refresh_sources_20260814215641.sql"), "utf8");
-    for (const id of Object.keys(expectedOfficialBoards)) expect(migration).toContain(`'${id}'`);
-    expect(migration).toContain("SET `next_crawl_at` = CURRENT_TIMESTAMP");
+    const previousMigration = readFileSync(join(process.cwd(), "drizzle/0087_refresh_sources_20260814215641.sql"), "utf8");
+    for (const id of Object.keys(previousOfficialBoards)) expect(previousMigration).toContain(`'${id}'`);
+    expect(previousMigration).toContain("SET `next_crawl_at` = CURRENT_TIMESTAMP");
+
+    const currentMigrationName = readdirSync(join(process.cwd(), "drizzle"))
+      .find((name) => /^0088_refresh_sources_\d+\.sql$/.test(name));
+    expect(currentMigrationName).toBeTruthy();
+    const currentMigration = readFileSync(join(process.cwd(), "drizzle", currentMigrationName!), "utf8");
+    for (const id of Object.keys(currentOfficialBoards)) expect(currentMigration).toContain(`'${id}'`);
+    expect(currentMigration).toContain("SET `next_crawl_at` = CURRENT_TIMESTAMP");
   });
 });

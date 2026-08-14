@@ -144,6 +144,7 @@ const US_SCOPED_LARGE_CATALOGS = new Set([
   "p5-0935-hologic",
   "p5-0972-marriott-international",
   "p5-0984-micron-technology",
+  "p5-1041-rippling",
 ]);
 
 // These source pages render their ATS client-side (or challenge generic
@@ -3675,6 +3676,420 @@ const embeddedRipplingJobs = (html: string, source: CrawlSource): { jobs: Crawle
       && new Set(rows.map((row) => row[5].toLocaleLowerCase())).size === jobs.length
       && linkedIds.every((id) => byId.has(id)),
   } : null;
+};
+
+type RipplingAlgoliaLocation = {
+  country?: unknown;
+  countryCode?: unknown;
+  name?: unknown;
+  workplaceType?: unknown;
+};
+
+type RipplingAlgoliaHit = {
+  departmentName?: unknown;
+  isRemote?: unknown;
+  jobId?: unknown;
+  locations?: unknown;
+  name?: unknown;
+  objectID?: unknown;
+  url?: unknown;
+};
+
+type RipplingAlgoliaPayload = {
+  hits?: unknown;
+  hitsPerPage?: unknown;
+  nbHits?: unknown;
+  nbPages?: unknown;
+  page?: unknown;
+};
+
+const RIPPLING_ALGOLIA_APPLICATION_ID = "6FNAX3TBEF";
+// Algolia search-only keys are intentionally embedded in Rippling's public
+// careers JavaScript. This key cannot mutate the index and is safe for a
+// first-party read-only catalog request.
+const RIPPLING_ALGOLIA_SEARCH_KEY = "416caa4690f002ff6fe4a2097623640b";
+const RIPPLING_ALGOLIA_INDEX = "careers_en-US_production";
+const RIPPLING_LISTING_URL = "https://www.rippling.com/careers/open-roles";
+
+const crawlRippling = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const endpoint = `https://${RIPPLING_ALGOLIA_APPLICATION_ID}-dsn.algolia.net/1/indexes/${encodeURIComponent(RIPPLING_ALGOLIA_INDEX)}/query`;
+  let responseStatus: number | null = null;
+  try {
+    const response = await fetchWithTimeout(fetcher, endpoint, {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json",
+        "x-algolia-api-key": RIPPLING_ALGOLIA_SEARCH_KEY,
+        "x-algolia-application-id": RIPPLING_ALGOLIA_APPLICATION_ID,
+      },
+      body: JSON.stringify({ query: "", hitsPerPage: 1_000, page: 0 }),
+    }, false, { attempts: 1, timeoutMs: 12_000 });
+    responseStatus = response.status;
+    if (!response.ok) return {
+      status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
+      responseStatus: response.status,
+      completeListing: false,
+      jobs: [],
+      error: `Rippling careers search returned HTTP ${response.status}.`,
+    };
+    const payload = await response.json() as RipplingAlgoliaPayload;
+    const hits = Array.isArray(payload.hits) ? payload.hits as RipplingAlgoliaHit[] : null;
+    const exactCatalog = hits
+      && payload.page === 0
+      && payload.hitsPerPage === 1_000
+      && Number.isSafeInteger(payload.nbHits)
+      && Number(payload.nbHits) > 0
+      && payload.nbPages === 1
+      && hits.length === Number(payload.nbHits);
+    if (!exactCatalog) return {
+      status: "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: "Rippling careers search did not return one exact, complete catalog page.",
+    };
+
+    const objectIds = new Set<string>();
+    const byJobId = new Map<string, {
+      department: string | null;
+      isRemote: boolean;
+      locations: Map<string, RipplingAlgoliaLocation>;
+      officialUrl: string;
+      title: string;
+    }>();
+    for (const hit of hits) {
+      const externalId = asText(hit.jobId)?.toLocaleLowerCase() ?? null;
+      const objectId = asText(hit.objectID);
+      const title = asText(hit.name);
+      const officialUrl = asText(hit.url);
+      const locations = Array.isArray(hit.locations) ? hit.locations as RipplingAlgoliaLocation[] : null;
+      if (!externalId || !/^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/.test(externalId)
+        || !objectId || objectIds.has(objectId) || !title || !officialUrl || !locations?.length
+        || locations.some((location) => !asText(location.name) || !asText(location.countryCode))) {
+        return {
+          status: "failed", responseStatus, completeListing: false, jobs: [],
+          error: "Rippling careers search returned a duplicate or malformed listing identity.",
+        };
+      }
+      objectIds.add(objectId);
+      let url: URL;
+      try {
+        url = new URL(officialUrl);
+      } catch {
+        return {
+          status: "failed", responseStatus, completeListing: false, jobs: [],
+          error: "Rippling careers search returned an invalid official job URL.",
+        };
+      }
+      if (url.protocol !== "https:" || url.hostname !== "ats.rippling.com" || url.port
+        || url.username || url.password || url.search || url.hash
+        || url.pathname !== `/rippling/jobs/${externalId}`) {
+        return {
+          status: "failed", responseStatus, completeListing: false, jobs: [],
+          error: "Rippling careers search returned a job URL outside the exact official ATS identity.",
+        };
+      }
+      const department = asText(hit.departmentName);
+      const existing = byJobId.get(externalId);
+      if (existing && (existing.title !== title || existing.department !== department || existing.officialUrl !== url.href)) {
+        return {
+          status: "failed", responseStatus, completeListing: false, jobs: [],
+          error: "Rippling careers search returned conflicting rows for one job identity.",
+        };
+      }
+      const record = existing ?? {
+        department,
+        isRemote: hit.isRemote === true,
+        locations: new Map<string, RipplingAlgoliaLocation>(),
+        officialUrl: url.href,
+        title,
+      };
+      record.isRemote ||= hit.isRemote === true;
+      for (const location of locations) {
+        if (asText(location.countryCode)?.toLocaleUpperCase() !== "US") continue;
+        const name = asText(location.name)!;
+        record.locations.set(name, location);
+      }
+      byJobId.set(externalId, record);
+    }
+
+    const jobs = [...byJobId.entries()].flatMap(([externalId, record]): CrawledJob[] => {
+      const locations = [...record.locations.entries()];
+      if (locations.length === 0) return [];
+      const workplaceTypes = locations.map(([, location]) => asText(location.workplaceType)?.toLocaleUpperCase());
+      const arrangement: CrawledJob["arrangement"] = record.isRemote || workplaceTypes.every((value) => value === "REMOTE")
+        ? "remote"
+        : workplaceTypes.some((value) => value === "HYBRID")
+          ? "hybrid"
+          : workplaceTypes.some((value) => value === "ON_SITE" || value === "ONSITE")
+            ? "onsite"
+            : "unknown";
+      const programs = classifyJobPrograms(record.title).keys;
+      return [{
+        externalId,
+        title: record.title,
+        company: source.company,
+        location: locations[0][0],
+        arrangement,
+        employmentType: programs.includes("coop") ? "Co-op" : programs.includes("internship") ? "Internship" : null,
+        summary: null,
+        ...(record.department ? { department: record.department } : {}),
+        ...(locations.length > 1 ? { secondaryLocations: locations.slice(1).map(([name]) => name) } : {}),
+        locationCountry: "US",
+        requisitionId: externalId,
+        officialUrl: record.officialUrl,
+        publishedAt: null,
+      }];
+    });
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: true,
+      jobs,
+      resolvedListingUrl: RIPPLING_LISTING_URL,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Rippling crawler error.",
+    };
+  }
+};
+
+type HiBobJobAd = {
+  benefits?: unknown;
+  country?: unknown;
+  department?: unknown;
+  description?: unknown;
+  employmentType?: unknown;
+  id?: unknown;
+  payTransparencyMaxSalary?: unknown;
+  payTransparencyMinSalary?: unknown;
+  payTransparencySalaryCurrency?: unknown;
+  payTransparencySalaryPayPeriod?: unknown;
+  publishedAt?: unknown;
+  requirements?: unknown;
+  responsibilities?: unknown;
+  site?: unknown;
+  title?: unknown;
+  workspaceType?: unknown;
+};
+
+const crawlHiBobCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const listing = new URL(source.postingUrl);
+  const tenant = listing.hostname.match(/^([a-z0-9-]+)\.careers\.hibob\.com$/i)?.[1];
+  if (!tenant) return {
+    status: "failed", responseStatus: null, completeListing: false, jobs: [],
+    error: "HiBob career site tenant could not be resolved from the official hostname.",
+  };
+  const headers = { accept: "application/json", companyidentifier: tenant, referer: listing.href };
+  let responseStatus: number | null = null;
+  try {
+    const [siteResponse, jobsResponse] = await Promise.all([
+      fetchWithTimeout(fetcher, new URL("/api/career-site", listing.origin), { headers }, false, { attempts: 1, timeoutMs: 10_000 }),
+      fetchWithTimeout(fetcher, new URL("/api/job-ad", listing.origin), { headers }, false, { attempts: 1, timeoutMs: 10_000 }),
+    ]);
+    responseStatus = jobsResponse.status;
+    if (!siteResponse.ok || !jobsResponse.ok) {
+      const status = !jobsResponse.ok ? jobsResponse.status : siteResponse.status;
+      return {
+        status: isBlockedHttpStatus(status) ? "blocked" : "failed",
+        responseStatus: status,
+        completeListing: false,
+        jobs: [],
+        error: `HiBob public career API returned HTTP ${status}.`,
+      };
+    }
+    const site = await siteResponse.json() as { companyName?: unknown; isBobCareerSite?: unknown; isPublished?: unknown };
+    const payload = await jobsResponse.json() as { jobAdDetails?: unknown };
+    const raw = Array.isArray(payload.jobAdDetails) ? payload.jobAdDetails as HiBobJobAd[] : null;
+    if (site.isBobCareerSite !== true || site.isPublished !== true || !asText(site.companyName) || !raw?.length) return {
+      status: "failed", responseStatus, completeListing: false, jobs: [],
+      error: "HiBob public career API returned an unpublished or malformed catalog.",
+    };
+    const ids = new Set<string>();
+    const jobs: CrawledJob[] = [];
+    for (const job of raw) {
+      const externalId = asText(job.id)?.toLocaleLowerCase() ?? null;
+      const title = asText(job.title);
+      if (!externalId || !/^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/.test(externalId)
+        || ids.has(externalId) || !title) {
+        return {
+          status: "failed", responseStatus, completeListing: false, jobs: [],
+          error: "HiBob public career API returned a duplicate or malformed job identity.",
+        };
+      }
+      ids.add(externalId);
+      const description = icimsText(asText(job.description));
+      const requirements = icimsText(asText(job.requirements));
+      const responsibilities = icimsText(asText(job.responsibilities));
+      const benefits = icimsText(asText(job.benefits));
+      const workspaceType = asText(job.workspaceType);
+      const arrangement: CrawledJob["arrangement"] = /remote/i.test(workspaceType ?? "")
+        ? "remote"
+        : /hybrid/i.test(workspaceType ?? "")
+          ? "hybrid"
+          : /on[ -]?site/i.test(workspaceType ?? "")
+            ? "onsite"
+            : "unknown";
+      const programs = classifyJobPrograms(title).keys;
+      const reportedEmploymentType = normalizeEmploymentType(job.employmentType) ?? asText(job.employmentType);
+      const employmentType = programs.includes("coop")
+        ? "Co-op"
+        : programs.includes("internship")
+          ? "Internship"
+          : reportedEmploymentType;
+      const minSalary = typeof job.payTransparencyMinSalary === "number" ? job.payTransparencyMinSalary : null;
+      const maxSalary = typeof job.payTransparencyMaxSalary === "number" ? job.payTransparencyMaxSalary : null;
+      jobs.push({
+        externalId,
+        title,
+        company: source.company,
+        location: asText(job.site),
+        arrangement,
+        employmentType,
+        summary: description?.slice(0, 500) ?? null,
+        ...(description ? { description } : {}),
+        ...(responsibilities ? { responsibilities } : {}),
+        ...(requirements ? { qualifications: requirements } : {}),
+        ...(asText(job.department) ? { department: asText(job.department) } : {}),
+        ...(asText(job.site) ? { office: asText(job.site) } : {}),
+        ...(asText(job.country) ? { locationCountry: asText(job.country) } : {}),
+        ...(minSalary != null ? { salaryMin: minSalary } : {}),
+        ...(maxSalary != null ? { salaryMax: maxSalary } : {}),
+        ...(asText(job.payTransparencySalaryCurrency) ? { salaryCurrency: asText(job.payTransparencySalaryCurrency) } : {}),
+        ...(asText(job.payTransparencySalaryPayPeriod) ? { salaryInterval: asText(job.payTransparencySalaryPayPeriod) } : {}),
+        ...(benefits ? { benefits } : {}),
+        requisitionId: externalId,
+        officialUrl: `${listing.origin}/jobs/${externalId}`,
+        publishedAt: normalizedDate(job.publishedAt),
+      });
+    }
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: true,
+      jobs,
+      resolvedListingUrl: `${listing.origin}/jobs`,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown HiBob careers crawler error.",
+    };
+  }
+};
+
+const selectOptionMap = (html: string, selectId: string): Map<string, string> => {
+  const select = html.match(new RegExp(`<select\\b[^>]*id=["']${selectId}["'][^>]*>([\\s\\S]*?)<\\/select>`, "i"))?.[1] ?? "";
+  return new Map([...select.matchAll(/<option\b[^>]*value=["']?([^"'\s>]+)["']?[^>]*>([\s\S]*?)<\/option>/gi)]
+    .map((match) => [match[1], icimsText(match[2]) ?? ""])
+    .filter((entry): entry is [string, string] => Boolean(entry[1])));
+};
+
+const crawlJfrog = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  try {
+    const response = await fetchWithTimeout(fetcher, source.postingUrl, undefined, true, { attempts: 1, timeoutMs: 12_000 });
+    responseStatus = response.status;
+    if (!response.ok) return {
+      status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
+      responseStatus: response.status,
+      completeListing: false,
+      jobs: [],
+      error: `JFrog official positions page returned HTTP ${response.status}.`,
+    };
+    const html = await response.text();
+    const offices = selectOptionMap(html, "location");
+    const departments = selectOptionMap(html, "department");
+    const cards = [...html.matchAll(/<a\b([^>]*\bclass=["'][^"']*\bgreen-job-square\b[^"']*["'][^>]*)>([\s\S]*?)<\/a>/gi)];
+    if (cards.length === 0) return {
+      status: "failed", responseStatus, completeListing: false, jobs: [],
+      error: "JFrog official positions page contained no job cards.",
+    };
+    const ids = new Set<string>();
+    const jobs: CrawledJob[] = [];
+    for (const card of cards) {
+      const attribute = (name: string): string | null => {
+        const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        return card[1].match(new RegExp(`\\b${escaped}=["']([^"']*)["']`, "i"))?.[1] ?? null;
+      };
+      const externalId = attribute("data-greenhouse-id");
+      const href = attribute("href");
+      const titles = [...card[2].matchAll(/<h3\b[^>]*>([\s\S]*?)<\/h3>/gi)]
+        .map((match) => icimsText(match[1]))
+        .filter((title): title is string => Boolean(title));
+      const uniqueTitles = [...new Set(titles)];
+      if (!externalId || !/^\d+$/.test(externalId) || ids.has(externalId) || !href || uniqueTitles.length !== 1) return {
+        status: "failed", responseStatus, completeListing: false, jobs: [],
+        error: "JFrog official positions page returned a duplicate or malformed job card.",
+      };
+      let officialUrl: URL;
+      try {
+        officialUrl = new URL(decodeHtmlAttribute(href));
+      } catch {
+        return {
+          status: "failed", responseStatus, completeListing: false, jobs: [],
+          error: "JFrog official positions page returned an invalid job URL.",
+        };
+      }
+      if (officialUrl.origin !== "https://join.jfrog.com" || officialUrl.search || officialUrl.hash
+        || !new RegExp(`^/job/${externalId}-[a-z0-9-]+/?$`, "i").test(officialUrl.pathname)) return {
+        status: "failed", responseStatus, completeListing: false, jobs: [],
+        error: "JFrog official positions page returned a URL outside the exact first-party job identity.",
+      };
+      const officeIds = (attribute("data-offices") ?? "").split(",").filter((id) => id && id !== "0");
+      const departmentIds = (attribute("data-departments") ?? "").split(",").filter((id) => id && id !== "0");
+      if (officeIds.some((id) => !offices.has(id)) || departmentIds.some((id) => !departments.has(id))) return {
+        status: "failed", responseStatus, completeListing: false, jobs: [],
+        error: "JFrog official positions page referenced an unknown location or department.",
+      };
+      ids.add(externalId);
+      const locations = officeIds.map((id) => offices.get(id)!).filter(Boolean);
+      const title = uniqueTitles[0];
+      const programs = classifyJobPrograms(title).keys;
+      jobs.push({
+        externalId,
+        title,
+        company: source.company,
+        location: locations[0] ?? null,
+        arrangement: locations.some((location) => /\bremote\b/i.test(location)) ? "remote" : locations.length > 0 ? "onsite" : "unknown",
+        employmentType: programs.includes("coop") ? "Co-op" : programs.includes("internship") ? "Internship" : null,
+        summary: null,
+        ...(departmentIds[0] ? { department: departments.get(departmentIds[0]) } : {}),
+        ...(locations.length > 1 ? { secondaryLocations: locations.slice(1) } : {}),
+        ...(locations.length > 0 && locations.every((location) => /,\s*US$/i.test(location)) ? { locationCountry: "US" } : {}),
+        requisitionId: externalId,
+        officialUrl: officialUrl.href,
+        publishedAt: null,
+      });
+    }
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: jobs.length === cards.length,
+      jobs,
+      resolvedListingUrl: source.postingUrl,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown JFrog crawler error.",
+    };
+  }
 };
 
 const embeddedWorkableCards = (html: string, source: CrawlSource): CrawledJob[] | null => {
@@ -11179,6 +11594,9 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   }
   if (source.id === "audit-row-342") return crawlDeltaAvature(source, fetcher);
   if (source.id === "p2-0067-wells-fargo") return crawlWellsFargo(source, fetcher);
+  if (source.id === "p5-1041-rippling") return crawlRippling(source, fetcher);
+  if (source.id === "p4-0450-jfrog") return crawlJfrog(source, fetcher);
+  if (/^[a-z0-9-]+\.careers\.hibob\.com$/i.test(sourcePage.hostname)) return crawlHiBobCareers(source, fetcher);
   if (source.id === "p4-0386-whatnot") return crawlWhatnot(source, fetcher);
   if (source.id === "p5-0812-aurora-innovation") return crawlAurora(source, fetcher);
   if (source.id === "p5-0950-jane-street") return crawlJaneStreet(source, fetcher);

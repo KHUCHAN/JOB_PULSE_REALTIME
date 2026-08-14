@@ -1,5 +1,10 @@
 {
   "overrides": {
+    "audit-row-342": { "url": "https://delta.avature.net/en_US/careers/SearchJobs", "adapter": "custom" },
+    "p2-0067-wells-fargo": { "url": "https://www.wellsfargojobs.com/en/jobs/", "adapter": "custom" },
+    "p4-0450-jfrog": { "url": "https://join.jfrog.com/positions", "adapter": "custom" },
+    "p4-0451-k2-integrity": { "url": "https://k2integrity.careers.hibob.com/jobs", "adapter": "custom" },
+    "p5-1041-rippling": { "url": "https://www.rippling.com/careers/open-roles", "adapter": "custom" },
     "p5-0523-abb-us": { "url": "https://abb.wd3.myworkdayjobs.com/External_Career_Page", "adapter": "workday" },
     "p5-0528-activision": { "url": "https://careers.activision.com/search-results", "adapter": "custom" },
     "p4-0245-cisco": { "url": "https://careers.cisco.com/global/en/search-results", "adapter": "phenom" },

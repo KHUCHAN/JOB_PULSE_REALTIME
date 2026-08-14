@@ -5876,6 +5876,216 @@ Wrong description.
     })]);
   });
 
+  it("reads Rippling's exact Algolia catalog and keeps only US location variants", async () => {
+    const jobId = "528f45e5-4c17-4fb7-affe-41e0c12c7c15";
+    const nonUsId = "d8797dce-0abf-406a-bf5f-0f288b9800ad";
+    const requests: Array<{ body: unknown; headers: Headers; url: string }> = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      requests.push({ body: JSON.parse(String(init?.body)), headers: new Headers(init?.headers), url: String(input) });
+      return Response.json({
+        page: 0,
+        hitsPerPage: 1_000,
+        nbHits: 3,
+        nbPages: 1,
+        hits: [
+          {
+            departmentName: "Sales",
+            isRemote: true,
+            jobId,
+            locations: [{ country: "United States", countryCode: "US", name: "Austin, TX", workplaceType: "REMOTE" }],
+            name: "Account Executive",
+            objectID: `${jobId}__austin-tx`,
+            url: `https://ats.rippling.com/rippling/jobs/${jobId}`,
+          },
+          {
+            departmentName: "Sales",
+            isRemote: true,
+            jobId,
+            locations: [{ country: "United States", countryCode: "US", name: "Remote (United States)", workplaceType: "REMOTE" }],
+            name: "Account Executive",
+            objectID: `${jobId}__remote-us`,
+            url: `https://ats.rippling.com/rippling/jobs/${jobId}`,
+          },
+          {
+            departmentName: "Product",
+            isRemote: false,
+            jobId: nonUsId,
+            locations: [{ country: "France", countryCode: "FR", name: "Paris, France", workplaceType: "HYBRID" }],
+            name: "Product Manager",
+            objectID: `${nonUsId}__paris-france`,
+            url: `https://ats.rippling.com/rippling/jobs/${nonUsId}`,
+          },
+        ],
+      });
+    };
+
+    const result = await crawlSource({
+      id: "p5-1041-rippling",
+      company: "Rippling",
+      postingUrl: "https://www.rippling.com/careers/open-roles",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toEqual(expect.objectContaining({
+      body: { query: "", hitsPerPage: 1_000, page: 0 },
+      url: "https://6FNAX3TBEF-dsn.algolia.net/1/indexes/careers_en-US_production/query",
+    }));
+    expect(requests[0].headers.get("x-algolia-application-id")).toBe("6FNAX3TBEF");
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://www.rippling.com/careers/open-roles",
+    }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: jobId,
+      title: "Account Executive",
+      department: "Sales",
+      location: "Austin, TX",
+      secondaryLocations: ["Remote (United States)"],
+      locationCountry: "US",
+      arrangement: "remote",
+    })]);
+  });
+
+  it("fails Rippling closed when the full catalog has a malformed identity", async () => {
+    const result = await crawlSource({
+      id: "p5-1041-rippling",
+      company: "Rippling",
+      postingUrl: "https://www.rippling.com/careers/open-roles",
+      adapter: "custom",
+    }, async () => Response.json({
+      page: 0,
+      hitsPerPage: 1_000,
+      nbHits: 1,
+      nbPages: 1,
+      hits: [{ jobId: "not-a-uuid", name: "Merged jobs", objectID: "bad", locations: [], url: "https://www.rippling.com/careers" }],
+    }), new Date());
+
+    expect(result).toEqual(expect.objectContaining({ status: "failed", completeListing: false, jobs: [] }));
+  });
+
+  it("does not treat transiently empty Rippling or HiBob payloads as authoritative", async () => {
+    const rippling = await crawlSource({
+      id: "p5-1041-rippling",
+      company: "Rippling",
+      postingUrl: "https://www.rippling.com/careers/open-roles",
+      adapter: "custom",
+    }, async () => Response.json({ page: 0, hitsPerPage: 1_000, nbHits: 0, nbPages: 0, hits: [] }), new Date());
+    expect(rippling).toEqual(expect.objectContaining({ status: "failed", completeListing: false, jobs: [] }));
+
+    const hiBob = await crawlSource({
+      id: "p4-0451-k2-integrity",
+      company: "K2 Integrity",
+      postingUrl: "https://k2integrity.careers.hibob.com/jobs",
+      adapter: "custom",
+    }, async (input) => String(input).endsWith("/api/career-site")
+      ? Response.json({ companyName: "K2 Integrity", isBobCareerSite: true, isPublished: true })
+      : Response.json({ jobAdDetails: [] }), new Date());
+    expect(hiBob).toEqual(expect.objectContaining({ status: "failed", completeListing: false, jobs: [] }));
+  });
+
+  it("reads a HiBob public career API with rich posting fields", async () => {
+    const jobId = "17630434-07a6-4236-af17-a9f2930cb78b";
+    const requests: Array<{ headers: Headers; url: string }> = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      requests.push({ headers: new Headers(init?.headers), url });
+      if (url.endsWith("/api/career-site")) return Response.json({
+        companyName: "K2 Integrity",
+        isBobCareerSite: true,
+        isPublished: true,
+      });
+      return Response.json({
+        jobAdDetails: [{
+          id: jobId,
+          title: "Senior Data Analyst",
+          department: "FCRM - Data Tech",
+          employmentType: "Contractor",
+          site: "Remote - US",
+          country: "United States",
+          description: "<p>Analyze large datasets.</p>",
+          requirements: "<ul><li>Advanced SQL</li></ul>",
+          responsibilities: "<p>Build detection models.</p>",
+          benefits: "<p>Medical</p>",
+          publishedAt: "2026-07-22T20:40:04.480727857Z",
+          workspaceType: "Remote",
+          payTransparencyMinSalary: 60,
+          payTransparencyMaxSalary: 75,
+          payTransparencySalaryCurrency: "USD",
+          payTransparencySalaryPayPeriod: "Hourly",
+        }],
+      });
+    };
+
+    const result = await crawlSource({
+      id: "p4-0451-k2-integrity",
+      company: "K2 Integrity",
+      postingUrl: "https://k2integrity.careers.hibob.com/jobs",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests.map((request) => request.url).sort()).toEqual([
+      "https://k2integrity.careers.hibob.com/api/career-site",
+      "https://k2integrity.careers.hibob.com/api/job-ad",
+    ]);
+    expect(requests.every((request) => request.headers.get("companyidentifier") === "k2integrity")).toBe(true);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: jobId,
+      title: "Senior Data Analyst",
+      location: "Remote - US",
+      locationCountry: "United States",
+      arrangement: "remote",
+      employmentType: "Contractor",
+      description: "Analyze large datasets.",
+      qualifications: "Advanced SQL",
+      responsibilities: "Build detection models.",
+      salaryMin: 60,
+      salaryMax: 75,
+      salaryCurrency: "USD",
+      salaryInterval: "Hourly",
+      publishedAt: "2026-07-22T20:40:04.480Z",
+      officialUrl: `https://k2integrity.careers.hibob.com/jobs/${jobId}`,
+    })]);
+  });
+
+  it("parses JFrog's official position cards without the Read More label", async () => {
+    const html = `
+      <select id="location"><option value="0">All</option><option value="84288">Remote, US</option><option value="25868">Netanya/Tel Aviv, Israel</option></select>
+      <select id="department"><option value="0">All</option><option value="39299">R&amp;D</option></select>
+      <a class="green-job-square grid-item" data-departments="0,39299" data-greenhouse-id="8102637" data-offices="0,84288" href="https://join.jfrog.com/job/8102637-ai-software-intern/">
+        <h3>AI Software Intern</h3><span class="read-more">Read More</span>
+      </a>
+      <a class="green-job-square grid-item" data-departments="0,39299" data-greenhouse-id="8102638" data-offices="0,25868" href="https://join.jfrog.com/job/8102638-software-engineer/">
+        <h3>Software Engineer</h3><h3>Software Engineer</h3><span class="read-more">Read More</span>
+      </a>`;
+    const result = await crawlSource({
+      id: "p4-0450-jfrog",
+      company: "JFrog",
+      postingUrl: "https://join.jfrog.com/positions",
+      adapter: "custom",
+    }, async () => new Response(html), new Date());
+
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        externalId: "8102637",
+        title: "AI Software Intern",
+        department: "R&D",
+        location: "Remote, US",
+        locationCountry: "US",
+        employmentType: "Internship",
+      }),
+      expect.objectContaining({
+        externalId: "8102638",
+        title: "Software Engineer",
+        location: "Netanya/Tel Aviv, Israel",
+      }),
+    ]);
+    expect(result.jobs.every((job) => !job.title.includes("Read More"))).toBe(true);
+  });
+
   it("checkpoints the SuccessFactors unified jobs API without skipping a page", async () => {
     const requests: Array<{ url: string; pageNumber: number | null }> = [];
     const fetcher: typeof fetch = async (input, init) => {
