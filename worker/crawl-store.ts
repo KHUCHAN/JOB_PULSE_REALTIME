@@ -5,7 +5,7 @@ import { classifyJobRegion } from "../lib/job-region-classifier";
 import { classifyAiDataJob } from "../lib/job-topic-classifier";
 import { classifyJobPrograms } from "../lib/job-program-classifier";
 import { classifyRecruitingYears } from "../lib/job-recruiting-year-classifier";
-import { normalizeEmploymentType } from "../lib/employment-type";
+import { inferEmploymentTypeFromPrograms, isCoopEmploymentType, normalizeEmploymentType } from "../lib/employment-type";
 import { syncResumeMatchesForUrls } from "../lib/resume-match-store";
 
 type SourceRow = {
@@ -133,8 +133,10 @@ const derivedFacets = (jobs: CrawledJob[]): CrawledFacet[] => {
     { key: "jobFunction", label: "Job Function", values: (job) => job.jobFunction ? [job.jobFunction] : [] },
     { key: "industry", label: "Industry", values: (job) => job.industry ? [job.industry] : [] },
     { key: "employmentType", label: "Employment Type", values: (job) => {
-      const employmentType = normalizeEmploymentType(job.employmentType)
-        ?? (classifyJobPrograms(job.title).keys.length > 0 ? "Internship" : null);
+      const programs = classifyJobPrograms(job.title).keys;
+      const employmentType = isCoopEmploymentType(job.employmentType) || programs.includes("coop")
+        ? "Co-op"
+        : normalizeEmploymentType(job.employmentType) ?? inferEmploymentTypeFromPrograms(programs);
       return employmentType ? [employmentType] : [];
     } },
     { key: "arrangement", label: "Workplace Type", values: (job) => job.arrangement !== "unknown" ? [job.arrangement] : [] },
@@ -373,11 +375,19 @@ export class D1CrawlStore implements CrawlStore {
         sourcePostingUrl: source.posting_url,
       });
       const titlePrograms = classifyJobPrograms(job.title);
-      const employmentType = normalizeEmploymentType(job.employmentType)
-        ?? (titlePrograms.keys.length > 0 ? "Internship" : null);
-      const programKeys = [...titlePrograms.keys];
+      const explicitCoop = isCoopEmploymentType(job.employmentType) || titlePrograms.keys.includes("coop");
+      const employmentType = explicitCoop
+        ? "Co-op"
+        : normalizeEmploymentType(job.employmentType) ?? inferEmploymentTypeFromPrograms(titlePrograms.keys);
+      const programKeys = explicitCoop
+        ? titlePrograms.keys.filter((key) => key !== "internship")
+        : [...titlePrograms.keys];
       const programEvidence = { ...titlePrograms.evidence };
-      if (employmentType?.split(" / ").includes("Internship") && !programKeys.includes("internship")) {
+      if (explicitCoop && !programKeys.includes("coop")) {
+        programKeys.push("coop");
+        programEvidence.coop = "employment_type:coop";
+      }
+      if (!explicitCoop && employmentType?.split(" / ").includes("Internship") && !programKeys.includes("internship")) {
         programKeys.push("internship");
         programEvidence.internship = "employment_type:internship";
       }
@@ -482,7 +492,8 @@ export class D1CrawlStore implements CrawlStore {
         if (!previous && allowNewJobNotifications) notificationEligibleUrls.add(officialUrl);
         if (previous && allowNewJobNotifications && previous.resume_match_hash !== record.resumeMatchHash
           && record.locationRegion === "us"
-          && (record.programKeys as string[]).some((key) => key === "internship" || key === "coop")
+          && (record.programKeys as string[]).includes("internship")
+          && !(record.programKeys as string[]).includes("coop")
           && (record.recruitingYears as number[]).includes(2027)) {
           // Recovery path: a previously seen posting can become newly
           // eligible after a crawler fixes missing region/program metadata.

@@ -1,6 +1,7 @@
 import type { DigestJob } from "./gmail-message";
 import type { ResumeAlertStatus } from "./domain";
 import { canonicalOpenJobNotExists } from "./job-canonical";
+import { jobHasCoopSql } from "./job-program-policy";
 
 export interface PlannedNotification {
   id: string;
@@ -95,6 +96,7 @@ export const planResumeDigests = async (
         WHERE jm.keyword_id = ? AND jm.is_active = 1 AND jm.notification_eligible = 1
           AND jm.open_generation = j.open_generation AND j.status = 'open'
           AND ${canonicalOpenJobNotExists("j")}
+          AND NOT ${jobHasCoopSql("j")}
           AND NOT EXISTS (
             SELECT 1 FROM notification_items ni
             WHERE ni.job_match_id = jm.id AND ni.recipient = ?
@@ -310,6 +312,52 @@ export const clearResumeAlertBacklog = async (
   ]);
 };
 
+/**
+ * Remove stale co-op items that may have been approved before the internship-
+ * only policy was enabled. This runs immediately before planning/claiming so
+ * an already queued co-op item can never be delivered by Gmail.
+ */
+export const purgeCoopResumeNotifications = async (
+  database: D1Database,
+  profileId: "chanyoung-resume",
+): Promise<void> => {
+  await database.batch([
+    database.prepare(`
+      DELETE FROM notification_items
+      WHERE notification_id IN (
+        SELECT id FROM notifications
+        WHERE keyword_id = (SELECT keyword_id FROM match_profiles WHERE id = ?)
+          AND status <> 'sent'
+      )
+      AND job_match_id IN (
+        SELECT jm.id
+        FROM job_matches jm
+        JOIN jobs j ON j.id = jm.job_id
+        WHERE jm.keyword_id = (SELECT keyword_id FROM match_profiles WHERE id = ?)
+          AND ${jobHasCoopSql("j")}
+      )
+    `).bind(profileId, profileId),
+    database.prepare(`
+      UPDATE job_matches
+      SET notification_eligible = 0
+      WHERE keyword_id = (SELECT keyword_id FROM match_profiles WHERE id = ?)
+        AND EXISTS (
+          SELECT 1 FROM jobs j
+          WHERE j.id = job_matches.job_id AND ${jobHasCoopSql("j")}
+        )
+    `).bind(profileId),
+    database.prepare(`
+      DELETE FROM notifications
+      WHERE keyword_id = (SELECT keyword_id FROM match_profiles WHERE id = ?)
+        AND status <> 'sent'
+        AND NOT EXISTS (
+          SELECT 1 FROM notification_items
+          WHERE notification_id = notifications.id
+        )
+    `).bind(profileId),
+  ]);
+};
+
 export const getResumeAlertStatus = async (
   database: D1Database,
   profileId: "chanyoung-resume",
@@ -331,7 +379,11 @@ export const getResumeAlertStatus = async (
     SELECT count(DISTINCT jm.id) AS total
     FROM job_matches jm
     JOIN match_profiles mp ON mp.keyword_id = jm.keyword_id
+    JOIN jobs j ON j.id = jm.job_id
     WHERE mp.id = ? AND jm.is_active = 1 AND jm.notification_eligible = 1
+      AND jm.open_generation = j.open_generation AND j.status = 'open'
+      AND NOT ${canonicalOpenJobNotExists("j")}
+      AND NOT ${jobHasCoopSql("j")}
       AND EXISTS (
         SELECT 1 FROM profile_recipients pr WHERE pr.profile_id = mp.id AND pr.enabled = 1
           AND NOT EXISTS (SELECT 1 FROM notification_items ni WHERE ni.job_match_id = jm.id AND ni.recipient = pr.recipient)

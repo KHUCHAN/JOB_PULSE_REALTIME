@@ -2,6 +2,7 @@ import type { JobFilters } from "./domain";
 import { canonicalOpenJobNotExists } from "./job-canonical";
 import { ftsQuery } from "./job-search";
 import { titleTokensSql } from "./job-title-tokens";
+import { jobHasCoopSql } from "./job-program-policy";
 
 export interface JobSearchPlan {
   pageSql: string;
@@ -147,6 +148,9 @@ JOIN job_matches resume_match
  AND resume_match.open_generation = j.open_generation
  AND resume_match.is_active = 1`;
     fromBindings.push("chanyoung-resume");
+    // Resume view is the personal internship shortlist; semester co-op terms
+    // must not leak into it even when their title contains "Intern".
+    add(`NOT ${jobHasCoopSql("j")}`);
   }
 
   const areas = asNormalizedValues(filters.areas)
@@ -200,6 +204,9 @@ JOIN job_matches resume_match
   }
   if (selectedPrograms.includes("regular")) programClauses.push(`${titleTokens} LIKE '% regular %'`);
   if (programClauses.length) add(`(${programClauses.join(" OR ")})`, programTopicKeys);
+  if (indexedPrograms.includes("internship") && !indexedPrograms.includes("coop")) {
+    add(`NOT ${jobHasCoopSql("j")}`);
+  }
 
   const seasons = asNormalizedValues(filters.seasons);
   if (seasons.length) {

@@ -256,7 +256,7 @@ describe("D1CrawlStore enriched job persistence", () => {
     ]);
   });
 
-  it("indexes every recognized internship title during crawl persistence", async () => {
+  it("prioritizes co-op over a title that also says intern", async () => {
     const { db, calls } = fakeDb();
     const store = new D1CrawlStore(db);
     const jobs = [{
@@ -274,14 +274,13 @@ describe("D1CrawlStore enriched job persistence", () => {
     const jobsInsert = calls.find((call) => call.sql.includes("INSERT INTO jobs"));
     const jobRecords = JSON.parse(String(jobsInsert?.values[0]));
     expect(jobRecords[0]).toEqual(expect.objectContaining({
-      employmentType: "Internship",
-      programKeys: ["internship", "coop"],
+      employmentType: "Co-op",
+      programKeys: ["coop"],
     }));
     expect(jobRecords[1].employmentType).toBeUndefined();
     expect(calls.some((call) => call.sql.includes("topic_key LIKE 'program:%'"))).toBe(true);
     const insert = calls.find((call) => call.sql.includes("'program:' ||"));
     expect(JSON.parse(String(insert?.values[0]))).toEqual([
-      expect.objectContaining({ programKey: "internship", evidence: "title:intern" }),
       expect.objectContaining({ programKey: "coop", evidence: "title:co-op" }),
     ]);
   });

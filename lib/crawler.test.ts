@@ -2058,6 +2058,37 @@ Wrong description.
     }));
   });
 
+  it("reads IBM 2027 detail metadata so co-op roles are not labeled internships", async () => {
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      if (url === "https://www-api.ibm.com/search/api/v2") {
+        const body = JSON.parse(String(init?.body)) as { from?: number };
+        if ((body.from ?? 0) > 0) return Response.json({ hits: { total: { value: 1 }, hits: [] } });
+        return Response.json({ hits: {
+          total: { value: 1 },
+          hits: [{ _id: "hash-128639", _source: {
+            title: "Data Engineer Intern 2027",
+            url: "https://careers.ibm.com/en_US/careers/JobDetail?jobId=128639",
+            description: "Build data pipelines.",
+            field_keyword_19: "Dallas, US",
+          } }],
+        } });
+      }
+      expect(url).toBe("https://r.jina.ai/https://careers.ibm.com/en_US/careers/JobDetail?jobId=128639");
+      return new Response("Job Title\n\nData Engineer Intern 2027\n\nEmployment type\n\nCo-Op (Fixed Term)\n");
+    };
+
+    const result = await crawlSource({
+      id: "p5-0624-ibm", company: "IBM",
+      postingUrl: "https://www.ibm.com/careers/search", adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result.jobs).toEqual([expect.objectContaining({
+      title: "Data Engineer Intern 2027",
+      employmentType: "Co-op",
+    })]);
+  });
+
   it("checkpoints IBM catalogs that exceed the Worker request budget", async () => {
     const offsets: number[] = [];
     const fetcher: typeof fetch = async (_input, init) => {

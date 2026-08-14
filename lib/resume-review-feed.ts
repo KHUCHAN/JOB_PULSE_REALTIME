@@ -1,4 +1,5 @@
 import { canonicalOpenJobNotExists } from "./job-canonical";
+import { internshipOnlySql } from "./job-program-policy";
 
 export interface ResumeReviewCandidate {
   matchId: string;
@@ -79,7 +80,7 @@ const parseNumberArray = (value: string | null): number[] => parseStringArray(va
 const boundedLimit = (value: number | undefined): number => Math.max(1, Math.min(100, Math.trunc(value ?? 100)));
 
 /**
- * Returns current internship/co-op resume matches that still need Codex
+ * Returns current internship (not co-op) resume matches that still need Codex
  * adjudication. The server deliberately does not decide region, recruiting
  * year, or profile fit; it only supplies the bounded candidate set.
  */
@@ -109,11 +110,7 @@ export const listResumeReviewCandidates = async (
       AND jm.is_active = 1 AND jm.notification_eligible = 0
       AND jm.open_generation = j.open_generation AND j.status = 'open'
       AND ${canonicalOpenJobNotExists("j")}
-      AND EXISTS (
-        SELECT 1 FROM job_topics program_topic
-        WHERE program_topic.job_id = j.id
-          AND program_topic.topic_key IN ('program:internship', 'program:coop')
-      )
+      AND ${internshipOnlySql("j")}
       AND NOT EXISTS (
         SELECT 1 FROM codex_reviews reviewed
         WHERE reviewed.job_match_id = jm.id

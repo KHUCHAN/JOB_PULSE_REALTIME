@@ -55,14 +55,14 @@ describe("parameterized job search SQL", () => {
       input: [
         `CREATE TABLE jobs (
           id TEXT PRIMARY KEY, company TEXT, title TEXT, official_url TEXT, status TEXT, first_seen_at TEXT,
-          valid_through TEXT
+          valid_through TEXT, employment_type TEXT
         );`,
         "CREATE TABLE job_topics (job_id TEXT, topic_key TEXT, PRIMARY KEY(job_id, topic_key));",
         "CREATE INDEX job_topics_topic_job_idx ON job_topics(topic_key, job_id);",
         `INSERT INTO jobs VALUES
-          ('ai-intern','Acme','2027 Machine Learning Intern','https://e/1','open','2026-01-03',NULL),
-          ('finance-intern','Acme','2027 Finance Intern','https://e/2','open','2026-01-02',NULL),
-          ('ai-regular','Acme','2026 Data Scientist','https://e/3','open','2026-01-01',NULL);`,
+          ('ai-intern','Acme','2027 Machine Learning Intern','https://e/1','open','2026-01-03',NULL,NULL),
+          ('finance-intern','Acme','2027 Finance Intern','https://e/2','open','2026-01-02',NULL,NULL),
+          ('ai-regular','Acme','2026 Data Scientist','https://e/3','open','2026-01-01',NULL,NULL);`,
         "INSERT INTO job_topics VALUES ('ai-intern','ai-data'),('ai-regular','ai-data'),('ai-intern','program:internship');",
         ".parameter init",
         parameters,
@@ -120,10 +120,10 @@ describe("parameterized job search SQL", () => {
     const output = execFileSync("sqlite3", ["-json", "-batch", ":memory:"], {
       encoding: "utf8",
       input: [
-        "CREATE TABLE jobs (id TEXT, company TEXT, title TEXT, official_url TEXT, status TEXT, first_seen_at TEXT, valid_through TEXT);",
+        "CREATE TABLE jobs (id TEXT, company TEXT, title TEXT, official_url TEXT, status TEXT, first_seen_at TEXT, valid_through TEXT, employment_type TEXT);",
         "CREATE TABLE job_topics (job_id TEXT, topic_key TEXT, PRIMARY KEY(job_id, topic_key));",
         "CREATE INDEX job_topics_topic_job_idx ON job_topics(topic_key, job_id);",
-        "INSERT INTO jobs VALUES ('motorola','Motorola Solutions','Supply Chain Applied AI Engineering Intern','https://e/R67461','open','2026-08-07',NULL);",
+        "INSERT INTO jobs VALUES ('motorola','Motorola Solutions','Supply Chain Applied AI Engineering Intern','https://e/R67461','open','2026-08-07',NULL,NULL);",
         "INSERT INTO job_topics VALUES ('motorola','program:internship'),('motorola','year:2027');",
         ".parameter init",
         ...plan.bindings.map((value, index) => `.parameter set ?${index + 1} ${sqliteLiteral(value)}`),
@@ -205,8 +205,8 @@ describe("parameterized job search SQL", () => {
     const output = execFileSync("sqlite3", ["-json", "-batch", ":memory:"], {
       encoding: "utf8",
       input: [
-        "CREATE TABLE jobs (id TEXT, company TEXT, official_url TEXT, status TEXT, first_seen_at TEXT, valid_through TEXT);",
-        "INSERT INTO jobs VALUES ('old','Older Co','https://example.com/1','open','2026-01-01',NULL),('new','Newer Co','https://example.com/1','open','2026-02-01',NULL);",
+        "CREATE TABLE jobs (id TEXT, company TEXT, official_url TEXT, status TEXT, first_seen_at TEXT, valid_through TEXT, employment_type TEXT);",
+        "INSERT INTO jobs VALUES ('old','Older Co','https://example.com/1','open','2026-01-01',NULL,NULL),('new','Newer Co','https://example.com/1','open','2026-02-01',NULL,NULL);",
         ".parameter init",
         parameters,
         `${sql};`,
@@ -246,18 +246,18 @@ describe("parameterized job search SQL", () => {
       const output = execFileSync("sqlite3", ["-json", "-batch", ":memory:"], {
         encoding: "utf8",
         input: [
-          "CREATE TABLE jobs (id TEXT, company TEXT, title TEXT, official_url TEXT, status TEXT, first_seen_at TEXT, valid_through TEXT);",
+          "CREATE TABLE jobs (id TEXT, company TEXT, title TEXT, official_url TEXT, status TEXT, first_seen_at TEXT, valid_through TEXT, employment_type TEXT);",
           "CREATE TABLE job_topics (job_id TEXT, topic_key TEXT, PRIMARY KEY(job_id, topic_key));",
           "CREATE INDEX job_topics_topic_job_idx ON job_topics(topic_key, job_id);",
           `INSERT INTO jobs VALUES
-            ('intern','A','2027 Software Intern','https://e/1','open','2026-01-01',NULL),
-            ('internship','A','2027 Product Internship','https://e/2','open','2026-01-01',NULL),
-            ('internal','A','2027 Internal Audit','https://e/3','open','2026-01-01',NULL),
-            ('international','A','2027 International Analyst','https://e/4','open','2026-01-01',NULL),
-            ('hyphen','A','2027 Finance Co-op','https://e/5','open','2026-01-01',NULL),
-            ('space','A','2027 Product Co Op','https://e/6','open','2026-01-01',NULL),
-            ('joined','A','2027 Engineering Coop','https://e/7','open','2026-01-01',NULL),
-            ('year-boundary','A','12027 Software Intern','https://e/8','open','2026-01-01',NULL);`,
+            ('intern','A','2027 Software Intern','https://e/1','open','2026-01-01',NULL,NULL),
+            ('internship','A','2027 Product Internship','https://e/2','open','2026-01-01',NULL,NULL),
+            ('internal','A','2027 Internal Audit','https://e/3','open','2026-01-01',NULL,NULL),
+            ('international','A','2027 International Analyst','https://e/4','open','2026-01-01',NULL,NULL),
+            ('hyphen','A','2027 Finance Co-op','https://e/5','open','2026-01-01',NULL,NULL),
+            ('space','A','2027 Product Co Op','https://e/6','open','2026-01-01',NULL,NULL),
+            ('joined','A','2027 Engineering Coop','https://e/7','open','2026-01-01',NULL,NULL),
+            ('year-boundary','A','12027 Software Intern','https://e/8','open','2026-01-01',NULL,NULL);`,
           `INSERT INTO job_topics VALUES
             ('intern','program:internship'),
             ('internship','program:internship'),

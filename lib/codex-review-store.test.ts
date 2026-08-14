@@ -51,7 +51,7 @@ const database = (): DatabaseSync => {
     CREATE TABLE jobs (
       id TEXT PRIMARY KEY, official_url TEXT NOT NULL, apply_url TEXT, first_seen_at TEXT NOT NULL,
       reopened_at TEXT, status TEXT NOT NULL, open_generation INTEGER NOT NULL, company TEXT NOT NULL,
-      location_region TEXT NOT NULL
+      location_region TEXT NOT NULL, employment_type TEXT
     );
     CREATE TABLE job_topics (job_id TEXT NOT NULL, topic_key TEXT NOT NULL);
     CREATE TABLE job_matches (
@@ -66,7 +66,8 @@ const database = (): DatabaseSync => {
     CREATE TABLE notifications (id TEXT PRIMARY KEY, status TEXT NOT NULL, keyword_id TEXT);
     CREATE TABLE notification_items (id TEXT PRIMARY KEY, notification_id TEXT NOT NULL, job_match_id TEXT NOT NULL);
     INSERT INTO match_profiles VALUES ('chanyoung-resume', 'resume-keyword-chanyoung', 1, '2026-08-13T10:00:00.000Z', '2026-08-13T20:00:00.000Z', CURRENT_TIMESTAMP);
-    INSERT INTO jobs VALUES ('job-new', 'https://careers.example.com/job-new', 'https://careers.example.com/apply-new', '2026-08-13T12:00:00.000Z', NULL, 'open', 1, 'Acme', 'us');
+    INSERT INTO jobs (id, official_url, apply_url, first_seen_at, reopened_at, status, open_generation, company, location_region, employment_type)
+      VALUES ('job-new', 'https://careers.example.com/job-new', 'https://careers.example.com/apply-new', '2026-08-13T12:00:00.000Z', NULL, 'open', 1, 'Acme', 'us', 'Internship');
     INSERT INTO job_topics VALUES ('job-new', 'program:internship'), ('job-new', 'year:2027');
     INSERT INTO job_matches VALUES ('match-new', 'job-new', 'resume-keyword-chanyoung', 1, 1, 0, NULL);
   `);

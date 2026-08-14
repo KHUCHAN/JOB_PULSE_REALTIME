@@ -42,8 +42,10 @@ export const alertDatabaseWithMatches = (matchCount = 2): DatabaseSync => {
     CREATE TABLE jobs (
       id TEXT PRIMARY KEY, company TEXT NOT NULL, title TEXT NOT NULL, location TEXT,
       official_url TEXT NOT NULL, apply_url TEXT, published_at TEXT, first_seen_at TEXT NOT NULL,
+      employment_type TEXT,
       status TEXT NOT NULL, open_generation INTEGER NOT NULL
     );
+    CREATE TABLE job_topics (job_id TEXT NOT NULL, topic_key TEXT NOT NULL);
     CREATE TABLE job_matches (
       id TEXT PRIMARY KEY, job_id TEXT NOT NULL, keyword_id TEXT NOT NULL, score INTEGER NOT NULL,
       matched_terms TEXT NOT NULL, open_generation INTEGER NOT NULL, is_active INTEGER NOT NULL,
@@ -67,7 +69,8 @@ export const alertDatabaseWithMatches = (matchCount = 2): DatabaseSync => {
       ('chanyoung-resume', 'lupeter@usc.edu', 1);
   `);
   for (let index = 1; index <= matchCount; index += 1) {
-    sqlite.prepare(`INSERT INTO jobs VALUES (?, 'Acme', ?, 'Los Angeles, CA', ?, NULL, NULL, ?, 'open', 1)`).run(
+    sqlite.prepare(`INSERT INTO jobs (id, company, title, location, official_url, apply_url, published_at, first_seen_at, employment_type, status, open_generation)
+      VALUES (?, 'Acme', ?, 'Los Angeles, CA', ?, NULL, NULL, ?, 'Internship', 'open', 1)`).run(
       `job-${index}`, `Machine Learning Intern ${index}`, `https://example.com/${index}`, "2026-08-10T12:01:00.000Z",
     );
     sqlite.prepare(`INSERT INTO job_matches VALUES (?, ?, 'resume-keyword-chanyoung', 92, ?, 1, 1, 1, NULL)`).run(

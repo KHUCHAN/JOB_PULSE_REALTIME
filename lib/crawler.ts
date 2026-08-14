@@ -5403,6 +5403,32 @@ const crawlIbm = async (source: CrawlSource, fetcher: typeof fetch): Promise<Sou
     }
   }
   const raw = [first, ...pages.filter((page): page is NonNullable<typeof page> => page !== null)].flatMap((page) => page.hits);
+  // IBM's search index exposes a generic "Intern" title but omits the
+  // authoritative Employment type shown on the rendered detail page. Read a
+  // bounded set of 2027 student detail pages through the same reader fallback
+  // used by other JS-rendered career sites so Co-Op (Fixed Term) cannot be
+  // mislabeled as a summer internship.
+  const detailEmploymentTypes = new Map<string, string>();
+  const detailCandidates = raw.filter((hit) => hit._id && hit._source?.url
+    && /\b2027\b/i.test(hit._source.title ?? "")
+    && /\b(?:intern(?:ship)?|co[\s-]?op|coop)\b/i.test(hit._source.title ?? "")).slice(0, 24);
+  for (let index = 0; index < detailCandidates.length; index += 4) {
+    const details = await Promise.all(detailCandidates.slice(index, index + 4).map(async (hit) => {
+      try {
+        const markdown = await readerMarkdown(hit._source!.url!, fetcher, {
+          maxConcurrent: 2,
+          richLinks: false,
+          timeoutMs: 10_000,
+        });
+        const value = markdown?.match(/\bEmployment type\s*\n+\s*([^\n]+)/i)?.[1]?.trim();
+        const employmentType = normalizeEmploymentType(value);
+        return hit._id && employmentType ? [hit._id, employmentType] as const : null;
+      } catch {
+        return null;
+      }
+    }));
+    for (const detail of details) if (detail) detailEmploymentTypes.set(detail[0], detail[1]);
+  }
   const jobs = raw.flatMap((hit): CrawledJob[] => {
     const value = hit._source;
     if (!hit._id || !value?.title || !value.url) return [];
@@ -5411,13 +5437,15 @@ const crawlIbm = async (source: CrawlSource, fetcher: typeof fetch): Promise<Sou
     const location = value.field_keyword_19 ?? null;
     const arrangementText = value.field_keyword_17 ?? "";
     const programs = classifyJobPrograms(value.title).keys;
+    const employmentType = detailEmploymentTypes.get(hit._id)
+      ?? (programs.includes("coop") ? "Co-op" : programs.includes("internship") ? "Internship" : null);
     return [{
       externalId: hit._id,
       title: value.title,
       company: source.company,
       location,
       arrangement: /remote/i.test(arrangementText) ? "remote" : /hybrid/i.test(arrangementText) ? "hybrid" : /on.?site/i.test(arrangementText) ? "onsite" : "unknown",
-      employmentType: programs.some((key) => key === "internship" || key === "coop") ? "Internship" : null,
+      employmentType,
       summary: plainText(value.description),
       description: plainText(value.description),
       ...(value.field_keyword_08 ? { department: value.field_keyword_08 } : {}),

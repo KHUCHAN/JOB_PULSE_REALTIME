@@ -1,5 +1,6 @@
 import type { CrawledFacet, CrawledJob, CrawlSource } from "./crawler";
-import { normalizeEmploymentType } from "./employment-type";
+import { inferEmploymentTypeFromPrograms, isCoopEmploymentType, normalizeEmploymentType } from "./employment-type";
+import { classifyJobPrograms } from "./job-program-classifier";
 
 type BrowserJobRecord = {
   officialUrl?: unknown;
@@ -89,8 +90,12 @@ export function normalizeBrowserJobSnapshot(
     const region = textValue(raw.region);
     const businessUnit = textValue(raw.businessUnit);
     const department = textValue(raw.department) ?? businessUnit;
-    const employmentType = normalizeEmploymentType(raw.employmentType)
-      ?? (/\b(?:intern(?:ship)?|co[\s-]?op|trainee|industrial placement)\b/i.test(title) ? "Internship" : null);
+    const titlePrograms = classifyJobPrograms(title).keys;
+    const employmentType = isCoopEmploymentType(raw.employmentType) || titlePrograms.includes("coop")
+      ? "Co-op"
+      : normalizeEmploymentType(raw.employmentType)
+      ?? inferEmploymentTypeFromPrograms(titlePrograms)
+      ?? (/\b(?:trainee|industrial placement)\b/i.test(title) ? "Internship" : null);
     const jobRequisitionType = textValue(raw.jobRequisitionType);
     const category = textValue(raw.category);
     const postingType = textValue(raw.postingType);

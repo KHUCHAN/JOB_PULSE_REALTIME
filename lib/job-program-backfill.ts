@@ -1,5 +1,5 @@
 import { classifyJobPrograms } from "./job-program-classifier.ts";
-import { normalizeEmploymentType } from "./employment-type.ts";
+import { inferEmploymentTypeFromPrograms, isCoopEmploymentType, normalizeEmploymentType } from "./employment-type.ts";
 
 type PendingJobRow = { id: string; title: string; employment_type: string | null };
 
@@ -29,7 +29,18 @@ export async function backfillJobPrograms(db: D1Database, requestedLimit: number
     LIMIT ?
   `).bind(limit).all<PendingJobRow>();
   const classifiedAt = new Date().toISOString();
-  const classified = selected.results.map((job) => ({ job, result: classifyJobPrograms(job.title) }));
+  const classified = selected.results.map((job) => {
+    const result = classifyJobPrograms(job.title);
+    const explicitCoop = isCoopEmploymentType(job.employment_type);
+    if (!explicitCoop) return { job, result };
+    return {
+      job,
+      result: {
+        keys: ["coop" as const],
+        evidence: { coop: "employment_type:coop" },
+      },
+    };
+  });
   const ids = selected.results.map((job) => job.id);
 
   for (const chunk of chunksOf(ids, 1_000)) {
@@ -62,7 +73,7 @@ export async function backfillJobPrograms(db: D1Database, requestedLimit: number
   const normalizedJobs = classified.map(({ job, result }) => ({
     id: job.id,
     employmentType: normalizeEmploymentType(job.employment_type)
-      ?? (result.keys.length > 0 ? "Internship" : null),
+      ?? inferEmploymentTypeFromPrograms(result.keys),
   }));
   for (const chunk of chunksOf(normalizedJobs, 1_000)) {
     await db.prepare(`

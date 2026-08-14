@@ -1,4 +1,5 @@
 import { canonicalOpenJobNotExists } from "./job-canonical";
+import { internshipOnlySql } from "./job-program-policy";
 
 export type CodexReviewDecision = "approve" | "reject";
 
@@ -69,12 +70,10 @@ const targetFor = async (
     WHERE mp.id = 'chanyoung-resume'
       AND jm.is_active = 1 AND jm.open_generation = j.open_generation AND j.status = 'open'
       AND ${canonicalOpenJobNotExists("j")}
-      AND EXISTS (
-        SELECT 1 FROM job_topics jt
-        WHERE jt.job_id = j.id AND jt.topic_key IN ('program:internship', 'program:coop')
-      )
+      AND ${internshipOnlySql("j")}
       -- Region, recruiting year, and profile fit are Codex review decisions.
-      -- The server only admits the crawler's internship/co-op candidate set.
+      -- The server admits only the crawler's internship candidate set; co-op
+      -- postings are intentionally ineligible for Chanyoung's email queue.
       AND (j.id = ? OR j.official_url = ?)
     LIMIT 1
   `).bind(jobId || null, officialUrl || null).first<ReviewTargetRow>();
