@@ -1388,6 +1388,53 @@ Wrong description.
     })]);
   });
 
+  it("reads Taboola's complete first-party embedded catalog without browser rendering", async () => {
+    const records = [{
+      id: 44170,
+      title: "Machine Learning Intern 2027",
+      office_text: "New York",
+      office_textual: "New York City, New York, United States",
+      country: "United States",
+      teams_text: "Data & Analytics",
+      greenhouse_job_id: "8025594",
+      body: "<p>Build ranking models and production data systems.</p>",
+      link: "https://www.taboola.com/careers/job/machine-learning-intern-2027",
+    }];
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p4-0361-taboola", company: "Taboola", postingUrl: "https://www.taboola.com/careers", adapter: "custom",
+    }, async (input) => {
+      requests.push(String(input));
+      return new Response(`<script>var jobs = ${JSON.stringify(records)};</script>`);
+    }, new Date());
+
+    expect(requests).toEqual(["https://www.taboola.com/careers/jobs/"]);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "8025594",
+      title: "Machine Learning Intern 2027",
+      location: "New York City, New York, United States",
+      locationCountry: "United States",
+      department: "Data & Analytics",
+      employmentType: "Internship",
+      description: "Build ranking models and production data systems.",
+      officialUrl: "https://www.taboola.com/careers/job/machine-learning-intern-2027",
+    })]);
+  });
+
+  it("does not grant Taboola closure when an embedded identity is unusable", async () => {
+    const records = [
+      { id: 1, title: "Data Scientist", country: "United States", link: "https://www.taboola.com/careers/job/data-scientist" },
+      { id: 2, title: "Unsafe Role", country: "United States", link: "https://example.com/jobs/2" },
+    ];
+    const result = await crawlSource({
+      id: "p4-0361-taboola", company: "Taboola", postingUrl: "https://www.taboola.com/careers", adapter: "custom",
+    }, async () => new Response(`<script>var jobs = ${JSON.stringify(records)};</script>`), new Date());
+
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: false }));
+    expect(result.jobs.map((job) => job.title)).toEqual(["Data Scientist"]);
+  });
+
   it("routes MetLife to its verified Avature SearchJobs listing", async () => {
     const requests: string[] = [];
     const result = await crawlSource({
@@ -7627,6 +7674,74 @@ Wrong description.
     expect(results.map((result) => result.jobs[0].title)).toEqual([
       "AI Intern", "Software Engineering Intern", "Data Science Intern", "Machine Learning Intern", "Data Engineer Intern",
     ]);
+  });
+
+  it("uses the official USAJOBS API for organization search pages", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === "https://www.occ.gov/scripts/careers-openings.js") {
+        return new Response('{"Authorization-Key":"runtime-public-key"}');
+      }
+      if (url.startsWith("https://data.usajobs.gov/api/search?")) {
+        const endpoint = new URL(url);
+        expect(endpoint.searchParams.get("Organization")).toBe("SE00");
+        expect(endpoint.searchParams.get("ResultsPerPage")).toBe("500");
+        expect(new Headers(init?.headers).get("authorization-key")).toBe("runtime-public-key");
+        return Response.json({ SearchResult: {
+          SearchResultCount: 1,
+          SearchResultCountAll: 1,
+          SearchResultItems: [{
+            MatchedObjectId: "870174500",
+            MatchedObjectDescriptor: {
+              PositionID: "SEC-2027-1",
+              PositionTitle: "Data Science Student Trainee 2027",
+              PositionURI: "https://www.usajobs.gov:443/job/870174500",
+              ApplyURI: ["https://www.usajobs.gov/job/870174500/apply"],
+              PositionSchedule: [{ Name: "Full-time" }],
+              PositionLocation: [{ LocationName: "Washington, District of Columbia", CityName: "Washington", CountrySubDivisionCode: "DC", CountryCode: "US" }],
+              PositionStartDate: "2026-08-14T00:00:00Z",
+              PositionEndDate: "2026-09-14T00:00:00Z",
+              UserArea: { Details: { JobSummary: "Analyze market data and enforcement signals." } },
+            },
+          }],
+        } });
+      }
+      return new Response("missing", { status: 404 });
+    };
+    const result = await crawlSource({
+      id: "p2-0160-sec",
+      company: "SEC (Division of Enforcement)",
+      postingUrl: "https://sec.usajobs.gov/search/results/?a=SE00&p=1",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-14T12:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "870174500",
+      requisitionId: "SEC-2027-1",
+      locationCountry: "US",
+      officialUrl: "https://www.usajobs.gov/job/870174500",
+    })]);
+    expect(requests).toHaveLength(2);
+  });
+
+  it("fails USAJOBS closed when the API count exceeds the returned page", async () => {
+    const fetcher: typeof fetch = async (input) => String(input).endsWith("careers-openings.js")
+      ? new Response('{"Authorization-Key":"runtime-public-key"}')
+      : Response.json({ SearchResult: {
+          SearchResultCount: 1,
+          SearchResultCountAll: 2,
+          SearchResultItems: [{ MatchedObjectId: "1", MatchedObjectDescriptor: {
+            PositionID: "SEC-1", PositionTitle: "Analyst", PositionURI: "https://www.usajobs.gov/job/1",
+          } }],
+        } });
+    const result = await crawlSource({
+      id: "p2-0160-sec", company: "SEC", postingUrl: "https://sec.usajobs.gov/search/results/?a=SE00&p=1", adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result).toEqual(expect.objectContaining({ status: "failed", completeListing: false, jobs: [] }));
   });
 
   it("reads OCC's complete official OCC and USAJobs catalogs with the runtime-published key", async () => {

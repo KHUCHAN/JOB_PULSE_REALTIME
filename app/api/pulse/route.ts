@@ -203,6 +203,10 @@ async function recordBrowserCrawlResult(
 ): Promise<{ sourceId: string; status: BrowserCrawlStatus; jobsSeen: number; nextCrawlAt: string }> {
   const source = await browserIngestSource(database, sourceId);
   if (!source) throw new Error("Browser crawl source is unavailable.");
+  const now = new Date();
+  const startedAt = now.toISOString();
+  const nextCrawlAt = new Date(now.getTime() + browserCrawlBackoffHours(status) * 60 * 60 * 1_000).toISOString();
+  const store = new D1CrawlStore(database);
   const previous = await database.prepare(`
     SELECT status, jobs_seen
     FROM crawl_runs
@@ -211,17 +215,21 @@ async function recordBrowserCrawlResult(
     LIMIT 1
   `).bind(sourceId).first<{ status: "succeeded" | "failed" | "blocked"; jobs_seen: number }>();
   if (!shouldRecordBrowserResult(previous?.status ?? null, status)) {
+    // Keep the native adapter's specific error visible, but still advance the
+    // lease so the same unrendered shell cannot starve the browser queue every
+    // two hours. Never shorten a backoff already assigned by the native run.
+    const existingTime = Date.parse(source.nextCrawlAt ?? "");
+    const preservedNextCrawlAt = Number.isFinite(existingTime) && existingTime > Date.parse(nextCrawlAt)
+      ? source.nextCrawlAt!
+      : nextCrawlAt;
+    if (source.nextCrawlAt !== preservedNextCrawlAt) await store.scheduleNext(source.id, preservedNextCrawlAt);
     return {
       sourceId,
       status: previous!.status,
       jobsSeen: previous!.jobs_seen,
-      nextCrawlAt: source.nextCrawlAt ?? new Date().toISOString(),
+      nextCrawlAt: preservedNextCrawlAt,
     };
   }
-  const now = new Date();
-  const startedAt = now.toISOString();
-  const nextCrawlAt = new Date(now.getTime() + browserCrawlBackoffHours(status) * 60 * 60 * 1_000).toISOString();
-  const store = new D1CrawlStore(database);
   const runId = await store.startRun(source, startedAt);
   await store.finishRun(runId, {
     status,

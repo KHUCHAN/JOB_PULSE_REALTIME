@@ -32,7 +32,11 @@ describe("browser fallback result precedence", () => {
     expect(shouldRecordBrowserResult("failed", "succeeded")).toBe(true);
   });
 
-  it.each(["failed", "blocked", null] as const)("keeps a %s source failure visible", (previous) => {
-    expect(shouldRecordBrowserResult(previous, "failed")).toBe(true);
+  it.each(["failed", "blocked"] as const)("preserves a native %s reason when browser recovery also fails", (previous) => {
+    expect(shouldRecordBrowserResult(previous, "failed")).toBe(false);
+  });
+
+  it("records a browser failure only when the source has no prior result", () => {
+    expect(shouldRecordBrowserResult(null, "failed")).toBe(true);
   });
 });

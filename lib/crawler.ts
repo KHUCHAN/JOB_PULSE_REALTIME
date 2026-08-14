@@ -10964,6 +10964,103 @@ const crawlGuardantHealth = async (source: CrawlSource, fetcher: typeof fetch): 
   }
 };
 
+type TaboolaEmbeddedJob = {
+  id?: string | number;
+  title?: string;
+  office_text?: string | null;
+  office_textual?: string | null;
+  country?: string | null;
+  teams_text?: string | null;
+  greenhouse_job_id?: string | number | null;
+  body?: string | null;
+  link?: string | null;
+};
+
+const taboolaJobsFromHtml = (html: string, source: CrawlSource, listingUrl: string): {
+  jobs: CrawledJob[];
+  rawCount: number;
+} | null => {
+  const embedded = embeddedJsonArray(html, "var jobs =");
+  if (!embedded) return null;
+  const raw = embedded.filter((value): value is TaboolaEmbeddedJob => Boolean(value) && typeof value === "object");
+  const listing = new URL(listingUrl);
+  const jobs = uniqueJobs(raw.flatMap((record): CrawledJob[] => {
+    const externalIdValue = record.greenhouse_job_id ?? record.id;
+    const externalId = externalIdValue == null ? "" : String(externalIdValue).trim();
+    const title = plainText(record.title) ?? "";
+    const linked = asText(record.link);
+    if (!externalId || !title || !linked) return [];
+    let official: URL;
+    try {
+      official = new URL(linked, listing);
+    } catch {
+      return [];
+    }
+    if (official.origin !== listing.origin || !/^\/careers\/job\//i.test(official.pathname)) return [];
+    official.hash = "";
+    const description = plainText(record.body);
+    const location = asText(record.office_textual) ?? asText(record.office_text) ?? asText(record.country);
+    const programs = classifyJobPrograms(title).keys;
+    return [{
+      externalId,
+      title,
+      company: source.company,
+      location,
+      arrangement: /\bremote\b/i.test(location ?? "") ? "remote" : "unknown",
+      employmentType: programs.some((key) => key === "internship" || key === "coop") ? "Internship" : null,
+      summary: description,
+      ...(description ? { description } : {}),
+      ...(asText(record.teams_text) ? { department: asText(record.teams_text) } : {}),
+      ...(asText(record.country) ? { locationCountry: asText(record.country) } : {}),
+      requisitionId: externalId,
+      officialUrl: official.href,
+      publishedAt: null,
+    }];
+  }));
+  return { jobs, rawCount: raw.length };
+};
+
+const crawlTaboola = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const listingUrl = "https://www.taboola.com/careers/jobs/";
+  try {
+    const response = await fetchWithTimeout(fetcher, listingUrl, {
+      headers: { accept: "text/html,application/xhtml+xml" },
+    }, true, { attempts: 2, timeoutMs: 12_000 });
+    if (!response.ok) return {
+      status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
+      responseStatus: response.status,
+      completeListing: false,
+      jobs: [],
+      error: `Taboola careers returned HTTP ${response.status}.`,
+    };
+    const parsed = taboolaJobsFromHtml(await response.text(), source, listingUrl);
+    if (!parsed || parsed.rawCount === 0 || parsed.jobs.length === 0) return {
+      status: "failed",
+      responseStatus: response.status,
+      completeListing: false,
+      jobs: [],
+      error: "Taboola careers did not expose a usable embedded catalog.",
+    };
+    const exact = parsed.jobs.length === parsed.rawCount;
+    return {
+      status: "succeeded",
+      responseStatus: response.status,
+      completeListing: exact,
+      jobs: parsed.jobs,
+      resolvedListingUrl: listingUrl,
+      error: exact ? null : "Taboola embedded catalog contained unusable job identities.",
+    };
+  } catch (error) {
+    return {
+      status: "failed",
+      responseStatus: null,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Taboola careers failed.",
+    };
+  }
+};
+
 type OccPositionLocation = {
   LocationName?: unknown;
   CityName?: unknown;
@@ -10997,6 +11094,193 @@ type OccPositionRecord = {
 const activeThrough = (value: unknown, now: Date): boolean => {
   const date = normalizedDate(value);
   return !date || new Date(date).getTime() + 24 * 60 * 60 * 1_000 > now.getTime();
+};
+
+const canonicalUsaJobsUrl = (value: unknown): string | null => {
+  const text = asText(value);
+  if (!text) return null;
+  try {
+    const url = new URL(text);
+    if (url.protocol !== "https:" || url.hostname.toLowerCase() !== "www.usajobs.gov"
+      || !/^\/job\//i.test(url.pathname)) return null;
+    url.port = "";
+    url.hash = "";
+    return url.href;
+  } catch {
+    return null;
+  }
+};
+
+const usaJobsRecordsToJobs = (
+  records: OccPositionRecord[],
+  source: CrawlSource,
+  usaJobsOnly = true,
+): CrawledJob[] => uniqueJobs(
+  records.flatMap((record): CrawledJob[] => {
+    const descriptor = record.MatchedObjectDescriptor;
+    const externalId = asText(record.MatchedObjectId) ?? asText(descriptor?.PositionID);
+    const title = asText(descriptor?.PositionTitle);
+    const officialUrl = canonicalUsaJobsUrl(descriptor?.PositionURI)
+      ?? (usaJobsOnly ? null : asText(descriptor?.PositionURI));
+    if (!descriptor || !externalId || !title || !officialUrl) return [];
+    const locations = Array.isArray(descriptor.PositionLocation)
+      ? descriptor.PositionLocation as OccPositionLocation[]
+      : [];
+    const primary = locations[0];
+    const locationText = (location: OccPositionLocation): string | null => {
+      const fallback = [asText(location.CityName), asText(location.CountrySubDivisionCode), asText(location.CountryCode)]
+        .filter(Boolean)
+        .join(", ");
+      return asText(location.LocationName) ?? (fallback || null);
+    };
+    const schedules = Array.isArray(descriptor.PositionSchedule)
+      ? (descriptor.PositionSchedule as Array<Record<string, unknown>>).map((value) => asText(value.Name)).filter(Boolean)
+      : [];
+    const remuneration = Array.isArray(descriptor.PositionRemuneration)
+      ? descriptor.PositionRemuneration[0] as Record<string, unknown> | undefined
+      : undefined;
+    const details = descriptor.UserArea && typeof descriptor.UserArea === "object"
+      ? (descriptor.UserArea as { Details?: Record<string, unknown> }).Details
+      : undefined;
+    const description = plainText([
+      asText(descriptor.QualificationSummary),
+      asText(details?.JobSummary),
+      asText(details?.MajorDuties),
+      asText(details?.Education),
+      asText(details?.Requirements),
+    ].filter(Boolean).join(" "));
+    const salaryMin = Number(remuneration?.MinimumRange);
+    const salaryMax = Number(remuneration?.MaximumRange);
+    const latitude = Number(primary?.Latitude);
+    const longitude = Number(primary?.Longitude);
+    const applyUrl = Array.isArray(descriptor.ApplyURI)
+      ? descriptor.ApplyURI.map(asText).find((value): value is string => Boolean(value)) ?? null
+      : null;
+    return [{
+      externalId,
+      title,
+      company: source.company,
+      location: primary ? locationText(primary) : null,
+      arrangement: /\bremote|anywhere\b/i.test(locations.map((location) => locationText(location)).join(" ")) ? "remote" : "unknown",
+      employmentType: normalizeEmploymentType(schedules.join(" / ") || asText(descriptor.PositionOfferingType)),
+      summary: description,
+      ...(description ? { description } : {}),
+      ...(locations.length > 1 ? { secondaryLocations: locations.slice(1).map(locationText).filter((value): value is string => Boolean(value)) } : {}),
+      ...(asText(primary?.CityName) ? { locationCity: asText(primary?.CityName) } : {}),
+      ...(asText(primary?.CountrySubDivisionCode) ? { locationState: asText(primary?.CountrySubDivisionCode) } : {}),
+      ...(asText(primary?.CountryCode) ? { locationCountry: asText(primary?.CountryCode) } : {}),
+      ...(asText(primary?.PostalCode) ? { locationPostalCode: asText(primary?.PostalCode) } : {}),
+      ...(Number.isFinite(latitude) ? { latitude } : {}),
+      ...(Number.isFinite(longitude) ? { longitude } : {}),
+      ...(Number.isFinite(salaryMin) ? { salaryMin } : {}),
+      ...(Number.isFinite(salaryMax) ? { salaryMax } : {}),
+      ...(Number.isFinite(salaryMin) || Number.isFinite(salaryMax) ? { salaryCurrency: "USD" } : {}),
+      ...(asText(remuneration?.RateIntervalCode) ? { salaryInterval: asText(remuneration?.RateIntervalCode) } : {}),
+      requisitionId: asText(descriptor.PositionID) ?? externalId,
+      ...(applyUrl ? { applyUrl } : {}),
+      ...(normalizedDate(descriptor.PositionEndDate) ? { validThrough: normalizedDate(descriptor.PositionEndDate) } : {}),
+      officialUrl,
+      publishedAt: normalizedDate(descriptor.PositionStartDate),
+    }];
+  }),
+);
+
+const usaJobsAuthorizationKey = async (fetcher: typeof fetch): Promise<{
+  key: string | null;
+  responseStatus: number | null;
+}> => {
+  try {
+    const response = await fetchWithTimeout(fetcher, "https://www.occ.gov/scripts/careers-openings.js", {
+      headers: { accept: "application/javascript,text/javascript" },
+    }, true, { attempts: 2, timeoutMs: 10_000 });
+    if (!response.ok) return { key: null, responseStatus: response.status };
+    const script = await response.text();
+    return {
+      key: script.match(/["']Authorization-Key["']\s*:\s*["']([^"']+)["']/i)?.[1] ?? null,
+      responseStatus: response.status,
+    };
+  } catch {
+    return { key: null, responseStatus: null };
+  }
+};
+
+const crawlUsaJobs = async (source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> => {
+  const page = new URL(source.postingUrl);
+  const organization = page.searchParams.get("a")?.trim().toUpperCase() ?? "";
+  if (!/^[A-Z0-9]{2,12}$/.test(organization)) return {
+    status: "failed",
+    responseStatus: null,
+    completeListing: false,
+    jobs: [],
+    error: "USAJOBS source did not identify a supported organization code.",
+  };
+  const authorization = await usaJobsAuthorizationKey(fetcher);
+  if (!authorization.key) return {
+    status: authorization.responseStatus != null && isBlockedHttpStatus(authorization.responseStatus) ? "blocked" : "failed",
+    responseStatus: authorization.responseStatus,
+    completeListing: false,
+    jobs: [],
+    error: "USAJOBS public API authorization key was unavailable.",
+  };
+  const endpoint = new URL("https://data.usajobs.gov/api/search");
+  endpoint.searchParams.set("Organization", organization);
+  endpoint.searchParams.set("ResultsPerPage", "500");
+  try {
+    const response = await fetchWithTimeout(fetcher, endpoint, {
+      headers: {
+        accept: "application/json",
+        "authorization-key": authorization.key,
+        "user-agent": "Job Pulse Realtime (kimchany@usc.edu)",
+      },
+    }, true, { attempts: 2, timeoutMs: 12_000 });
+    if (!response.ok) return {
+      status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
+      responseStatus: response.status,
+      completeListing: false,
+      jobs: [],
+      error: `USAJOBS API returned HTTP ${response.status}.`,
+    };
+    const payload = await response.json() as {
+      SearchResult?: {
+        SearchResultCount?: unknown;
+        SearchResultCountAll?: unknown;
+        SearchResultItems?: OccPositionRecord[];
+      };
+    };
+    const items = payload.SearchResult?.SearchResultItems;
+    const pageCount = Number(payload.SearchResult?.SearchResultCount ?? items?.length);
+    const totalCount = Number(payload.SearchResult?.SearchResultCountAll ?? pageCount);
+    if (!Array.isArray(items) || !Number.isInteger(pageCount) || pageCount !== items.length
+      || !Number.isInteger(totalCount) || totalCount !== items.length || totalCount > 500) return {
+      status: "failed",
+      responseStatus: response.status,
+      completeListing: false,
+      jobs: [],
+      error: "USAJOBS API returned an incomplete or malformed catalog.",
+    };
+    const records = items.filter((record) => activeThrough(record.MatchedObjectDescriptor?.PositionEndDate, now));
+    const jobs = usaJobsRecordsToJobs(records, source);
+    const identities = records.map((record) => canonicalUsaJobsUrl(record.MatchedObjectDescriptor?.PositionURI));
+    const exact = identities.every((identity): identity is string => Boolean(identity))
+      && jobs.length === records.length
+      && jobs.length === new Set(identities).size;
+    return {
+      status: exact || jobs.length > 0 ? "succeeded" : "failed",
+      responseStatus: response.status,
+      completeListing: exact,
+      jobs,
+      resolvedListingUrl: source.postingUrl,
+      error: exact ? null : "USAJOBS API returned unusable job identities.",
+    };
+  } catch (error) {
+    return {
+      status: "failed",
+      responseStatus: null,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "USAJOBS API failed.",
+    };
+  }
 };
 
 const crawlOcc = async (source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> => {
@@ -11096,72 +11380,7 @@ const crawlOcc = async (source: CrawlSource, fetcher: typeof fetch, now: Date): 
   }
 
   const records = [...staticRecords, ...usaJobsRecords];
-  const jobs = uniqueJobs(records.flatMap((record): CrawledJob[] => {
-    const descriptor = record.MatchedObjectDescriptor;
-    const externalId = asText(record.MatchedObjectId) ?? asText(descriptor?.PositionID);
-    const title = asText(descriptor?.PositionTitle);
-    const officialUrl = asText(descriptor?.PositionURI);
-    if (!descriptor || !externalId || !title || !officialUrl) return [];
-    const locations = Array.isArray(descriptor.PositionLocation)
-      ? descriptor.PositionLocation as OccPositionLocation[]
-      : [];
-    const primary = locations[0];
-    const locationText = (location: OccPositionLocation): string | null => {
-      const fallback = [asText(location.CityName), asText(location.CountrySubDivisionCode), asText(location.CountryCode)]
-        .filter(Boolean)
-        .join(", ");
-      return asText(location.LocationName) ?? (fallback || null);
-    };
-    const schedules = Array.isArray(descriptor.PositionSchedule)
-      ? (descriptor.PositionSchedule as Array<Record<string, unknown>>).map((value) => asText(value.Name)).filter(Boolean)
-      : [];
-    const remuneration = Array.isArray(descriptor.PositionRemuneration)
-      ? descriptor.PositionRemuneration[0] as Record<string, unknown> | undefined
-      : undefined;
-    const details = descriptor.UserArea && typeof descriptor.UserArea === "object"
-      ? (descriptor.UserArea as { Details?: Record<string, unknown> }).Details
-      : undefined;
-    const description = plainText([
-      asText(descriptor.QualificationSummary),
-      asText(details?.JobSummary),
-      asText(details?.MajorDuties),
-      asText(details?.Education),
-      asText(details?.Requirements),
-    ].filter(Boolean).join(" "));
-    const salaryMin = Number(remuneration?.MinimumRange);
-    const salaryMax = Number(remuneration?.MaximumRange);
-    const latitude = Number(primary?.Latitude);
-    const longitude = Number(primary?.Longitude);
-    const applyUrl = Array.isArray(descriptor.ApplyURI)
-      ? descriptor.ApplyURI.map(asText).find((value): value is string => Boolean(value)) ?? null
-      : null;
-    return [{
-      externalId,
-      title,
-      company: source.company,
-      location: primary ? locationText(primary) : null,
-      arrangement: /\bremote|anywhere\b/i.test(locations.map((location) => locationText(location)).join(" ")) ? "remote" : "unknown",
-      employmentType: normalizeEmploymentType(schedules.join(" / ") || asText(descriptor.PositionOfferingType)),
-      summary: description,
-      ...(description ? { description } : {}),
-      ...(locations.length > 1 ? { secondaryLocations: locations.slice(1).map(locationText).filter((value): value is string => Boolean(value)) } : {}),
-      ...(asText(primary?.CityName) ? { locationCity: asText(primary?.CityName) } : {}),
-      ...(asText(primary?.CountrySubDivisionCode) ? { locationState: asText(primary?.CountrySubDivisionCode) } : {}),
-      ...(asText(primary?.CountryCode) ? { locationCountry: asText(primary?.CountryCode) } : {}),
-      ...(asText(primary?.PostalCode) ? { locationPostalCode: asText(primary?.PostalCode) } : {}),
-      ...(Number.isFinite(latitude) ? { latitude } : {}),
-      ...(Number.isFinite(longitude) ? { longitude } : {}),
-      ...(Number.isFinite(salaryMin) ? { salaryMin } : {}),
-      ...(Number.isFinite(salaryMax) ? { salaryMax } : {}),
-      ...(Number.isFinite(salaryMin) || Number.isFinite(salaryMax) ? { salaryCurrency: "USD" } : {}),
-      ...(asText(remuneration?.RateIntervalCode) ? { salaryInterval: asText(remuneration?.RateIntervalCode) } : {}),
-      requisitionId: asText(descriptor.PositionID) ?? externalId,
-      ...(applyUrl ? { applyUrl } : {}),
-      ...(normalizedDate(descriptor.PositionEndDate) ? { validThrough: normalizedDate(descriptor.PositionEndDate) } : {}),
-      officialUrl,
-      publishedAt: normalizedDate(descriptor.PositionStartDate),
-    }];
-  }));
+  const jobs = usaJobsRecordsToJobs(records, source, false);
   const rawIdentities = records.map((record) => asText(record.MatchedObjectDescriptor?.PositionURI));
   const exact = staticValid && usaJobsValid
     && rawIdentities.every((identity): identity is string => Boolean(identity))
@@ -11634,6 +11853,13 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   if (source.id === "p5-0950-jane-street") return crawlJaneStreet(source, fetcher);
   if (source.id === "p5-0921-guardant-health") return crawlGuardantHealth(source, fetcher);
   if (source.id === "p2-0143-occ") return crawlOcc(source, fetcher, now);
+  if (source.id === "p4-0361-taboola"
+    || (sourcePage.hostname.endsWith("taboola.com") && sourcePage.pathname.startsWith("/careers"))) {
+    return crawlTaboola(source, fetcher);
+  }
+  if (sourcePage.hostname.endsWith("usajobs.gov") && sourcePage.searchParams.has("a")) {
+    return crawlUsaJobs(source, fetcher, now);
+  }
   if (source.id === "p4-0234-capgemini") return crawlCapgemini(source, fetcher);
   if (source.id === "p4-0479-rain-ai" || sourcePage.hostname === "rain.ai") return crawlRainAi(source, fetcher);
   if (source.id === "audit-row-364") return crawlGraybar(source, fetcher);
