@@ -30,6 +30,18 @@ describe("Gmail digest MIME", () => {
     expect(raw).not.toContain("(213) 598-7426");
   });
 
+  it("puts all digest recipients on one MIME message", () => {
+    const raw = decodeBase64Url(buildGmailRawMessage({
+      from: "kimchany@usc.edu",
+      to: "kimchany@usc.edu, lupeter@usc.edu",
+      subject: "Digest",
+      jobs: [],
+      siteUrl: "https://example.com/jobs",
+    }));
+
+    expect(raw).toContain("To: kimchany@usc.edu, lupeter@usc.edu");
+  });
+
   it("rejects header injection and unsafe official links", () => {
     const valid = {
       from: "kimchany@usc.edu",

@@ -18,13 +18,11 @@ describe("resume alert delivery service", () => {
     expect(resumeAlertHttpStatus({ error: "delivery failed" })).toBe(502);
   });
 
-  it("keeps only the failed recipient retryable", async () => {
+  it("sends one digest message to all enabled recipients", async () => {
     const sqlite = alertDatabaseWithMatches(1);
     const responses = [
       new Response(JSON.stringify({ access_token: "access-1" }), { status: 200 }),
       new Response(JSON.stringify({ id: "message-1" }), { status: 200 }),
-      new Response(JSON.stringify({ access_token: "access-2" }), { status: 200 }),
-      new Response("temporary", { status: 503 }),
     ];
     const fetcher = vi.fn(async () => responses.shift()!);
 
@@ -35,11 +33,11 @@ describe("resume alert delivery service", () => {
       fetcher,
     );
 
-    expect(result).toMatchObject({ sent: 1, retryable: 1, authBlocked: 0, failed: 0 });
+    expect(result).toMatchObject({ planned: 1, sent: 1, retryable: 0, authBlocked: 0, failed: 0 });
     expect(sqlite.prepare("SELECT recipient, status FROM notifications ORDER BY recipient").all()).toEqual([
-      { recipient: "kimchany@usc.edu", status: "sent" },
-      { recipient: "lupeter@usc.edu", status: "retryable" },
+      { recipient: "kimchany@usc.edu, lupeter@usc.edu", status: "sent" },
     ]);
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
   it("marks Gmail blocked when authorization is revoked", async () => {
@@ -54,8 +52,7 @@ describe("resume alert delivery service", () => {
     expect(sqlite.prepare("SELECT gmail_state FROM match_profiles").get()).toEqual({ gmail_state: "blocked" });
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(sqlite.prepare("SELECT recipient, status FROM notifications ORDER BY recipient").all()).toEqual([
-      { recipient: "kimchany@usc.edu", status: "auth_blocked" },
-      { recipient: "lupeter@usc.edu", status: "queued" },
+      { recipient: "kimchany@usc.edu, lupeter@usc.edu", status: "auth_blocked" },
     ]);
   });
 

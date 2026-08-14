@@ -10,7 +10,11 @@ describe("resume digest reservation", () => {
     const first = await planResumeDigests(db, "chanyoung-resume", "2026-08-10T12:00:00.000Z", 25);
     const second = await planResumeDigests(db, "chanyoung-resume", "2026-08-10T12:00:00.000Z", 25);
 
-    expect(first).toHaveLength(2);
+    expect(first).toHaveLength(1);
+    expect(first[0]).toMatchObject({
+      recipient: "kimchany@usc.edu, lupeter@usc.edu",
+      jobCount: 2,
+    });
     expect(second).toHaveLength(0);
     expect(sqlite.prepare("SELECT count(*) AS total FROM notification_items").get()).toEqual({ total: 4 });
   });
@@ -23,7 +27,7 @@ describe("resume digest reservation", () => {
       createD1ForSqlite(sqlite), "chanyoung-resume", "2026-08-10T12:00:00.000Z", 25,
     );
 
-    expect(planned).toHaveLength(2);
+    expect(planned).toHaveLength(1);
   });
 
   it("splits more than 25 jobs into deterministic parts up to the four-message cap", async () => {
@@ -32,16 +36,15 @@ describe("resume digest reservation", () => {
       createD1ForSqlite(sqlite), "chanyoung-resume", "2026-08-10T12:00:00.000Z", 25,
     );
 
-    expect(planned.map((item) => item.jobCount)).toEqual([25, 25, 25, 25]);
-    expect(sqlite.prepare("SELECT count(*) AS total FROM notification_items").get()).toEqual({ total: 100 });
+    expect(planned.map((item) => item.jobCount)).toEqual([25, 25, 10]);
+    expect(sqlite.prepare("SELECT count(*) AS total FROM notification_items").get()).toEqual({ total: 120 });
     expect(sqlite.prepare(
       "SELECT recipient, count(*) AS total FROM notifications GROUP BY recipient ORDER BY recipient",
     ).all()).toEqual([
-      { recipient: "kimchany@usc.edu", total: 2 },
-      { recipient: "lupeter@usc.edu", total: 2 },
+      { recipient: "kimchany@usc.edu, lupeter@usc.edu", total: 3 },
     ]);
     expect(sqlite.prepare("SELECT next_digest_at FROM match_profiles").get()).toEqual({
-      next_digest_at: "2026-08-10T12:00:00.000Z",
+      next_digest_at: "2026-08-10T14:00:00.000Z",
     });
   });
 
@@ -62,8 +65,10 @@ describe("resume digest reservation", () => {
 
     const claimed = await claimDueNotifications(db, "chanyoung-resume", "2026-08-10T12:00:01.000Z", 4);
 
-    expect(claimed).toHaveLength(2);
-    expect(claimed.every((notification) => notification.jobs[0]?.officialUrl === "https://example.com/1")).toBe(true);
+    expect(claimed).toHaveLength(1);
+    expect(claimed[0].recipient).toBe("kimchany@usc.edu, lupeter@usc.edu");
+    expect(claimed[0].jobs).toHaveLength(1);
+    expect(claimed[0].jobs[0]?.officialUrl).toBe("https://example.com/1");
   });
 
   it("clears unsent backlog before switching to insert-only notifications", async () => {

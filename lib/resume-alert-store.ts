@@ -16,7 +16,7 @@ export interface ClaimedNotification extends PlannedNotification {
 
 type LeaseRow = { keyword_id: string };
 type RecipientRow = { recipient: string };
-type MatchRow = { id: string };
+type PendingMatchRow = { id: string; pending_recipients: string };
 type ClaimedRow = { id: string; recipient: string; job_count: number; attempt_count: number };
 type DigestRow = {
   notification_id: string;
@@ -39,6 +39,17 @@ const evidenceLabels = (value: string): string[] => {
     const parsed = JSON.parse(value) as unknown;
     return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string")
       .map((item) => item.split("|")[1] || item).slice(0, 4) : [];
+  } catch {
+    return [];
+  }
+};
+
+const pendingRecipients = (value: string, allowed: string[]): string[] => {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    const present = new Set(parsed.filter((item): item is string => typeof item === "string"));
+    return allowed.filter((recipient) => present.has(recipient));
   } catch {
     return [];
   }
@@ -81,45 +92,61 @@ export const planResumeDigests = async (
     `).bind(profileId).all<RecipientRow>();
     const boundedPageSize = Math.max(1, Math.min(25, Math.trunc(pageSize)));
     const boundedMessageLimit = Math.max(1, Math.min(4, Math.trunc(maxMessages)));
-    for (const [recipientIndex, { recipient }] of recipients.results.entries()) {
+    const enabledRecipients = recipients.results.map((row) => row.recipient);
+    const matches = await database.prepare(`
+      SELECT jm.id, json_group_array(pr.recipient) AS pending_recipients
+      FROM job_matches jm
+      JOIN jobs j ON j.id = jm.job_id
+      JOIN profile_recipients pr ON pr.profile_id = ? AND pr.enabled = 1
+      LEFT JOIN notification_items ni
+        ON ni.job_match_id = jm.id AND ni.recipient = pr.recipient
+      WHERE jm.keyword_id = ? AND jm.is_active = 1 AND jm.notification_eligible = 1
+        AND jm.open_generation = j.open_generation AND j.status = 'open'
+        AND ${canonicalOpenJobNotExists("j")}
+        AND NOT ${jobHasCoopSql("j")}
+        AND ni.id IS NULL
+      GROUP BY jm.id, jm.score, j.published_at, j.first_seen_at
+      ORDER BY jm.score DESC, COALESCE(j.published_at, j.first_seen_at) DESC, jm.id
+      LIMIT ?
+    `).bind(profileId, keywordId, boundedPageSize * boundedMessageLimit + 1).all<PendingMatchRow>();
+
+    // A normal digest has the exact same pending recipient set for every job,
+    // so all recipients share one MIME message. If a prior partial delivery
+    // left only one recipient pending, keep that subset separate to avoid
+    // sending a duplicate job to a recipient who already received it.
+    const groups = new Map<string, { recipients: string[]; matches: string[] }>();
+    for (const match of matches.results) {
+      const groupRecipients = pendingRecipients(match.pending_recipients, enabledRecipients);
+      if (groupRecipients.length === 0) continue;
+      const key = groupRecipients.join("\u001f");
+      const group = groups.get(key) ?? { recipients: groupRecipients, matches: [] };
+      group.matches.push(match.id);
+      groups.set(key, group);
+    }
+
+    for (const group of groups.values()) {
       const remainingMessageSlots = boundedMessageLimit - planned.length;
       if (remainingMessageSlots <= 0) {
         hasRemaining = true;
         break;
       }
-      const remainingRecipients = recipients.results.length - recipientIndex;
-      const fairMessageSlots = Math.max(1, Math.floor(remainingMessageSlots / remainingRecipients));
-      const matches = await database.prepare(`
-        SELECT jm.id
-        FROM job_matches jm
-        JOIN jobs j ON j.id = jm.job_id
-        WHERE jm.keyword_id = ? AND jm.is_active = 1 AND jm.notification_eligible = 1
-          AND jm.open_generation = j.open_generation AND j.status = 'open'
-          AND ${canonicalOpenJobNotExists("j")}
-          AND NOT ${jobHasCoopSql("j")}
-          AND NOT EXISTS (
-            SELECT 1 FROM notification_items ni
-            WHERE ni.job_match_id = jm.id AND ni.recipient = ?
-          )
-        ORDER BY jm.score DESC, COALESCE(j.published_at, j.first_seen_at) DESC, jm.id
-        LIMIT ?
-      `).bind(keywordId, recipient, boundedPageSize * fairMessageSlots + 1).all<MatchRow>();
-      if (matches.results.length === 0) continue;
-      const selected = matches.results.slice(0, boundedPageSize * fairMessageSlots);
-      if (matches.results.length > selected.length) hasRemaining = true;
+      const capacity = boundedPageSize * remainingMessageSlots;
+      const selected = group.matches.slice(0, capacity);
+      if (selected.length < group.matches.length) hasRemaining = true;
       for (let index = 0; index < selected.length; index += boundedPageSize) {
         const part = selected.slice(index, index + boundedPageSize);
         const notificationId = crypto.randomUUID();
-        const items = part.map((match) => ({
-          id: crypto.randomUUID(), notificationId, jobMatchId: match.id, recipient,
-        }));
+        const recipientHeader = group.recipients.join(", ");
+        const items = part.flatMap((jobMatchId) => group.recipients.map((recipient) => ({
+          id: crypto.randomUUID(), notificationId, jobMatchId, recipient,
+        })));
         await database.batch([
           database.prepare(`
             INSERT INTO notifications (
               id, keyword_id, channel, recipient, status, job_count, scheduled_at,
               attempt_count, created_at
             ) VALUES (?, ?, 'email', ?, 'queued', ?, ?, 0, ?)
-          `).bind(notificationId, keywordId, recipient, part.length, now, now),
+          `).bind(notificationId, keywordId, recipientHeader, part.length, now, now),
           database.prepare(`
             INSERT OR IGNORE INTO notification_items (id, notification_id, job_match_id, recipient)
             SELECT json_extract(value, '$.id'), json_extract(value, '$.notificationId'),
@@ -128,7 +155,7 @@ export const planResumeDigests = async (
           `).bind(JSON.stringify(items)),
           database.prepare(`
             UPDATE notifications
-            SET job_count = (SELECT count(*) FROM notification_items WHERE notification_id = ?)
+            SET job_count = (SELECT count(DISTINCT job_match_id) FROM notification_items WHERE notification_id = ?)
             WHERE id = ?
           `).bind(notificationId, notificationId),
           database.prepare(`
@@ -138,10 +165,7 @@ export const planResumeDigests = async (
             )
           `).bind(notificationId, notificationId),
         ]);
-        planned.push({ id: notificationId, recipient, jobCount: part.length });
-      }
-      if (planned.length >= boundedMessageLimit && recipientIndex < recipients.results.length - 1) {
-        hasRemaining = true;
+        planned.push({ id: notificationId, recipient: recipientHeader, jobCount: part.length });
       }
     }
     completed = true;
@@ -182,7 +206,7 @@ export const claimDueNotifications = async (
   if (claimed.results.length === 0) return [];
   const ids = claimed.results.map((row) => row.id);
   const jobs = await database.prepare(`
-    SELECT ni.notification_id, j.company, j.title, j.location, j.official_url,
+    SELECT DISTINCT ni.notification_id, j.company, j.title, j.location, j.official_url,
            j.published_at, j.first_seen_at, jm.score, jm.matched_terms
     FROM notification_items ni
     JOIN job_matches jm ON jm.id = ni.job_match_id
