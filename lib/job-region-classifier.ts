@@ -33,6 +33,10 @@ const usStateCodes = new Set(
   "AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC".split(" "),
 );
 
+const canadianProvinceCodes = new Set(
+  "AB BC MB NB NL NS NT NU ON PE QC SK YT".split(" "),
+);
+
 const usStateNames = [
   "alabama", "alaska", "arizona", "arkansas", "california", "colorado", "connecticut",
   "delaware", "florida", "georgia", "hawaii", "idaho", "illinois", "indiana", "iowa",
@@ -52,6 +56,9 @@ const nonUsCountryNames = [
   "korea", "taiwan", "australia", "new zealand", "brazil", "argentina", "chile", "colombia",
   "peru", "israel", "united arab emirates", "saudi arabia", "south africa", "philippines",
   "malaysia", "indonesia", "thailand", "vietnam", "india", "karnataka", "bengaluru", "bangalore",
+  "ontario", "quebec", "alberta", "british columbia", "manitoba", "new brunswick",
+  "newfoundland and labrador", "nova scotia", "prince edward island", "saskatchewan",
+  "northwest territories", "nunavut", "yukon",
 ];
 
 const normalize = (value: unknown): string => typeof value === "string"
@@ -78,8 +85,9 @@ const rawLocation = (value: unknown): RegionEvidence => {
   if ([...usCountryAliases].some((country) => containsPhrase(location, country))) return "us";
   if (nonUsCountryNames.some((country) => containsPhrase(location, country))) return "non_us";
   if (usStateNames.some((state) => containsPhrase(location, state))) return "us";
-  const contextualCode = original.match(/,\s*([A-Z]{2})(?:\s*[,-]|\s+\d{5}|$)/);
+  const contextualCode = original.match(/,\s*([A-Z]{2})(?:\s*[,-]|\s+[A-Z]\d[A-Z]\s*\d[A-Z]\d|\s+\d{5}|$)/);
   if (contextualCode && usStateCodes.has(contextualCode[1])) return "us";
+  if (contextualCode && canadianProvinceCodes.has(contextualCode[1])) return "non_us";
   return null;
 };
 

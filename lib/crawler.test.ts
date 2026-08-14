@@ -997,6 +997,30 @@ Wrong description.
     })]);
   });
 
+  it("filters a configured large Radancy catalog after extracting its real card metadata", async () => {
+    const html = [
+      '<script src="https://tbcdn.talentbrew.com/js/client/search.js"></script>',
+      '<section data-total-job-results="2" data-total-results="2" data-total-pages="1" data-records-per-page="15" data-ajax-post-url="/en/search-jobs/resultspost">',
+      '<li><a class="search-results__job-title-link" href="/en/job/uxbridge/data-engineer/733/1001" data-job-id="1001">Data Engineer</a><span class="search-results__job-location">Uxbridge, MA</span><span class="search-results__job-date-posted">08/14/2026</span></li>',
+      '<li><a class="search-results__job-title-link" href="/en/job/mississauga/data-engineer/733/1002" data-job-id="1002">Data Engineer Canada</a><span class="search-results__job-location">Mississauga, ON</span><span class="search-results__job-date-posted">08/13/2026</span></li>',
+      '<li class="recommended-link"><a href="/en/job/uxbridge/data-engineer/733/1001">Data Engineer</a></li>',
+      '</section>',
+    ].join("");
+    const result = await crawlSource({
+      id: "p5-0662-mckesson", company: "McKesson", postingUrl: "https://careers.mckesson.com/en/search-jobs", adapter: "custom",
+    }, async () => new Response(html), new Date());
+
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "1001",
+      title: "Data Engineer",
+      location: "Uxbridge, MA",
+      locationCountry: "US",
+      sourcePostedText: "08/14/2026",
+      publishedAt: "2026-08-14T00:00:00.000Z",
+    })]);
+  });
+
   it("accepts Avature SearchJobs pages and paginates the complete official listing", async () => {
     const page = (offset: number) => [
       '<meta name="avature.portal.page" content="SearchJobs">',
@@ -1019,6 +1043,37 @@ Wrong description.
     expect(requests).toContain("https://jobs.acme.avature.net/en_US/careers/SearchJobs?jobOffset=1&jobRecordsPerPage=1");
     expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
     expect(result.jobs.map((job) => job.externalId)).toEqual(["100", "101"]);
+  });
+
+  it("extracts Avature card metadata without letting CTA links replace titles and keeps the US scope", async () => {
+    const card = (id: string, title: string, location: string) => [
+      '<article class="article article--result article--non-toggle">',
+      '<div class="article__header__text"><h3 class="article__header__text__title title">',
+      `<a class="link link_result" href="/en_US/careers/JobDetail/${title.replaceAll(" ", "-")}/${id}">${title}</a></h3>`,
+      `<div class="article__header__text__subtitle"><span class="list-item-location">${location}</span>`,
+      `<span class="list-item-id">Role ID ${id}</span><span class="list-item-workerType">Regular Employee</span>`,
+      '<span class="list-item-department">Data &amp; Analytics</span><span class="list-item-posted">14-Aug-2026</span></div></div>',
+      `<div class="article__footer"><a class="button" href="/en_US/careers/JobDetail/${title.replaceAll(" ", "-")}/${id}">More Information</a></div>`,
+      '</article>',
+    ].join("");
+    const html = [
+      '<meta name="avature.portal.page" content="SearchJobs"><p>1-2 of 2 results</p>',
+      card("214230", "Site Reliability Engineer III", "Hyderabad, India"),
+      card("214231", "Data Engineer", "Austin, TX, United States"),
+    ].join("");
+    const result = await crawlSource({
+      id: "p5-0589-electronic-arts", company: "Electronic Arts (EA)", postingUrl: "https://jobs.ea.com/en_US/careers/SearchJobs", adapter: "custom",
+    }, async () => new Response(html), new Date());
+
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "214231",
+      requisitionId: "214231",
+      title: "Data Engineer",
+      location: "Austin, TX, United States",
+      department: "Data & Analytics",
+      sourcePostedText: "14-Aug-2026",
+    })]);
   });
 
   it("checkpoints large Avature catalogs below the source request budget", async () => {
@@ -1195,6 +1250,36 @@ Wrong description.
 
     expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: false }));
     expect(result.jobs).toHaveLength(1);
+  });
+
+  it("keeps only US, mixed, and unknown jobs for configured large catalogs", async () => {
+    const locations = [
+      "Marlborough, MA, United States",
+      "Paris, France",
+      "New York, NY, United States; Toronto, Canada",
+      "Remote",
+    ];
+    const page = (index: number) => [
+      "<h2>4 Jobs found</h2>",
+      '<div class="result-list-box row"><div class="col-sm-10">',
+      `<h4>Data Role ${index}</h4><div class="basicinfo"><span>${locations[index - 1]}</span></div>Build products.`,
+      `</div><div class="col"><a class="lnkJobDetails" href="/search/30000000000000${index}/role-${index}"><span>View details</span></a></div></div>`,
+      '<div><ul class="pagination"></ul></div>',
+    ].join("");
+    const result = await crawlSource({
+      id: "p5-0935-hologic", company: "Hologic", postingUrl: "https://careers.hologic.com/", adapter: "custom",
+    }, async (input) => {
+      const pageNumber = Number(new URL(String(input)).searchParams.get("page") ?? "1");
+      return new Response(page(pageNumber));
+    }, new Date());
+
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs.map((job) => job.location)).toEqual([
+      "Marlborough, MA, United States",
+      "New York, NY, United States; Toronto, Canada",
+      "Remote",
+    ]);
+    expect(result.facets).toBeUndefined();
   });
 
   it("extracts Innovaccer's embedded official Workable cards without granting closure", async () => {

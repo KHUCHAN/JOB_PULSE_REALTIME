@@ -26,6 +26,9 @@ describe("classifyJobRegion", () => {
     "Singapore, Marina Bay",
     "Hong Kong, Cheung Kong Center",
     "Toronto, Ontario, Canada",
+    "Mississauga, Ontario",
+    "Mississauga, ON",
+    "Vancouver, BC V6B 1A1",
     "Paris, France",
   ])("recognizes a trustworthy non-U.S. raw location: %s", (location) => {
     expect(classifyJobRegion({ location })).toBe("non_us");

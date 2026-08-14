@@ -1,6 +1,7 @@
 import { jobsFromBrowserAnchors, type BrowserAnchor } from "./browser-job-extractor.ts";
 import { normalizeEmploymentType, workdayBulletFields } from "./employment-type.ts";
 import { classifyJobPrograms } from "./job-program-classifier.ts";
+import { classifyJobRegion } from "./job-region-classifier.ts";
 import { careerCandidates, detectUrlAdapter, isPublicAtsCatalogUrl, isSafeCareerRecommendation } from "./url-remediation.ts";
 
 export type CrawlSource = {
@@ -97,6 +98,44 @@ type VerifiedSourceFeed = {
   listingUrl: string;
   adapter: CrawlSource["adapter"];
 };
+
+// These verified multinational catalogs are large enough that retaining the
+// clearly non-US portion adds substantial write and review cost. Keep this
+// source-level rather than result-size based: paged adapters may return small
+// checkpoint segments, and changing scope between segments would make stale
+// closure nondeterministic. Unknown and mixed/global roles remain visible so
+// an incomplete location never causes a potentially relevant US role to drop.
+const US_SCOPED_LARGE_CATALOGS = new Set([
+  "audit-row-378", // JLL
+  "legacy-row-878", // Vertiv
+  "p2-0032-citi",
+  "p2-0041-jpmorgan-chase",
+  "p2-0048-metlife",
+  "p2-0064-unitedhealth-group",
+  "p4-0285-google",
+  "p4-0325-oracle",
+  "p4-0333-publicis-sapient",
+  "p4-0387-wipro",
+  "p4-0428-exl-service",
+  "p4-0436-genpact",
+  "p5-0523-abb-us",
+  "p5-0524-abbott-laboratories",
+  "p5-0538-amazon-2",
+  "p5-0545-anduril-industries",
+  "p5-0589-electronic-arts",
+  "p5-0662-mckesson",
+  "p5-0693-optumrx",
+  "p5-0694-oracle-health",
+  "p5-0699-pepsico",
+  "p5-0712-raytheon",
+  "p5-0724-schneider-electric-us",
+  "p5-0752-tiktok",
+  "p5-0860-coherent",
+  "p5-0932-hilton",
+  "p5-0935-hologic",
+  "p5-0972-marriott-international",
+  "p5-0984-micron-technology",
+]);
 
 // These source pages render their ATS client-side (or challenge generic
 // server requests), so the public feed cannot be rediscovered reliably on
@@ -3625,27 +3664,62 @@ const crawlCornerstone = async (
 const radancyJobsFromHtml = (html: string, source: CrawlSource): CrawledJob[] => {
   const structured = [...html.matchAll(/<li\b[^>]*>([\s\S]*?)<\/li>/gi)].flatMap((match): CrawledJob[] => {
     const block = match[0];
-    const anchor = anchorsFromHtml(block).find(({ href }) => /\/job\/(?:[^/?#]+\/)+\d+\/\d+\/?(?:[?#]|$)/i.test(href));
-    const title = plainText(block.match(/<h2\b[^>]*>([\s\S]*?)<\/h2>/i)?.[1]);
+    const anchor = anchorsFromHtml(block).find(({ href, text }) =>
+      /\/job\/(?:[^/?#]+\/)+\d+\/\d+\/?(?:[?#]|$)/i.test(href) && Boolean(text.trim()));
+    const title = icimsText(block.match(/<h2\b[^>]*>([\s\S]*?)<\/h2>/i)?.[1]) ?? icimsText(anchor?.text);
     if (!anchor || !title) return [];
-    const officialUrl = new URL(anchor.href, source.postingUrl).href;
-    const externalId = block.match(/\bdata-job-id=["']([^"']+)["']/i)?.[1] ?? null;
-    const requisitionId = plainText(block.match(/<span\b[^>]*class=["'][^"']*\bjob-id\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1]);
-    const location = plainText(block.match(/<span\b[^>]*class=["'][^"']*\bjob-location\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1]);
+    const official = new URL(anchor.href, source.postingUrl);
+    if (official.origin !== new URL(source.postingUrl).origin) return [];
+    const externalId = block.match(/\bdata-job-id=["']([^"']+)["']/i)?.[1]
+      ?? official.pathname.split("/").filter(Boolean).at(-1)
+      ?? null;
+    const requisitionId = icimsText(block.match(/<span\b[^>]*class=["'][^"']*\bjob-id\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1]);
+    const location = icimsText(
+      block.match(/<span\b[^>]*class=["']search-results__job-location["'][^>]*>([\s\S]*?)<\/span>/i)?.[1]
+        ?? block.match(/<span\b[^>]*class=["'][^"']*\bjob-location\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1],
+    );
+    const posted = icimsText(
+      block.match(/<span\b[^>]*class=["']search-results__job-date-posted["'][^>]*>([\s\S]*?)<\/span>/i)?.[1],
+    );
+    const locationParts = location?.split(",").map((value) => value.trim()).filter(Boolean) ?? [];
+    const locationState = locationParts.length > 1 && /^[A-Z]{2}$/.test(locationParts.at(-1)!)
+      ? locationParts.at(-1)!
+      : null;
+    const region = classifyJobRegion({ location, locationCity: locationParts[0], locationState });
+    const programs = classifyJobPrograms(title).keys;
     return [{
       externalId,
       title,
       company: source.company,
       location,
       arrangement: /\bremote\b/i.test(location ?? "") ? "remote" : "unknown",
-      employmentType: null,
+      employmentType: programs.some((key) => key === "internship" || key === "coop") ? "Internship" : null,
       summary: null,
       ...(requisitionId ? { requisitionId } : {}),
-      officialUrl,
-      publishedAt: null,
+      ...(locationParts.length > 1 ? { locationCity: locationParts[0] } : {}),
+      ...(locationState ? { locationState } : {}),
+      ...(region === "us" ? { locationCountry: "US" } : {}),
+      ...(posted ? { sourcePostedText: posted } : {}),
+      officialUrl: official.href,
+      publishedAt: normalizedUsDate(posted),
     }];
   });
-  return structured.length > 0 ? uniqueJobs(structured) : jobsFromBrowserAnchors(anchorsFromHtml(html), source);
+  if (structured.length === 0) return jobsFromBrowserAnchors(anchorsFromHtml(html), source);
+  const richness = (job: CrawledJob): number => [
+    job.location,
+    job.locationCity,
+    job.locationState,
+    job.locationCountry,
+    job.requisitionId,
+    job.sourcePostedText,
+    job.publishedAt,
+  ].filter(Boolean).length;
+  const preferred = new Map<string, CrawledJob>();
+  for (const job of structured) {
+    const previous = preferred.get(job.officialUrl);
+    if (!previous || richness(job) > richness(previous)) preferred.set(job.officialUrl, job);
+  }
+  return [...preferred.values()];
 };
 
 const talentBrewSearchResultsUrl = (html: string, pageUrl: string): string | null => {
@@ -4233,6 +4307,62 @@ const crawlTalentHubPages = async (
   };
 };
 
+const avatureJobsFromHtml = (html: string, source: CrawlSource): CrawledJob[] => {
+  const sourceOrigin = new URL(source.postingUrl).origin;
+  const jobFromAnchor = (href: string, titleText: string, block = ""): CrawledJob[] => {
+    let officialUrl: URL;
+    try {
+      officialUrl = new URL(href, source.postingUrl);
+      if (officialUrl.origin !== sourceOrigin || !/\/JobDetail\//i.test(officialUrl.pathname)) return [];
+    } catch {
+      return [];
+    }
+    const externalId = officialUrl.pathname.split("/").filter(Boolean).at(-1) ?? null;
+    const title = icimsText(titleText);
+    if (!externalId || !title || /^(?:apply|more information|learn more|view details?)$/i.test(title)) return [];
+    const field = (className: string): string | null => icimsText(block.match(new RegExp(
+      `<span\\b[^>]*class=["'][^"']*\\b${className}\\b[^"']*["'][^>]*>([\\s\\S]*?)<\\/span>`, "i",
+    ))?.[1]);
+    const location = field("list-item-location");
+    const requisitionId = field("list-item-(?:ref|id)")?.replace(/^(?:job|role)\s+id\s*:?\s*/i, "") ?? externalId;
+    const posted = field("list-item-posted");
+    const workerType = field("list-item-workerType");
+    const department = field("list-item-department");
+    const programs = classifyJobPrograms(title).keys;
+    return [{
+      externalId,
+      title,
+      company: source.company,
+      location,
+      arrangement: /\bremote\b/i.test(location ?? "") ? "remote" : "unknown",
+      employmentType: programs.some((key) => key === "internship" || key === "coop")
+        ? "Internship"
+        : normalizeEmploymentType(workerType),
+      summary: null,
+      ...(department ? { department } : {}),
+      requisitionId,
+      ...(posted ? { sourcePostedText: posted } : {}),
+      officialUrl: officialUrl.href,
+      publishedAt: normalizedDate(posted),
+    }];
+  };
+
+  const cards = [...html.matchAll(
+    /<article\b[^>]*class=["'][^"']*\barticle--result\b[^"']*["'][^>]*>([\s\S]*?)<\/article>/gi,
+  )].flatMap((match): CrawledJob[] => {
+    const block = match[0];
+    const titleBlock = block.match(/<h3\b[^>]*class=["'][^"']*\barticle__header__text__title\b[^"']*["'][^>]*>([\s\S]*?)<\/h3>/i)?.[1];
+    const anchor = titleBlock ? anchorsFromHtml(titleBlock).find(({ href }) => /\/JobDetail\//i.test(href)) : null;
+    return anchor ? jobFromAnchor(anchor.href, anchor.text, block) : [];
+  });
+  if (cards.length > 0) return uniqueJobs(cards);
+
+  // Older tenants and tests expose a flat anchor list. Keep that compatible,
+  // but ignore duplicate call-to-action anchors so the button label can never
+  // overwrite the actual job title for the same official URL.
+  return uniqueJobs(anchorsFromHtml(html).flatMap(({ href, text }) => jobFromAnchor(href, text)));
+};
+
 const crawlAvaturePages = async (
   source: CrawlSource,
   html: string,
@@ -4247,33 +4377,7 @@ const crawlAvaturePages = async (
   const openEndedTotal = range[3] === "+";
   if (!Number.isFinite(pageSize) || pageSize < 1 || !Number.isFinite(total)) return null;
 
-  const jobsOnPage = (pageHtml: string) => uniqueJobs(anchorsFromHtml(pageHtml)
-    .filter(({ href, text }) => /\/JobDetail\//i.test(href) && Boolean(text.trim()))
-    .flatMap(({ href, text }): CrawledJob[] => {
-      let officialUrl: URL;
-      try {
-        officialUrl = new URL(href, source.postingUrl);
-        if (officialUrl.origin !== new URL(source.postingUrl).origin) return [];
-      } catch {
-        return [];
-      }
-      const externalId = officialUrl.pathname.split("/").filter(Boolean).at(-1) ?? null;
-      const title = icimsText(text);
-      if (!externalId || !title) return [];
-      const programs = classifyJobPrograms(title).keys;
-      return [{
-        externalId,
-        title,
-        company: source.company,
-        location: null,
-        arrangement: "unknown",
-        employmentType: programs.some((key) => key === "internship" || key === "coop") ? "Internship" : null,
-        summary: null,
-        requisitionId: externalId,
-        officialUrl: officialUrl.href,
-        publishedAt: null,
-      }];
-    }));
+  const jobsOnPage = (pageHtml: string) => avatureJobsFromHtml(pageHtml, source);
   const jobs = jobsOnPage(html);
   const paginationHref = anchorsFromHtml(html).find(({ href }) => /[?&]jobOffset=\d+/i.test(href))?.href;
   if (total <= pageSize) return {
@@ -10935,7 +11039,26 @@ const enrichProgramJobDetails = async (
   return { ...result, jobs: enriched };
 };
 
+const applyLargeCatalogRegionScope = (result: SourceCrawlResult, source: CrawlSource): SourceCrawlResult => {
+  if (result.status !== "succeeded" || !US_SCOPED_LARGE_CATALOGS.has(source.id)) return result;
+  const jobs = result.jobs.filter((job) => classifyJobRegion({
+    location: job.location,
+    locationCity: job.locationCity,
+    locationState: job.locationState,
+    locationCountry: job.locationCountry,
+    secondaryLocations: job.secondaryLocations,
+    sourceCompany: source.company,
+    sourcePostingUrl: result.resolvedListingUrl ?? source.postingUrl,
+  }) !== "non_us");
+  // Native facet counts describe the unscoped global catalog. Dropping them
+  // lets complete crawls derive accurate US-scoped facets, while incomplete
+  // checkpoint segments leave the last authoritative facet snapshot intact.
+  return { ...result, jobs, facets: undefined };
+};
+
 export async function crawlSource(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
   const budgetedFetcher = crawlBudgetedFetcher(fetcher);
-  return enrichProgramJobDetails(await crawlSourceBase(source, budgetedFetcher, now), source, budgetedFetcher, now);
+  const scoped = applyLargeCatalogRegionScope(await crawlSourceBase(source, budgetedFetcher, now), source);
+  const enriched = await enrichProgramJobDetails(scoped, source, budgetedFetcher, now);
+  return applyLargeCatalogRegionScope(enriched, source);
 }
