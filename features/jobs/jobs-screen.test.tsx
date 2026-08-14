@@ -141,12 +141,13 @@ describe("JobsScreen", () => {
     expect(screen.getAllByText(/First seen Aug/).length).toBeGreaterThan(0);
   });
 
-  it("presents Company and Role as separate desktop columns and mobile fields", async () => {
+  it("presents Company, Role, and Region as separate desktop columns and mobile fields", async () => {
     render(<FixtureProvider><JobsScreen initialQuery="" /></FixtureProvider>);
     const table = await screen.findByRole("table", { name: "Matching jobs" });
 
     expect(within(table).getByRole("columnheader", { name: "Company" })).toBeInTheDocument();
     expect(within(table).getByRole("columnheader", { name: "Role" })).toBeInTheDocument();
+    expect(within(table).getByRole("columnheader", { name: "Region" })).toBeInTheDocument();
     expect(screen.getAllByLabelText(/^Company:/).length).toBeGreaterThan(0);
     expect(screen.getAllByLabelText(/^Role:/).length).toBeGreaterThan(0);
   });

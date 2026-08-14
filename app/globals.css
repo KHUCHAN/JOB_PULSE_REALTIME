@@ -418,8 +418,9 @@ a { color: inherit; }
 .jobs-table td:first-child { min-width: 180px; }
 .jobs-table td:nth-child(2) { min-width: 245px; }
 .jobs-table td:nth-child(3) { min-width: 145px; }
-.jobs-table td:nth-child(5) { min-width: 145px; }
-.jobs-table td:nth-child(6) { white-space: nowrap; }
+.jobs-table td:nth-child(4) { min-width: 112px; white-space: nowrap; }
+.jobs-table td:nth-child(6) { min-width: 145px; }
+.jobs-table td:nth-child(7) { white-space: nowrap; }
 .job-company-cell { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .job-company-cell > span:last-child { color: var(--ink); font-size: 11px; font-weight: 700; line-height: 1.35; }
 .job-role-cell strong { display: block; line-height: 1.4; }

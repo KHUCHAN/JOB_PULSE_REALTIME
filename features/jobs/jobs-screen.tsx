@@ -174,13 +174,14 @@ export function JobsScreen({
           <>
             <div className="table-wrap desktop-jobs-table">
               <table className="data-table jobs-table" aria-label="Matching jobs">
-                <thead><tr><th>Company</th><th>Role</th><th>Location</th><th>Arrangement</th><th>Matched</th><th>Posted</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr></thead>
+                <thead><tr><th>Company</th><th>Role</th><th>Location</th><th>Region</th><th>Arrangement</th><th>Matched</th><th>Posted</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr></thead>
                 <tbody>
                   {jobs.map((job) => (
                     <tr key={job.id}>
                       <td><div className="job-company-cell"><CompanyLogo company={job.company} /><span>{job.company}</span></div></td>
                       <td className="job-role-cell"><strong>{job.title}</strong>{job.areaKeys.length ? <span className="job-area-list">{job.areaKeys.map((area) => <span className="job-area-badge" key={area}>{areaLabels[area]}</span>)}</span> : null}</td>
-                      <td><span className="job-location-meta"><span>{job.location}</span><span className="job-region-badge" aria-label={`Region: ${regionLabels[job.locationRegion]}`}>{regionLabels[job.locationRegion]}</span></span></td>
+                      <td>{job.location}</td>
+                      <td><span className="job-region-badge" aria-label={`Region: ${regionLabels[job.locationRegion]}`}>{regionLabels[job.locationRegion]}</span></td>
                       <td>{job.arrangement}</td>
                       <td>{job.resumeMatchScore !== null ? <><b className="match-score resume-score">{job.resumeMatchScore}% Match</b><span>{job.resumeMatchEvidence.slice(0, 2).join(" · ")}</span></> : <span className="muted-value">—</span>}</td>
                       <td><span className="job-posting-time">{postingTiming(job)}</span></td>

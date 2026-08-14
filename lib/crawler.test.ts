@@ -2992,6 +2992,7 @@ Wrong description.
         salaryMax: 140000,
         salaryCurrency: "USD",
         salaryInterval: "YEAR",
+        requisitionId: "fraud-7",
         validThrough: "2026-09-01T00:00:00.000Z",
         officialUrl: "https://careers.example.com/jobs/fraud-7",
         publishedAt: "2026-08-07T00:00:00.000Z",
@@ -4304,7 +4305,7 @@ Wrong description.
 
   it("enriches program-like Phenom listings from their official Workday detail endpoint", async () => {
     const calls: string[] = [];
-    const officialUrl = "https://motorolasolutions.wd5.myworkdayjobs.com/Careers/job/Chicago-IL/Supply-Chain-Applied-AI-Engineering-Intern_R67461";
+    const officialUrl = "https://motorolasolutions.wd5.myworkdayjobs.com/Careers/job/Chicago-IL/Supply-Chain-Applied-AI-Engineering-Intern_R67461/apply";
     const fetcher: typeof fetch = async (input) => {
       const url = String(input);
       calls.push(url);
@@ -4341,6 +4342,49 @@ Wrong description.
       publishedAt: "2026-08-07T00:00:00.000Z",
     })]);
     expect(calls.some((url) => url.includes("/wday/cxs/motorolasolutions/Careers/job/"))).toBe(true);
+    expect(calls.some((url) => url.includes("/wday/cxs/") && url.endsWith("/apply"))).toBe(false);
+  });
+
+  it("enriches a program job from a first-party vanity detail page without replacing its canonical URL", async () => {
+    const jobUrl = "https://jobs.citi.com/job/new-york/services-summer-analyst-program-new-york-city-us-2027/287/93724104768";
+    const workdayApply = "https://citi.wd5.myworkdayjobs.com/2/job/New-York-New-York-United-States/Services---Summer-Analyst-Program--New-York-City---US--2027_26945311/apply";
+    const title = "Services - Summer Analyst Program, New York City - US, 2027";
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url === jobUrl) {
+        return new Response(`
+          <script type="application/ld+json">${JSON.stringify({
+            "@context": "https://schema.org", "@type": "JobPosting", title,
+            url: jobUrl, identifier: "26945311", datePosted: "2026-04-08",
+            employmentType: "Apprentice", description: "A".repeat(500),
+            jobLocation: { address: { addressLocality: "New York", addressRegion: "NY", addressCountry: "US" } },
+          })}</script>
+          <a href="${workdayApply}">Apply now</a>
+        `, { status: 200, headers: { "content-type": "text/html" } });
+      }
+      return new Response(`<script>phApp.ddo = ${JSON.stringify({ eagerLoadRefineSearch: { data: { totalHits: 1, jobs: [{
+        title, jobId: "26945311", applyUrl: jobUrl,
+      }] } } })};</script>`, { status: 200 });
+    };
+
+    const result = await crawlSource({
+      id: "p2-0032-citi", company: "Citi",
+      postingUrl: "https://jobs.citi.com/search-jobs", adapter: "custom",
+    }, fetcher, new Date("2026-08-14T08:00:00Z"));
+
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "26945311",
+      officialUrl: jobUrl,
+      applyUrl: workdayApply,
+      requisitionId: "26945311",
+      location: "New York, NY, US",
+      locationCity: "New York",
+      locationState: "NY",
+      locationCountry: "US",
+      employmentType: "Internship; Apprenticeship",
+      publishedAt: "2026-04-08T00:00:00.000Z",
+      description: "A".repeat(500),
+    })]);
   });
 
   it("rotates a bounded Workday detail enrichment window instead of blocking the listing crawl", async () => {

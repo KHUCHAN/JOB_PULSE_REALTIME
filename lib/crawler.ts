@@ -4020,6 +4020,7 @@ const jsonLdJob = (value: JsonLdValue, source: CrawlSource): CrawledJob | null =
     ...(address && asText(address.addressCountry) ? { locationCountry: asText(address.addressCountry) } : {}),
     ...(address && asText(address.postalCode) ? { locationPostalCode: asText(address.postalCode) } : {}),
     ...salaryFields(value.baseSalary),
+    ...(externalId ? { requisitionId: externalId } : {}),
     ...(normalizedDate(value.validThrough) ? { validThrough: normalizedDate(value.validThrough) } : {}),
     officialUrl,
     publishedAt: normalizedDate(value.datePosted),
@@ -9277,7 +9278,10 @@ const workdayDetailCandidates = (jobUrl: string): string[] => {
     ? segments[jobIndex - 1]
     : null;
   const sites = [...new Set([explicitSite, "External", "Careers"].filter((site): site is string => Boolean(site)))];
-  const suffix = segments.slice(jobIndex + 1).map(encodeURIComponent).join("/");
+  const detailSegments = segments.slice(jobIndex + 1);
+  if (detailSegments.at(-1)?.toLocaleLowerCase() === "apply") detailSegments.pop();
+  if (detailSegments.length === 0) return [];
+  const suffix = detailSegments.map(encodeURIComponent).join("/");
   const tenants = [...new Set([tenantMatch[1], tenantMatch[1].replaceAll("-", "_")])];
   return tenants.flatMap((tenant) => sites.map((site) => new URL(
     `/wday/cxs/${encodeURIComponent(tenant)}/${encodeURIComponent(site)}/job/${suffix}`,
@@ -9298,8 +9302,107 @@ const combinedEmploymentType = (job: CrawledJob, timeType: unknown): string | nu
   return values.join("; ") || null;
 };
 
-const enrichWorkdayProgramJobs = async (
+const jobIdentityText = (value: string | null | undefined): string => (value ?? "")
+  .normalize("NFKD")
+  .replace(/\p{M}+/gu, "")
+  .toLocaleLowerCase()
+  .replace(/[^a-z0-9]+/g, " ")
+  .trim();
+
+const mergeProgramJobDetail = (
+  job: CrawledJob,
+  detail: Partial<CrawledJob>,
+  applyUrl?: string | null,
+): CrawledJob => ({
+  ...job,
+  location: detail.location ?? job.location,
+  arrangement: detail.arrangement && detail.arrangement !== "unknown" ? detail.arrangement : job.arrangement,
+  employmentType: combinedEmploymentType(job, detail.employmentType),
+  summary: detail.summary ?? job.summary,
+  description: detail.description ?? job.description ?? null,
+  responsibilities: detail.responsibilities ?? job.responsibilities ?? null,
+  qualifications: detail.qualifications ?? job.qualifications ?? null,
+  skills: detail.skills?.length ? detail.skills : job.skills,
+  department: detail.department ?? job.department,
+  team: detail.team ?? job.team,
+  businessUnit: detail.businessUnit ?? job.businessUnit,
+  jobFamily: detail.jobFamily ?? job.jobFamily,
+  jobFunction: detail.jobFunction ?? job.jobFunction,
+  industry: detail.industry ?? job.industry,
+  office: detail.office ?? job.office,
+  secondaryLocations: detail.secondaryLocations?.length ? detail.secondaryLocations : job.secondaryLocations,
+  locationCity: detail.locationCity ?? job.locationCity,
+  locationState: detail.locationState ?? job.locationState,
+  locationCountry: detail.locationCountry ?? job.locationCountry,
+  locationPostalCode: detail.locationPostalCode ?? job.locationPostalCode,
+  latitude: detail.latitude ?? job.latitude,
+  longitude: detail.longitude ?? job.longitude,
+  salaryMin: detail.salaryMin ?? job.salaryMin,
+  salaryMax: detail.salaryMax ?? job.salaryMax,
+  salaryCurrency: detail.salaryCurrency ?? job.salaryCurrency,
+  salaryInterval: detail.salaryInterval ?? job.salaryInterval,
+  benefits: detail.benefits ?? job.benefits,
+  educationRequirements: detail.educationRequirements ?? job.educationRequirements,
+  experienceRequirements: detail.experienceRequirements ?? job.experienceRequirements,
+  experienceLevel: detail.experienceLevel ?? job.experienceLevel,
+  shiftSchedule: detail.shiftSchedule ?? job.shiftSchedule,
+  travelRequirements: detail.travelRequirements ?? job.travelRequirements,
+  securityClearance: detail.securityClearance ?? job.securityClearance,
+  languages: detail.languages?.length ? detail.languages : job.languages,
+  requisitionId: detail.requisitionId ?? detail.externalId ?? job.requisitionId ?? job.externalId,
+  applyUrl: applyUrl ?? detail.applyUrl ?? job.applyUrl,
+  sourceUpdatedAt: detail.sourceUpdatedAt ?? job.sourceUpdatedAt,
+  validThrough: detail.validThrough ?? job.validThrough,
+  publishedAt: detail.publishedAt ?? job.publishedAt,
+  // The listing URL is the stable deduplication key. Detail enrichment may
+  // resolve an ATS apply URL, but must never replace the canonical job URL.
+  officialUrl: job.officialUrl,
+});
+
+const matchingJsonLdDetail = (html: string, source: CrawlSource, job: CrawledJob): CrawledJob | null => {
+  const details = jsonLdScripts(html).flatMap(jobPostingNodes)
+    .map((node) => jsonLdJob(node, source))
+    .filter((detail): detail is CrawledJob => detail !== null);
+  const externalIdentity = job.requisitionId ?? job.externalId;
+  return details.find((detail) => Boolean(
+    externalIdentity && (detail.requisitionId === externalIdentity || detail.externalId === externalIdentity),
+  )) ?? details.find((detail) => jobIdentityText(detail.title) === jobIdentityText(job.title)) ?? null;
+};
+
+const officialApplyUrl = (html: string, pageUrl: string): string | null => anchorsFromHtml(html)
+  .flatMap(({ href, text }) => {
+    try {
+      const url = new URL(href, pageUrl);
+      if (!/^https:$/.test(url.protocol)) return [];
+      const isWorkdayApply = /\.myworkdayjobs\.com$/i.test(url.hostname) && /\/apply\/?$/i.test(url.pathname);
+      const isExplicitApply = url.origin === new URL(pageUrl).origin
+        && /\bapply(?: now| externally)?\b/i.test(text)
+        && /\b(?:job|career|apply)\b/i.test(url.href);
+      return isWorkdayApply || isExplicitApply ? [url.href] : [];
+    } catch {
+      return [];
+    }
+  })
+  .at(0) ?? null;
+
+// Only hosts verified to publish trustworthy JobPosting JSON-LD belong here.
+// Keeping this explicit avoids spending one detail request on every internship
+// returned by already-rich ATS feeds.
+const VERIFIED_JSON_LD_DETAIL_HOSTS = new Set([
+  "jobs.citi.com",
+]);
+
+const supportsJsonLdDetailEnrichment = (jobUrl: string): boolean => {
+  try {
+    return VERIFIED_JSON_LD_DETAIL_HOSTS.has(new URL(jobUrl).hostname.toLocaleLowerCase());
+  } catch {
+    return false;
+  }
+};
+
+const enrichProgramJobDetails = async (
   result: SourceCrawlResult,
+  source: CrawlSource,
   fetcher: typeof fetch,
   now: Date,
 ): Promise<SourceCrawlResult> => {
@@ -9308,8 +9411,14 @@ const enrichWorkdayProgramJobs = async (
   const targets = result.jobs.flatMap((job, index) => {
     const indexedAsProgram = classifyJobPrograms(job.title).keys.length > 0
       || normalizeEmploymentType(job.employmentType)?.split(" / ").includes("Internship");
-    const candidates = indexedAsProgram ? workdayDetailCandidates(job.officialUrl) : [];
-    return candidates.length > 0 ? [{ index, candidates }] : [];
+    const hasLocation = Boolean(job.location && !/^(?:location not specified|multiple locations)$/i.test(job.location.trim()));
+    const needsDetail = !hasLocation
+      || !job.description || job.description.trim().length < 100
+      || !(job.requisitionId ?? job.externalId)
+      || !job.publishedAt;
+    if (!indexedAsProgram || !needsDetail) return [];
+    const candidates = workdayDetailCandidates(job.officialUrl);
+    return [{ index, candidates }];
   });
   const enrichmentStart = targets.length === 0
     ? 0
@@ -9322,6 +9431,7 @@ const enrichWorkdayProgramJobs = async (
       );
 
   const enrichOne = async ({ index, candidates }: { index: number; candidates: string[] }): Promise<void> => {
+    const job = enriched[index];
     for (const endpoint of candidates) {
       try {
         const response = await fetchWithTimeout(fetcher, endpoint, undefined, true, { attempts: 1, timeoutMs: 4_000 });
@@ -9329,24 +9439,33 @@ const enrichWorkdayProgramJobs = async (
         const payload = await response.json() as WorkdayDetailPayload;
         const info = payload.jobPostingInfo;
         if (!info || typeof info !== "object") continue;
-        const job = enriched[index];
         const description = plainText(asText(info.jobDescription));
         const additionalLocations = Array.isArray(info.additionalLocations)
           ? info.additionalLocations.flatMap((value) => asText(value) ?? [])
           : [];
-        enriched[index] = {
-          ...job,
-          employmentType: combinedEmploymentType(job, info.timeType),
-          description: description ?? job.description ?? null,
-          requisitionId: asText(info.jobReqId) ?? job.requisitionId ?? job.externalId,
-          location: asText(info.location) ?? job.location,
+        enriched[index] = mergeProgramJobDetail(job, {
+          employmentType: asText(info.timeType),
+          description,
+          requisitionId: asText(info.jobReqId),
+          location: asText(info.location),
           ...(additionalLocations.length > 0 ? { secondaryLocations: additionalLocations } : {}),
-          publishedAt: normalizedDate(info.startDate) ?? job.publishedAt,
-        };
+          publishedAt: normalizedDate(info.startDate),
+        });
         return;
       } catch {
         // Detail enrichment is optional; the verified listing remains usable.
       }
+    }
+    if (!supportsJsonLdDetailEnrichment(job.officialUrl)) return;
+    try {
+      const response = await fetchWithTimeout(fetcher, job.officialUrl, undefined, true, { attempts: 1, timeoutMs: 4_000 });
+      if (!response.ok) return;
+      const html = await response.text();
+      const detail = matchingJsonLdDetail(html, source, job);
+      if (!detail) return;
+      enriched[index] = mergeProgramJobDetail(job, detail, officialApplyUrl(html, response.url || job.officialUrl));
+    } catch {
+      // A detail page is optional and must never make its verified listing fail.
     }
   };
   await Promise.all(selectedTargets.map(enrichOne));
@@ -9355,5 +9474,5 @@ const enrichWorkdayProgramJobs = async (
 
 export async function crawlSource(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
   const budgetedFetcher = crawlBudgetedFetcher(fetcher);
-  return enrichWorkdayProgramJobs(await crawlSourceBase(source, budgetedFetcher, now), budgetedFetcher, now);
+  return enrichProgramJobDetails(await crawlSourceBase(source, budgetedFetcher, now), source, budgetedFetcher, now);
 }
