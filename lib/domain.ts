@@ -134,7 +134,7 @@ export interface SourceRecord {
   company: string;
   postingUrl: string | null;
   talentUrl: string | null;
-  adapter: "greenhouse" | "lever" | "workday" | "ashby" | "icims" | "phenom" | "dayforce" | "custom";
+  adapter: "greenhouse" | "lever" | "workday" | "ashby" | "icims" | "phenom" | "dayforce" | "smartrecruiters" | "custom";
   health: SourceHealth;
   httpStatus: number | null;
   lastError?: string | null;

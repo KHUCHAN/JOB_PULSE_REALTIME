@@ -97,6 +97,28 @@ describe("normalizeAuditRecord", () => {
     expect(normalized.adapter).toBe("dayforce");
   });
 
+  it("promotes SmartRecruiters boards even when the imported adapter is stale", () => {
+    const normalized = normalizeAuditRecord({
+      masterRow: 904,
+      Company: "SmartRecruiters Example",
+      "Ledger ID": "p5-0904-smartrecruiters-example",
+      postingUrl: "https://careers.smartrecruiters.com/SmartRecruitersExample",
+      talentPoolUrl: null,
+      channel: "official careers",
+      resumeUpload: "미확인",
+      jobAlerts: "미확인",
+      verification: "CAREER_ONLY",
+      confidence: "HIGH",
+      recommendedAction: "CAREER_ONLY",
+      evidenceUrl: "https://careers.smartrecruiters.com/SmartRecruitersExample",
+      evidenceNote: "verified",
+      checkedAt: "2026-08-14",
+      adapter: "workday",
+    });
+
+    expect(normalized.adapter).toBe("smartrecruiters");
+  });
+
   it("does not classify a company careers page from an unrelated Talent form host", () => {
     const normalized = normalizeAuditRecord({
       masterRow: 901,

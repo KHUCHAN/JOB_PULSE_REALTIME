@@ -23,7 +23,7 @@ export interface NormalizedSourceRecord {
   postingUrl: string | null;
   talentUrl: string | null;
   channel: string;
-  adapter: "greenhouse" | "lever" | "workday" | "ashby" | "icims" | "phenom" | "dayforce" | "custom";
+  adapter: "greenhouse" | "lever" | "workday" | "ashby" | "icims" | "phenom" | "dayforce" | "smartrecruiters" | "custom";
   verification: string;
   confidence: string;
   resumeUpload: "available" | "job_only" | "unknown";
@@ -52,6 +52,7 @@ function detectAdapter(...urls: Array<string | null>): NormalizedSourceRecord["a
     if (hostname.includes("icims")) return "icims";
     if (hostname.includes("phenom") || href.includes("jointalentcommunity")) return "phenom";
     if (hostname === "dayforcehcm.com" || hostname.endsWith(".dayforcehcm.com")) return "dayforce";
+    if (hostname === "smartrecruiters.com" || hostname.endsWith(".smartrecruiters.com")) return "smartrecruiters";
   }
   return "custom";
 }
@@ -73,9 +74,11 @@ export function normalizeAuditRecord(record: AuditSourceRecord): NormalizedSourc
     postingUrl,
     talentUrl,
     channel: record.channel,
-    adapter: record.adapter === "custom" && detectedAdapter !== "custom"
+    adapter: detectedAdapter === "dayforce" || detectedAdapter === "smartrecruiters"
       ? detectedAdapter
-      : record.adapter ?? detectedAdapter,
+      : record.adapter === "custom" && detectedAdapter !== "custom"
+        ? detectedAdapter
+        : record.adapter ?? detectedAdapter,
     verification: record.verification.toLowerCase(),
     confidence: record.confidence.toLowerCase(),
     resumeUpload,

@@ -8,7 +8,7 @@ export type CrawlSource = {
   id: string;
   company: string;
   postingUrl: string;
-  adapter: "greenhouse" | "lever" | "workday" | "ashby" | "icims" | "phenom" | "dayforce" | "custom";
+  adapter: "greenhouse" | "lever" | "workday" | "ashby" | "icims" | "phenom" | "dayforce" | "smartrecruiters" | "custom";
   crawlPageCursor?: number;
   crawlCycleStartedAt?: string | null;
   crawlPreviousCycleStartedAt?: string | null;
@@ -107,12 +107,14 @@ type VerifiedSourceFeed = {
 // an incomplete location never causes a potentially relevant US role to drop.
 const US_SCOPED_LARGE_CATALOGS = new Set([
   "audit-row-378", // JLL
+  "legacy-row-128", // Wabtec
   "legacy-row-878", // Vertiv
   "p2-0032-citi",
   "p2-0041-jpmorgan-chase",
   "p2-0048-metlife",
   "p2-0064-unitedhealth-group",
   "p4-0285-google",
+  "p4-0313-nbcuniversal",
   "p4-0325-oracle",
   "p4-0333-publicis-sapient",
   "p4-0387-wipro",
@@ -123,6 +125,7 @@ const US_SCOPED_LARGE_CATALOGS = new Set([
   "p5-0538-amazon-2",
   "p5-0543-amgen",
   "p5-0545-anduril-industries",
+  "p5-0565-canva",
   "p5-0589-electronic-arts",
   "p5-0662-mckesson",
   "p5-0693-optumrx",
@@ -131,6 +134,7 @@ const US_SCOPED_LARGE_CATALOGS = new Set([
   "p5-0712-raytheon",
   "p5-0724-schneider-electric-us",
   "p5-0752-tiktok",
+  "p5-0803-arista-networks",
   "p5-0860-coherent",
   "p5-0932-hilton",
   "p5-0935-hologic",
@@ -344,7 +348,7 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
   "p5-1029-psi-cro": {
     discovered: { kind: "smartrecruiters", endpoint: "https://api.smartrecruiters.com/v1/companies/PSICRO/postings" },
     listingUrl: "https://careers.smartrecruiters.com/PSICRO",
-    adapter: "custom",
+    adapter: "smartrecruiters",
   },
   "p2-0146-oportun": {
     discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/oportun/jobs?content=true" },
@@ -414,12 +418,12 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
   "p4-0313-nbcuniversal": {
     discovered: { kind: "smartrecruiters", endpoint: "https://api.smartrecruiters.com/v1/companies/NBCUniversal3/postings" },
     listingUrl: "https://careers.smartrecruiters.com/NBCUniversal3",
-    adapter: "custom",
+    adapter: "smartrecruiters",
   },
   "legacy-row-128": {
     discovered: { kind: "smartrecruiters", endpoint: "https://api.smartrecruiters.com/v1/companies/Wabtec/postings" },
     listingUrl: "https://careers.smartrecruiters.com/Wabtec",
-    adapter: "custom",
+    adapter: "smartrecruiters",
   },
 };
 
@@ -613,16 +617,47 @@ type AshbyJob = {
 type SmartRecruitersJob = {
   id?: string;
   name?: string;
+  uuid?: string;
+  jobAdId?: string;
   ref?: string;
   refNumber?: string;
-  location?: { city?: string; region?: string; country?: string; postalCode?: string; latitude?: number; longitude?: number; remote?: boolean; hybrid?: boolean };
+  company?: { identifier?: string; name?: string };
+  location?: {
+    city?: string;
+    region?: string;
+    country?: string;
+    postalCode?: string;
+    latitude?: number | string;
+    longitude?: number | string;
+    remote?: boolean;
+    hybrid?: boolean;
+    fullLocation?: string;
+  };
   typeOfEmployment?: { label?: string };
   department?: { label?: string };
   function?: { label?: string };
   industry?: { label?: string };
   experienceLevel?: { label?: string };
   language?: { code?: string; label?: string };
+  customField?: Array<{ fieldLabel?: string; valueLabel?: string }>;
+  visibility?: string;
   releasedDate?: string;
+};
+
+type SmartRecruitersPayload = {
+  offset?: number;
+  limit?: number;
+  totalFound?: number;
+  content?: SmartRecruitersJob[];
+};
+
+type SmartRecruitersDetailPayload = SmartRecruitersJob & {
+  active?: boolean;
+  postingUrl?: string;
+  applyUrl?: string;
+  jobAd?: {
+    sections?: Record<string, { title?: string; text?: string }>;
+  };
 };
 
 type JibeJob = {
@@ -1394,7 +1429,246 @@ const phenomSearchResultsUrl = (html: string, pageUrl: string): string | null =>
   return page.href;
 };
 
+const smartRecruitersEndpointIdentity = (value: string): { companyCode: string; endpoint: string } | null => {
+  try {
+    const url = new URL(value);
+    const match = url.pathname.match(/^\/v1\/companies\/([^/]+)\/postings\/?$/i);
+    if (url.protocol !== "https:" || url.hostname.toLocaleLowerCase() !== "api.smartrecruiters.com" || !match) return null;
+    const companyCode = decodeURIComponent(match[1]);
+    if (!/^[a-z0-9_-]+$/i.test(companyCode)) return null;
+    return {
+      companyCode,
+      endpoint: `https://api.smartrecruiters.com/v1/companies/${encodeURIComponent(companyCode)}/postings`,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const smartRecruitersJobUrl = (companyCode: string, job: SmartRecruitersJob): string => {
+  const titleSlug = (job.name ?? "")
+    .normalize("NFKD")
+    .replace(/\p{M}+/gu, "")
+    .toLocaleLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const identity = `${job.id}${titleSlug ? `-${titleSlug}` : ""}`;
+  return `https://jobs.smartrecruiters.com/${encodeURIComponent(companyCode)}/${encodeURIComponent(identity)}`;
+};
+
+const smartRecruitersNumber = (value: unknown): number | undefined => {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const smartRecruitersCustomValue = (job: SmartRecruitersJob, pattern: RegExp): string | null =>
+  job.customField?.find(({ fieldLabel, valueLabel }) => pattern.test(fieldLabel ?? "") && Boolean(valueLabel?.trim()))?.valueLabel?.trim() ?? null;
+
+const normalizeSmartRecruitersJob = (source: CrawlSource, companyCode: string, job: SmartRecruitersJob): CrawledJob => {
+  const title = job.name!.trim();
+  const programKeys = classifyJobPrograms(title).keys;
+  const reportedEmployment = job.typeOfEmployment?.label?.trim() || null;
+  const employmentType = programKeys.includes("coop")
+    ? "Co-op"
+    : programKeys.includes("internship")
+      ? "Internship"
+      : normalizeEmploymentType(reportedEmployment) ?? reportedEmployment;
+  const locationCountry = job.location?.country
+    ?? smartRecruitersCustomValue(job, /^(?:country\/region|work location country)$/i);
+  const locationCity = job.location?.city
+    ?? smartRecruitersCustomValue(job, /^work location city$/i);
+  const locationState = job.location?.region
+    ?? smartRecruitersCustomValue(job, /^work location state$/i);
+  const locationPostalCode = job.location?.postalCode
+    ?? smartRecruitersCustomValue(job, /^(?:work location )?(?:zip|postal) code$/i);
+  const location = job.location?.fullLocation?.trim()
+    || [locationCity, locationState, locationCountry].filter(Boolean).join(", ")
+    || null;
+  const latitude = smartRecruitersNumber(job.location?.latitude);
+  const longitude = smartRecruitersNumber(job.location?.longitude);
+  const businessUnit = smartRecruitersCustomValue(job, /^(?:business unit|business group|business segment)$/i);
+  const team = smartRecruitersCustomValue(job, /^(?:team|sub business|brands?)$/i);
+  const office = smartRecruitersCustomValue(job, /^work location name$/i);
+  return {
+    externalId: job.id!,
+    title,
+    company: source.company,
+    location,
+    arrangement: job.location?.remote === true
+      ? "remote"
+      : job.location?.hybrid === true
+        ? "hybrid"
+        : job.location?.remote === false && job.location?.hybrid === false
+          ? "onsite"
+          : "unknown",
+    employmentType,
+    summary: null,
+    ...(job.refNumber ? { requisitionId: job.refNumber } : {}),
+    ...(job.department?.label ? { department: job.department.label } : {}),
+    ...(job.function?.label ? { jobFunction: job.function.label } : {}),
+    ...(job.industry?.label ? { industry: job.industry.label } : {}),
+    ...(job.experienceLevel?.label ? { experienceLevel: job.experienceLevel.label } : {}),
+    ...(businessUnit ? { businessUnit } : {}),
+    ...(team ? { team } : {}),
+    ...(office ? { office } : {}),
+    ...(locationCity ? { locationCity } : {}),
+    ...(locationState ? { locationState } : {}),
+    ...(locationCountry ? { locationCountry } : {}),
+    ...(locationPostalCode ? { locationPostalCode } : {}),
+    ...(latitude != null ? { latitude } : {}),
+    ...(longitude != null ? { longitude } : {}),
+    ...(job.language?.label ? { languages: [job.language.label] } : {}),
+    officialUrl: smartRecruitersJobUrl(companyCode, job),
+    publishedAt: normalizedDate(job.releasedDate),
+  };
+};
+
+async function crawlSmartRecruiters(
+  source: CrawlSource,
+  endpointValue: string,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult> {
+  const identity = smartRecruitersEndpointIdentity(endpointValue);
+  if (!identity) return {
+    status: "failed",
+    responseStatus: null,
+    completeListing: false,
+    jobs: [],
+    error: "SmartRecruiters endpoint identity was invalid.",
+  };
+
+  const pageSize = 100;
+  // Leave source-wide request headroom for one structural retry plus the
+  // bounded internship detail enrichment that follows the listing crawl.
+  const maxPagesPerPass = 19;
+  let responseStatus: number | null = null;
+  const fetchPage = async (page: number): Promise<{ total: number; jobs: SmartRecruitersJob[]; identities: string[] }> => {
+    const offset = (page - 1) * pageSize;
+    const url = new URL(identity.endpoint);
+    url.searchParams.set("limit", String(pageSize));
+    url.searchParams.set("offset", String(offset));
+    const response = await fetchWithTimeout(fetcher, url, {
+      headers: { accept: "application/json" },
+    }, false, { attempts: 1, timeoutMs: 12_000 });
+    responseStatus = response.status;
+    if (!response.ok) {
+      throw Object.assign(new Error(`SmartRecruiters returned HTTP ${response.status}.`), { responseStatus: response.status });
+    }
+    const payload = await response.json() as SmartRecruitersPayload;
+    const total = payload.totalFound;
+    const jobs = payload.content;
+    const expected = Number.isInteger(total) && total! >= 0
+      ? Math.min(pageSize, Math.max(0, total! - offset))
+      : -1;
+    if (payload.offset !== offset || payload.limit !== pageSize || !Array.isArray(jobs)
+      || jobs.length !== expected) {
+      throw Object.assign(new Error("SmartRecruiters returned an incomplete or malformed catalog page."), { responseStatus: response.status });
+    }
+    const usable = jobs.every((job) => {
+      if (typeof job.id !== "string" || !job.id.trim() || typeof job.name !== "string" || !job.name.trim()) return false;
+      if (job.visibility && job.visibility.toLocaleUpperCase() !== "PUBLIC") return false;
+      if (job.company?.identifier && job.company.identifier.toLocaleLowerCase() !== identity.companyCode.toLocaleLowerCase()) return false;
+      if (!job.ref) return true;
+      try {
+        const reference = new URL(job.ref);
+        return reference.origin === "https://api.smartrecruiters.com"
+          && reference.pathname.toLocaleLowerCase() === `/v1/companies/${identity.companyCode}/postings/${job.id}`.toLocaleLowerCase();
+      } catch {
+        return false;
+      }
+    });
+    const identities = jobs.map((job) => job.id!);
+    if (!usable || new Set(identities).size !== identities.length) {
+      throw Object.assign(new Error("SmartRecruiters returned duplicate or unusable job identities."), { responseStatus: response.status });
+    }
+    return { total: total!, jobs, identities };
+  };
+
+  try {
+    const first = await fetchPage(1);
+    if (first.total === 0) {
+      const confirmation = await fetchPage(1);
+      if (confirmation.total !== 0 || confirmation.jobs.length !== 0) {
+        throw new Error("SmartRecruiters empty catalog was not stable across confirmation requests.");
+      }
+      return {
+        status: "succeeded",
+        responseStatus,
+        completeListing: true,
+        jobs: [],
+        pagination: { nextPage: 1, cycleComplete: true, totalPages: 1 },
+        resolvedListingUrl: `https://careers.smartrecruiters.com/${encodeURIComponent(identity.companyCode)}`,
+        error: null,
+      };
+    }
+
+    const totalPages = Math.ceil(first.total / pageSize);
+    const requestedStart = Math.max(1, Math.trunc(source.crawlPageCursor ?? 1));
+    const startPage = requestedStart <= totalPages ? requestedStart : 1;
+    const endPage = Math.min(totalPages, startPage + maxPagesPerPass - 1);
+    const pageNumbers = Array.from({ length: endPage - startPage + 1 }, (_, index) => startPage + index);
+    type Page = { total: number; jobs: SmartRecruitersJob[]; identities: string[] };
+    const loadPages = async (concurrent: boolean): Promise<Page[]> => {
+      const pages: Page[] = [];
+      for (let index = 0; index < pageNumbers.length; index += concurrent ? 4 : 1) {
+        const batch = pageNumbers.slice(index, index + (concurrent ? 4 : 1));
+        const results = await Promise.all(batch.map((page) => page === 1 ? Promise.resolve(first) : fetchPage(page)));
+        pages.push(...results);
+      }
+      return pages;
+    };
+    const stablePages = async (pages: Page[]): Promise<boolean> => {
+      if (pages.some((page) => page.total !== first.total)) return false;
+      const identities = pages.flatMap((page) => page.identities);
+      if (new Set(identities).size !== identities.length) return false;
+      const firstConfirmation = await fetchPage(1);
+      return firstConfirmation.total === first.total
+        && firstConfirmation.identities.length === first.identities.length
+        && firstConfirmation.identities.every((jobId, index) => jobId === first.identities[index]);
+    };
+
+    let pages = await loadPages(true);
+    if (!await stablePages(pages)) {
+      pages = await loadPages(false);
+      if (!await stablePages(pages)) {
+        throw new Error("SmartRecruiters catalog changed or repeated job identities during pagination.");
+      }
+    }
+    const rawJobs = pages.flatMap((page) => page.jobs);
+    const jobs = rawJobs.map((job) => normalizeSmartRecruitersJob(source, identity.companyCode, job));
+    const cycleComplete = endPage === totalPages;
+    const completeListing = startPage === 1 && cycleComplete && jobs.length === first.total;
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing,
+      jobs,
+      pagination: {
+        nextPage: cycleComplete ? 1 : endPage + 1,
+        cycleComplete,
+        totalPages,
+      },
+      resolvedListingUrl: `https://careers.smartrecruiters.com/${encodeURIComponent(identity.companyCode)}`,
+      error: null,
+    };
+  } catch (error) {
+    const status = typeof error === "object" && error && "responseStatus" in error
+      ? Number((error as { responseStatus: unknown }).responseStatus)
+      : responseStatus;
+    return {
+      status: isBlockedHttpStatus(status) ? "blocked" : "failed",
+      responseStatus: Number.isFinite(status) ? status : null,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown SmartRecruiters crawler error.",
+    };
+  }
+}
+
 async function crawlDiscoveredFeed(source: CrawlSource, discovered: DiscoveredAts, fetcher: typeof fetch): Promise<SourceCrawlResult> {
+  if (discovered.kind === "smartrecruiters") {
+    return crawlSmartRecruiters(source, discovered.endpoint, fetcher);
+  }
   if (discovered.kind === "workable") {
     return crawlWorkable({ ...source, postingUrl: discovered.endpoint, adapter: "custom" }, fetcher);
   }
@@ -1651,58 +1925,7 @@ async function crawlDiscoveredFeed(source: CrawlSource, discovered: DiscoveredAt
       };
     }
 
-    const firstPayload = await response.json() as { totalFound?: number; content?: SmartRecruitersJob[] };
-    const content = [...(firstPayload.content ?? [])];
-    const totalFound = firstPayload.totalFound ?? content.length;
-    let offset = content.length;
-    while (offset < totalFound) {
-      const pageUrl = new URL(discovered.endpoint);
-      pageUrl.searchParams.set("limit", "100");
-      pageUrl.searchParams.set("offset", String(offset));
-      const pageResponse = await fetchWithTimeout(fetcher, pageUrl);
-      if (!pageResponse.ok) return {
-        status: isBlockedHttpStatus(pageResponse.status) ? "blocked" : "failed",
-        responseStatus: pageResponse.status,
-        completeListing: false,
-        jobs: [],
-        error: `smartrecruiters returned HTTP ${pageResponse.status}.`,
-      };
-      const page = await pageResponse.json() as { content?: SmartRecruitersJob[] };
-      const additions = page.content ?? [];
-      if (additions.length === 0) break;
-      content.push(...additions);
-      offset += additions.length;
-    }
-    const companyCode = new URL(discovered.endpoint).pathname.match(/\/companies\/([^/]+)\/postings/)?.[1] ?? source.company;
-    return {
-      status: "succeeded",
-      responseStatus: response.status,
-      completeListing: content.length >= totalFound,
-      jobs: content.flatMap((job) => job.id && job.name ? [{
-        externalId: job.id,
-        title: job.name,
-        company: source.company,
-        location: [job.location?.city, job.location?.region, job.location?.country].filter(Boolean).join(", ") || null,
-        arrangement: job.location?.remote ? "remote" as const : job.location?.hybrid ? "hybrid" as const : "unknown" as const,
-        employmentType: job.typeOfEmployment?.label ?? null,
-        summary: null,
-        ...(job.refNumber ? { requisitionId: job.refNumber } : {}),
-        ...(job.department?.label ? { department: job.department.label } : {}),
-        ...(job.function?.label ? { jobFunction: job.function.label } : {}),
-        ...(job.industry?.label ? { industry: job.industry.label } : {}),
-        ...(job.experienceLevel?.label ? { experienceLevel: job.experienceLevel.label } : {}),
-        ...(job.location?.city ? { locationCity: job.location.city } : {}),
-        ...(job.location?.region ? { locationState: job.location.region } : {}),
-        ...(job.location?.country ? { locationCountry: job.location.country } : {}),
-        ...(job.location?.postalCode ? { locationPostalCode: job.location.postalCode } : {}),
-        ...(job.location?.latitude != null ? { latitude: job.location.latitude } : {}),
-        ...(job.location?.longitude != null ? { longitude: job.location.longitude } : {}),
-        ...(job.language?.label ? { languages: [job.language.label] } : {}),
-        officialUrl: `https://jobs.smartrecruiters.com/${companyCode}/${job.id}`,
-        publishedAt: normalizedDate(job.releasedDate),
-      }] : []),
-      error: null,
-    };
+    throw new Error(`Unsupported discovered feed kind: ${discovered.kind}`);
   } catch (error) {
     return { status: "failed", responseStatus: null, completeListing: false, jobs: [], error: error instanceof Error ? error.message : "Unknown crawler error." };
   }
@@ -11147,6 +11370,37 @@ const workdayDetailCandidates = (jobUrl: string): string[] => {
   ).href));
 };
 
+const smartRecruitersDetailEndpoint = (job: CrawledJob): { companyCode: string; endpoint: string } | null => {
+  try {
+    const url = new URL(job.officialUrl);
+    const companyCode = decodeURIComponent(url.pathname.split("/").filter(Boolean)[0] ?? "");
+    const externalId = job.externalId?.trim() ?? "";
+    if (url.protocol !== "https:" || url.hostname.toLocaleLowerCase() !== "jobs.smartrecruiters.com"
+      || !/^[a-z0-9_-]+$/i.test(companyCode) || !/^[a-z0-9-]+$/i.test(externalId)) return null;
+    return {
+      companyCode,
+      endpoint: `https://api.smartrecruiters.com/v1/companies/${encodeURIComponent(companyCode)}/postings/${encodeURIComponent(externalId)}`,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const verifiedSmartRecruitersApplyUrl = (value: string | undefined, companyCode: string, externalId: string): string | null => {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    const path = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+    return url.protocol === "https:" && url.hostname.toLocaleLowerCase() === "jobs.smartrecruiters.com"
+      && path[0]?.toLocaleLowerCase() === companyCode.toLocaleLowerCase()
+      && path[1]?.toLocaleLowerCase().startsWith(externalId.toLocaleLowerCase())
+      ? url.href
+      : null;
+  } catch {
+    return null;
+  }
+};
+
 const combinedEmploymentType = (job: CrawledJob, timeType: unknown): string | null => {
   const values: string[] = [];
   const add = (value: string | null | undefined) => {
@@ -11290,6 +11544,41 @@ const enrichProgramJobDetails = async (
 
   const enrichOne = async ({ index, candidates }: { index: number; candidates: string[] }): Promise<void> => {
     const job = enriched[index];
+    const smartRecruitersDetail = smartRecruitersDetailEndpoint(job);
+    if (smartRecruitersDetail) {
+      try {
+        const response = await fetchWithTimeout(fetcher, smartRecruitersDetail.endpoint, {
+          headers: { accept: "application/json" },
+        }, false, { attempts: 1, timeoutMs: 4_000 });
+        if (response.ok) {
+          const payload = await response.json() as SmartRecruitersDetailPayload;
+          const validIdentity = payload.active !== false
+            && payload.id === job.externalId
+            && typeof payload.name === "string"
+            && jobIdentityText(payload.name) === jobIdentityText(job.title)
+            && (!payload.company?.identifier
+              || payload.company.identifier.toLocaleLowerCase() === smartRecruitersDetail.companyCode.toLocaleLowerCase());
+          if (validIdentity) {
+            const base = normalizeSmartRecruitersJob(source, smartRecruitersDetail.companyCode, payload);
+            const sections = payload.jobAd?.sections ?? {};
+            const jobDescription = icimsText(sections.jobDescription?.text);
+            const qualifications = icimsText(sections.qualifications?.text);
+            const additionalInformation = icimsText(sections.additionalInformation?.text);
+            const description = [jobDescription, additionalInformation].filter(Boolean).join("\n\n") || null;
+            enriched[index] = mergeProgramJobDetail(job, {
+              ...base,
+              summary: jobDescription,
+              description,
+              responsibilities: jobDescription,
+              qualifications,
+            }, verifiedSmartRecruitersApplyUrl(payload.applyUrl, smartRecruitersDetail.companyCode, job.externalId!));
+            return;
+          }
+        }
+      } catch {
+        // Detail enrichment is optional; the verified listing remains usable.
+      }
+    }
     for (const endpoint of candidates) {
       try {
         const response = await fetchWithTimeout(fetcher, endpoint, undefined, true, { attempts: 1, timeoutMs: 4_000 });

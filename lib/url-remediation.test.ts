@@ -49,6 +49,10 @@ describe("career URL remediation", () => {
     expect(detectUrlAdapter("https://jobs.dayforcehcm.com/en-US/example/CANDIDATEPORTAL")).toBe("dayforce");
   });
 
+  it("detects SmartRecruiters boards as API-backed sources", () => {
+    expect(detectUrlAdapter("https://careers.smartrecruiters.com/Acme")).toBe("smartrecruiters");
+  });
+
   it("rejects individual job detail pages as catalog URLs", () => {
     const detail = { href: "https://careers.example/jobs/staff-engineer-123", text: "Staff Engineer" };
     expect(careerCandidates([detail], "https://careers.example/jobs/search")).toEqual([]);

@@ -431,8 +431,10 @@ Wrong description.
       if (url === "https://careers.acme.example/search-jobs") {
         return new Response('<script>widget({"company_code":"Acme"})</script>', { status: 200 });
       }
-      if (url === "https://api.smartrecruiters.com/v1/companies/Acme/postings") {
+      if (url === "https://api.smartrecruiters.com/v1/companies/Acme/postings?limit=100&offset=0") {
         return new Response(JSON.stringify({
+          offset: 0,
+          limit: 100,
           totalFound: 1,
           content: [{ id: "job-1", name: "Software Engineer", ref: "https://api.smartrecruiters.com/v1/companies/Acme/postings/job-1" }],
         }), { status: 200, headers: { "content-type": "application/json" } });
@@ -455,12 +457,12 @@ Wrong description.
     expect(result.jobs).toEqual([expect.objectContaining({
       externalId: "job-1",
       title: "Software Engineer",
-      officialUrl: "https://jobs.smartrecruiters.com/Acme/job-1",
+      officialUrl: "https://jobs.smartrecruiters.com/Acme/job-1-software-engineer",
     })]);
     expect(requests.slice(0, 3)).toEqual([
       "https://acme.example/careers",
       "https://careers.acme.example/search-jobs",
-      "https://api.smartrecruiters.com/v1/companies/Acme/postings",
+      "https://api.smartrecruiters.com/v1/companies/Acme/postings?limit=100&offset=0",
     ]);
   });
 
@@ -853,26 +855,34 @@ Wrong description.
       if (url === "https://acme.example/careers") {
         return new Response('<script>widget({"company_code":"Acme"})</script>', { status: 200 });
       }
-      const offset = new URL(url).searchParams.get("offset");
+      const pageUrl = new URL(url);
+      const offset = Number(pageUrl.searchParams.get("offset"));
+      const content = offset === 100
+        ? [{ id: "101", name: "Designer", ref: "https://api.smartrecruiters.com/v1/companies/Acme/postings/101" }]
+        : Array.from({ length: 100 }, (_, index) => index === 0 ? {
+            id: "1", name: "Engineer", ref: "https://api.smartrecruiters.com/v1/companies/Acme/postings/1", refNumber: "REQ-1",
+            department: { label: "Platform" }, function: { label: "Engineering" }, industry: { label: "Software" },
+            experienceLevel: { label: "Mid-Senior" }, releasedDate: "2026-08-01T00:00:00Z",
+            location: { city: "Austin", region: "Texas", country: "us", remote: true, hybrid: false, latitude: 30.27, longitude: -97.74 },
+            typeOfEmployment: { label: "Full-time" }, language: { code: "en", label: "English" },
+          } : {
+            id: String(index + 1), name: `Role ${index + 1}`,
+            ref: `https://api.smartrecruiters.com/v1/companies/Acme/postings/${index + 1}`,
+          });
       return new Response(JSON.stringify({
-        totalFound: 2,
-        content: offset === "1" ? [{ id: "2", name: "Designer", ref: "https://api.smartrecruiters.com/v1/companies/Acme/postings/2" }] : [{
-          id: "1", name: "Engineer", ref: "https://api.smartrecruiters.com/v1/companies/Acme/postings/1", refNumber: "REQ-1",
-          department: { label: "Platform" }, function: { label: "Engineering" }, industry: { label: "Software" },
-          experienceLevel: { label: "Mid-Senior" }, releasedDate: "2026-08-01T00:00:00Z",
-          location: { city: "Austin", region: "Texas", country: "us", remote: true, hybrid: false, latitude: 30.27, longitude: -97.74 },
-          typeOfEmployment: { label: "Full-time" }, language: { code: "en", label: "English" },
-        }],
+        offset,
+        limit: 100,
+        totalFound: 101,
+        content,
       }), { status: 200, headers: { "content-type": "application/json" } });
     };
 
     const result = await crawlSource({ id: "acme", company: "Acme", postingUrl: "https://acme.example/careers", adapter: "custom" }, fetcher, new Date());
 
-    expect(result.jobs.map((job) => job.officialUrl)).toEqual([
-      "https://jobs.smartrecruiters.com/Acme/1",
-      "https://jobs.smartrecruiters.com/Acme/2",
-    ]);
-    expect(requests).toContain("https://api.smartrecruiters.com/v1/companies/Acme/postings?limit=100&offset=1");
+    expect(result.jobs).toHaveLength(101);
+    expect(result.jobs[0].officialUrl).toBe("https://jobs.smartrecruiters.com/Acme/1-engineer");
+    expect(result.jobs.at(-1)?.officialUrl).toBe("https://jobs.smartrecruiters.com/Acme/101-designer");
+    expect(requests).toContain("https://api.smartrecruiters.com/v1/companies/Acme/postings?limit=100&offset=100");
     expect(result.completeListing).toBe(true);
     expect(result.jobs[0]).toEqual(expect.objectContaining({
       requisitionId: "REQ-1", department: "Platform", jobFunction: "Engineering", industry: "Software",
@@ -5487,7 +5497,22 @@ Wrong description.
     const fetcher: typeof fetch = async (input) => {
       const url = String(input);
       requests.push(url);
+      if (url.endsWith("/postings/sr-101")) return Response.json({
+        id: "sr-101",
+        name: "Machine Learning Intern",
+        active: true,
+        company: { identifier: "Acme" },
+        typeOfEmployment: { label: "Intern" },
+        applyUrl: "https://jobs.smartrecruiters.com/Acme/sr-101-machine-learning-intern?oga=true",
+        jobAd: { sections: {
+          jobDescription: { text: "<p>Build production ML systems.</p>" },
+          qualifications: { text: "<p>Python and SQL.</p>" },
+          additionalInformation: { text: "<p>Summer 2027 in the United States.</p>" },
+        } },
+      });
       return Response.json({
+        offset: 0,
+        limit: 100,
         totalFound: 1,
         content: [{ id: "sr-101", name: "Machine Learning Intern" }],
       });
@@ -5500,10 +5525,81 @@ Wrong description.
       adapter: "custom",
     }, fetcher, new Date());
 
-    expect(requests[0]).toBe("https://api.smartrecruiters.com/v1/companies/Acme/postings");
+    expect(requests).toEqual([
+      "https://api.smartrecruiters.com/v1/companies/Acme/postings?limit=100&offset=0",
+      "https://api.smartrecruiters.com/v1/companies/Acme/postings?limit=100&offset=0",
+      "https://api.smartrecruiters.com/v1/companies/Acme/postings/sr-101",
+    ]);
     expect(result.status).toBe("succeeded");
     expect(result.completeListing).toBe(true);
     expect(result.jobs.map((job) => job.title)).toEqual(["Machine Learning Intern"]);
+    expect(result.jobs[0].employmentType).toBe("Internship");
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      description: "Build production ML systems.\n\nSummer 2027 in the United States.",
+      qualifications: "Python and SQL.",
+      applyUrl: "https://jobs.smartrecruiters.com/Acme/sr-101-machine-learning-intern?oga=true",
+    }));
+  });
+
+  it("confirms a SmartRecruiters empty board before allowing authoritative closure", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "smartrecruiters-empty",
+      company: "Acme",
+      postingUrl: "https://careers.smartrecruiters.com/Acme",
+      adapter: "smartrecruiters",
+    }, async (input) => {
+      requests.push(String(input));
+      return Response.json({ offset: 0, limit: 100, totalFound: 0, content: [] });
+    }, new Date());
+
+    expect(requests).toHaveLength(2);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      jobs: [],
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 1 },
+    }));
+  });
+
+  it("retries a transient repeated SmartRecruiters page before accepting completeness", async () => {
+    let secondPageCalls = 0;
+    const result = await crawlSource({
+      id: "smartrecruiters-repeated",
+      company: "Acme",
+      postingUrl: "https://careers.smartrecruiters.com/Acme",
+      adapter: "smartrecruiters",
+    }, async (input) => {
+      const url = new URL(String(input));
+      const offset = Number(url.searchParams.get("offset"));
+      if (offset === 100) secondPageCalls += 1;
+      const content = offset === 0
+        ? Array.from({ length: 100 }, (_, index) => ({ id: String(index + 1), name: `Role ${index + 1}` }))
+        : [{ id: secondPageCalls === 1 ? "1" : "101", name: "Final Role" }];
+      return Response.json({ offset, limit: 100, totalFound: 101, content });
+    }, new Date());
+
+    expect(secondPageCalls).toBe(2);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toHaveLength(101);
+  });
+
+  it("drops only clearly non-US roles from configured large SmartRecruiters catalogs", async () => {
+    const jobs = [
+      { id: "us-1", name: "US Engineer", location: { country: "us", city: "Austin" } },
+      { id: "fr-1", name: "France Engineer", location: { country: "fr", city: "Paris" } },
+      { id: "unknown-1", name: "Global Engineer" },
+    ];
+    const result = await crawlSource({
+      id: "p5-0565-canva",
+      company: "Canva",
+      postingUrl: "https://careers.smartrecruiters.com/canva",
+      adapter: "smartrecruiters",
+    }, async () => Response.json({ offset: 0, limit: 100, totalFound: jobs.length, content: jobs }), new Date());
+
+    expect(result.status).toBe("succeeded");
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs.map((job) => job.externalId)).toEqual(["us-1", "unknown-1"]);
   });
 
   it("loads a Workable board through its public jobs API", async () => {
@@ -6877,7 +6973,7 @@ Wrong description.
       adapter: "custom",
     }, async (input) => {
       psiRequests.push(String(input));
-      return Response.json({ totalFound: 1, content: [{ id: "sr-1", name: "Data Analyst" }] });
+      return Response.json({ offset: 0, limit: 100, totalFound: 1, content: [{ id: "sr-1", name: "Data Analyst" }] });
     }, new Date());
 
     const openAiRequests: string[] = [];
@@ -6900,7 +6996,7 @@ Wrong description.
     const smartRecruitersFetcher: typeof fetch = async (input) => {
       const url = String(input);
       smartRecruitersRequests.push(url);
-      return Response.json({ totalFound: 1, content: [{ id: url.includes("NBCUniversal3") ? "nbc-1" : "wabtec-1", name: "Data Science Intern" }] });
+      return Response.json({ offset: 0, limit: 100, totalFound: 1, content: [{ id: url.includes("NBCUniversal3") ? "nbc-1" : "wabtec-1", name: "Data Science Intern" }] });
     };
     const nbc = await crawlSource({
       id: "p4-0313-nbcuniversal", company: "NBCUniversal", postingUrl: "https://www.nbcunicareers.com/talent-community", adapter: "custom",
@@ -6909,13 +7005,20 @@ Wrong description.
       id: "legacy-row-128", company: "Westinghouse Air Brake", postingUrl: "https://careers.wabtec.com/jobs", adapter: "custom",
     }, smartRecruitersFetcher, new Date());
 
-    expect(psiRequests).toEqual(["https://api.smartrecruiters.com/v1/companies/PSICRO/postings"]);
+    expect(psiRequests).toEqual([
+      "https://api.smartrecruiters.com/v1/companies/PSICRO/postings?limit=100&offset=0",
+      "https://api.smartrecruiters.com/v1/companies/PSICRO/postings?limit=100&offset=0",
+    ]);
     expect(psi.jobs).toHaveLength(1);
     expect(openAiRequests).toEqual(["https://api.ashbyhq.com/posting-api/job-board/openai"]);
     expect(openAi.jobs).toHaveLength(1);
     expect(smartRecruitersRequests).toEqual([
-      "https://api.smartrecruiters.com/v1/companies/NBCUniversal3/postings",
-      "https://api.smartrecruiters.com/v1/companies/Wabtec/postings",
+      "https://api.smartrecruiters.com/v1/companies/NBCUniversal3/postings?limit=100&offset=0",
+      "https://api.smartrecruiters.com/v1/companies/NBCUniversal3/postings?limit=100&offset=0",
+      "https://api.smartrecruiters.com/v1/companies/NBCUniversal3/postings/nbc-1",
+      "https://api.smartrecruiters.com/v1/companies/Wabtec/postings?limit=100&offset=0",
+      "https://api.smartrecruiters.com/v1/companies/Wabtec/postings?limit=100&offset=0",
+      "https://api.smartrecruiters.com/v1/companies/Wabtec/postings/wabtec-1",
     ]);
     expect(nbc.jobs).toHaveLength(1);
     expect(wabtec.jobs).toHaveLength(1);

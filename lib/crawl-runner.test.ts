@@ -152,7 +152,9 @@ describe("runDueCrawls", () => {
       const url = String(input);
       if (url === source.postingUrl) return new Response('<a href="https://careers.acme.example/search-jobs">Search jobs</a>');
       if (url === "https://careers.acme.example/search-jobs") return new Response('<script>widget({"company_code":"Acme"})</script>');
-      if (url === "https://api.smartrecruiters.com/v1/companies/Acme/postings") return Response.json({
+      if (url === "https://api.smartrecruiters.com/v1/companies/Acme/postings?limit=100&offset=0") return Response.json({
+        offset: 0,
+        limit: 100,
         totalFound: 1,
         content: [{ id: "1", name: "AI Intern", ref: "https://api.smartrecruiters.com/v1/companies/Acme/postings/1" }],
       });
