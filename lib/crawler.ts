@@ -106,9 +106,11 @@ type VerifiedSourceFeed = {
 // closure nondeterministic. Unknown and mixed/global roles remain visible so
 // an incomplete location never causes a potentially relevant US role to drop.
 const US_SCOPED_LARGE_CATALOGS = new Set([
+  "audit-row-369", // Hertz
   "audit-row-378", // JLL
   "legacy-row-128", // Wabtec
   "legacy-row-878", // Vertiv
+  "p1-0007-kroll",
   "p2-0032-citi",
   "p2-0041-jpmorgan-chase",
   "p2-0048-metlife",
@@ -120,6 +122,7 @@ const US_SCOPED_LARGE_CATALOGS = new Set([
   "p4-0387-wipro",
   "p4-0428-exl-service",
   "p4-0436-genpact",
+  "p4-0521-zscaler",
   "p5-0523-abb-us",
   "p5-0524-abbott-laboratories",
   "p5-0538-amazon-2",
@@ -133,6 +136,7 @@ const US_SCOPED_LARGE_CATALOGS = new Set([
   "p5-0699-pepsico",
   "p5-0712-raytheon",
   "p5-0724-schneider-electric-us",
+  "p5-0750-thales-us",
   "p5-0752-tiktok",
   "p5-0803-arista-networks",
   "p5-0860-coherent",
