@@ -7577,6 +7577,38 @@ Wrong description.
     expect(result.jobs[0]).toEqual(expect.objectContaining({ title: "Support Analyst", location: "3 Locations" }));
   });
 
+  it("bypasses Power Integrations' blocked corporate page with its official Jobvite board", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p5-1023-power-integrations",
+      company: "Power Integrations",
+      postingUrl: "https://www.power.com/company/careers",
+      adapter: "custom",
+    }, async (input) => {
+      requests.push(String(input));
+      return new Response(`<table class="jv-job-list"><tbody>
+        <tr><td class="jv-job-list-name"><a href="/power-integrations/job/o6ceAfwQ">Senior Manager, Digital HR &amp; AI Enablement</a></td><td class="jv-job-list-location">San Jose, California</td></tr>
+        <tr><td class="jv-job-list-name"><a href="/power-integrations/job/o36mAfwP">Production Technician</a></td><td class="jv-job-list-location">Biel, Switzerland</td></tr>
+      </tbody></table>`);
+    }, new Date());
+
+    expect(requests).toEqual(["https://jobs.jobvite.com/power-integrations/"]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://jobs.jobvite.com/power-integrations",
+    }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        externalId: "o6ceAfwQ",
+        title: "Senior Manager, Digital HR & AI Enablement",
+        location: "San Jose, California",
+        officialUrl: "https://jobs.jobvite.com/power-integrations/job/o6ceAfwQ",
+      }),
+      expect.objectContaining({ externalId: "o36mAfwP", location: "Biel, Switzerland" }),
+    ]);
+  });
+
   it("stores only real LogRhythm Jobvite rows and closes navigation false positives", async () => {
     const requests: string[] = [];
     const result = await crawlSource({ id: "p4-0455-logrhythm", company: "LogRhythm", postingUrl: "https://jobs.jobvite.com/exabeam/#openings", adapter: "custom" }, async (input) => {

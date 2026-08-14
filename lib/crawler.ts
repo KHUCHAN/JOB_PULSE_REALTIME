@@ -8462,8 +8462,9 @@ const crawlJobviteBoard = async (
       if (!anchor?.text) return [];
       const officialUrl = new URL(anchor.href, listingUrl);
       const externalId = officialUrl.pathname.split("/").filter(Boolean).at(-1) ?? null;
-      const title = plainText(block.match(/class=["'][^"']*jv-job-list-name[^"']*["'][^>]*>([\s\S]*?)<\/(?:div|td)>/i)?.[1]) ?? anchor.text;
-      const location = plainText(block.match(/class=["'][^"']*jv-job-list-location[^"']*["'][^>]*>([\s\S]*?)<\/(?:div|td)>/i)?.[1]) ?? null;
+      const title = decodeHtmlAttribute(plainText(block.match(/class=["'][^"']*jv-job-list-name[^"']*["'][^>]*>([\s\S]*?)<\/(?:div|td)>/i)?.[1]) ?? anchor.text);
+      const locationText = plainText(block.match(/class=["'][^"']*jv-job-list-location[^"']*["'][^>]*>([\s\S]*?)<\/(?:div|td)>/i)?.[1]);
+      const location = locationText ? decodeHtmlAttribute(locationText) : null;
       const programs = classifyJobPrograms(title).keys;
       return [{
         externalId,
@@ -11940,6 +11941,7 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   if (source.id === "p5-0566-cardinal-health" || sourcePage.hostname === "jobs.cardinalhealth.com") return crawlCardinalHealth(source, fetcher);
   if (source.id === "p5-1095-vanguard" || sourcePage.hostname === "www.vanguardjobs.com") return crawlVanguard(source, fetcher);
   if (source.id === "p5-1005-olympus-medical-systems") return crawlOlympusSuccessFactors(source, fetcher);
+  if (source.id === "p5-1023-power-integrations") return crawlJobviteBoard(source, "https://jobs.jobvite.com/power-integrations/", "power-integrations", fetcher);
   if (source.id === "p2-0068-abrigo") return crawlJobviteBoard(source, "https://jobs.jobvite.com/bankerstoolbox", "bankerstoolbox", fetcher);
   if (source.id === "p4-0455-logrhythm") return crawlJobviteBoard(source, "https://jobs.jobvite.com/exabeam/", "exabeam", fetcher);
   if (source.id === "legacy-row-777") return crawlAceJobs(source, fetcher);
