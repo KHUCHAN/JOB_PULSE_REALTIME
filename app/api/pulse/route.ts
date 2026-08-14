@@ -44,6 +44,7 @@ import {
 } from "../../../lib/pulse-mappers";
 import { D1CrawlStore } from "../../../worker/crawl-store";
 import { backfillResumeMatches } from "../../../lib/resume-match-store";
+import { listResumeReviewCandidates } from "../../../lib/resume-review-feed";
 import { applyCodexReviews, type CodexReviewInput } from "../../../lib/codex-review-store";
 import {
   clearResumeAlertBacklog,
@@ -53,6 +54,7 @@ import {
 } from "../../../lib/resume-alert-store";
 import {
   processDueResumeAlerts,
+  resumeAlertHttpStatus,
   sendResumeTestEmail,
   type GmailRuntimeConfig,
 } from "../../../lib/resume-alert-service";
@@ -501,6 +503,11 @@ export async function GET(request: Request): Promise<Response> {
     if (resource === "runStatus") return json(await runStatusFor());
     if (resource === "overview") return json(await overview());
     if (resource === "resumeAlert") return json(await resumeStatus());
+    if (resource === "resumeReviewCandidates") {
+      if (!codexReviewAuthorized(request)) return json({ error: "Codex review authorization is required." }, 401);
+      const requested = Number(url.searchParams.get("limit"));
+      return json(await listResumeReviewCandidates(db(), Number.isFinite(requested) ? requested : undefined));
+    }
     return json({ error: "Unknown resource." }, 400);
   } catch (error) {
     if (error instanceof InvalidJobFilterError) return json({ error: error.message }, 400);
@@ -604,7 +611,8 @@ export async function POST(request: Request): Promise<Response> {
     if (body.action === "scheduledProcessAlerts") {
       const authorized = await verifyGithubActionsOidc(request.headers.get("authorization"));
       if (!authorized) return json({ error: "Scheduled alert authorization is required." }, 401);
-      return json({ alerts: await runResumeAlerts(db()) });
+      const alerts = await runResumeAlerts(db());
+      return json({ alerts }, resumeAlertHttpStatus(alerts));
     }
     if (body.action === "backfillResumeMatches") {
       const requested = typeof body.limit === "number" ? body.limit : 500;

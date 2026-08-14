@@ -32,6 +32,18 @@ export interface TestEmailResult {
   permanent: number;
 }
 
+/**
+ * The scheduled API action must make delivery failures visible to GitHub
+ * Actions. A JSON 200 with an embedded error otherwise makes a green crawl
+ * look healthy even though no digest was delivered.
+ */
+export const resumeAlertHttpStatus = (
+  result: ResumeDispatchResult | { error: string },
+): number => {
+  if ("error" in result) return 502;
+  return result.authBlocked > 0 || result.retryable > 0 || result.failed > 0 ? 502 : 200;
+};
+
 const emptyResult = (skipped = false): ResumeDispatchResult => ({
   planned: 0, sent: 0, retryable: 0, authBlocked: 0, failed: 0, skipped,
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { alertDatabaseWithMatches, createD1ForSqlite } from "./resume-alert-test-helper";
-import { processDueResumeAlerts, sendResumeTestEmail } from "./resume-alert-service";
+import { processDueResumeAlerts, resumeAlertHttpStatus, sendResumeTestEmail } from "./resume-alert-service";
 
 const config = {
   clientId: "client",
@@ -11,6 +11,13 @@ const config = {
 };
 
 describe("resume alert delivery service", () => {
+  it("surfaces delivery failures as a failed scheduled action", () => {
+    expect(resumeAlertHttpStatus({ planned: 0, sent: 0, retryable: 0, authBlocked: 0, failed: 0, skipped: false })).toBe(200);
+    expect(resumeAlertHttpStatus({ planned: 1, sent: 0, retryable: 1, authBlocked: 0, failed: 0, skipped: false })).toBe(502);
+    expect(resumeAlertHttpStatus({ planned: 1, sent: 0, retryable: 0, authBlocked: 1, failed: 0, skipped: false })).toBe(502);
+    expect(resumeAlertHttpStatus({ error: "delivery failed" })).toBe(502);
+  });
+
   it("keeps only the failed recipient retryable", async () => {
     const sqlite = alertDatabaseWithMatches(1);
     const responses = [

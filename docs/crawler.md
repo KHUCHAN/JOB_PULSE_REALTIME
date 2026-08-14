@@ -21,6 +21,14 @@ The workflow may also be started manually from GitHub Actions. Its summary recor
 
 The Codex two-hour automation is monitoring-only: it reviews the scheduled workflow, Sites runtime logs, overview counts, and source-health regressions. It must not duplicate the production crawl trigger.
 
+Codex review candidates are exposed through the authenticated
+`GET /api/pulse?resource=resumeReviewCandidates&limit=100` feed. It returns only
+current, open internship/co-op matches that do not already have a Codex review;
+the reviewer still decides U.S. region, 2027 cycle, and profile fit. Approved
+records are submitted with `submitCodexReview`, which wakes the Gmail queue.
+The scheduled alert action returns a non-2xx response for delivery/auth errors
+so GitHub Actions cannot report a green run when email dispatch failed.
+
 For a local parser audit against the currently failed/blocked production sources:
 
 ```bash
