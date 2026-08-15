@@ -4660,6 +4660,82 @@ HUMAN RESOURCES Posted Date
     }));
   });
 
+  it("recovers every identity-checked ASE U.S. role from its official reader page", async () => {
+    const requests: string[] = [];
+    const markdown = `Title: Career Opportunities in US | ASE
+
+URL Source: https://ase.aseglobal.com/careers-us/
+
+Markdown Content:
+## Career Opportunities in the U.S.
+
+### ![Image 1](https://ase.aseglobal.com/icon.svg) SALES MANAGER #503
+
+ASE (U.S.) INC., SUNNYVALE OFFICE
+
+JOB ID #503
+
+[job503@aseus.com](mailto:job503@aseus.com)
+SUMMARY: Lead semiconductor customer development.
+
+RESPONSIBILITIES: Own the account pipeline.
+
+We are an equal opportunity employer.
+
+### ![Image 2](https://ase.aseglobal.com/icon.svg) DIRECTOR, ENGINEERING & TECHNICAL MARKETING #499
+
+ASE (U.S.) INC., AUSTIN OFFICE
+
+JOB ID #499
+
+[job499@aseus.com](mailto:job499@aseus.com)
+SUMMARY: Lead advanced packaging strategy.
+
+QUALIFICATIONS: Semiconductor experience.
+
+We are an equal opportunity employer.`;
+    const fetcher: typeof fetch = async (input) => {
+      requests.push(String(input));
+      return new Response(markdown);
+    };
+
+    const result = await crawlSource({
+      id: "p5-0806-ase-group",
+      company: "ASE Group",
+      postingUrl: "https://ase.aseglobal.com/careers-us/",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests).toEqual(["https://r.jina.ai/https://ase.aseglobal.com/careers-us/"]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      responseStatus: 200,
+      resolvedListingUrl: "https://ase.aseglobal.com/careers-us/",
+    }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        externalId: "503",
+        requisitionId: "503",
+        title: "SALES MANAGER",
+        location: "Sunnyvale, CA, United States",
+        locationCity: "Sunnyvale",
+        locationState: "CA",
+        locationCountry: "United States",
+        officialUrl: "https://ase.aseglobal.com/careers-us/#job-503",
+        summary: "Lead semiconductor customer development.",
+      }),
+      expect.objectContaining({
+        externalId: "499",
+        title: "DIRECTOR, ENGINEERING & TECHNICAL MARKETING",
+        location: "Austin, TX, United States",
+        locationCity: "Austin",
+        locationState: "TX",
+        locationCountry: "United States",
+      }),
+    ]);
+  });
+
   it("bypasses a stale reader challenge snapshot when the cached response has no jobs", async () => {
     let readerRequests = 0;
     const fetcher: typeof fetch = async (input, init) => {
@@ -4697,7 +4773,7 @@ HUMAN RESOURCES Posted Date
     expect(result.responseStatus).toBe(403);
   });
 
-  it("extracts official static ASE openings that do not have separate detail links", async () => {
+  it("rejects a truncated ASE reader snapshot that lacks source and section evidence", async () => {
     const fetcher: typeof fetch = async (input) => String(input).startsWith("https://r.jina.ai/")
       ? new Response([
           "## Career Opportunities in the U.S.",
@@ -4710,11 +4786,9 @@ HUMAN RESOURCES Posted Date
 
     const result = await crawlSource({ id: "p5-0806-ase-group", company: "ASE Group", postingUrl: "https://ase.aseglobal.com/careers-us/", adapter: "custom" }, fetcher, new Date());
 
-    expect(result.status).toBe("succeeded");
-    expect(result.jobs).toEqual([
-      expect.objectContaining({ externalId: "500", title: "ACCOUNT MANAGER/SR. ACCOUNT MANAGER", officialUrl: "https://ase.aseglobal.com/careers-us/#job-500" }),
-      expect.objectContaining({ externalId: "499", title: "DIRECTOR, ENGINEERING & TECHNICAL MARKETING", officialUrl: "https://ase.aseglobal.com/careers-us/#job-499" }),
-    ]);
+    expect(result.status).toBe("failed");
+    expect(result.completeListing).toBe(false);
+    expect(result.jobs).toEqual([]);
   });
 
   it("extracts every Paylocity job from its embedded public page data", async () => {

@@ -18636,6 +18636,114 @@ const crawlCgiNjoyn = async (
   }
 };
 
+const ASE_US_LISTING_URL = "https://ase.aseglobal.com/careers-us/";
+
+const aseUsJobFromReaderSection = (
+  source: CrawlSource,
+  title: string,
+  headingId: string,
+  section: string,
+): CrawledJob | null => {
+  const internalId = section.match(/^\s*JOB ID\s+#(\d+)\s*$/mi)?.[1] ?? null;
+  const office = section.match(/^\s*ASE \(U\.S\.\) INC\.,\s*([A-Z ]+?) OFFICE\s*$/mi)?.[1]?.trim() ?? null;
+  const summarySection = section.match(/^\s*SUMMARY:\s*([\s\S]*?)(?=^\s*(?:RESPONSIBILITIES|ESSENTIAL DUTIES|EDUCATION|SUPERVISORY|COMPUTER|COMMUNICATION|MATHEMATICAL|QUALIFICATIONS|GENERAL QUALIFICATIONS|REASONING|PHYSICAL|WORK ENVIRONMENT|COMPANY BENEFITS|TRAVEL):)/mi)?.[1] ?? null;
+  if (!internalId || internalId !== headingId || !office || !summarySection
+    || !new RegExp(`\\[job${headingId}@aseus\\.com]\\(mailto:job${headingId}@aseus\\.com\\)`, "i").test(section)
+    || !/We are an equal opportunity employer\./i.test(section)) return null;
+
+  const location = office === "SUNNYVALE"
+    ? "Sunnyvale, CA, United States"
+    : office === "AUSTIN"
+      ? "Austin, TX, United States"
+      : `${office.toLocaleLowerCase().replace(/\b\w/g, (letter) => letter.toLocaleUpperCase())}, United States`;
+  const description = citadelMarkdownText(section);
+  const summary = citadelMarkdownText(summarySection);
+  const official = new URL(ASE_US_LISTING_URL);
+  official.hash = `job-${headingId}`;
+  return {
+    externalId: headingId,
+    requisitionId: headingId,
+    title: citadelMarkdownText(title),
+    company: source.company,
+    location,
+    locationCity: office === "SUNNYVALE" ? "Sunnyvale" : office === "AUSTIN" ? "Austin" : null,
+    locationState: office === "SUNNYVALE" ? "CA" : office === "AUSTIN" ? "TX" : null,
+    locationCountry: "United States",
+    arrangement: "onsite",
+    employmentType: null,
+    summary,
+    description,
+    office: `${office} OFFICE`,
+    officialUrl: official.href,
+    publishedAt: null,
+  };
+};
+
+const crawlAseUsCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const readerUrl = `https://r.jina.ai/${ASE_US_LISTING_URL}`;
+  try {
+    const response = await fetchWithTimeout(fetcher, readerUrl, {
+      headers: { accept: "text/plain" },
+    }, false, { attempts: 1, timeoutMs: 12_000 });
+    if (!response.ok) return {
+      status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
+      responseStatus: response.status,
+      completeListing: false,
+      jobs: [],
+      resolvedListingUrl: ASE_US_LISTING_URL,
+      error: `ASE official U.S. careers reader returned HTTP ${response.status}.`,
+    };
+    const markdown = await response.text();
+    let sourceUrl: URL;
+    try {
+      const sourceText = markdown.match(/^URL Source:\s*(\S+)\s*$/mi)?.[1];
+      if (!sourceText) throw new Error("missing reader source URL");
+      sourceUrl = new URL(sourceText);
+    } catch {
+      throw new Error("ASE reader response did not identify its official source URL.");
+    }
+    const expected = new URL(ASE_US_LISTING_URL);
+    if (sourceUrl.origin !== expected.origin
+      || sourceUrl.pathname.replace(/\/$/, "") !== expected.pathname.replace(/\/$/, "")
+      || sourceUrl.search || sourceUrl.hash || sourceUrl.username || sourceUrl.password) {
+      throw new Error("ASE reader response identified an unexpected source URL.");
+    }
+
+    const content = markdown.split(/^Markdown Content:\s*$/mi)[1] ?? "";
+    const headings = [...content.matchAll(/^###\s+(?:!\[[^\]]*]\([^)]+\)\s*)?(.+?)\s+#(\d+)\s*$/gmi)];
+    const jobs = headings.map((heading, index) => {
+      const sectionStart = (heading.index ?? 0) + heading[0].length;
+      const sectionEnd = headings[index + 1]?.index ?? content.length;
+      return aseUsJobFromReaderSection(source, heading[1], heading[2], content.slice(sectionStart, sectionEnd));
+    });
+    const usable = jobs.flatMap((job) => job ? [job] : []);
+    if (headings.length === 0 || usable.length !== headings.length
+      || new Set(usable.map((job) => job.externalId)).size !== usable.length) {
+      throw new Error("ASE reader response failed job identity or completeness validation.");
+    }
+    return {
+      status: "succeeded",
+      responseStatus: response.status,
+      // Reader output is a recovery surface. It can add and refresh verified
+      // official jobs, but never authoritatively close a role if the provider
+      // returns a truncated snapshot.
+      completeListing: false,
+      jobs: usable,
+      resolvedListingUrl: ASE_US_LISTING_URL,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: "failed",
+      responseStatus: null,
+      completeListing: false,
+      jobs: [],
+      resolvedListingUrl: ASE_US_LISTING_URL,
+      error: error instanceof Error ? error.message : "Unknown ASE U.S. careers crawler error.",
+    };
+  }
+};
+
 async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
   if ((source.discoveryDepth ?? 0) === 0) {
     try {
@@ -18691,6 +18799,9 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p2-0192-ally-financial") {
     return crawlAllyCareers(source, fetcher, now);
+  }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-0806-ase-group") {
+    return crawlAseUsCareers(source, fetcher);
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-1104-wayfair") {
     return crawlWayfairCareers(source, fetcher);
