@@ -14461,6 +14461,335 @@ const crawlDayforce = async (
   }
 };
 
+type ChristusJob = {
+  key?: unknown;
+  jobId?: unknown;
+  reqId?: unknown;
+  community?: unknown;
+  category?: unknown;
+  bu?: unknown;
+  title?: unknown;
+  location?: unknown;
+  locationList?: unknown;
+  type?: unknown;
+  url?: unknown;
+};
+
+type ChristusCatalog = {
+  count?: unknown;
+  resultCount?: unknown;
+  jobs?: unknown;
+};
+
+const crawlChristusHealth = async (
+  source: CrawlSource,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult> => {
+  const listingUrl = "https://careers.christushealth.org/job-search";
+  const endpoint = "https://careers.christushealth.org/job-search/jobs";
+  let responseStatus: number | null = null;
+  const fetchCatalog = async (): Promise<ChristusCatalog> => {
+    const response = await fetchWithTimeout(fetcher, endpoint, {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "x-requested-with": "XMLHttpRequest",
+      },
+      body: new URLSearchParams({
+        saved_jobs: "",
+        new_search: "1",
+        saved_jobs_only: "0",
+        keyword: "",
+        location: "",
+        condition: "",
+        zipcode: "",
+        sortBy: "Proximity",
+        sr: "1920x1080",
+        expiredJobId: "",
+        careerArea: "",
+        careerAreaCat: "",
+        hospital: "",
+        region: "",
+      }).toString(),
+    });
+    responseStatus = response.status;
+    if (!response.ok) {
+      throw Object.assign(new Error(`CHRISTUS Health returned HTTP ${response.status}.`), {
+        responseStatus: response.status,
+      });
+    }
+    return response.json() as Promise<ChristusCatalog>;
+  };
+
+  try {
+    const payload = await fetchCatalog();
+    const total = Number(payload.count);
+    const resultCount = Number(payload.resultCount);
+    const raw = Array.isArray(payload.jobs) ? payload.jobs as ChristusJob[] : [];
+    if (!Number.isInteger(total) || total < 0 || resultCount !== total || raw.length !== total) {
+      throw new Error("CHRISTUS Health returned an incomplete public catalog.");
+    }
+    if (total === 0) {
+      const confirmation = await fetchCatalog();
+      if (Number(confirmation.count) !== 0 || Number(confirmation.resultCount) !== 0
+        || !Array.isArray(confirmation.jobs) || confirmation.jobs.length !== 0) {
+        throw new Error("CHRISTUS Health returned an unstable empty catalog.");
+      }
+    }
+
+    const identities = new Set<string>();
+    const urls = new Set<string>();
+    const jobs = raw.flatMap((job): CrawledJob[] => {
+      const externalId = job.key == null ? null : String(job.key).trim() || null;
+      const requisitionId = asText(job.reqId);
+      const jobId = asText(job.jobId);
+      const title = asText(job.title);
+      const location = asText(job.location);
+      const officialUrlText = asText(job.url);
+      if (!externalId || !requisitionId || requisitionId !== jobId || !title || !officialUrlText) return [];
+      let officialUrl: URL;
+      try {
+        officialUrl = new URL(officialUrlText);
+      } catch {
+        return [];
+      }
+      if (officialUrl.origin !== "https://careers.christushealth.org"
+        || !/^\/opportunity\/[a-z0-9-]+$/i.test(officialUrl.pathname)
+        || officialUrl.search || officialUrl.hash
+        || identities.has(externalId) || urls.has(officialUrl.href)) return [];
+      identities.add(externalId);
+      urls.add(officialUrl.href);
+
+      const locationParts = location?.split(",").map((part) => part.trim()).filter(Boolean) ?? [];
+      const locationState = locationParts[0] && /^[A-Z]{2}$/.test(locationParts[0]) ? locationParts[0] : null;
+      const locationCity = locationState ? locationParts.slice(1).join(", ") || null : null;
+      const programs = classifyJobPrograms(title).keys;
+      return [{
+        externalId,
+        title,
+        company: source.company,
+        location,
+        arrangement: /\bremote\b/i.test(location ?? "") ? "remote" : "unknown",
+        employmentType: programs.includes("coop")
+          ? "Co-op"
+          : programs.includes("internship") ? "Internship" : normalizeEmploymentType(asText(job.type)),
+        summary: null,
+        ...(asText(job.category) ? { department: asText(job.category) } : {}),
+        ...(asText(job.community) ? { team: asText(job.community) } : {}),
+        ...(asText(job.bu) ? { businessUnit: asText(job.bu) } : {}),
+        ...(locationCity ? { locationCity } : {}),
+        ...(locationState ? { locationState } : {}),
+        locationCountry: "US",
+        requisitionId,
+        officialUrl: officialUrl.href,
+        publishedAt: null,
+      }];
+    });
+    if (jobs.length !== total) throw new Error("CHRISTUS Health returned duplicate or unusable job identities.");
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: true,
+      jobs,
+      resolvedListingUrl: listingUrl,
+      error: null,
+    };
+  } catch (error) {
+    const status = typeof error === "object" && error && "responseStatus" in error
+      ? Number((error as { responseStatus: unknown }).responseStatus)
+      : responseStatus;
+    return {
+      status: status != null && isBlockedHttpStatus(status) ? "blocked" : "failed",
+      responseStatus: status,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown CHRISTUS Health crawler error.",
+    };
+  }
+};
+
+type CgiNjoynPage = {
+  page: number;
+  total: number;
+  totalPages: number;
+  rawIdentities: string[];
+  rawUrls: string[];
+  jobs: CrawledJob[];
+};
+
+const CGI_NJOYN_PAGE_SIZE = 50;
+const CGI_NJOYN_LISTING_URL = "https://cgi.njoyn.com/CORP/xweb/xweb.asp?CLID=21001&page=JobListing&lang=1&CountryID=US";
+
+const cgiNjoynPageUrl = (page: number): string => {
+  const url = new URL(CGI_NJOYN_LISTING_URL);
+  if (page > 1) url.searchParams.set("pn", String(page));
+  return url.href;
+};
+
+const cgiNjoynReaderUrl = (listingUrl: string): string => {
+  const target = new URL(listingUrl);
+  target.protocol = "http:";
+  // r.jina.ai treats unescaped ampersands as parameters belonging to the
+  // reader endpoint. Escaping them preserves the complete Njoyn target URL.
+  return `https://r.jina.ai/${target.href.replaceAll("&", "%26")}`;
+};
+
+const parseCgiNjoynPage = (
+  html: string,
+  source: CrawlSource,
+  expectedPage: number,
+): CgiNjoynPage | null => {
+  const total = Number(html.match(/Search Results\s*\(([\d,]+)\)/i)?.[1]?.replaceAll(",", ""));
+  const pagination = html.match(/\bPage\s+(\d+)\s+of\s+(\d+)\b/i);
+  const page = Number(pagination?.[1]);
+  const totalPages = Number(pagination?.[2]);
+  if (!Number.isInteger(total) || total <= 0 || page !== expectedPage
+    || !Number.isInteger(totalPages) || totalPages !== Math.ceil(total / CGI_NJOYN_PAGE_SIZE)) return null;
+
+  const rawRows = [...html.matchAll(
+    /<tr\b([^>]*)>\s*<td\b[^>]*>\s*<a\b[^>]*href=["']([^"']*\bPage=JobDetails\b[^"']*)["'][^>]*>([\s\S]*?)<\/a>\s*<\/td>\s*<td\b[^>]*>([\s\S]*?)<\/td>\s*<td\b[^>]*>([\s\S]*?)<\/td>\s*<td\b[^>]*>([\s\S]*?)<\/td>\s*<td\b[^>]*>([\s\S]*?)<\/td>\s*<\/tr>/gi,
+  )];
+  const expectedJobs = expectedPage < totalPages
+    ? CGI_NJOYN_PAGE_SIZE
+    : total - CGI_NJOYN_PAGE_SIZE * (totalPages - 1);
+  if (rawRows.length !== expectedJobs) return null;
+  const parsedRows = rawRows.map((match): { externalId: string; officialUrl: string; job: CrawledJob | null } | null => {
+    const rowAttributes = match[1] ?? "";
+    const externalId = decodeHtmlAttribute(plainText(match[3]) ?? "").trim();
+    const title = decodeHtmlAttribute(plainText(match[4]) ?? "").trim();
+    const jobFunction = decodeHtmlAttribute(plainText(match[5]) ?? "").trim();
+    const location = decodeHtmlAttribute(plainText(match[6]) ?? "").trim();
+    const country = decodeHtmlAttribute(plainText(match[7]) ?? "").trim();
+    const remote = /\bremotework=["']?true\b/i.test(rowAttributes);
+    // Njoyn's CountryID=US filter also returns the global remote pool. Validate
+    // those rows as part of the paged snapshot, but persist only rows whose
+    // advertised country is explicitly United States.
+    if (!/^J\d{4}-\d{4}$/i.test(externalId) || !title || !country
+      || (country !== "United States" && !remote)) return null;
+
+    let detailUrl: URL;
+    try {
+      detailUrl = new URL(decodeHtmlAttribute(match[2]), CGI_NJOYN_LISTING_URL);
+    } catch {
+      return null;
+    }
+    const parameters = new Map([...detailUrl.searchParams].map(([key, value]) => [key.toLocaleLowerCase(), value]));
+    const brid = parameters.get("brid");
+    if (!/^https?:$/.test(detailUrl.protocol) || detailUrl.hostname.toLocaleLowerCase() !== "cgi.njoyn.com"
+      || detailUrl.port || detailUrl.pathname.toLocaleLowerCase() !== "/corp/xweb/xweb.asp"
+      || parameters.get("page")?.toLocaleLowerCase() !== "jobdetails"
+      || parameters.get("clid") !== "21001" || parameters.get("jobid") !== externalId
+      || !brid || !/^\d+$/.test(brid)) return null;
+
+    const officialUrl = new URL("https://cgi.njoyn.com/CORP/xweb/xweb.asp");
+    for (const [key, value] of [
+      ["NTKN", "c"], ["clid", "21001"], ["Page", "JobDetails"],
+      ["Jobid", externalId], ["BRID", brid], ["lang", "1"],
+    ]) officialUrl.searchParams.set(key, value);
+    if (country !== "United States") return { externalId, officialUrl: officialUrl.href, job: null };
+    const programs = classifyJobPrograms(title).keys;
+    return { externalId, officialUrl: officialUrl.href, job: {
+      externalId,
+      requisitionId: externalId,
+      title,
+      company: source.company,
+      location: location || null,
+      arrangement: remote || /\bremote\b/i.test(location) ? "remote" : "unknown",
+      employmentType: programs.includes("coop")
+        ? "Co-op"
+        : programs.includes("internship") ? "Internship" : null,
+      summary: null,
+      ...(jobFunction ? { jobFunction } : {}),
+      locationCountry: "US",
+      officialUrl: officialUrl.href,
+      publishedAt: null,
+    } };
+  });
+  if (parsedRows.some((row) => row == null)) return null;
+  const validRows = parsedRows as Array<{ externalId: string; officialUrl: string; job: CrawledJob | null }>;
+  return {
+    page,
+    total,
+    totalPages,
+    rawIdentities: validRows.map((row) => row.externalId),
+    rawUrls: validRows.map((row) => row.officialUrl),
+    jobs: validRows.flatMap((row) => row.job ? [row.job] : []),
+  };
+};
+
+const crawlCgiNjoyn = async (
+  source: CrawlSource,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  const fetchPage = async (page: number): Promise<CgiNjoynPage> => {
+    const listingUrl = cgiNjoynPageUrl(page);
+    try {
+      const direct = await fetchWithTimeout(fetcher, listingUrl, undefined, true, { attempts: 1, timeoutMs: 7_000 });
+      responseStatus = direct.status;
+      if (direct.ok) {
+        const parsed = parseCgiNjoynPage(await direct.text(), source, page);
+        if (parsed) return parsed;
+      } else {
+        await direct.body?.cancel().catch(() => undefined);
+      }
+    } catch {
+      // The independent reader below can recover a Radware-blocked Njoyn page.
+    }
+    const reader = await fetchWithTimeout(fetcher, cgiNjoynReaderUrl(listingUrl), {
+      headers: { accept: "text/html", "x-return-format": "html" },
+    }, false, { attempts: 1, timeoutMs: 10_000 });
+    if (!reader.ok) {
+      throw Object.assign(new Error(`CGI Njoyn reader returned HTTP ${reader.status}.`), {
+        responseStatus: reader.status,
+      });
+    }
+    const parsed = parseCgiNjoynPage(await reader.text(), source, page);
+    if (!parsed) throw new Error(`CGI Njoyn returned an unusable US catalog page ${page}.`);
+    return parsed;
+  };
+
+  try {
+    const first = await fetchPage(1);
+    const pages: CgiNjoynPage[] = [first];
+    const remaining = Array.from({ length: first.totalPages - 1 }, (_, index) => index + 2);
+    for (let index = 0; index < remaining.length; index += 4) {
+      pages.push(...await Promise.all(remaining.slice(index, index + 4).map(fetchPage)));
+    }
+    const stable = pages.every((page, index) => page.page === index + 1
+      && page.total === first.total && page.totalPages === first.totalPages);
+    const rawIdentities = pages.flatMap((page) => page.rawIdentities);
+    const rawUrls = pages.flatMap((page) => page.rawUrls);
+    const jobs = pages.flatMap((page) => page.jobs);
+    const identities = new Set(jobs.map((job) => job.externalId));
+    const urls = new Set(jobs.map((job) => job.officialUrl));
+    if (!stable || rawIdentities.length !== first.total || new Set(rawIdentities).size !== rawIdentities.length
+      || new Set(rawUrls).size !== rawUrls.length || identities.size !== jobs.length || urls.size !== jobs.length) {
+      throw new Error("CGI Njoyn returned an incomplete or unstable US catalog.");
+    }
+    return {
+      status: "succeeded",
+      responseStatus: responseStatus ?? 200,
+      completeListing: true,
+      jobs,
+      resolvedListingUrl: CGI_NJOYN_LISTING_URL,
+      error: null,
+    };
+  } catch (error) {
+    const status = typeof error === "object" && error && "responseStatus" in error
+      ? Number((error as { responseStatus: unknown }).responseStatus)
+      : responseStatus;
+    return {
+      status: status != null && isBlockedHttpStatus(status) ? "blocked" : "failed",
+      responseStatus: status,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown CGI Njoyn crawler error.",
+    };
+  }
+};
+
 async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
   if ((source.discoveryDepth ?? 0) === 0) {
     try {
@@ -14559,6 +14888,10 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   }
   if (source.id === "audit-row-342") return crawlDeltaAvature(source, fetcher);
   if (source.id === "audit-row-328") return crawlCbreAvature(source, fetcher);
+  if (source.id === "p4-0241-cgi") return crawlCgiNjoyn(source, fetcher);
+  if (source.id === "p5-0849-christus-health" || sourcePage.hostname === "careers.christushealth.org") {
+    return crawlChristusHealth(source, fetcher);
+  }
   if (source.id === "audit-row-359" || sourcePage.hostname === "careers.fedex.com") return crawlFedEx(source, fetcher);
   if (source.id === "p2-0067-wells-fargo") return crawlWellsFargo(source, fetcher);
   if (source.id === "p5-1041-rippling") return crawlRippling(source, fetcher);

@@ -10496,4 +10496,184 @@ Wrong description.
       error: "Dayforce returned an unstable empty catalog.",
     }));
   });
+
+  it("reads CHRISTUS Health's complete first-party public catalog", async () => {
+    const requests: Array<{ url: string; method: string | undefined; body: URLSearchParams }> = [];
+    const jobs = [{
+      key: 36051,
+      jobId: "318190",
+      reqId: "318190",
+      community: "CHRISTUS Santa Rosa Health System",
+      category: "Nursing",
+      bu: "CHRISTUS Santa Rosa Hospital - Alamo Heights",
+      title: "RN, Registered Nurse - General Surgery",
+      location: "TX, San Antonio",
+      type: "Full Time",
+      url: "https://careers.christushealth.org/opportunity/rn-registered-nurse-general-surgery-318190",
+    }, {
+      key: 36052,
+      jobId: "318190",
+      reqId: "318190",
+      community: "CHRISTUS Santa Rosa Health System",
+      category: "Information Technology",
+      bu: "CHRISTUS Corporate",
+      title: "Summer 2027 Data Science Intern",
+      location: "TX, Irving",
+      type: "Full Time",
+      url: "https://careers.christushealth.org/opportunity/summer-2027-data-science-intern-318190-1",
+    }];
+    const result = await crawlSource({
+      id: "p5-0849-christus-health",
+      company: "CHRISTUS Health",
+      postingUrl: "https://careers.christushealth.org/job-search",
+      adapter: "custom",
+    }, async (input, init) => {
+      requests.push({
+        url: String(input),
+        method: init?.method,
+        body: new URLSearchParams(String(init?.body)),
+      });
+      return Response.json({ count: jobs.length, resultCount: jobs.length, jobs });
+    }, new Date("2026-08-15T12:00:00Z"));
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toEqual(expect.objectContaining({
+      url: "https://careers.christushealth.org/job-search/jobs",
+      method: "POST",
+    }));
+    expect(requests[0].body.get("new_search")).toBe("1");
+    expect(requests[0].body.get("keyword")).toBe("");
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      responseStatus: 200,
+      completeListing: true,
+      resolvedListingUrl: "https://careers.christushealth.org/job-search",
+      error: null,
+    }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        externalId: "36051",
+        requisitionId: "318190",
+        title: "RN, Registered Nurse - General Surgery",
+        locationCity: "San Antonio",
+        locationState: "TX",
+        locationCountry: "US",
+        employmentType: "Full-time",
+        department: "Nursing",
+        team: "CHRISTUS Santa Rosa Health System",
+        businessUnit: "CHRISTUS Santa Rosa Hospital - Alamo Heights",
+      }),
+      expect.objectContaining({
+        externalId: "36052",
+        requisitionId: "318190",
+        title: "Summer 2027 Data Science Intern",
+        locationCity: "Irving",
+        employmentType: "Internship",
+      }),
+    ]);
+  });
+
+  it("fails CHRISTUS Health closed for incomplete or duplicate catalog identities", async () => {
+    const source = {
+      id: "p5-0849-christus-health",
+      company: "CHRISTUS Health",
+      postingUrl: "https://careers.christushealth.org/job-search",
+      adapter: "custom" as const,
+    };
+    const duplicate = {
+      key: 1, jobId: "100", reqId: "100", title: "Role",
+      location: "TX, Irving", type: "Full Time",
+      url: "https://careers.christushealth.org/opportunity/role-100",
+    };
+    for (const payload of [
+      { count: 2, resultCount: 2, jobs: [duplicate] },
+      { count: 2, resultCount: 2, jobs: [duplicate, duplicate] },
+    ]) {
+      const result = await crawlSource(source, async () => Response.json(payload), new Date());
+      expect(result).toEqual(expect.objectContaining({
+        status: "failed",
+        completeListing: false,
+        jobs: [],
+      }));
+    }
+  });
+
+  it("crawls CGI's complete US-scoped Njoyn catalog", async () => {
+    const source = {
+      id: "p4-0241-cgi",
+      company: "CGI",
+      postingUrl: "https://www.cgi.com/en/careers",
+      adapter: "custom" as const,
+    };
+    const row = (index: number) => {
+      const jobId = `J0826-${String(index).padStart(4, "0")}`;
+      const title = index === 1 ? "Summer 2027 Software Developer Intern" : `Software Engineer ${index}`;
+      return `<tr HasMultipleLocations='0' RemoteWork='False' CountryIDs='US'><td><a href='xweb.asp?NTKN=c&amp;clid=21001&amp;Page=JobDetails&amp;Jobid=${jobId}&amp;BRID=${1325000 + index}&amp;lang=1'>${jobId}</a></td><td>${title}</td><td>Software Development / Engineering</td><td>Fairfax</td><td name='CountryCell'>United States</td></tr>`;
+    };
+    const remoteForeignRow = `<tr HasMultipleLocations='0' RemoteWork='True' CountryIDs=''><td><a href='xweb.asp?NTKN=c&amp;clid=21001&amp;Page=JobDetails&amp;Jobid=J0826-0052&amp;BRID=1325052&amp;lang=1'>J0826-0052</a></td><td>Remote Test Engineer</td><td>Testing</td><td>France</td><td name='CountryCell'>France</td></tr>`;
+    const page = (current: number, rows: string) => `<header>Search Results (52)</header><table><tbody>${rows}</tbody></table><div>Page ${current} of 2</div>`;
+    const firstRows = Array.from({ length: 50 }, (_, index) => row(index + 1)).join("");
+    const requests: string[] = [];
+    const result = await crawlSource(source, async (input) => {
+      const url = String(input);
+      requests.push(url);
+      return new Response(url.includes("pn=2") ? page(2, `${row(51)}${remoteForeignRow}`) : page(1, firstRows));
+    }, new Date("2026-08-15T12:00:00Z"));
+
+    expect(requests).toHaveLength(2);
+    expect(requests[0]).toContain("CountryID=US");
+    expect(requests[1]).toContain("pn=2");
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      responseStatus: 200,
+      completeListing: true,
+      resolvedListingUrl: "https://cgi.njoyn.com/CORP/xweb/xweb.asp?CLID=21001&page=JobListing&lang=1&CountryID=US",
+    }));
+    expect(result.jobs).toHaveLength(51);
+    expect(result.jobs.some((job) => job.externalId === "J0826-0052")).toBe(false);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "J0826-0001",
+      requisitionId: "J0826-0001",
+      title: "Summer 2027 Software Developer Intern",
+      employmentType: "Internship",
+      location: "Fairfax",
+      locationCountry: "US",
+      jobFunction: "Software Development / Engineering",
+      officialUrl: "https://cgi.njoyn.com/CORP/xweb/xweb.asp?NTKN=c&clid=21001&Page=JobDetails&Jobid=J0826-0001&BRID=1325001&lang=1",
+    }));
+  });
+
+  it("uses an HTML reader for CGI and fails closed on unstable page identities", async () => {
+    const source = {
+      id: "p4-0241-cgi",
+      company: "CGI",
+      postingUrl: "https://www.cgi.com/en/careers",
+      adapter: "custom" as const,
+    };
+    const row = (jobId: string, brid: string) => `<tr hasmultiplelocations="0" remotework="False" countryids="US"><td><a href="xweb.asp?NTKN=c&amp;clid=21001&amp;Page=JobDetails&amp;Jobid=${jobId}&amp;BRID=${brid}&amp;lang=1">${jobId}</a></td><td>Data Science Intern</td><td>Analytics</td><td>New York</td><td name="CountryCell">United States</td></tr>`;
+    const requests: string[] = [];
+    const recovered = await crawlSource(source, async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (!url.startsWith("https://r.jina.ai/")) return new Response("<title>Radware Block Page</title>");
+      return new Response(`<header>Search Results (1)</header><table><tbody>${row("J0826-0001", "1325001")}</tbody></table><div>Page 1 of 1</div>`);
+    }, new Date());
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toContain("CountryID=US");
+    expect(requests[1]).toContain("%26");
+    expect(recovered).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+
+    const duplicateRows = Array.from({ length: 50 }, () => row("J0826-0001", "1325001")).join("");
+    const unstable = await crawlSource(source, async (input) => {
+      const url = String(input);
+      if (url.includes("pn=2")) return new Response(`<header>Search Results (51)</header><table><tbody>${row("J0826-0001", "1325001")}</tbody></table><div>Page 2 of 2</div>`);
+      return new Response(`<header>Search Results (51)</header><table><tbody>${duplicateRows}</tbody></table><div>Page 1 of 2</div>`);
+    }, new Date());
+    expect(unstable).toEqual(expect.objectContaining({
+      status: "failed",
+      completeListing: false,
+      jobs: [],
+      error: "CGI Njoyn returned an incomplete or unstable US catalog.",
+    }));
+  });
 });
