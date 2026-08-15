@@ -4368,17 +4368,23 @@ const crawlTalemetryJson = async (
     return endpoint;
   };
   let directUnavailable = false;
+  const pageFailures = new Map<number, string>();
   const fetchPage = async (page: number, allowReaderRetry = false): Promise<TalemetryPayload | null> => {
     const endpoint = endpointFor(page);
     if (!directUnavailable) {
       try {
         const direct = await fetchWithTimeout(fetcher, endpoint, { headers: { accept: "application/json" } }, false, { attempts: 1, timeoutMs: 10_000 });
         if (direct.ok) {
-          const parsed = parseTalemetryPayload(await direct.text());
+          const directText = await direct.text();
+          const parsed = parseTalemetryPayload(directText);
           if (parsed) return parsed;
+          pageFailures.set(page, `direct HTTP ${direct.status} returned an unusable ${directText.length}-character body`);
+        } else {
+          pageFailures.set(page, `direct endpoint returned HTTP ${direct.status}`);
         }
         directUnavailable = true;
       } catch {
+        pageFailures.set(page, "direct endpoint request failed");
         directUnavailable = true;
       }
     }
@@ -4391,9 +4397,17 @@ const crawlTalemetryJson = async (
             ...(attempt > 0 ? { "x-no-cache": "true", "x-engine": "browser" } : {}),
           },
         }, false, { attempts: 1, timeoutMs: attempt > 0 ? 18_000 : 12_000 });
-        const parsed = reader.ok ? parseTalemetryPayload(await reader.text()) : null;
-        if (parsed) return parsed;
+        const readerText = await reader.text();
+        const parsed = reader.ok ? parseTalemetryPayload(readerText) : null;
+        if (parsed) {
+          pageFailures.delete(page);
+          return parsed;
+        }
+        pageFailures.set(page, reader.ok
+          ? `reader HTTP ${reader.status} returned an unusable ${readerText.length}-character body`
+          : `reader returned HTTP ${reader.status}`);
       } catch {
+        pageFailures.set(page, "reader request or body stream failed");
         // The bounded second attempt also covers network/body-stream failures.
       }
     }
@@ -4410,7 +4424,7 @@ const crawlTalemetryJson = async (
       completeListing: false,
       jobs: [],
       pagination: { nextPage: requestedStart, cycleComplete: false, totalPages: requestedStart },
-      error: "Talemetry returned no consecutive usable catalog pages.",
+      error: `Talemetry page ${requestedStart} was unavailable (${pageFailures.get(requestedStart) ?? "unknown response"}).`,
     };
   }
   const perPage = Math.max(1, first.per_page ?? first.entries?.length ?? 100);
@@ -4483,6 +4497,7 @@ const crawlTalemetryJson = async (
   const jobs: CrawledJob[] = [];
   const seen = new Set<string>();
   let firstFailedPage: number | null = null;
+  let firstFailureReason: string | null = null;
   for (const pageNumber of pageNumbers) {
     const page = pages.get(pageNumber) ?? null;
     const entries = page?.entries ?? [];
@@ -4499,6 +4514,21 @@ const crawlTalemetryJson = async (
       && identities.every((identity) => !seen.has(identity));
     if (!valid) {
       firstFailedPage = pageNumber;
+      firstFailureReason = !page
+        ? pageFailures.get(pageNumber) ?? "missing page payload"
+        : (page.current_page ?? pageNumber) !== pageNumber
+          ? `reported page ${String(page.current_page)}`
+          : page.total_entries !== totalEntries
+            ? `total changed from ${totalEntries} to ${String(page.total_entries)}`
+            : (page.per_page ?? perPage) !== perPage
+              ? `page size changed from ${perPage} to ${String(page.per_page)}`
+              : entries.length !== expected
+                ? `expected ${expected} entries but received ${entries.length}`
+                : normalized.length !== expected
+                  ? `only ${normalized.length} of ${expected} entries had stable identities`
+                  : new Set(identities).size !== expected
+                    ? "page contained duplicate identities"
+                    : "page repeated an identity from the current window";
       break;
     }
     identities.forEach((identity) => seen.add(identity));
@@ -4519,7 +4549,9 @@ const crawlTalemetryJson = async (
         totalPages,
       },
     } : {}),
-    error: unique.length > 0 ? null : "Talemetry returned no consecutive usable catalog pages.",
+    error: firstFailedPage === null
+      ? null
+      : `Talemetry page ${firstFailedPage} was unusable (${firstFailureReason ?? "unknown response"}).`,
   };
 };
 
