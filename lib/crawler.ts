@@ -17714,6 +17714,58 @@ const crawlRainAi = async (source: CrawlSource, fetcher: typeof fetch): Promise<
   }
 };
 
+const crawlAllyCareers = async (
+  source: CrawlSource,
+  fetcher: typeof fetch,
+  now: Date,
+): Promise<SourceCrawlResult> => {
+  const listingUrl = "https://www.ally.com/about/careers/";
+  try {
+    const response = await fetchWithTimeout(fetcher, listingUrl, undefined, true, { attempts: 1, timeoutMs: 10_000 });
+    if (!response.ok) return {
+      status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
+      responseStatus: response.status,
+      completeListing: false,
+      jobs: [],
+      error: `Ally's official careers page returned HTTP ${response.status}.`,
+    };
+    const html = await response.text();
+    const text = plainText(html) ?? "";
+    const announcedMaintenance = /careers portal is going offline for system updates/i.test(text)
+      && /back online Tuesday,?\s+Sept(?:ember)?\.?\s+1/i.test(text)
+      && /Careers at Ally/i.test(text);
+    if (announcedMaintenance) return {
+      status: "succeeded",
+      responseStatus: response.status,
+      completeListing: false,
+      jobs: [],
+      resolvedListingUrl: listingUrl,
+      error: "Ally's official careers portal is under announced maintenance through September 1; retained existing jobs and will retry in two hours.",
+    };
+
+    // Once the announced maintenance ends, re-run normal discovery against
+    // the official corporate page so its replacement ATS is adopted without
+    // another hard-coded migration.
+    const discovered = await crawlJsonLd({
+      ...source,
+      postingUrl: listingUrl,
+      adapter: "custom",
+      discoveryDepth: 1,
+    }, fetcher, now);
+    return discovered.status === "succeeded"
+      ? { ...discovered, resolvedListingUrl: discovered.resolvedListingUrl ?? listingUrl }
+      : discovered;
+  } catch (error) {
+    return {
+      status: "failed",
+      responseStatus: null,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Ally careers error.",
+    };
+  }
+};
+
 type DayforceLocation = {
   formattedAddress?: unknown;
   isoCountryCode?: unknown;
@@ -18552,6 +18604,9 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-1072-tampa-general-hospital") {
     return crawlTampaGeneralTaleo(source, fetcher);
+  }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p2-0192-ally-financial") {
+    return crawlAllyCareers(source, fetcher, now);
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-1104-wayfair") {
     return crawlWayfairCareers(source, fetcher);

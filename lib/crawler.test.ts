@@ -9298,6 +9298,33 @@ HUMAN RESOURCES Posted Date
     }));
   });
 
+  it("preserves Ally jobs during its officially announced careers maintenance", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p2-0192-ally-financial",
+      company: "Ally Financial",
+      postingUrl: "https://ally.avature.net/careers",
+      adapter: "custom",
+    }, async (input) => {
+      requests.push(String(input));
+      return new Response(`
+        <title>Careers at Ally: Explore Jobs, Our Culture, Core Values &amp; Hiring Info</title>
+        <main><h1>Careers</h1><p><strong>Our careers portal is going offline for system updates starting Saturday, Aug. 15.
+        We'll be back online Tuesday, Sept. 1 with a new look and feel.</strong></p></main>
+      `);
+    }, new Date("2026-08-15T19:00:00Z"));
+
+    expect(requests).toEqual(["https://www.ally.com/about/careers/"]);
+    expect(result).toEqual({
+      status: "succeeded",
+      responseStatus: 200,
+      completeListing: false,
+      jobs: [],
+      resolvedListingUrl: "https://www.ally.com/about/careers/",
+      error: "Ally's official careers portal is under announced maintenance through September 1; retained existing jobs and will retry in two hours.",
+    });
+  });
+
   it("caps a Vanguard catalog above 500 jobs without falsely closing unseen jobs", async () => {
     let requests = 0;
     const fetcher: typeof fetch = async (input) => {
