@@ -11723,6 +11723,24 @@ HUMAN RESOURCES Posted Date
     }));
   });
 
+  it("preserves a literal pipe inside a CGI reader table title", async () => {
+    const source = {
+      id: "p4-0241-cgi",
+      company: "CGI",
+      postingUrl: "https://www.cgi.com/en/careers",
+      adapter: "custom" as const,
+    };
+    const row = "| [J0426-1430](http://cgi.njoyn.com/CORP/xweb/xweb.asp?clid=21001&Page=JobDetails&Jobid=J0426-1430&BRID=1292903) | Backend Developer (Golang / Java | Microservices) | Software Development / Engineering | Merrimack | United States |";
+    const content = `Title: Careers\nURL Source: http://cgi.njoyn.com/CORP/xweb/xweb.asp?CLID=21001&page=JobListing&CountryID=US\nSearch Results (1)\n${row}\nPage 1 of 1`;
+    const result = await crawlSource(source, async (input) => String(input).startsWith("https://r.jina.ai/")
+      ? new Response(content)
+      : new Response("<title>Radware Block Page</title>"), new Date());
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "J0426-1430",
+      title: "Backend Developer (Golang / Java | Microservices)",
+    })]);
+  });
+
   it("persists CGI page-one progress without advancing past a blocked checkpoint page", async () => {
     const source = {
       id: "p4-0241-cgi",

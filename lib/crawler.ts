@@ -15957,17 +15957,24 @@ const cgiNjoynRowsFromContent = (content: string): CgiNjoynRawRow[] => {
 
   const markdownTableRows = content.split(/\r?\n/).flatMap((line): CgiNjoynRawRow[] => {
     const cells = splitMarkdownTableRow(line);
-    if (!cells || cells.length !== 5) return [];
+    if (!cells || cells.length < 5) return [];
     const identity = cells[0].match(/^\[([^\]]+)]\((https?:\/\/[^)]+)\)$/i);
     if (!identity) return [];
+    // Reader occasionally leaves a literal pipe inside a title unescaped.
+    // The final three columns are fixed (category, city, country), so join any
+    // surplus middle cells back into the title instead of dropping the row.
+    const title = cells.slice(1, -3).join(" | ");
+    const jobFunction = cells.at(-3)!;
+    const location = cells.at(-2)!;
+    const country = cells.at(-1)!;
     return [{
       externalId: identity[1].trim(),
       href: identity[2].trim(),
-      title: decodeHtmlAttribute(cells[1]).trim(),
-      jobFunction: decodeHtmlAttribute(cells[2]).trim(),
-      location: decodeHtmlAttribute(cells[3]).trim(),
-      country: decodeHtmlAttribute(cells[4]).trim(),
-      remote: /\bremote\b/i.test(cells[3]),
+      title: decodeHtmlAttribute(title).trim(),
+      jobFunction: decodeHtmlAttribute(jobFunction).trim(),
+      location: decodeHtmlAttribute(location).trim(),
+      country: decodeHtmlAttribute(country).trim(),
+      remote: /\bremote\b/i.test(location),
     }];
   });
   if (markdownTableRows.length > 0) return markdownTableRows;
