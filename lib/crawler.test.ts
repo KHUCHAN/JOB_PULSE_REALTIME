@@ -8635,6 +8635,68 @@ Wrong description.
     })]);
   });
 
+  it("uses Jefferies' verified Oracle tenant and keeps only explicit US jobs", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p2-0040-jefferies",
+      company: "Jefferies",
+      postingUrl: "https://www.jefferies.com/careers/",
+      adapter: "custom",
+    }, async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.href);
+      expect(url.origin + url.pathname).toBe(
+        "https://hdid.fa.us2.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitions",
+      );
+      expect(url.searchParams.get("finder")).toContain("siteNumber=CX_1");
+      return Response.json({ items: [{
+        TotalJobsCount: 2,
+        requisitionList: [{
+          Id: "4101",
+          Title: "2027 Quantitative Finance Summer Intern",
+          PrimaryLocation: "New York, NY",
+          PrimaryLocationCountry: "US",
+          Department: "Investment Banking",
+          BusinessUnit: "Jefferies Group",
+          JobFunction: "Quantitative Research",
+          JobSchedule: null,
+          ShortDescriptionStr: "Build quantitative models.",
+          ExternalResponsibilitiesStr: "Research and implement models.",
+          ExternalQualificationsStr: "Python and statistics.",
+          PostedDate: "2026-08-14",
+          PostingEndDate: "2026-09-30",
+        }, {
+          Id: "4102",
+          Title: "Fixed Income BI Developer",
+          PrimaryLocation: "Pune, India",
+          PrimaryLocationCountry: "IN",
+          PostedDate: "2026-08-14",
+        }],
+      }] });
+    }, new Date());
+
+    expect(requests).toHaveLength(1);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://careers.jefferies.com/#en/sites/CX_1",
+    }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "4101",
+      requisitionId: "4101",
+      title: "2027 Quantitative Finance Summer Intern",
+      employmentType: "Internship",
+      locationCountry: "US",
+      department: "Investment Banking",
+      businessUnit: "Jefferies Group",
+      jobFunction: "Quantitative Research",
+      responsibilities: "Research and implement models.",
+      qualifications: "Python and statistics.",
+      validThrough: "2026-09-30T00:00:00.000Z",
+      officialUrl: "https://careers.jefferies.com/hcmUI/CandidateExperience/en/sites/CX_1/job/4101",
+    })]);
+  });
+
   it("paginates Vanguard's official M-Cloud API with rich filter fields and exact closure checks", async () => {
     const offsets: number[] = [];
     const total = 25;

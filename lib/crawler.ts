@@ -97,6 +97,7 @@ export type DiscoveredAts =
 
 type VerifiedSourceFeed = {
   discovered?: DiscoveredAts;
+  oracle?: { apiOrigin: string; site: string };
   listingUrl: string;
   adapter: CrawlSource["adapter"];
 };
@@ -120,6 +121,7 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
   "p1-0007-kroll",
   "p2-0029-capital-one",
   "p2-0032-citi",
+  "p2-0040-jefferies",
   "p2-0041-jpmorgan-chase",
   "p2-0048-metlife",
   "p2-0050-morgan-stanley",
@@ -336,6 +338,11 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
   },
   "p2-0064-unitedhealth-group": {
     listingUrl: "https://careers.unitedhealthgroup.com/search-jobs",
+    adapter: "custom",
+  },
+  "p2-0040-jefferies": {
+    oracle: { apiOrigin: "https://hdid.fa.us2.oraclecloud.com", site: "CX_1" },
+    listingUrl: "https://careers.jefferies.com/#en/sites/CX_1",
     adapter: "custom",
   },
   "p4-0209-aci-worldwide": {
@@ -1088,11 +1095,21 @@ type OracleJob = {
   Id?: string | number;
   Title?: string;
   PostedDate?: string;
+  PostingEndDate?: string | null;
   PrimaryLocation?: string;
+  PrimaryLocationCountry?: string;
   WorkplaceType?: string;
   WorkplaceTypeCode?: string;
   JobSchedule?: string;
+  JobType?: string;
+  WorkerType?: string;
+  Department?: string;
+  BusinessUnit?: string;
+  JobFamily?: string;
+  JobFunction?: string;
   ShortDescriptionStr?: string;
+  ExternalQualificationsStr?: string;
+  ExternalResponsibilitiesStr?: string;
 };
 
 type McKinseyJob = {
@@ -2313,17 +2330,32 @@ async function crawlOracle(
     const normalizePage = (page: OracleJob[]): CrawledJob[] => page.flatMap((job) => {
         if (!job.Id || !job.Title) return [];
         const workplace = `${job.WorkplaceType ?? ""} ${job.WorkplaceTypeCode ?? ""}`.toLowerCase();
+        const programs = classifyJobPrograms(job.Title).keys;
+        const description = plainText(job.ShortDescriptionStr);
         return [{
           externalId: String(job.Id),
+          requisitionId: String(job.Id),
           title: job.Title,
           company: source.company,
           location: job.PrimaryLocation ?? null,
           arrangement: workplace.includes("remote") ? "remote" as const : workplace.includes("hybrid") ? "hybrid" as const : workplace.includes("site") ? "onsite" as const : "unknown" as const,
-          employmentType: job.JobSchedule ?? null,
-          summary: plainText(job.ShortDescriptionStr),
-          description: plainText(job.ShortDescriptionStr),
+          employmentType: programs.includes("coop")
+            ? "Co-op"
+            : programs.includes("internship")
+              ? "Internship"
+              : job.JobSchedule ?? normalizeEmploymentType(job.JobType ?? job.WorkerType),
+          summary: description,
+          description,
+          ...(plainText(job.ExternalResponsibilitiesStr) ? { responsibilities: plainText(job.ExternalResponsibilitiesStr) } : {}),
+          ...(plainText(job.ExternalQualificationsStr) ? { qualifications: plainText(job.ExternalQualificationsStr) } : {}),
+          ...(asText(job.Department) ? { department: asText(job.Department) } : {}),
+          ...(asText(job.BusinessUnit) ? { businessUnit: asText(job.BusinessUnit) } : {}),
+          ...(asText(job.JobFamily) ? { jobFamily: asText(job.JobFamily) } : {}),
+          ...(asText(job.JobFunction) ? { jobFunction: asText(job.JobFunction) } : {}),
+          ...(asText(job.PrimaryLocationCountry) ? { locationCountry: asText(job.PrimaryLocationCountry) } : {}),
           officialUrl: oracleJobUrl(source.postingUrl, oracle.site, job),
           publishedAt: normalizedDate(job.PostedDate),
+          validThrough: normalizedDate(job.PostingEndDate),
         }];
       });
 
@@ -14819,7 +14851,13 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   const verifiedFeed = (source.discoveryDepth ?? 0) === 0 ? VERIFIED_SOURCE_FEEDS[source.id] : undefined;
   if (verifiedFeed) {
     const verifiedDayforceIdentity = dayforceBoardIdentity(verifiedFeed.listingUrl);
-    const result = verifiedFeed.discovered
+    const result = verifiedFeed.oracle
+      ? await crawlOracle({
+          ...source,
+          postingUrl: verifiedFeed.listingUrl,
+          adapter: verifiedFeed.adapter,
+        }, verifiedFeed.oracle, fetcher)
+      : verifiedFeed.discovered
       ? verifiedFeed.discovered.kind === "workday"
         ? await crawlWorkday({
             ...source,
