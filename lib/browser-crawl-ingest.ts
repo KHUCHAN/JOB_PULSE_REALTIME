@@ -3,14 +3,34 @@ import { inferEmploymentTypeFromPrograms, isCoopEmploymentType, normalizeEmploym
 import { classifyJobPrograms } from "./job-program-classifier";
 
 type BrowserJobRecord = {
+  externalId?: unknown;
   officialUrl?: unknown;
+  applyUrl?: unknown;
   title?: unknown;
   location?: unknown;
+  locationCity?: unknown;
+  locationState?: unknown;
+  locationCountry?: unknown;
+  secondaryLocations?: unknown;
+  arrangement?: unknown;
   publishedText?: unknown;
+  publishedAt?: unknown;
+  sourcePostedText?: unknown;
+  sourceUpdatedAt?: unknown;
+  validThrough?: unknown;
+  summary?: unknown;
+  description?: unknown;
+  responsibilities?: unknown;
+  qualifications?: unknown;
+  skills?: unknown;
   businessUnit?: unknown;
   category?: unknown;
   companyId?: unknown;
   department?: unknown;
+  team?: unknown;
+  jobFamily?: unknown;
+  jobFunction?: unknown;
+  requisitionId?: unknown;
   jobRequisitionType?: unknown;
   employmentType?: unknown;
   postingType?: unknown;
@@ -27,8 +47,19 @@ const NON_JOB_TITLE = /^(?:privacy notice|create (?:an? )?(?:job )?alert|share y
 
 const dateFromCard = (value: string | null): string | null => {
   if (!value) return null;
-  const timestamp = Date.parse(`${value.replace(/^Date Posted:\s*/i, "")} UTC`);
+  const text = value.replace(/^Date Posted:\s*/i, "").trim();
+  const timestamp = Date.parse(/(?:Z|[+-]\d{2}:?\d{2}|\bUTC)$/i.test(text) ? text : `${text} UTC`);
   return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+};
+
+const stringValues = (value: unknown, limit = 100): string[] => Array.isArray(value)
+  ? [...new Set(value.slice(0, limit).flatMap((item) => textValue(item) ?? []))]
+  : [];
+
+const arrangementValue = (value: unknown, location: string | null): CrawledJob["arrangement"] => {
+  const text = textValue(value, 20)?.toLocaleLowerCase();
+  if (text === "onsite" || text === "hybrid" || text === "remote" || text === "unknown") return text;
+  return /\bremote\b/i.test(location ?? "") ? "remote" : "unknown";
 };
 
 const countedFacet = (key: string, label: string, values: Array<string | null>): CrawledFacet | null => {
@@ -80,13 +111,18 @@ export function normalizeBrowserJobSnapshot(
       throw new Error("Browser job URL is outside the official careers origin.");
     }
     if (avatureListing && !/\/careers\/JobDetail\//i.test(officialUrl.pathname)) continue;
-    const externalId = officialUrl.pathname.match(/\/jobs\/(\d+)/i)?.[1]
+    const externalId = textValue(raw.externalId, 200)
+      ?? officialUrl.pathname.match(/\/jobs\/(\d+)/i)?.[1]
       ?? officialUrl.pathname.match(/\/JobDetail\/[^/]+\/([^/?#]+)/i)?.[1]
       ?? officialUrl.pathname.match(/\/jobs?\/([^/?#]+)/i)?.[1]
       ?? officialUrl.searchParams.get("jobid")
       ?? officialUrl.searchParams.get("jobId")
       ?? null;
     const location = textValue(raw.location)?.replace(/^Location:\s*/i, "") ?? null;
+    const locationCity = textValue(raw.locationCity);
+    const locationState = textValue(raw.locationState);
+    const locationCountry = textValue(raw.locationCountry);
+    const secondaryLocations = stringValues(raw.secondaryLocations);
     const region = textValue(raw.region);
     const businessUnit = textValue(raw.businessUnit);
     const department = textValue(raw.department) ?? businessUnit;
@@ -99,18 +135,44 @@ export function normalizeBrowserJobSnapshot(
     const jobRequisitionType = textValue(raw.jobRequisitionType);
     const category = textValue(raw.category);
     const postingType = textValue(raw.postingType);
-    const summary = [employmentType, department, region, jobRequisitionType].filter(Boolean).join(" · ") || null;
+    const jobFamily = textValue(raw.jobFamily) ?? region;
+    const summary = textValue(raw.summary, 4_000)
+      ?? ([employmentType, department, region, jobRequisitionType].filter(Boolean).join(" · ") || null);
+    const applyUrlText = textValue(raw.applyUrl, 2_000);
+    let applyUrl: string | null = null;
+    if (applyUrlText) {
+      const candidate = new URL(applyUrlText);
+      if (candidate.protocol !== "https:" || candidate.username || candidate.password
+        || !officialOrigins.has(candidate.origin)) throw new Error("Browser apply URL is outside the official careers origin.");
+      applyUrl = candidate.href;
+    }
+    const sourcePostedText = textValue(raw.sourcePostedText, 500) ?? textValue(raw.publishedText, 500);
     jobs.set(officialUrl.href, {
       externalId,
       title,
       company: source.company,
       location,
-      arrangement: /\bremote\b/i.test(location ?? "") ? "remote" : "unknown",
+      arrangement: arrangementValue(raw.arrangement, location),
       employmentType,
       summary,
+      description: textValue(raw.description, 100_000),
+      responsibilities: textValue(raw.responsibilities, 40_000),
+      qualifications: textValue(raw.qualifications, 40_000),
+      skills: stringValues(raw.skills),
       ...(department ? { department } : {}),
+      ...(textValue(raw.team) ? { team: textValue(raw.team) } : {}),
       ...(businessUnit ? { businessUnit } : {}),
-      ...(region ? { jobFamily: region } : {}),
+      ...(jobFamily ? { jobFamily } : {}),
+      ...(textValue(raw.jobFunction) ? { jobFunction: textValue(raw.jobFunction) } : {}),
+      ...(secondaryLocations.length > 0 ? { secondaryLocations } : {}),
+      ...(locationCity ? { locationCity } : {}),
+      ...(locationState ? { locationState } : {}),
+      ...(locationCountry ? { locationCountry } : {}),
+      ...(textValue(raw.requisitionId, 200) ? { requisitionId: textValue(raw.requisitionId, 200) } : {}),
+      ...(applyUrl ? { applyUrl } : {}),
+      ...(sourcePostedText ? { sourcePostedText } : {}),
+      ...(dateFromCard(textValue(raw.sourceUpdatedAt, 200)) ? { sourceUpdatedAt: dateFromCard(textValue(raw.sourceUpdatedAt, 200)) } : {}),
+      ...(dateFromCard(textValue(raw.validThrough, 200)) ? { validThrough: dateFromCard(textValue(raw.validThrough, 200)) } : {}),
       rawPayload: {
         ...(category ? { category } : {}),
         ...(jobRequisitionType ? { jobRequisitionType } : {}),
@@ -118,7 +180,7 @@ export function normalizeBrowserJobSnapshot(
         ...(textValue(raw.companyId) ? { companyId: textValue(raw.companyId) } : {}),
       },
       officialUrl: officialUrl.href,
-      publishedAt: dateFromCard(textValue(raw.publishedText)),
+      publishedAt: dateFromCard(textValue(raw.publishedAt, 200)) ?? dateFromCard(textValue(raw.publishedText)),
     });
     regions.push(region);
     businessUnits.push(businessUnit);

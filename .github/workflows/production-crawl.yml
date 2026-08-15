@@ -13,6 +13,7 @@ on:
     paths:
       - .github/workflows/production-crawl.yml
       - scripts/run-production-crawl.mjs
+      - scripts/request-fallback-crawl.ts
       - scripts/browser-fallback-crawl.ts
       - lib/**
       - app/api/pulse/**
@@ -40,8 +41,29 @@ jobs:
           JOB_PULSE_MAX_RUN_MINUTES: "20"
         run: node scripts/run-production-crawl.mjs
 
-  browser-recovery:
+  request-recovery:
     needs: crawl
+    # These exact sources expose validated first-party APIs that work from the
+    # independent runner but reject Sites Worker egress. Run the same bounded
+    # request crawler here and ingest its verified result before paying for a
+    # rendered-browser pass.
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Recover request-only egress sources
+        env:
+          REQUEST_FALLBACK_LIVE_URL: https://job-pulse-realtime.autodev61.chatgpt.site
+          REQUEST_FALLBACK_INGEST_URL: https://job-pulse-realtime.autodev61.chatgpt.site/api/pulse
+          REQUEST_FALLBACK_SOURCE_IDS: p5-0722-saic,p5-1039-revolut
+        run: node scripts/request-fallback-crawl.ts
+
+  browser-recovery:
+    needs: [crawl, request-recovery]
     # Browser recovery is the safety net for exactly the runs where the
     # native drain encounters an infrastructure/OIDC failure.  Do not let a
     # failed native job suppress the independent browser queue.

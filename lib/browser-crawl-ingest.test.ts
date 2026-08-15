@@ -69,6 +69,49 @@ describe("browser crawl ingestion", () => {
     }));
   });
 
+  it("preserves bounded native-runner fields used by filters and job details", () => {
+    const result = normalizeBrowserJobSnapshot({
+      id: "p5-0722-saic",
+      company: "SAIC",
+      postingUrl: "https://jobs.saic.com/search/jobs/in/country/united-states",
+      adapter: "custom",
+    }, [{
+      externalId: "18100000",
+      officialUrl: "https://jobs.saic.com/jobs/18100000-data-science-intern",
+      applyUrl: "https://jobs.saic.com/jobs/18100000-data-science-intern/apply",
+      title: "Data Science Intern",
+      location: "Reston, VA, United States",
+      locationCity: "Reston",
+      locationState: "VA",
+      locationCountry: "United States",
+      arrangement: "onsite",
+      employmentType: "Internship",
+      summary: "Build production ML systems.",
+      description: "A detailed internship description.",
+      skills: ["Python", "SQL"],
+      department: "Data Science",
+      team: "Applied AI",
+      requisitionId: "18100000",
+      sourcePostedText: "2026-08-15 13:09:58 UTC",
+      sourceUpdatedAt: "2026-08-15T13:09:58.000Z",
+      publishedAt: "2026-08-15T13:09:58.000Z",
+    }]);
+
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "18100000",
+      locationCity: "Reston",
+      locationState: "VA",
+      locationCountry: "United States",
+      arrangement: "onsite",
+      description: "A detailed internship description.",
+      skills: ["Python", "SQL"],
+      team: "Applied AI",
+      requisitionId: "18100000",
+      sourceUpdatedAt: "2026-08-15T13:09:58.000Z",
+      publishedAt: "2026-08-15T13:09:58.000Z",
+    }));
+  });
+
   it("drops non-job UI controls even when their URL resembles a job detail", () => {
     const result = normalizeBrowserJobSnapshot(source, [
       { officialUrl: "https://careers.alvarezandmarsal.com/jobs/123", title: "Create alert" },
