@@ -97,4 +97,23 @@ describe("resume review feed", () => {
     const candidates = await listResumeReviewCandidates(createD1ForSqlite(sqlite), 1);
     expect(candidates.map((candidate) => candidate.jobId)).toEqual(["job-new"]);
   });
+
+  it("does not let a fresher low-fit US 2027 backlog starve a stronger match", async () => {
+    const sqlite = databaseWithCandidates();
+    sqlite.exec(`
+      INSERT INTO jobs VALUES
+        ('job-us-newer-low-fit', 'Bulk Launch Co', 'Human Resources Intern 2027', 'New York, NY', 'us',
+         'https://careers.bulk.example/jobs/newer', NULL, NULL, NULL, NULL, NULL,
+         '[]', NULL, NULL, NULL, NULL, 'Internship', NULL, NULL, NULL,
+         '2026-08-14T23:00:00.000Z', '2026-08-14T23:00:00.000Z', '2026-08-14T23:00:00.000Z', 'open', 1, NULL);
+      INSERT INTO job_matches VALUES
+        ('match-us-newer-low-fit', 'job-us-newer-low-fit', 'resume-keyword', 0, '[]', 1, 1, 0);
+      INSERT INTO job_topics VALUES
+        ('job-us-newer-low-fit', 'program:internship'),
+        ('job-us-newer-low-fit', 'year:2027');
+    `);
+
+    const candidates = await listResumeReviewCandidates(createD1ForSqlite(sqlite), 1);
+    expect(candidates.map((candidate) => candidate.jobId)).toEqual(["job-new"]);
+  });
 });

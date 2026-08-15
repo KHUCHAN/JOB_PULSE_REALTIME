@@ -125,8 +125,9 @@ export const listResumeReviewCandidates = async (
       )
     -- The feed remains an internship-only candidate set; Codex still makes
     -- every region/year/fit decision. Prioritize records whose extracted
-    -- signals indicate the user's target so a 100-row global influx cannot
-    -- delay a newly published US 2027 role for another review interval.
+    -- signals indicate the user's target, then use the coarse resume score
+    -- before freshness. Otherwise a 100-row low-fit company launch can starve
+    -- an older, strongly matched US 2027 internship from Codex review.
     ORDER BY CASE
       WHEN j.location_region = 'us' AND EXISTS (
         SELECT 1 FROM job_topics priority_year
@@ -139,7 +140,7 @@ export const listResumeReviewCandidates = async (
       WHEN j.location_region = 'us' THEN 2
       ELSE 3
     END,
-    COALESCE(j.published_at, j.first_seen_at) DESC, jm.score DESC, jm.id
+    jm.score DESC, COALESCE(j.published_at, j.first_seen_at) DESC, jm.id
     LIMIT ?
   `).bind(boundedLimit(limit)).all<Row>();
 
