@@ -109,6 +109,7 @@ type VerifiedSourceFeed = {
 // an incomplete location never causes a potentially relevant US role to drop.
 const US_SCOPED_LARGE_CATALOGS = new Set([
   "audit-row-319", // Baker Hughes
+  "audit-row-359", // FedEx
   "audit-row-369", // Hertz
   "audit-row-378", // JLL
   "legacy-row-128", // Wabtec
@@ -9841,6 +9842,281 @@ const aceJobsFromHtml = (html: string, source: CrawlSource): CrawledJob[] => uni
     }),
 );
 
+type FedExLocation = {
+  zipCode?: unknown;
+  postalCode?: unknown;
+  locationName?: unknown;
+  city?: unknown;
+  state?: unknown;
+  stateAbbr?: unknown;
+  country?: unknown;
+  countryAbbr?: unknown;
+  latitude?: unknown;
+  longitude?: unknown;
+  locationText?: unknown;
+  locationParsedText?: unknown;
+  isRemote?: unknown;
+};
+
+type FedExListingJob = {
+  sourceID?: unknown;
+  uniqueID?: unknown;
+  reference?: unknown;
+  title?: unknown;
+  brandName?: unknown;
+  locations?: unknown;
+  isRemote?: unknown;
+  employmentType?: unknown;
+  employmentStatus?: unknown;
+  postingType?: unknown;
+  applyURL?: unknown;
+  originalURL?: unknown;
+  customFields?: unknown;
+};
+
+type FedExListingPage = {
+  status: number;
+  total: number;
+  jobs: CrawledJob[];
+};
+
+const fedexListingUrl = (page: number): string => {
+  const endpoint = new URL(`/jobs/page/${page}`, "https://careers.fedex.com");
+  endpoint.searchParams.set("page_size", "100");
+  endpoint.searchParams.append("filter[country]", "United States");
+  endpoint.searchParams.set("sort_by", "update_date");
+  return endpoint.href;
+};
+
+const fedexCustomFields = (value: unknown): Map<string, string> => {
+  if (!Array.isArray(value)) return new Map();
+  return new Map(value.flatMap((field): Array<[string, string]> => {
+    if (!field || typeof field !== "object") return [];
+    const key = asText((field as { cfKey?: unknown }).cfKey);
+    const fieldValue = asText((field as { value?: unknown }).value);
+    return key && fieldValue ? [[key, fieldValue]] : [];
+  }));
+};
+
+const fedexNumericField = (value: string | undefined): number | null => {
+  if (!value) return null;
+  const number = Number(value.replaceAll(",", "").replace(/[^\d.-]/g, ""));
+  return Number.isFinite(number) && number >= 0 ? number : null;
+};
+
+const fedexApplyUrl = (value: unknown): string | null => {
+  const text = asText(value);
+  if (!text) return null;
+  try {
+    const url = new URL(text);
+    const exactParadox = url.protocol === "https:" && url.hostname === "fedex.paradox.ai" && /^\/co\/[^/]+\/Job$/i.test(url.pathname)
+      && Boolean(url.searchParams.get("job_id"));
+    const exactAdp = url.protocol === "https:" && url.hostname === "recruiting.adp.com" && /^\/srccar\/public\/RTI\.home$/i.test(url.pathname)
+      && Boolean(url.searchParams.get("r")) && Boolean(url.searchParams.get("c"));
+    return exactParadox || exactAdp ? url.href : null;
+  } catch {
+    return null;
+  }
+};
+
+const fedexLocationText = (location: FedExLocation): string | null => {
+  const composed = [asText(location.city), asText(location.stateAbbr) ?? asText(location.state), asText(location.country)]
+    .filter(Boolean).join(", ");
+  return (asText(location.locationParsedText) ?? asText(location.locationText) ?? composed) || null;
+};
+
+const fedexListingJob = (value: unknown, source: CrawlSource): CrawledJob | null => {
+  if (!value || typeof value !== "object") return null;
+  const job = value as FedExListingJob;
+  const externalId = asText(job.reference);
+  const title = asText(job.title);
+  const originalPath = asText(job.originalURL);
+  if (!externalId || !/^[a-z0-9-]+$/i.test(externalId) || !title || !originalPath) return null;
+
+  let officialUrl: URL;
+  try {
+    officialUrl = new URL(originalPath.replace(/^\/+/, ""), "https://careers.fedex.com/");
+  } catch {
+    return null;
+  }
+  if (officialUrl.origin !== "https://careers.fedex.com"
+    || !/^\/[a-z0-9-]+\/job\/[a-z0-9-]+\/?$/i.test(officialUrl.pathname)) return null;
+
+  if (!Array.isArray(job.locations) || job.locations.length === 0) return null;
+  const locations = job.locations.filter((location): location is FedExLocation => Boolean(location) && typeof location === "object");
+  if (locations.length !== job.locations.length) return null;
+  const hasUsLocation = locations.some((location) => asText(location.countryAbbr)?.toLocaleUpperCase() === "US"
+    || /^United States(?: of America)?$/i.test(asText(location.country) ?? ""));
+  const hasRemoteLocation = job.isRemote === true || locations.some((location) => location.isRemote === true
+    || /^remote$/i.test(asText(location.locationName) ?? ""));
+  if (!hasUsLocation && !hasRemoteLocation) return null;
+
+  const locationValues = [...new Set(locations.map(fedexLocationText).filter((location): location is string => Boolean(location)))];
+  if (locationValues.length === 0) return null;
+  const primary = locations.find((location) => asText(location.countryAbbr)?.toLocaleUpperCase() === "US"
+    || /^United States(?: of America)?$/i.test(asText(location.country) ?? "")) ?? locations[0];
+  const fields = fedexCustomFields(job.customFields);
+  const customDescription = fields.get("cf_custom_description") ?? null;
+  const programs = classifyJobPrograms(title).keys;
+  const employmentLabels = Array.isArray(job.employmentType)
+    ? [...new Set(job.employmentType.flatMap((entry) => normalizeEmploymentType(asText(entry))?.split(" / ") ?? []))]
+    : [];
+  if (programs.includes("coop") && !employmentLabels.includes("Co-op")) employmentLabels.unshift("Co-op");
+  else if (programs.includes("internship") && !employmentLabels.includes("Internship")) employmentLabels.unshift("Internship");
+  const remote = job.isRemote === true || locations.every((location) => location.isRemote === true
+    || /^remote$/i.test(asText(location.locationName) ?? ""));
+  const arrangement: CrawledJob["arrangement"] = remote
+    ? "remote"
+    : /\bhybrid\b/i.test(customDescription ?? "") ? "hybrid" : "onsite";
+  const effectiveDate = fields.get("cf_effective_date") ?? null;
+  const salaryMin = fedexNumericField(fields.get("cf_compensation_pay_range_data_minimum"));
+  const salaryMax = fedexNumericField(fields.get("cf_compensation_pay_range_data_maximum"));
+  const applyUrl = fedexApplyUrl(job.applyURL);
+  const latitude = typeof primary.latitude === "number" && Number.isFinite(primary.latitude) ? primary.latitude : null;
+  const longitude = typeof primary.longitude === "number" && Number.isFinite(primary.longitude) ? primary.longitude : null;
+  const compactRawPayload = {
+    ...(asText(job.sourceID) ? { sourceId: asText(job.sourceID) } : {}),
+    ...(asText(job.uniqueID) ? { uniqueId: asText(job.uniqueID) } : {}),
+    ...(asText(job.postingType) ? { postingType: asText(job.postingType) } : {}),
+    ...(Array.isArray(job.employmentStatus) ? { employmentStatus: job.employmentStatus.filter((entry): entry is string => Boolean(asText(entry))) } : {}),
+  };
+
+  return {
+    externalId,
+    title,
+    company: source.company,
+    location: locationValues.join("; "),
+    arrangement,
+    employmentType: employmentLabels.join(" / ") || null,
+    summary: customDescription,
+    ...(asText(job.brandName) ? { businessUnit: asText(job.brandName) } : {}),
+    ...(asText(primary.locationName) ? { office: asText(primary.locationName) } : {}),
+    ...(locationValues.length > 1 ? { secondaryLocations: locationValues.slice(1) } : {}),
+    ...(asText(primary.city) ? { locationCity: asText(primary.city) } : {}),
+    ...(asText(primary.stateAbbr) ?? asText(primary.state) ? { locationState: asText(primary.stateAbbr) ?? asText(primary.state) } : {}),
+    locationCountry: "US",
+    ...(asText(primary.zipCode) ?? asText(primary.postalCode) ? { locationPostalCode: asText(primary.zipCode) ?? asText(primary.postalCode) } : {}),
+    ...(latitude != null ? { latitude } : {}),
+    ...(longitude != null ? { longitude } : {}),
+    ...(salaryMin != null ? { salaryMin } : {}),
+    ...(salaryMax != null ? { salaryMax } : {}),
+    ...(fields.get("cf_currency_id") ? { salaryCurrency: fields.get("cf_currency_id") } : {}),
+    ...(fields.get("cf_frequency_id") ? { salaryInterval: fields.get("cf_frequency_id") } : {}),
+    ...(fields.get("cf_shift_options") ? { shiftSchedule: fields.get("cf_shift_options") } : {}),
+    requisitionId: externalId,
+    ...(applyUrl ? { applyUrl } : {}),
+    ...(effectiveDate ? { sourcePostedText: effectiveDate, sourceUpdatedAt: normalizedDate(effectiveDate) } : {}),
+    ...(Object.keys(compactRawPayload).length > 0 ? { rawPayload: compactRawPayload } : {}),
+    officialUrl: officialUrl.href,
+    publishedAt: normalizedDate(effectiveDate),
+  };
+};
+
+const fedexListingPage = (html: string, page: number, source: CrawlSource, status: number): FedExListingPage | null => {
+  const payload = embeddedJsonObject(html, "window.__PRELOAD_STATE__ = ");
+  const jobSearch = payload?.jobSearch;
+  if (!jobSearch || typeof jobSearch !== "object") return null;
+  const state = jobSearch as JsonLdValue;
+  const params = state.params;
+  if (!params || typeof params !== "object") return null;
+  const request = params as JsonLdValue;
+  const filter = request.filter;
+  const countries = filter && typeof filter === "object" ? (filter as JsonLdValue).country : null;
+  const total = state.totalJob;
+  const rawJobs = state.jobs;
+  if (request.page_number !== page || request.page_size !== 100 || request.sort_by !== "update_date"
+    || !Array.isArray(countries) || countries.length !== 1 || countries[0] !== "United States"
+    || !Number.isSafeInteger(total) || Number(total) <= 0 || !Array.isArray(rawJobs)) return null;
+  const expected = Math.min(100, Math.max(0, Number(total) - (page - 1) * 100));
+  const lastPage = page === Math.ceil(Number(total) / 100);
+  // FedEx currently advertises 2,411 US jobs while its official final page
+  // consistently exposes 10 rows (2,410 accessible jobs). Admit only that
+  // bounded one-row final-page discrepancy; any larger truncation remains an
+  // incomplete page and cannot advance the stale-closure checkpoint.
+  if (rawJobs.length !== expected && !(lastPage && expected > 1 && rawJobs.length === expected - 1)) return null;
+  const jobs = rawJobs.map((job) => fedexListingJob(job, source));
+  if (jobs.some((job) => job === null)) return null;
+  const normalized = jobs as CrawledJob[];
+  const identities = normalized.map((job) => job.externalId);
+  if (new Set(identities).size !== identities.length) return null;
+  return { status, total: Number(total), jobs: normalized };
+};
+
+const crawlFedEx = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const pageSize = 100;
+  const maxPagesPerPass = 7;
+  let responseStatus: number | null = null;
+  const fetchPage = async (page: number): Promise<FedExListingPage | null> => {
+    try {
+      const endpoint = fedexListingUrl(page);
+      const response = await fetchWithTimeout(fetcher, endpoint, undefined, true, { attempts: 1, timeoutMs: 12_000 });
+      responseStatus = response.status;
+      if (!response.ok) return null;
+      if (response.url) {
+        const final = new URL(response.url);
+        if (final.origin !== "https://careers.fedex.com" || final.pathname !== `/jobs/page/${page}`) return null;
+      }
+      return fedexListingPage(await response.text(), page, source, response.status);
+    } catch {
+      return null;
+    }
+  };
+
+  const first = await fetchPage(1);
+  if (!first) return {
+    status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+    responseStatus,
+    completeListing: false,
+    jobs: [],
+    error: "FedEx US catalog did not return a usable first page.",
+  };
+  const totalPages = Math.ceil(first.total / pageSize);
+  const requestedStart = Math.max(1, Math.trunc(source.crawlPageCursor ?? 1));
+  const startPage = requestedStart <= totalPages ? requestedStart : 1;
+  const endPage = Math.min(startPage + maxPagesPerPass - 1, totalPages);
+  const pageNumbers = Array.from(
+    { length: Math.max(0, endPage - Math.max(2, startPage) + 1) },
+    (_, index) => Math.max(2, startPage) + index,
+  );
+  const pages = new Map<number, FedExListingPage>([[1, first]]);
+  for (let index = 0; index < pageNumbers.length; index += 3) {
+    const batch = pageNumbers.slice(index, index + 3);
+    const results = await Promise.all(batch.map(async (page) => ({ page, result: await fetchPage(page) })));
+    for (const { page, result } of results) if (result) pages.set(page, result);
+  }
+
+  const jobs = [...first.jobs];
+  const seen = new Set(first.jobs.map((job) => job.externalId ?? job.officialUrl));
+  let firstFailedPage: number | null = null;
+  for (let page = Math.max(2, startPage); page <= endPage; page += 1) {
+    const result = pages.get(page);
+    if (!result || result.total !== first.total
+      || !claimPageIdentities(result.jobs.map((job) => job.externalId ?? job.officialUrl), result.jobs.length, seen)) {
+      firstFailedPage = page;
+      break;
+    }
+    jobs.push(...result.jobs);
+  }
+  const cycleComplete = firstFailedPage === null && endPage === totalPages;
+  return {
+    status: "succeeded",
+    responseStatus: first.status,
+    // The paged cycle owns stale closure after two complete passes. Never let
+    // one checkpoint segment close the remainder of this 2,000+ job catalog.
+    completeListing: false,
+    jobs: uniqueJobs(jobs),
+    pagination: {
+      // Re-read the last successful page on the next pass so insertions near a
+      // page boundary cannot create an unobserved gap between checkpoints.
+      nextPage: cycleComplete ? 1 : firstFailedPage ?? Math.max(startPage + 1, endPage),
+      cycleComplete,
+      totalPages,
+    },
+    resolvedListingUrl: fedexListingUrl(1),
+    error: firstFailedPage == null ? null : `FedEx US catalog page ${firstFailedPage} was unavailable or unstable.`,
+  };
+};
+
 const crawlAceJobs = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
   const pageSize = 100;
   const endpointFor = (page: number): string => {
@@ -13408,6 +13684,7 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   }
   if (source.id === "audit-row-342") return crawlDeltaAvature(source, fetcher);
   if (source.id === "audit-row-328") return crawlCbreAvature(source, fetcher);
+  if (source.id === "audit-row-359" || sourcePage.hostname === "careers.fedex.com") return crawlFedEx(source, fetcher);
   if (source.id === "p2-0067-wells-fargo") return crawlWellsFargo(source, fetcher);
   if (source.id === "p5-1041-rippling") return crawlRippling(source, fetcher);
   if (source.id === "p4-0450-jfrog") return crawlJfrog(source, fetcher);
@@ -13762,6 +14039,7 @@ const verifiedInactiveCareerPage = (
 // Keeping this explicit avoids spending one detail request on every internship
 // returned by already-rich ATS feeds.
 const VERIFIED_JSON_LD_DETAIL_HOSTS = new Set([
+  "careers.fedex.com",
   "jobs.citi.com",
   "search.jobs.barclays",
 ]);

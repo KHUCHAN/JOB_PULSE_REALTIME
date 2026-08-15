@@ -8679,6 +8679,174 @@ Wrong description.
     ]);
   });
 
+  it("checkpoints FedEx's official US catalog and enriches internship details", async () => {
+    const listingJob = (reference: string, title: string) => ({
+      sourceID: `source-${reference}`,
+      uniqueID: `unique-${reference}`,
+      reference,
+      title,
+      brandName: "Federal Express Corporation",
+      locations: [{
+        zipCode: "38125", locationName: "Memphis Office", city: "Memphis", state: "Tennessee", stateAbbr: "TN",
+        country: "United States", countryAbbr: "US", latitude: 35.05, longitude: -89.79,
+        locationParsedText: "Memphis, TN 38125, United States", isRemote: false,
+      }],
+      isRemote: false,
+      employmentType: ["Full Time"],
+      employmentStatus: [],
+      postingType: "1",
+      applyURL: `https://fedex.paradox.ai/co/FederalExpressCorporation41/Job?job_id=${reference}`,
+      originalURL: `${title.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}/job/${reference}`,
+      customFields: [
+        { cfKey: "cf_effective_date", value: "2026-08-13" },
+        { cfKey: "cf_custom_description", value: "Hybrid student engineering assignment" },
+        { cfKey: "cf_compensation_pay_range_data_minimum", value: "25.50" },
+        { cfKey: "cf_compensation_pay_range_data_maximum", value: "35.75" },
+        { cfKey: "cf_currency_id", value: "USD" },
+        { cfKey: "cf_frequency_id", value: "Hourly" },
+      ],
+    });
+    const internship = listingJob("P25-100-1", "Software Engineering Intern 2027");
+    const regular = listingJob("P25-101-1", "Operations Manager");
+    const listing = `<script>window.__PRELOAD_STATE__ = ${JSON.stringify({
+      jobSearch: {
+        params: { page_number: 1, page_size: 100, filter: { country: ["United States"] }, sort_by: "update_date" },
+        totalJob: 2,
+        jobs: [internship, regular],
+      },
+    })};</script>`;
+    const internshipUrl = "https://careers.fedex.com/software-engineering-intern-2027/job/P25-100-1";
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "audit-row-359", company: "FedEx", postingUrl: "https://careers.fedex.com/", adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === internshipUrl) return new Response(`
+        <script type="application/ld+json">${JSON.stringify({
+          "@context": "https://schema.org", "@type": "JobPosting", url: internshipUrl,
+          title: "Software Engineering Intern 2027", identifier: { value: "P25-100-1" },
+          datePosted: "2026-08-14", employmentType: ["INTERN"],
+          description: "Build production software and data pipelines with Python, TypeScript, SQL, and cloud services.",
+          jobLocation: [{ address: { addressLocality: "Memphis", addressRegion: "TN", postalCode: "38125", addressCountry: "US" } }],
+        })}</script>
+      `);
+      return new Response(listing, { status: 200 });
+    }, new Date("2026-08-14T20:00:00Z"));
+
+    expect(requests).toEqual([
+      "https://careers.fedex.com/jobs/page/1?page_size=100&filter%5Bcountry%5D=United+States&sort_by=update_date",
+      internshipUrl,
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: false,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 1 },
+      resolvedListingUrl: "https://careers.fedex.com/jobs/page/1?page_size=100&filter%5Bcountry%5D=United+States&sort_by=update_date",
+    }));
+    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "P25-100-1",
+      requisitionId: "P25-100-1",
+      title: "Software Engineering Intern 2027",
+      employmentType: "Internship",
+      location: "Memphis, TN, US",
+      locationCity: "Memphis",
+      locationState: "TN",
+      locationCountry: "US",
+      salaryMin: 25.5,
+      salaryMax: 35.75,
+      salaryCurrency: "USD",
+      salaryInterval: "Hourly",
+      arrangement: "hybrid",
+      description: expect.stringContaining("data pipelines"),
+      publishedAt: "2026-08-14T00:00:00.000Z",
+      applyUrl: "https://fedex.paradox.ai/co/FederalExpressCorporation41/Job?job_id=P25-100-1",
+      officialUrl: internshipUrl,
+    }));
+  });
+
+  it("walks the bounded FedEx US catalog with a one-page checkpoint overlap", async () => {
+    const makeJob = (index: number) => ({
+      reference: `P25-${String(index).padStart(6, "0")}-1`,
+      title: `Operations Specialist ${index}`,
+      brandName: "FedEx",
+      locations: [{ city: "Memphis", stateAbbr: "TN", country: "United States", countryAbbr: "US", locationParsedText: "Memphis, TN, United States" }],
+      isRemote: false,
+      employmentType: ["Full Time"],
+      applyURL: `https://fedex.paradox.ai/co/FederalExpressCorporation41/Job?job_id=P25-${String(index).padStart(6, "0")}-1`,
+      originalURL: `operations-specialist-${index}/job/P25-${String(index).padStart(6, "0")}-1`,
+      customFields: [{ cfKey: "cf_effective_date", value: "2026-08-14" }],
+    });
+    const requestedPages: number[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      expect(url.searchParams.get("page_size")).toBe("100");
+      expect(url.searchParams.getAll("filter[country]")).toEqual(["United States"]);
+      expect(url.searchParams.get("sort_by")).toBe("update_date");
+      const page = Number(url.pathname.match(/\/jobs\/page\/(\d+)/)?.[1]);
+      requestedPages.push(page);
+      const total = 702;
+      const start = (page - 1) * 100;
+      // FedEx's live final page is consistently one row shorter than its
+      // advertised total; the crawler permits only that exact last-page gap.
+      const count = page === 8 ? 1 : Math.min(100, total - start);
+      const jobs = Array.from({ length: count }, (_, offset) => makeJob(start + offset + 1));
+      return new Response(`<script>window.__PRELOAD_STATE__ = ${JSON.stringify({
+        jobSearch: { params: { page_number: page, page_size: 100, filter: { country: ["United States"] }, sort_by: "update_date" }, totalJob: total, jobs },
+      })};</script>`);
+    };
+    const first = await crawlSource({
+      id: "audit-row-359", company: "FedEx", postingUrl: "https://careers.fedex.com/", adapter: "custom",
+    }, fetcher, new Date("2026-08-14T20:00:00Z"));
+    expect(requestedPages.sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(first.jobs).toHaveLength(700);
+    expect(first.pagination).toEqual({ nextPage: 7, cycleComplete: false, totalPages: 8 });
+
+    requestedPages.length = 0;
+    const tail = await crawlSource({
+      id: "audit-row-359", company: "FedEx", postingUrl: "https://careers.fedex.com/", adapter: "custom", crawlPageCursor: 7,
+    }, fetcher, new Date("2026-08-14T22:00:00Z"));
+    expect(requestedPages.sort((a, b) => a - b)).toEqual([1, 7, 8]);
+    expect(tail.jobs).toHaveLength(201);
+    expect(tail.pagination).toEqual({ nextPage: 1, cycleComplete: true, totalPages: 8 });
+  });
+
+  it("does not advance a FedEx checkpoint across a repeated or empty catalog page", async () => {
+    const job = (index: number) => ({
+      reference: `P25-${index}-1`, title: `Handler ${index}`, brandName: "FedEx",
+      locations: [{ city: "Memphis", stateAbbr: "TN", country: "United States", countryAbbr: "US", locationParsedText: "Memphis, TN, United States" }],
+      isRemote: false, employmentType: ["Part Time"],
+      applyURL: `https://fedex.paradox.ai/co/FederalExpressCorporation41/Job?job_id=P25-${index}-1`,
+      originalURL: `handler-${index}/job/P25-${index}-1`, customFields: [],
+    });
+    const repeated = await crawlSource({
+      id: "audit-row-359", company: "FedEx", postingUrl: "https://careers.fedex.com/", adapter: "custom",
+    }, async (input) => {
+      const page = Number(new URL(String(input)).pathname.match(/\/(\d+)$/)?.[1]);
+      const start = page === 2 ? 1 : (page - 1) * 100 + 1;
+      const jobs = Array.from({ length: page < 3 ? 100 : 50 }, (_, offset) => job(start + offset));
+      return new Response(`<script>window.__PRELOAD_STATE__ = ${JSON.stringify({
+        jobSearch: { params: { page_number: page, page_size: 100, filter: { country: ["United States"] }, sort_by: "update_date" }, totalJob: 250, jobs },
+      })};</script>`);
+    }, new Date());
+    expect(repeated).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: false,
+      pagination: { nextPage: 2, cycleComplete: false, totalPages: 3 },
+      error: "FedEx US catalog page 2 was unavailable or unstable.",
+    }));
+    expect(repeated.jobs).toHaveLength(100);
+
+    const empty = await crawlSource({
+      id: "audit-row-359", company: "FedEx", postingUrl: "https://careers.fedex.com/", adapter: "custom",
+    }, async () => new Response(`<script>window.__PRELOAD_STATE__ = ${JSON.stringify({
+      jobSearch: { params: { page_number: 1, page_size: 100, filter: { country: ["United States"] }, sort_by: "update_date" }, totalJob: 0, jobs: [] },
+    })};</script>`), new Date());
+    expect(empty).toEqual(expect.objectContaining({
+      status: "failed", completeListing: false, jobs: [],
+      error: "FedEx US catalog did not return a usable first page.",
+    }));
+  });
+
   it("checkpoints Ace Hardware's official JSON-backed pages without loading job details", async () => {
     const requests: string[] = [];
     const block = (id: string, title: string, location: string) => `<div class="search--item"><label>${id}</label><p><a href="/posting/${title.toLocaleLowerCase().replaceAll(" ", "-")}/${id}">${title}</a></p><label>Location</label><p>${location}</p><label>Category</label><p>Corporate</p></div>`;
