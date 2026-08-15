@@ -4367,6 +4367,201 @@ const crawlCfpbCareers = async (source: CrawlSource, fetcher: typeof fetch): Pro
   }
 };
 
+type ClarotyPositionSummary = {
+  name?: unknown;
+  department?: unknown;
+  location?: unknown;
+  uid?: unknown;
+  workplace_type?: unknown;
+};
+
+type ClarotyPositionGroup = {
+  department?: unknown;
+  positions?: unknown;
+};
+
+type ClarotyPositionDetail = ClarotyPositionSummary & {
+  url_comeet_hosted_page?: unknown;
+  employment_type?: unknown;
+  details?: unknown;
+  location?: {
+    name?: unknown;
+    country?: unknown;
+    city?: unknown;
+    state?: unknown;
+    postal_code?: unknown;
+    is_remote?: unknown;
+  } | null;
+};
+
+const CLAROTY_LISTING_URL = "https://claroty.com/open-positions";
+const CLAROTY_API_URL = "https://claroty.com/api/v1/comeet/positions";
+
+const clarotyHtmlSection = (html: string, heading: string): string | null => {
+  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const section = html.match(new RegExp(
+    `<h[1-6]\\b[^>]*>\\s*${escaped}\\s*<\\/h[1-6]>([\\s\\S]*?)(?=<h[1-6]\\b|$)`,
+    "i",
+  ))?.[1];
+  return icimsText(section);
+};
+
+const clarotyApplyUrl = (value: unknown, uid: string): string | null => {
+  const raw = asText(value);
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    if (url.origin !== "https://www.comeet.com" || url.search || url.hash
+      || !new RegExp(`^/jobs/Claroty/F2\\.004/[^/]+/${uid.replace(".", "\\.")}/?$`, "i").test(url.pathname)) return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+};
+
+const clarotyJob = (
+  source: CrawlSource,
+  summary: ClarotyPositionSummary,
+  detail: ClarotyPositionDetail,
+): CrawledJob | null => {
+  const uid = asText(summary.uid);
+  const title = asText(summary.name);
+  const department = asText(summary.department);
+  if (!uid || !/^[A-Z0-9]{2}\.[A-Z0-9]{3}$/i.test(uid) || !title
+    || jobIdentityText(asText(detail.name) ?? "") !== jobIdentityText(title)
+    || (department && asText(detail.department) !== department)) return null;
+  const applyUrl = clarotyApplyUrl(detail.url_comeet_hosted_page, uid);
+  const detailsHtml = asText(detail.details);
+  const description = icimsText(detailsHtml);
+  const responsibilities = detailsHtml ? clarotyHtmlSection(detailsHtml, "Responsibilities") : null;
+  const qualifications = detailsHtml
+    ? clarotyHtmlSection(detailsHtml, "Requirements") ?? clarotyHtmlSection(detailsHtml, "Qualifications")
+    : null;
+  const workplace = asText(detail.workplace_type) ?? asText(summary.workplace_type) ?? "";
+  const city = asText(detail.location?.city);
+  const state = asText(detail.location?.state);
+  const countryCode = asText(detail.location?.country)?.toLocaleUpperCase() ?? null;
+  const listingLocation = asText(summary.location) ?? asText(detail.location?.name);
+  const country = countryCode === "US" ? "United States" : listingLocation;
+  const location = [city, state, country].filter(Boolean).filter((value, index, values) => values.indexOf(value) === index).join(", ")
+    || listingLocation;
+  if (!applyUrl || !description || !location || !countryCode) return null;
+  const programs = classifyJobPrograms(title).keys;
+  const employmentType = programs.includes("coop")
+    ? "Co-op"
+    : programs.includes("internship")
+      ? "Internship"
+      : normalizeEmploymentType(detail.employment_type);
+  return {
+    externalId: uid,
+    title,
+    company: source.company,
+    location,
+    arrangement: /\bhybrid\b/i.test(workplace)
+      ? "hybrid"
+      : /\bremote\b/i.test(workplace) || detail.location?.is_remote === true
+        ? "remote"
+        : /\b(?:on[- ]?site|office)\b/i.test(workplace) ? "onsite" : "unknown",
+    employmentType,
+    summary: description,
+    description,
+    ...(responsibilities ? { responsibilities } : {}),
+    ...(qualifications ? { qualifications } : {}),
+    ...(department ? { department, jobFunction: department } : {}),
+    ...(city ? { locationCity: city } : {}),
+    ...(state ? { locationState: state } : {}),
+    locationCountry: countryCode === "US" ? "United States" : country ?? countryCode,
+    ...(asText(detail.location?.postal_code) ? { locationPostalCode: asText(detail.location?.postal_code) } : {}),
+    requisitionId: uid,
+    applyUrl,
+    rawPayload: { comeetUid: uid, countryCode },
+    officialUrl: new URL(`/open-positions/${encodeURIComponent(uid)}`, "https://claroty.com").href,
+    publishedAt: null,
+  };
+};
+
+const crawlClarotyCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  let failureStatus: number | null = null;
+  try {
+    const listingResponse = await fetchWithTimeout(fetcher, CLAROTY_API_URL, {
+      headers: { accept: "application/json", referer: CLAROTY_LISTING_URL },
+    }, true, { attempts: 1, timeoutMs: 10_000 });
+    responseStatus = listingResponse.status;
+    if (!listingResponse.ok) {
+      failureStatus = listingResponse.status;
+      throw new Error(`Claroty positions API returned HTTP ${listingResponse.status}.`);
+    }
+    const groups = await listingResponse.json() as unknown;
+    if (!Array.isArray(groups) || groups.length === 0) {
+      throw new Error("Claroty positions API returned an empty or malformed catalog.");
+    }
+    const summaries: ClarotyPositionSummary[] = [];
+    for (const value of groups) {
+      if (!value || typeof value !== "object") throw new Error("Claroty positions API returned a malformed group.");
+      const group = value as ClarotyPositionGroup;
+      if (!asText(group.department) || !Array.isArray(group.positions)) {
+        throw new Error("Claroty positions API returned a malformed group.");
+      }
+      summaries.push(...group.positions as ClarotyPositionSummary[]);
+    }
+    if (summaries.length === 0 || summaries.length > 48
+      || summaries.some((summary) => !summary || typeof summary !== "object")
+      || new Set(summaries.map((summary) => asText(summary.uid))).size !== summaries.length) {
+      throw new Error("Claroty positions API returned duplicate or unusable identities.");
+    }
+
+    const details = new Map<string, ClarotyPositionDetail>();
+    for (let index = 0; index < summaries.length; index += 6) {
+      const batch = summaries.slice(index, index + 6);
+      const results = await Promise.all(batch.map(async (summary) => {
+        const uid = asText(summary.uid);
+        if (!uid || !/^[A-Z0-9]{2}\.[A-Z0-9]{3}$/i.test(uid)) return { uid, detail: null };
+        try {
+          const endpoint = new URL(`/api/v1/comeet/positions/${encodeURIComponent(uid)}`, "https://claroty.com");
+          const response = await fetchWithTimeout(fetcher, endpoint, {
+            headers: { accept: "application/json", referer: CLAROTY_LISTING_URL },
+          }, true, { attempts: 1, timeoutMs: 8_000 });
+          if (!response.ok || (response.url && response.url !== endpoint.href)) {
+            failureStatus ??= response.status;
+            return { uid, detail: null };
+          }
+          const detail = await response.json() as ClarotyPositionDetail;
+          return { uid, detail };
+        } catch {
+          return { uid, detail: null };
+        }
+      }));
+      for (const result of results) if (result.uid && result.detail) details.set(result.uid, result.detail);
+    }
+    const jobs = summaries.flatMap((summary) => {
+      const uid = asText(summary.uid);
+      const detail = uid ? details.get(uid) : null;
+      const job = detail ? clarotyJob(source, summary, detail) : null;
+      return job ? [job] : [];
+    });
+    if (jobs.length !== summaries.length || new Set(jobs.map((job) => job.officialUrl)).size !== jobs.length) {
+      throw new Error("Claroty position details were incomplete or inconsistent.");
+    }
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: true,
+      jobs,
+      resolvedListingUrl: CLAROTY_LISTING_URL,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: isBlockedHttpStatus(failureStatus ?? responseStatus) ? "blocked" : "failed",
+      responseStatus: failureStatus ?? responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Claroty careers crawler error.",
+    };
+  }
+};
+
 type WayfairCareerJob = {
   id?: unknown;
   eid?: unknown;
@@ -16870,6 +17065,9 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p4-0240-cfpb") {
     return crawlCfpbCareers(source, fetcher);
+  }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p4-0412-claroty") {
+    return crawlClarotyCareers(source, fetcher);
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-1104-wayfair") {
     return crawlWayfairCareers(source, fetcher);

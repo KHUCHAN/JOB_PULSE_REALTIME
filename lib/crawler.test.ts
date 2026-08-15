@@ -11536,6 +11536,95 @@ HUMAN RESOURCES Posted Date
     }));
   });
 
+  it("collects Claroty's complete catalog from its first-party Comeet proxy", async () => {
+    const listingUrl = "https://claroty.com/api/v1/comeet/positions";
+    const summaries = [
+      { name: "Software Engineering Intern", department: "Software Engineering", location: "USA", uid: "FA.E52", workplace_type: "Hybrid" },
+      { name: "Backend Software Engineer", department: "Software Engineering", location: "Israel", uid: "1C.B6C", workplace_type: "Hybrid" },
+    ];
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p4-0412-claroty",
+      company: "Claroty",
+      postingUrl: "https://claroty.com/careers",
+      adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === listingUrl) return Response.json([{ department: "Software Engineering", positions: summaries }]);
+      const summary = summaries.find((candidate) => url === `${listingUrl}/${candidate.uid}`);
+      if (!summary) return new Response("missing", { status: 404 });
+      const us = summary.uid === "FA.E52";
+      return Response.json({
+        name: summary.name,
+        department: summary.department,
+        url_comeet_hosted_page: `https://www.comeet.com/jobs/Claroty/F2.004/${us ? "software-engineering-intern" : "backend-software-engineer"}/${summary.uid}`,
+        employment_type: "Full Time Employee",
+        location: us
+          ? { name: "USA", country: "US", city: "New York", state: "NY", postal_code: "10001", is_remote: false }
+          : { name: "Israel", country: "IL", city: "Tel Aviv", state: "", postal_code: "", is_remote: true },
+        workplace_type: "Hybrid",
+        details: `<h2>Description</h2><p>${summary.name} builds secure products.</p><h2>Responsibilities</h2><p>Develop production systems.</p><h2>Requirements</h2><p>Experience with Python.</p>`,
+      });
+    }, new Date("2026-08-15T16:00:00Z"));
+
+    expect(requests).toEqual([listingUrl, `${listingUrl}/FA.E52`, `${listingUrl}/1C.B6C`]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      responseStatus: 200,
+      completeListing: true,
+      resolvedListingUrl: "https://claroty.com/open-positions",
+      error: null,
+    }));
+    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "FA.E52",
+      requisitionId: "FA.E52",
+      title: "Software Engineering Intern",
+      location: "New York, NY, United States",
+      locationCity: "New York",
+      locationState: "NY",
+      locationCountry: "United States",
+      arrangement: "hybrid",
+      employmentType: "Internship",
+      department: "Software Engineering",
+      responsibilities: "Develop production systems.",
+      qualifications: "Experience with Python.",
+      officialUrl: "https://claroty.com/open-positions/FA.E52",
+      applyUrl: "https://www.comeet.com/jobs/Claroty/F2.004/software-engineering-intern/FA.E52",
+    }));
+  });
+
+  it("fails Claroty closed on duplicate identities or an unavailable detail", async () => {
+    const source = {
+      id: "p4-0412-claroty",
+      company: "Claroty",
+      postingUrl: "https://claroty.com/careers",
+      adapter: "custom" as const,
+    };
+    const summary = { name: "Backend Engineer", department: "Engineering", location: "USA", uid: "FA.E52", workplace_type: "Remote" };
+    const duplicate = await crawlSource(source, async () => Response.json([
+      { department: "Engineering", positions: [summary, summary] },
+    ]), new Date());
+    expect(duplicate).toEqual(expect.objectContaining({
+      status: "failed",
+      completeListing: false,
+      jobs: [],
+      error: "Claroty positions API returned duplicate or unusable identities.",
+    }));
+
+    const blocked = await crawlSource(source, async (input) => String(input).endsWith("/positions")
+      ? Response.json([{ department: "Engineering", positions: [summary] }])
+      : new Response("blocked", { status: 403 }), new Date());
+    expect(blocked).toEqual(expect.objectContaining({
+      status: "blocked",
+      responseStatus: 403,
+      completeListing: false,
+      jobs: [],
+      error: "Claroty position details were incomplete or inconsistent.",
+    }));
+  });
+
   it("collects Wayfair's complete US catalog from its first-party job search API", async () => {
     const requests: Array<{ url: string; body: Record<string, unknown>; headers: Headers }> = [];
     const job = (id: number, requisitionId: string, title: string, city: string, state: string) => ({
