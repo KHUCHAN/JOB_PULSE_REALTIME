@@ -14767,32 +14767,51 @@ const crawlCincinnatiTaleo = async (source: CrawlSource, fetcher: typeof fetch):
       requestedPage * detailBatchSize,
     );
     const enriched = new Map<string, CrawledJob>();
-    let detailFailures = 0;
-    for (let index = 0; index < detailSummaries.length; index += 6) {
-      const values = await Promise.all(detailSummaries.slice(index, index + 6).map(async (summary) => {
-        try {
-          const response = await fetchWithTimeout(fetcher, summary.officialUrl, {
-            headers: {
-              accept: "text/html,application/xhtml+xml",
-              cookie: "locale=en",
-              referer: CINCINNATI_TALEO_LISTING_URL,
-            },
-          }, true, { attempts: 1, timeoutMs: 10_000 });
-          responseStatus = response.status;
-          if (!response.ok) {
-            failureStatus ??= response.status;
-            return null;
-          }
-          return cincinnatiDetailJob(summary, await response.text(), source);
-        } catch {
+    const fetchDetail = async (summary: CincinnatiTaleoSummary): Promise<CrawledJob | null> => {
+      try {
+        const response = await fetchWithTimeout(fetcher, summary.officialUrl, {
+          headers: {
+            accept: "text/html,application/xhtml+xml",
+            cookie: "locale=en",
+            referer: CINCINNATI_TALEO_LISTING_URL,
+          },
+        }, true, { attempts: 1, timeoutMs: 10_000 });
+        responseStatus = response.status;
+        if (!response.ok) {
+          failureStatus ??= response.status;
           return null;
         }
-      }));
+        return cincinnatiDetailJob(summary, await response.text(), source);
+      } catch {
+        return null;
+      }
+    };
+    const failedDetails: CincinnatiTaleoSummary[] = [];
+    // Taleo becomes noticeably less reliable with six simultaneous detail
+    // requests. Three keeps the normal pass fast while avoiding the transient
+    // connection stalls observed in production.
+    for (let index = 0; index < detailSummaries.length; index += 3) {
+      const summaries = detailSummaries.slice(index, index + 3);
+      const values = await Promise.all(summaries.map(fetchDetail));
       for (const [offset, job] of values.entries()) {
-        if (job) enriched.set(detailSummaries[index + offset].officialUrl, job);
-        else detailFailures += 1;
+        const summary = summaries[offset];
+        if (job) enriched.set(summary.officialUrl, job);
+        else failedDetails.push(summary);
       }
     }
+    // Preserve the strict 50-request source ceiling. The catalog/provenance
+    // pass uses 2 + (2 * totalPages) requests; retry only the remaining budget
+    // and keep the page cursor in place if any detail is still unavailable.
+    const retryBudget = Math.max(0, 50 - (2 + 2 * totalPages + detailSummaries.length));
+    const retryDetails = failedDetails.slice(0, retryBudget);
+    for (let index = 0; index < retryDetails.length; index += 2) {
+      const summaries = retryDetails.slice(index, index + 2);
+      const values = await Promise.all(summaries.map(fetchDetail));
+      values.forEach((job, offset) => {
+        if (job) enriched.set(summaries[offset].officialUrl, job);
+      });
+    }
+    const detailFailures = detailSummaries.filter((summary) => !enriched.has(summary.officialUrl)).length;
     const jobs = secondPass.map((summary) => enriched.get(summary.officialUrl) ?? cincinnatiSummaryJob(summary, source));
     const detailsComplete = detailFailures === 0 && enriched.size === detailSummaries.length;
     const cycleComplete = detailsComplete && requestedPage === totalDetailPages;

@@ -11970,6 +11970,7 @@ HUMAN RESOURCES Posted Date
         <script>api.fillList("requisitionDescriptionInterface", "descRequisition", ${JSON.stringify(values)});</script>`;
     };
     const requestCounts = { corporate: 0, board: 0, search: 0, detail: 0 };
+    let transientDetailAttempts = 0;
     const result = await crawlSource({
       id: "p2-0089-cincinnati-financial",
       company: "Cincinnati Financial",
@@ -11995,10 +11996,13 @@ HUMAN RESOURCES Posted Date
       requestCounts.detail += 1;
       const contestNo = new URL(url).searchParams.get("job");
       const summary = summaries.find((candidate) => candidate.contestNo === contestNo);
+      if (contestNo === summaries[0].contestNo && transientDetailAttempts++ === 0) {
+        return new Response("temporarily unavailable", { status: 503 });
+      }
       return summary ? new Response(detail(summary)) : new Response("missing", { status: 404 });
     }, new Date("2026-08-15T16:00:00Z"));
 
-    expect(requestCounts).toEqual({ corporate: 1, board: 1, search: 4, detail: 25 });
+    expect(requestCounts).toEqual({ corporate: 1, board: 1, search: 4, detail: 26 });
     expect(result).toEqual(expect.objectContaining({
       status: "succeeded",
       responseStatus: 200,
