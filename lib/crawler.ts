@@ -14501,6 +14501,12 @@ type TampaGeneralTaleoSummary = CincinnatiTaleoSummary & {
   employmentType: string | null;
 };
 
+type PcaCareerPagePayload = {
+  postings?: unknown;
+  showingCount?: unknown;
+  pagination?: unknown;
+};
+
 const CINCINNATI_CORPORATE_LISTING_URL = "https://www.cinfin.com/cincinnati-insurance-careers/openings";
 const CINCINNATI_TALEO_LISTING_URL = "https://cinfin.taleo.net/careersection/ex/jobsearch.ftl?lang=en";
 const CINCINNATI_TALEO_SEARCH_URL = "https://cinfin.taleo.net/careersection/rest/jobboard/searchjobs?lang=en&portal=101430233";
@@ -14508,6 +14514,243 @@ const TAMPA_GENERAL_TALEO_LISTING_URL = "https://tgh.taleo.net/careersection/ex/
 const TAMPA_GENERAL_TALEO_SEARCH_URL = "https://tgh.taleo.net/careersection/rest/jobboard/searchjobs?lang=en&portal=101430233";
 const ENTERPRISE_PRODUCTS_CORPORATE_JOB_OPENINGS_URL = "https://www.enterpriseproducts.com/careers/job-openings/";
 const ENTERPRISE_PRODUCTS_TALEO_LISTING_URL = "https://epco.taleo.net/careersection/alljobs/jobsearch.ftl?lang=en&location=101372523&radius=1&radiusType=K&searchExpanded=false&dropListSize=1000";
+const PCA_CAREER_SEARCH_URL = "https://careers.packagingcorp.com/career-search/";
+const PCA_CAREER_SEARCH_API_URL = "https://careers.packagingcorp.com/wp-content/themes/pcoa/get-jobs.php";
+
+const pcaCareerSearchApiUrl = (page: number): string => {
+  const url = new URL(PCA_CAREER_SEARCH_API_URL);
+  for (const [key, value] of [
+    ["ajax", "1"], ["keyword", ""], ["title", ""], ["location", ""], ["job_type", ""], ["spage", String(page)],
+  ]) url.searchParams.set(key, value);
+  return url.href;
+};
+
+const pcaCareerSearchApiIdentity = (value: string, page: number): boolean => {
+  try {
+    const url = new URL(value);
+    const expected = new URL(pcaCareerSearchApiUrl(page));
+    return url.origin === expected.origin && url.pathname === expected.pathname
+      && !url.username && !url.password && !url.port && !url.hash
+      && url.searchParams.size === expected.searchParams.size
+      && [...expected.searchParams].every(([key, expectedValue]) => url.searchParams.get(key) === expectedValue);
+  } catch {
+    return false;
+  }
+};
+
+const pcaListingJob = (html: string, source: CrawlSource): CrawledJob | null => {
+  const externalId = icimsText(html.match(/<td\b[^>]*class=["'][^"']*\bid\b[^"']*["'][^>]*>([\s\S]*?)<\/td>/i)?.[1]);
+  const title = icimsText(html.match(/<td\b[^>]*class=["'][^"']*\btitle\b[^"']*["'][^>]*>([\s\S]*?)<\/td>/i)?.[1]);
+  const location = icimsText(html.match(/<td\b[^>]*class=["'][^"']*\blocation\b[^"']*["'][^>]*>([\s\S]*?)<\/td>/i)?.[1]);
+  const sourcePostedText = icimsText(html.match(/<td\b[^>]*class=["'][^"']*\bposted\b[^"']*["'][^>]*>([\s\S]*?)<\/td>/i)?.[1]);
+  const anchor = anchorsFromHtml(html).find(({ text }) => /^view job$/i.test(text));
+  const locationMatch = location?.match(/^(.+),\s*([A-Z]{2})$/);
+  if (!externalId || !/^\d{4,8}$/.test(externalId) || !title || !locationMatch || !sourcePostedText
+    || !/^\d{2}\/\d{2}\/\d{2}$/.test(sourcePostedText) || !anchor) return null;
+  let officialUrl: URL;
+  try {
+    officialUrl = new URL(anchor.href, PCA_CAREER_SEARCH_URL);
+  } catch {
+    return null;
+  }
+  const pathIdentity = officialUrl.pathname.match(/^\/career-search\/posting\/[^/]+\/(\d{4,8})\/?$/i)?.[1];
+  if (officialUrl.origin !== "https://careers.packagingcorp.com" || pathIdentity !== externalId
+    || officialUrl.username || officialUrl.password || officialUrl.port || officialUrl.search || officialUrl.hash) return null;
+  officialUrl.pathname = officialUrl.pathname.replace(/\/$/, "");
+  const programs = classifyJobPrograms(title).keys;
+  return {
+    externalId,
+    requisitionId: externalId,
+    title,
+    company: source.company,
+    location,
+    locationCity: locationMatch[1].trim(),
+    locationState: locationMatch[2],
+    locationCountry: "United States",
+    arrangement: /\bremote\b/i.test(`${title} ${location}`) ? "remote" : "unknown",
+    employmentType: programs.includes("coop") ? "Co-op"
+      : programs.includes("internship") ? "Internship" : null,
+    summary: null,
+    sourcePostedText,
+    publishedAt: normalizedUsDate(sourcePostedText),
+    officialUrl: officialUrl.href,
+  };
+};
+
+const pcaPage = (
+  payload: PcaCareerPagePayload,
+  page: number,
+  source: CrawlSource,
+  expectedTotal?: number,
+): { total: number; jobs: CrawledJob[] } | null => {
+  if (typeof payload.postings !== "string" || typeof payload.showingCount !== "string"
+    || typeof payload.pagination !== "string") return null;
+  const countText = icimsText(payload.showingCount);
+  const count = countText?.match(/^Showing\s+(\d+)\s*[–-]\s*(\d+)\s+of\s+([\d,]+)$/i);
+  if (!count) return null;
+  const start = Number(count[1]);
+  const end = Number(count[2]);
+  const total = Number(count[3].replaceAll(",", ""));
+  const expectedStart = (page - 1) * 10 + 1;
+  const expectedRows = Math.min(10, total - expectedStart + 1);
+  if (!Number.isSafeInteger(total) || total < 1 || total > 390 || expectedRows < 1
+    || start !== expectedStart || end !== expectedStart + expectedRows - 1
+    || (expectedTotal !== undefined && total !== expectedTotal)) return null;
+  const rows = [...payload.postings.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)];
+  const jobs = rows.flatMap((row) => pcaListingJob(row[0], source) ?? []);
+  return rows.length === expectedRows && jobs.length === rows.length ? { total, jobs } : null;
+};
+
+const pcaDetailJob = async (
+  job: CrawledJob,
+  source: CrawlSource,
+  fetcher: typeof fetch,
+): Promise<CrawledJob | null> => {
+  try {
+    const response = await fetchWithTimeout(fetcher, job.officialUrl, {
+      headers: { accept: "text/html,application/xhtml+xml", referer: PCA_CAREER_SEARCH_URL },
+    }, true, { attempts: 1, timeoutMs: 8_000 });
+    if (!response.ok) return null;
+    const expected = new URL(job.officialUrl);
+    const finalUrl = new URL(response.url || job.officialUrl);
+    if (finalUrl.origin !== expected.origin || finalUrl.pathname.replace(/\/$/, "") !== expected.pathname.replace(/\/$/, "")
+      || finalUrl.search || finalUrl.hash || finalUrl.username || finalUrl.password) return null;
+    const html = await response.text();
+    const title = icimsText(html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i)?.[1]);
+    const externalId = icimsText(html.match(/<div\b[^>]*class=["'][^"']*\bjob-id\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/i)?.[1])
+      ?.match(/^Req\s*#(\d{4,8})$/i)?.[1] ?? null;
+    const posted = icimsText(html.match(/<div\b[^>]*class=["'][^"']*\bjob-posted\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/i)?.[1])
+      ?.match(/^Posted:\s*(\d{2}\/\d{2}\/\d{2})$/i)?.[1] ?? null;
+    const location = icimsText(html.match(/<div\b[^>]*class=["'][^"']*\bjob-location\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/i)?.[1]);
+    const descriptionStart = html.search(/<div\b[^>]*class=["'][^"']*\bjob-description\b[^"']*["'][^>]*>/i);
+    const descriptionEnd = descriptionStart >= 0 ? html.indexOf("</section>", descriptionStart) : -1;
+    const description = descriptionStart >= 0 && descriptionEnd > descriptionStart
+      ? icimsText(html.slice(descriptionStart, descriptionEnd)) : null;
+    const applyUrl = anchorsFromHtml(html).flatMap(({ href, text }) => {
+      if (!/^apply to job$/i.test(text)) return [];
+      try {
+        const url = new URL(href, job.officialUrl);
+        return url.origin === "https://jobs.dayforcehcm.com"
+          && /^\/en-US\/pca\/CANDIDATEPORTAL\/jobs\/\d+\/apply$/i.test(url.pathname)
+          && !url.username && !url.password && !url.port && !url.hash
+          && url.searchParams.size === 1 && url.searchParams.get("flowSelection") === "true" ? [url.href] : [];
+      } catch {
+        return [];
+      }
+    }).at(0) ?? null;
+    if (!title || jobIdentityText(title) !== jobIdentityText(job.title) || externalId !== job.externalId
+      || posted !== job.sourcePostedText || location !== job.location || !description || description.length < 100 || !applyUrl) return null;
+    const coOpDetail = /\bco[- ]?op\s+(?:student|housing|assignment)\b/i.test(description);
+    const salaryText = icimsText(html.match(/<div\b[^>]*class=["'][^"']*\bsalary\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/i)?.[1]);
+    const salary = salaryText?.match(/\$\s*([\d,]+(?:\.\d+)?)\s*[–—-]\s*\$\s*([\d,]+(?:\.\d+)?)\s+per\s+(hour|year)/i);
+    return {
+      ...job,
+      company: source.company,
+      employmentType: coOpDetail ? "Co-op" : job.employmentType,
+      summary: description.slice(0, 1_200),
+      description,
+      applyUrl,
+      ...(salary ? {
+        salaryMin: Number(salary[1].replaceAll(",", "")),
+        salaryMax: Number(salary[2].replaceAll(",", "")),
+        salaryCurrency: "USD",
+        salaryInterval: salary[3].toLocaleLowerCase(),
+      } : {}),
+    };
+  } catch {
+    return null;
+  }
+};
+
+const crawlPcaCareerSearch = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  let failureStatus: number | null = null;
+  try {
+    const listingResponse = await fetchWithTimeout(fetcher, PCA_CAREER_SEARCH_URL, {
+      headers: { accept: "text/html,application/xhtml+xml" },
+    }, true, { attempts: 1, timeoutMs: 10_000 });
+    responseStatus = listingResponse.status;
+    if (!listingResponse.ok) {
+      failureStatus = listingResponse.status;
+      throw new Error(`Packaging Corporation careers returned HTTP ${listingResponse.status}.`);
+    }
+    const listingFinal = new URL(listingResponse.url || PCA_CAREER_SEARCH_URL);
+    if (listingFinal.origin !== "https://careers.packagingcorp.com" || listingFinal.pathname !== "/career-search/"
+      || listingFinal.search || listingFinal.hash || listingFinal.username || listingFinal.password) {
+      throw new Error("Packaging Corporation careers redirected outside its verified search page.");
+    }
+    const listingHtml = await listingResponse.text();
+    if (!new RegExp(`<input\\b(?=[^>]*\\bid=["']template-url["'])(?=[^>]*\\bvalue=["']https://careers\\.packagingcorp\\.com/wp-content/themes/pcoa["'])[^>]*>`, "i").test(listingHtml)
+      || !/<th\b[^>]*class=["']id["'][^>]*>\s*JOB ID\s*<\/th>/i.test(listingHtml)
+      || !/<th\b[^>]*class=["']posted["'][^>]*>\s*POSTED DATE\s*<\/th>/i.test(listingHtml)) {
+      throw new Error("Packaging Corporation careers returned invalid search configuration.");
+    }
+
+    const fetchPage = async (page: number): Promise<{ payload: PcaCareerPagePayload; status: number }> => {
+      const url = pcaCareerSearchApiUrl(page);
+      const response = await fetchWithTimeout(fetcher, url, {
+        headers: { accept: "application/json,text/plain;q=0.9", referer: PCA_CAREER_SEARCH_URL },
+      }, true, { attempts: 1, timeoutMs: 8_000 });
+      responseStatus = response.status;
+      if (!response.ok) {
+        failureStatus = response.status;
+        throw new Error(`Packaging Corporation job search returned HTTP ${response.status}.`);
+      }
+      if (response.url && !pcaCareerSearchApiIdentity(response.url, page)) {
+        throw new Error("Packaging Corporation job search redirected outside its verified endpoint.");
+      }
+      return { payload: await response.json() as PcaCareerPagePayload, status: response.status };
+    };
+
+    const firstResponse = await fetchPage(1);
+    const first = pcaPage(firstResponse.payload, 1, source);
+    if (!first) throw new Error("Packaging Corporation job search returned an invalid first page.");
+    const totalPages = Math.ceil(first.total / 10);
+    if (totalPages < 1 || totalPages > 39) throw new Error("Packaging Corporation job search exceeded its bounded catalog size.");
+    const pages = new Map<number, CrawledJob[]>([[1, first.jobs]]);
+    for (let start = 2; start <= totalPages; start += 6) {
+      const pageNumbers = Array.from({ length: Math.min(6, totalPages - start + 1) }, (_, index) => start + index);
+      const responses = await Promise.all(pageNumbers.map(async (page) => ({ page, response: await fetchPage(page) })));
+      for (const { page, response } of responses) {
+        const parsed = pcaPage(response.payload, page, source, first.total);
+        if (!parsed) throw new Error("Packaging Corporation job search returned an invalid catalog page.");
+        pages.set(page, parsed.jobs);
+      }
+    }
+    const finalFirst = pcaPage((await fetchPage(1)).payload, 1, source, first.total);
+    if (!finalFirst || finalFirst.jobs.map(({ officialUrl }) => officialUrl).join("|")
+      !== first.jobs.map(({ officialUrl }) => officialUrl).join("|")) {
+      throw new Error("Packaging Corporation job search changed during pagination.");
+    }
+    const jobs = Array.from({ length: totalPages }, (_, index) => pages.get(index + 1) ?? []).flat();
+    if (jobs.length !== first.total || new Set(jobs.map(({ externalId }) => externalId)).size !== first.total
+      || new Set(jobs.map(({ officialUrl }) => officialUrl)).size !== first.total) {
+      throw new Error("Packaging Corporation job search returned duplicate or missing jobs.");
+    }
+    const detailBudget = Math.max(0, 50 - (totalPages + 2));
+    const detailIndexes = jobs.flatMap((job, index) => classifyJobPrograms(job.title).keys.length > 0 ? [index] : [])
+      .slice(0, detailBudget);
+    const detailResults = await Promise.all(detailIndexes.map((index) => pcaDetailJob(jobs[index], source, fetcher)));
+    for (const [offset, detail] of detailResults.entries()) if (detail) jobs[detailIndexes[offset]] = detail;
+    return {
+      status: "succeeded",
+      responseStatus: firstResponse.status,
+      completeListing: true,
+      jobs,
+      resolvedListingUrl: PCA_CAREER_SEARCH_URL,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: isBlockedHttpStatus(failureStatus ?? responseStatus) ? "blocked" : "failed",
+      responseStatus: failureStatus ?? responseStatus,
+      completeListing: false,
+      jobs: [],
+      resolvedListingUrl: PCA_CAREER_SEARCH_URL,
+      error: error instanceof Error ? error.message : "Unknown Packaging Corporation crawler error.",
+    };
+  }
+};
 
 const taleoClassicSearchBody = (pageNo: number): string => JSON.stringify({
   fieldData: { fields: { KEYWORD: "", CATEGORY: "" }, valid: true },
@@ -18964,6 +19207,9 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-807") {
     return crawlEnterpriseProductsTaleo(source, fetcher);
+  }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-846") {
+    return crawlPcaCareerSearch(source, fetcher);
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p4-0423-dynatrace") {
     return crawlDynatraceCoveo(source, fetcher);

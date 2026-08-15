@@ -12199,6 +12199,108 @@ We are an equal opportunity employer.`;
     }));
   });
 
+  it("collects Packaging Corporation's complete paged catalog and enriches internship details", async () => {
+    const listingUrl = "https://careers.packagingcorp.com/career-search/";
+    const apiUrl = (page: number) => `https://careers.packagingcorp.com/wp-content/themes/pcoa/get-jobs.php?ajax=1&keyword=&title=&location=&job_type=&spage=${page}`;
+    const posting = (id: number, title: string, city: string, state: string, posted: string) => ({
+      id: String(id), title, location: `${city}, ${state}`, posted,
+      url: `${listingUrl}posting/${title.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}/${id}`,
+    });
+    const rows = [
+      posting(24515, "Spring 2027 Engineering Intern", "DeRidder", "LA", "08/13/26"),
+      ...Array.from({ length: 11 }, (_, index) => posting(24_600 + index, `PCA Role ${index + 1}`, "Lake Forest", "IL", "08/12/26")),
+    ];
+    const rowHtml = (row: typeof rows[number]) => `<tr><td class="id">${row.id}</td><td class="title">${row.title}</td>
+      <td class="location">${row.location.replace(", ", ",&nbsp;")}</td><td class="posted">${row.posted}</td>
+      <td class="apply"><a href="${row.url}" class="btn-apply">View Job</a></td></tr>`;
+    const page = (pageNumber: number) => {
+      const pageRows = rows.slice((pageNumber - 1) * 10, pageNumber * 10);
+      const start = (pageNumber - 1) * 10 + 1;
+      return {
+        postings: pageRows.map(rowHtml).join(""),
+        showingCount: `Showing ${start} &ndash; ${start + pageRows.length - 1} of 12`,
+        pagination: `<ul class="pagination"><li>${pageNumber}</li></ul>`,
+      };
+    };
+    const internship = rows[0];
+    const detailHtml = `<link rel="canonical" href="${internship.url}"><h1>${internship.title}</h1>
+      <div class="job-location">${internship.location}</div><div class="info job-id">Req #${internship.id}</div>
+      <div class="info job-posted">Posted: ${internship.posted}</div><div class="info salary">Salary: $25.00-$30.00 per hour</div>
+      <section class="section-career-search-description"><div class="job-description"><p>Build reliable engineering systems with project teams. Use analytical software and communicate results while completing a structured summer internship.</p></div></section>
+      <a href="https://jobs.dayforcehcm.com/en-US/pca/CANDIDATEPORTAL/jobs/62479/apply?flowSelection=true">APPLY TO JOB</a>`;
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "legacy-row-846", company: "Packaging Corp. of America",
+      postingUrl: "https://careers.packagingcorp.com/", adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === listingUrl) return new Response(`<input id="template-url" value="https://careers.packagingcorp.com/wp-content/themes/pcoa">
+        <table><thead><tr><th class="id">JOB ID</th><th class="posted">POSTED DATE</th></tr></thead></table>`);
+      if (url === apiUrl(1)) return Response.json(page(1));
+      if (url === apiUrl(2)) return Response.json(page(2));
+      if (url === internship.url) return new Response(detailHtml);
+      return new Response("unexpected", { status: 404 });
+    }, new Date("2026-08-15T20:00:00Z"));
+
+    expect(requests).toEqual([listingUrl, apiUrl(1), apiUrl(2), apiUrl(1), internship.url]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", responseStatus: 200, completeListing: true,
+      resolvedListingUrl: listingUrl, error: null,
+    }));
+    expect(result.jobs).toHaveLength(12);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "24515",
+      requisitionId: "24515",
+      title: "Spring 2027 Engineering Intern",
+      location: "DeRidder, LA",
+      locationCity: "DeRidder",
+      locationState: "LA",
+      locationCountry: "United States",
+      employmentType: "Internship",
+      sourcePostedText: "08/13/26",
+      description: expect.stringContaining("structured summer internship"),
+      applyUrl: "https://jobs.dayforcehcm.com/en-US/pca/CANDIDATEPORTAL/jobs/62479/apply?flowSelection=true",
+      salaryMin: 25,
+      salaryMax: 30,
+      salaryCurrency: "USD",
+      salaryInterval: "hour",
+      officialUrl: internship.url,
+    }));
+  });
+
+  it("fails Packaging Corporation closed when pagination repeats job identities", async () => {
+    const listingUrl = "https://careers.packagingcorp.com/career-search/";
+    const apiUrl = (page: number) => `https://careers.packagingcorp.com/wp-content/themes/pcoa/get-jobs.php?ajax=1&keyword=&title=&location=&job_type=&spage=${page}`;
+    const row = (id: number) => `<tr><td class="id">${id}</td><td class="title">PCA Role ${id}</td>
+      <td class="location">Lake Forest,&nbsp;IL</td><td class="posted">08/12/26</td>
+      <td class="apply"><a href="${listingUrl}posting/pca-role-${id}/${id}">View Job</a></td></tr>`;
+    const firstRows = Array.from({ length: 10 }, (_, index) => row(24_600 + index));
+    const payload = (page: number) => ({
+      postings: page === 1 ? firstRows.join("") : firstRows.slice(0, 2).join(""),
+      showingCount: page === 1 ? "Showing 1 &ndash; 10 of 12" : "Showing 11 &ndash; 12 of 12",
+      pagination: `<ul><li>${page}</li></ul>`,
+    });
+    const result = await crawlSource({
+      id: "legacy-row-846", company: "Packaging Corp. of America",
+      postingUrl: "https://careers.packagingcorp.com/", adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      if (url === listingUrl) return new Response(`<input id="template-url" value="https://careers.packagingcorp.com/wp-content/themes/pcoa">
+        <table><thead><tr><th class="id">JOB ID</th><th class="posted">POSTED DATE</th></tr></thead></table>`);
+      if (url === apiUrl(1)) return Response.json(payload(1));
+      if (url === apiUrl(2)) return Response.json(payload(2));
+      return new Response("unexpected", { status: 404 });
+    }, new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed",
+      completeListing: false,
+      jobs: [],
+      error: "Packaging Corporation job search returned duplicate or missing jobs.",
+    }));
+  });
+
   it("collects Enterprise Products' complete official U.S. Taleo catalog", async () => {
     const corporateUrl = "https://www.enterpriseproducts.com/careers/job-openings/";
     const officialBoardUrl = "https://epco.taleo.net/careersection/alljobs/jobsearch.ftl?lang=en&radiusType=K&location=101372523&searchExpanded=false&radius=1";
