@@ -246,7 +246,7 @@ JOIN job_matches resume_match
     pageSql: `SELECT ${jobListProjection(resumeMatchSelected)}
 ${fromSql}
 WHERE ${clauses.join(" AND ")}
-ORDER BY COALESCE(j.published_at, j.first_seen_at) DESC${resumeMatchSelected ? ", resume_match.score DESC" : ""}, j.company ASC, j.id ASC
+ORDER BY j.published_at IS NULL ASC, j.published_at DESC${resumeMatchSelected ? ", resume_match.score DESC" : ""}, j.first_seen_at DESC, j.company ASC, j.id ASC
 LIMIT ? OFFSET ?`,
     countSql: `SELECT count(*) AS total
 ${fromSql}

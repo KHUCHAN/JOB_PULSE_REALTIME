@@ -30,7 +30,7 @@ const executePlan = (sql: string, bindings: unknown[], limit?: number, offset?: 
         source_updated_at TEXT, valid_through TEXT, published_at TEXT, raw_payload TEXT
       );`,
       "CREATE TABLE job_topics (job_id TEXT, topic_key TEXT, PRIMARY KEY(job_id, topic_key));",
-      "INSERT INTO jobs (id, company, official_url, status, first_seen_at, published_at, valid_through) VALUES ('older-duplicate', 'Acme, Inc.', 'https://acme.example/jobs/1', 'open', '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z', NULL), ('newer-duplicate', 'Acme, Inc.', 'https://acme.example/jobs/1', 'open', '2026-08-03T00:00:00.000Z', '2026-08-01T00:00:00.000Z', NULL), ('second-page', 'Acme, Inc.', 'https://acme.example/jobs/2', 'open', '2026-08-02T00:00:00.000Z', '2026-08-10T00:00:00.000Z', NULL), ('not-a-match', 'Acme', 'https://acme.example/jobs/3', 'open', '2026-08-04T00:00:00.000Z', '2026-08-04T00:00:00.000Z', NULL), ('expired', 'Acme, Inc.', 'https://acme.example/jobs/4', 'open', '2026-08-11T00:00:00.000Z', '2026-08-11T00:00:00.000Z', '2000-01-01');",
+      "INSERT INTO jobs (id, company, official_url, status, first_seen_at, published_at, valid_through) VALUES ('older-duplicate', 'Acme, Inc.', 'https://acme.example/jobs/1', 'open', '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z', NULL), ('newer-duplicate', 'Acme, Inc.', 'https://acme.example/jobs/1', 'open', '2026-08-03T00:00:00.000Z', '2026-08-01T00:00:00.000Z', NULL), ('second-page', 'Acme, Inc.', 'https://acme.example/jobs/2', 'open', '2026-08-02T00:00:00.000Z', '2026-08-10T00:00:00.000Z', NULL), ('not-a-match', 'Acme', 'https://acme.example/jobs/3', 'open', '2026-08-04T00:00:00.000Z', '2026-08-04T00:00:00.000Z', NULL), ('expired', 'Acme, Inc.', 'https://acme.example/jobs/4', 'open', '2026-08-11T00:00:00.000Z', '2026-08-11T00:00:00.000Z', '2000-01-01'), ('known-posted-date', 'Date Order Inc.', 'https://date.example/jobs/known', 'open', '2026-08-01T00:00:00.000Z', '2026-08-14T00:00:00.000Z', NULL), ('unknown-posted-date', 'Date Order Inc.', 'https://date.example/jobs/unknown', 'open', '2026-08-15T00:00:00.000Z', NULL, NULL);",
       ".parameter init",
       parameters,
       `${sql};`,
@@ -320,6 +320,17 @@ describe("parameterized job search SQL", () => {
     expect(plan.pageSql).toContain("j.company = ? COLLATE NOCASE");
   });
 
+  it("ranks known official posting dates ahead of newly discovered unknown dates", () => {
+    const plan = buildJobSearchPlan({
+      ...defaultJobFilters,
+      companies: ["Date Order Inc."],
+    });
+
+    expect(executePlan(plan.pageSql, plan.bindings, plan.limit, plan.offset))
+      .toMatchObject([{ id: "known-posted-date" }, { id: "unknown-posted-date" }]);
+    expect(plan.pageSql).toContain("ORDER BY j.published_at IS NULL ASC, j.published_at DESC");
+  });
+
   it("filters active matches and orders by posting freshness before score", () => {
     const plan = buildJobSearchPlan({
       ...defaultJobFilters,
@@ -330,7 +341,7 @@ describe("parameterized job search SQL", () => {
 
     expect(plan.pageSql).toContain("resume_match.is_active = 1");
     expect(plan.pageSql).toContain("resume_match.open_generation = j.open_generation");
-    expect(plan.pageSql).toContain("ORDER BY COALESCE(j.published_at, j.first_seen_at) DESC, resume_match.score DESC");
+    expect(plan.pageSql).toContain("ORDER BY j.published_at IS NULL ASC, j.published_at DESC, resume_match.score DESC, j.first_seen_at DESC");
     expect(plan.pageSql).toContain("resume_match.score AS resume_match_score");
     expect(plan.bindings).toContain("chanyoung-resume");
   });
