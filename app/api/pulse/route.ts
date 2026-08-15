@@ -111,6 +111,14 @@ const codexReviewAuthorized = (request: Request): boolean => {
   return Boolean(secret && request.headers.get("authorization") === `Bearer ${secret}`);
 };
 
+// The scheduled Codex repair runner may submit only the same bounded,
+// official-origin snapshot accepted from browser/GitHub recovery. Keep this
+// narrower than browserIngestAuthorized so the Codex token does not gain
+// access to browser-result or other crawler-control actions.
+const jobSnapshotIngestAuthorized = async (request: Request): Promise<boolean> => (
+  codexReviewAuthorized(request) || browserIngestAuthorized(request)
+);
+
 const gmailRuntimeConfig = (): GmailRuntimeConfig | null => {
   const values = env as typeof env & GmailEnvironment;
   const clientId = values.GMAIL_CLIENT_ID?.trim();
@@ -585,7 +593,7 @@ export async function POST(request: Request): Promise<Response> {
       return json(targets.find((item) => item.id === body.targetId) ?? null);
     }
     if (body.action === "ingestBrowserJobs") {
-      if (!await browserIngestAuthorized(request)) return json({ error: "Browser crawl authorization is required." }, 401);
+      if (!await jobSnapshotIngestAuthorized(request)) return json({ error: "Crawler snapshot authorization is required." }, 401);
       const sourceId = typeof body.sourceId === "string" ? body.sourceId : "";
       const database = db();
       const source = await browserIngestSource(database, sourceId);
