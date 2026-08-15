@@ -426,7 +426,7 @@ Wrong description.
       "https://join.stonex.com/jobs",
     )).toEqual({
       kind: "jibe",
-      endpoint: "https://join.stonex.com/api/jobs?page=1&limit=100&sortBy=relevance&descending=false&internal=false",
+      endpoint: "https://join.stonex.com/api/jobs?page=1&limit=100&sortBy=posted_date&descending=true&internal=false",
     });
   });
 
@@ -936,7 +936,7 @@ Wrong description.
       "https://careers.acme.example/jobs/101?lang=en-us",
       "https://careers.acme.example/jobs/102?lang=en-us",
     ]);
-    expect(requests).toContain("https://careers.acme.example/api/jobs?page=2&limit=100&sortBy=relevance&descending=false&internal=false");
+    expect(requests).toContain("https://careers.acme.example/api/jobs?page=2&limit=100&sortBy=posted_date&descending=true&internal=false");
   });
 
   it("uses a verified Jibe endpoint without refetching a client-rendered landing page", async () => {
@@ -960,8 +960,63 @@ Wrong description.
     expect(result.status).toBe("succeeded");
     expect(result.completeListing).toBe(true);
     expect(requests).toEqual([
-      "https://careers.costco.com/api/jobs?page=1&limit=100&sortBy=relevance&descending=false&internal=false",
+      "https://careers.costco.com/api/jobs?page=1&limit=100&sortBy=posted_date&descending=true&internal=false",
     ]);
+  });
+
+  it.each([
+    {
+      id: "p5-0628-ies-holdings",
+      company: "IES Holdings",
+      postingUrl: "https://joinus.ies-co.com/ies-holdings/jobs",
+      endpoint: "https://joinus.ies-co.com/api/jobs?page=1&limit=100&sortBy=posted_date&descending=true&internal=false",
+      jobUrl: "https://joinus.ies-co.com/ies-holdings/jobs/101?lang=en-us",
+    },
+    {
+      id: "audit-row-434",
+      company: "Universal Health Services",
+      postingUrl: "https://jobs.uhsinc.com/careers/",
+      endpoint: "https://jobs.uhsinc.com/api/jobs?page=1&limit=100&sortBy=posted_date&descending=true&internal=false",
+      jobUrl: "https://jobs.uhsinc.com/careers/jobs/101?lang=en-us",
+    },
+    {
+      id: "legacy-row-792",
+      company: "Builders FirstSource",
+      postingUrl: "https://careers.bldr.com/jobs",
+      endpoint: "https://careers.bldr.com/api/jobs?page=1&limit=100&sortBy=posted_date&descending=true&internal=false",
+      jobUrl: "https://careers.bldr.com/jobs/101?lang=en-us",
+    },
+  ])("uses $company's verified date-sorted Jibe feed without loading its shell", async ({
+    id, company, postingUrl, endpoint, jobUrl,
+  }) => {
+    const requests: string[] = [];
+    const result = await crawlSource({ id, company, postingUrl, adapter: "custom" }, async (input) => {
+      requests.push(String(input));
+      return Response.json({
+        totalCount: 1,
+        jobs: [{ data: {
+          slug: "101",
+          req_id: "REQ-101",
+          title: "Software Engineering Intern",
+          language: "en-us",
+          full_location: "Austin, Texas",
+          country: "United States",
+          posted_date: "2026-08-14T16:00:00+0000",
+        } }],
+      });
+    }, new Date());
+
+    expect(requests).toEqual([endpoint]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: postingUrl,
+      jobs: [expect.objectContaining({
+        externalId: "REQ-101",
+        officialUrl: jobUrl,
+        publishedAt: "2026-08-14T16:00:00.000Z",
+      })],
+    }));
   });
 
   it("fully paginates a Radancy TalentBrew job search", async () => {

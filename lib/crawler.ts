@@ -291,6 +291,7 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
   "p5-0594-essilorluxottica",
   "p5-0603-general-dynamics-it",
   "p5-0616-hca-healthcare",
+  "p5-0628-ies-holdings",
   "p5-0640-kaiser-permanente",
   "p5-0647-l3harris",
   "p5-0651-leidos",
@@ -334,8 +335,13 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
 // the canonical listing URL after the first successful sync.
 const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
   "audit-row-345": {
-    discovered: { kind: "jibe", endpoint: "https://careers.dollargeneral.com/api/jobs?page=1&limit=100&sortBy=relevance&descending=false&internal=false" },
+    discovered: { kind: "jibe", endpoint: "https://careers.dollargeneral.com/api/jobs?page=1&limit=100&sortBy=posted_date&descending=true&internal=false" },
     listingUrl: "https://careers.dollargeneral.com/jobs?page=1",
+    adapter: "custom",
+  },
+  "audit-row-434": {
+    discovered: { kind: "jibe", endpoint: "https://jobs.uhsinc.com/api/jobs?page=1&limit=100&sortBy=posted_date&descending=true&internal=false" },
+    listingUrl: "https://jobs.uhsinc.com/careers/",
     adapter: "custom",
   },
   "audit-row-370": { listingUrl: "https://careers.hfsinclair.com/search/?q=&locationsearch=&sortColumn=referencedate&sortDirection=desc", adapter: "custom" },
@@ -352,6 +358,11 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
   },
   "legacy-row-815": {
     listingUrl: "https://talent.fmjobs.com/careers?domain=fcx.com&query=*",
+    adapter: "custom",
+  },
+  "legacy-row-792": {
+    discovered: { kind: "jibe", endpoint: "https://careers.bldr.com/api/jobs?page=1&limit=100&sortBy=posted_date&descending=true&internal=false" },
+    listingUrl: "https://careers.bldr.com/jobs",
     adapter: "custom",
   },
   "p2-0050-morgan-stanley": {
@@ -405,8 +416,13 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
     adapter: "workday",
   },
   "p5-0869-costco": {
-    discovered: { kind: "jibe", endpoint: "https://careers.costco.com/api/jobs?page=1&limit=100&sortBy=relevance&descending=false&internal=false" },
+    discovered: { kind: "jibe", endpoint: "https://careers.costco.com/api/jobs?page=1&limit=100&sortBy=posted_date&descending=true&internal=false" },
     listingUrl: "https://careers.costco.com/jobs",
+    adapter: "custom",
+  },
+  "p5-0628-ies-holdings": {
+    discovered: { kind: "jibe", endpoint: "https://joinus.ies-co.com/api/jobs?page=1&limit=100&sortBy=posted_date&descending=true&internal=false" },
+    listingUrl: "https://joinus.ies-co.com/ies-holdings/jobs",
     adapter: "custom",
   },
   "p5-0760-veeva-systems": {
@@ -1747,7 +1763,12 @@ export function discoverAts(html: string, _pageUrl: string): DiscoveredAts | nul
 
   if (/(?:app\.jibecdn\.com\/prod\/search\/|cms\.jibecdn\.com\/prod\/)/i.test(searchable)) {
     const page = new URL(_pageUrl);
-    return { kind: "jibe", endpoint: `${page.origin}/api/jobs?page=1&limit=100&sortBy=relevance&descending=false&internal=false` };
+    // A blank relevance query gives every posting the same score on Jibe.
+    // Several live tenants then reorder ties between page requests, repeating
+    // boundary requisitions and hiding the displaced posting. Posted-date
+    // order is the provider's native deterministic browsing mode and also
+    // guarantees that each bounded pass sees the newest roles first.
+    return { kind: "jibe", endpoint: `${page.origin}/api/jobs?page=1&limit=100&sortBy=posted_date&descending=true&internal=false` };
   }
 
   return null;
