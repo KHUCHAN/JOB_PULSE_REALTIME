@@ -4382,14 +4382,22 @@ const crawlTalemetryJson = async (
         directUnavailable = true;
       }
     }
-    try {
-      const reader = await fetchWithTimeout(fetcher, `https://r.jina.ai/${endpoint.href}`, {
-        headers: { accept: "text/plain" },
-      }, false, { attempts: allowReaderRetry ? 2 : 1, timeoutMs: 12_000 });
-      return reader.ok ? parseTalemetryPayload(await reader.text()) : null;
-    } catch {
-      return null;
+    const attempts = allowReaderRetry ? 2 : 1;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        const reader = await fetchWithTimeout(fetcher, `https://r.jina.ai/${endpoint.href}`, {
+          headers: {
+            accept: "text/plain",
+            ...(attempt > 0 ? { "x-no-cache": "true" } : {}),
+          },
+        }, false, { attempts: 1, timeoutMs: 12_000 });
+        const parsed = reader.ok ? parseTalemetryPayload(await reader.text()) : null;
+        if (parsed) return parsed;
+      } catch {
+        // The bounded second attempt also covers network/body-stream failures.
+      }
     }
+    return null;
   };
 
   const requestedStart = Math.max(1, Math.trunc(source.crawlPageCursor ?? 1));

@@ -3341,6 +3341,35 @@ Wrong description.
     expect(result.jobs).toHaveLength(100);
   });
 
+  it("retries an unusable successful Talemetry reader body without cache", async () => {
+    const headers: Array<string | null> = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      if (!url.startsWith("https://r.jina.ai/")) return new Response("blocked", { status: 403 });
+      headers.push(new Headers(init?.headers).get("x-no-cache"));
+      if (headers.length === 1) return new Response("Title: Just a moment...", { status: 200 });
+      return Response.json({
+        current_page: 2,
+        per_page: 100,
+        total_entries: 101,
+        entries: [{ id: "101", talemetry_job_id: "101", permalink: "data-intern", title: "Data Intern" }],
+      });
+    };
+
+    const result = await crawlSource({
+      id: "talemetry-resumed", company: "Acme",
+      postingUrl: "https://careers.acme.example/search/jobs", adapter: "custom",
+      crawlPageCursor: 2,
+    }, fetcher, new Date());
+
+    expect(headers).toEqual([null, "true"]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 2 },
+    }));
+    expect(result.jobs).toEqual([expect.objectContaining({ externalId: "101", title: "Data Intern" })]);
+  });
+
   it("supports Talemetry catalogs whose public route is jobs/search", async () => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input) => {
