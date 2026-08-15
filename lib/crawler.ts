@@ -2867,6 +2867,280 @@ const mergeCookies = (jar: Map<string, string>, response: Response): void => {
   }
 };
 
+type LegacySuccessFactorsIdentity = {
+  companyCode: string;
+  listingUrl: string;
+  origin: string;
+};
+
+const legacySuccessFactorsIdentity = (value: string): LegacySuccessFactorsIdentity | null => {
+  try {
+    const url = new URL(value);
+    const companyCode = url.searchParams.get("company") ?? url.searchParams.get("career_company") ?? "";
+    if (url.protocol !== "https:" || url.username || url.password || url.port
+      || !/^career\d+\.successfactors\.(?:com|eu)$/i.test(url.hostname)
+      || url.pathname !== "/career" || !/^[a-z0-9_-]{2,80}$/i.test(companyCode)) return null;
+    const listing = new URL("/career", url.origin);
+    listing.searchParams.set("company", companyCode);
+    return { companyCode, listingUrl: listing.href, origin: url.origin };
+  } catch {
+    return null;
+  }
+};
+
+const dwrStringValue = (body: string, reference: string, property: string): string | null => {
+  const match = body.match(new RegExp(`\\b${reference}\\.${property}="((?:\\\\.|[^"\\\\])*)";`));
+  if (!match) return null;
+  try {
+    return decodeHtmlAttribute(JSON.parse(`"${match[1]}"`) as string);
+  } catch {
+    return null;
+  }
+};
+
+const dwrNumberValue = (body: string, reference: string, property: string): number | null => {
+  const value = body.match(new RegExp(`\\b${reference}\\.${property}=(-?\\d+);`))?.[1];
+  const parsed = value == null ? Number.NaN : Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+};
+
+const dwrReferenceValue = (body: string, reference: string, property: string): string | null =>
+  body.match(new RegExp(`\\b${reference}\\.${property}=(s\\d+);`))?.[1] ?? null;
+
+const dwrArrayReferences = (body: string, reference: string): Array<{ index: number; reference: string }> =>
+  [...body.matchAll(new RegExp(`\\b${reference}\\[(\\d+)\\]=(s\\d+);`, "g"))]
+    .map((match) => ({ index: Number(match[1]), reference: match[2] }))
+    .sort((left, right) => left.index - right.index);
+
+const parseLegacySuccessFactorsDwr = (
+  body: string,
+  source: CrawlSource,
+  identity: LegacySuccessFactorsIdentity,
+  expectedPage: number,
+  expectedPageSize: number,
+  defaultLocation?: string,
+): { jobs: CrawledJob[]; total: number; valid: boolean } => {
+  if (!/dwr\.engine\._remoteHandleCallback\('\d+','0',/.test(body)) return { jobs: [], total: 0, valid: false };
+  const postingsReference = body.match(/\b(?:s\d+)\.postings=(s\d+);/)?.[1];
+  const paginationReference = body.match(/\b(s\d+)\.currentPage=-?\d+;/)?.[1];
+  if (!postingsReference || !paginationReference) return { jobs: [], total: 0, valid: false };
+  const currentPage = dwrNumberValue(body, paginationReference, "currentPage");
+  const pageSize = dwrNumberValue(body, paginationReference, "pageSize");
+  const startRow = dwrNumberValue(body, paginationReference, "startRow");
+  const endRow = dwrNumberValue(body, paginationReference, "endRow");
+  const total = dwrNumberValue(body, paginationReference, "totalCount");
+  if (currentPage !== expectedPage || pageSize !== expectedPageSize || total == null || total < 0) {
+    return { jobs: [], total: total ?? 0, valid: false };
+  }
+  const expectedStart = total === 0 ? 0 : ((expectedPage - 1) * expectedPageSize) + 1;
+  const expectedEnd = Math.min(expectedPage * expectedPageSize, total);
+  const expectedCount = Math.max(0, expectedEnd - expectedStart + 1);
+  if ((total === 0 ? startRow !== 0 && startRow !== 1 : startRow !== expectedStart) || endRow !== expectedEnd) {
+    return { jobs: [], total, valid: false };
+  }
+  const jobReferences = dwrArrayReferences(body, postingsReference);
+  if (jobReferences.length !== expectedCount
+    || jobReferences.some((entry, index) => entry.index !== index)) return { jobs: [], total, valid: false };
+  const jobs = jobReferences.flatMap(({ reference }): CrawledJob[] => {
+    const id = dwrNumberValue(body, reference, "id");
+    const title = dwrStringValue(body, reference, "title")?.trim() ?? "";
+    const postingDate = dwrStringValue(body, reference, "postingDate");
+    const publishedAt = normalizedDate(postingDate);
+    if (id == null || id <= 0 || !title || !publishedAt) return [];
+    const fields = new Map<string, string>();
+    const valuesReference = dwrReferenceValue(body, reference, "otherValues");
+    for (const group of valuesReference ? dwrArrayReferences(body, valuesReference) : []) {
+      const leaves = dwrArrayReferences(body, group.reference);
+      for (const leaf of leaves.length > 0 ? leaves : [group]) {
+        const fieldId = dwrStringValue(body, leaf.reference, "fieldId");
+        const value = dwrStringValue(body, leaf.reference, "shortVal");
+        if (fieldId && value) fields.set(fieldId.toLocaleLowerCase(), value);
+      }
+    }
+    const externalId = String(id);
+    const detail = new URL("/career", identity.origin);
+    detail.searchParams.set("career_ns", "job_listing");
+    detail.searchParams.set("company", identity.companyCode);
+    detail.searchParams.set("navBarLevel", "JOB_SEARCH");
+    detail.searchParams.set("rcm_site_locale", "en_US");
+    detail.searchParams.set("career_job_req_id", externalId);
+    detail.searchParams.set("selected_lang", "en_US");
+    const employmentType = fields.get("filter3") ?? null;
+    const department = fields.get("filter2") ?? null;
+    return [{
+      externalId,
+      title,
+      company: source.company,
+      location: defaultLocation ?? null,
+      arrangement: /\bremote\b/i.test(`${title} ${defaultLocation ?? ""}`) ? "remote" : "unknown",
+      employmentType,
+      summary: [department, employmentType].filter(Boolean).join(" · ") || null,
+      department,
+      ...(defaultLocation === "United States" ? { locationCountry: "United States" } : {}),
+      requisitionId: externalId,
+      sourcePostedText: postingDate,
+      officialUrl: detail.href,
+      publishedAt,
+    }];
+  });
+  return {
+    jobs,
+    total,
+    valid: jobs.length === expectedCount
+      && new Set(jobs.map((job) => job.externalId)).size === expectedCount
+      && new Set(jobs.map((job) => job.officialUrl)).size === expectedCount,
+  };
+};
+
+const legacySuccessFactorsDwrBody = (
+  page: string,
+  method: "getInitialJobSearchData" | "search",
+  total = 0,
+  currentPage = 1,
+): string => {
+  const common = [
+    "callCount=1",
+    `page=${page}`,
+    "httpSessionId=",
+    "scriptSessionId=0123456789ABCDEF0123456789ABCDEF000",
+    "c0-scriptName=careerJobSearchControllerProxy",
+    `c0-methodName=${method}`,
+    "c0-id=0",
+  ];
+  if (method === "getInitialJobSearchData") {
+    return [...common,
+      "c0-e1=string:",
+      "c0-e2=string:",
+      "c0-e3=string:",
+      "c0-e4=string:America%2FLos_Angeles",
+      "c0-param0=Object_Object:{filterOnly:reference:c0-e1, jobAlertId:reference:c0-e2, returnToList:reference:c0-e3, browserTimeZone:reference:c0-e4}",
+      "batchId=0",
+      "",
+    ].join("\n");
+  }
+  const previousStart = currentPage === 1 ? 1 : ((currentPage - 2) * 50) + 1;
+  const previousEnd = currentPage === 1 ? Math.min(10, total) : Math.min((currentPage - 1) * 50, total);
+  return [...common,
+    `c0-e2=number:${currentPage}`,
+    `c0-e3=number:${previousEnd}`,
+    "c0-e4=boolean:false",
+    "c0-e5=string:50",
+    `c0-e6=number:${previousStart}`,
+    `c0-e7=number:${total}`,
+    "c0-e1=Object_Object:{currentPage:reference:c0-e2, endRow:reference:c0-e3, increaseCandSummaryPagination:reference:c0-e4, pageSize:reference:c0-e5, startRow:reference:c0-e6, totalCount:reference:c0-e7}",
+    "c0-e8=string:JOB_POSTING_DATE",
+    "c0-e9=string:DESC",
+    "c0-param0=Object_Object:{pagination:reference:c0-e1, sortByColumn:reference:c0-e8, sortOrder:reference:c0-e9}",
+    "batchId=1",
+    "",
+  ].join("\n");
+};
+
+const crawlLegacySuccessFactors = async (
+  source: CrawlSource,
+  boardUrl: string,
+  fetcher: typeof fetch,
+  defaultLocation?: string,
+): Promise<SourceCrawlResult> => {
+  const identity = legacySuccessFactorsIdentity(boardUrl);
+  if (!identity) return { status: "failed", responseStatus: null, completeListing: false, jobs: [], error: "Legacy SuccessFactors board identity was invalid." };
+  let responseStatus: number | null = null;
+  try {
+    const cookies = new Map<string, string>();
+    const landing = await fetchWithTimeout(fetcher, identity.listingUrl, undefined, true, { attempts: 1, timeoutMs: 10_000 });
+    responseStatus = landing.status;
+    if (!landing.ok) throw Object.assign(new Error(`Legacy SuccessFactors landing returned HTTP ${landing.status}.`), { responseStatus: landing.status });
+    mergeCookies(cookies, landing);
+    const landingHtml = await landing.text();
+    const landingToken = landingHtml.match(/\bvar ajaxSecKey="([^"]{20,512})"/)?.[1];
+    if (!landingToken || cookies.size === 0) throw new Error("Legacy SuccessFactors did not establish a usable session.");
+    let decodedToken: string;
+    try {
+      decodedToken = decodeURIComponent(landingToken);
+    } catch {
+      throw new Error("Legacy SuccessFactors returned an invalid session token.");
+    }
+    const searchPage = new URL(identity.listingUrl);
+    searchPage.searchParams.set("career_ns", "job_listing_summary");
+    searchPage.searchParams.set("navBarLevel", "JOB_SEARCH");
+    searchPage.searchParams.set("_s.crb", decodedToken);
+    const listing = await fetchWithTimeout(fetcher, searchPage, {
+      headers: { cookie: [...cookies.values()].join("; "), referer: identity.listingUrl },
+    }, true, { attempts: 1, timeoutMs: 10_000 });
+    responseStatus = listing.status;
+    if (!listing.ok) throw Object.assign(new Error(`Legacy SuccessFactors search page returned HTTP ${listing.status}.`), { responseStatus: listing.status });
+    mergeCookies(cookies, listing);
+    const listingHtml = await listing.text();
+    const ajaxToken = listingHtml.match(/\bvar ajaxSecKey="([^"]{20,512})"/)?.[1] ?? landingToken;
+    const page = `${searchPage.pathname}${searchPage.search}`;
+    const endpoint = new URL("/xi/ajax/remoting/call/plaincall/careerJobSearchControllerProxy.getInitialJobSearchData.dwr", identity.origin);
+    const headers = () => ({
+      accept: "text/javascript, */*;q=0.1",
+      "content-type": "text/plain",
+      cookie: [...cookies.values()].join("; "),
+      referer: searchPage.href,
+      viewid: "/ui/rcmcareer/pages/careersite/career.jsp.xhtml",
+      "x-ajax-token": ajaxToken,
+      "x-csrf-token": ajaxToken,
+      "x-sap-page-info": `companyId=${identity.companyCode}`,
+      "x-subaction": "0",
+    });
+    const initialResponse = await fetchWithTimeout(fetcher, endpoint, {
+      method: "POST",
+      headers: headers(),
+      body: legacySuccessFactorsDwrBody(page, "getInitialJobSearchData"),
+    }, true, { attempts: 1, timeoutMs: 10_000 });
+    responseStatus = initialResponse.status;
+    if (!initialResponse.ok) throw Object.assign(new Error(`Legacy SuccessFactors bootstrap returned HTTP ${initialResponse.status}.`), { responseStatus: initialResponse.status });
+    mergeCookies(cookies, initialResponse);
+    const initialBody = await initialResponse.text();
+    const initialTotalMatch = initialBody.match(/\b(s\d+)\.currentPage=1;/)?.[1];
+    const total = initialTotalMatch ? dwrNumberValue(initialBody, initialTotalMatch, "totalCount") : null;
+    const initial = total == null ? null : parseLegacySuccessFactorsDwr(initialBody, source, identity, 1, 10, defaultLocation);
+    if (total == null || total <= 0 || !initial?.valid || initial.total !== total) {
+      throw new Error("Legacy SuccessFactors bootstrap contained no authoritative jobs.");
+    }
+    const totalPages = Math.ceil(total / 50);
+    const currentPage = Math.min(Math.max(source.crawlPageCursor ?? 1, 1), totalPages);
+    endpoint.pathname = "/xi/ajax/remoting/call/plaincall/careerJobSearchControllerProxy.search.dwr";
+    const searchResponse = await fetchWithTimeout(fetcher, endpoint, {
+      method: "POST",
+      headers: headers(),
+      body: legacySuccessFactorsDwrBody(page, "search", total, currentPage),
+    }, true, { attempts: 1, timeoutMs: 10_000 });
+    responseStatus = searchResponse.status;
+    if (!searchResponse.ok) throw Object.assign(new Error(`Legacy SuccessFactors search returned HTTP ${searchResponse.status}.`), { responseStatus: searchResponse.status });
+    const parsed = parseLegacySuccessFactorsDwr(await searchResponse.text(), source, identity, currentPage, 50, defaultLocation);
+    if (!parsed.valid || parsed.total !== total || parsed.jobs.length !== Math.min(50, total - ((currentPage - 1) * 50))) {
+      throw new Error(`Legacy SuccessFactors search returned a malformed or changing catalog page (${parsed.jobs.length}/${parsed.total}; expected ${Math.min(50, total - ((currentPage - 1) * 50))}/${total}).`);
+    }
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: totalPages === 1 && parsed.jobs.length === total,
+      jobs: parsed.jobs,
+      resolvedListingUrl: identity.listingUrl,
+      ...(totalPages > 1 ? { pagination: {
+        nextPage: currentPage >= totalPages ? 1 : currentPage + 1,
+        cycleComplete: currentPage >= totalPages,
+        totalPages,
+      } } : {}),
+      error: null,
+    };
+  } catch (error) {
+    const status = typeof error === "object" && error && "responseStatus" in error
+      ? Number((error as { responseStatus: unknown }).responseStatus)
+      : responseStatus;
+    return {
+      status: isBlockedHttpStatus(status) ? "blocked" : "failed",
+      responseStatus: Number.isFinite(status) ? status : null,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown legacy SuccessFactors crawler error.",
+    };
+  }
+};
+
 const brassRingValue = (fields: Map<string, string>, key: string): string | null =>
   fields.get(key)?.replace(/\s+/g, " ").trim() || null;
 
@@ -11941,6 +12215,9 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   if (source.id === "p5-0566-cardinal-health" || sourcePage.hostname === "jobs.cardinalhealth.com") return crawlCardinalHealth(source, fetcher);
   if (source.id === "p5-1095-vanguard" || sourcePage.hostname === "www.vanguardjobs.com") return crawlVanguard(source, fetcher);
   if (source.id === "p5-1005-olympus-medical-systems") return crawlOlympusSuccessFactors(source, fetcher);
+  if (source.id === "p5-0544-amkor-technology") {
+    return crawlLegacySuccessFactors(source, "https://career8.successfactors.com/career?company=amkor", fetcher, "United States");
+  }
   if (source.id === "p5-1023-power-integrations") return crawlJobviteBoard(source, "https://jobs.jobvite.com/power-integrations/", "power-integrations", fetcher);
   if (source.id === "p2-0068-abrigo") return crawlJobviteBoard(source, "https://jobs.jobvite.com/bankerstoolbox", "bankerstoolbox", fetcher);
   if (source.id === "p4-0455-logrhythm") return crawlJobviteBoard(source, "https://jobs.jobvite.com/exabeam/", "exabeam", fetcher);

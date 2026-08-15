@@ -7565,6 +7565,95 @@ Wrong description.
     expect(result.jobs[0]).toEqual(expect.objectContaining({ location: "Center Valley, PA, US", requisitionId: "REQ-1" }));
   });
 
+  it("reads Amkor's complete legacy SuccessFactors DWR catalog without a browser", async () => {
+    const requests: Array<{ url: string; body: string; headers: Headers }> = [];
+    const jobs = [
+      { id: 28989, title: "MES &amp; Factory Automation Engineer", date: "08/10/2026" },
+      { id: 29067, title: "Senior Accounting Manager", date: "08/09/2026" },
+    ];
+    const dwr = (batchId: number, pageSize: number, values = jobs): string => {
+      const declarations = ["s0={}", "s1={}", "s2=[]", "s3={}", ...values.map((_job, index) => `s${index + 4}={}`), "s6=[]", "s7=[]", "s8={}", "s9={}"].join(";var ");
+      const records = values.map((job, index) => {
+        const reference = `s${index + 4}`;
+        return `s2[${index}]=${reference};${reference}.id=${job.id};${reference}.postingDate="${job.date}";${reference}.title="${job.title}";`;
+      }).join("");
+      return `throw 'allowScriptTagRemoting is false.';var ${declarations};s1.postings=s2;s1.pagination=s3;s3.currentPage=1;s3.endRow=${values.length};s3.pageSize=${pageSize};s3.startRow=1;s3.totalCount=${values.length};${records}s4.otherValues=s6;s6[0]=s7;s7[0]=s8;s7[1]=s9;s8.fieldId="filter2";s8.shortVal="Engineering";s9.fieldId="filter3";s9.shortVal="Regular Exempt Full-Time Employee";dwr.engine._remoteHandleCallback('${batchId}','0',{results:s1});`;
+    };
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      requests.push({ url, body: String(init?.body ?? ""), headers: new Headers(init?.headers) });
+      if (url.includes("getInitialJobSearchData.dwr")) return new Response(dwr(0, 10), { status: 200 });
+      if (url.includes("careerJobSearchControllerProxy.search.dwr")) return new Response(dwr(1, 50), { status: 200 });
+      if (url.includes("career_ns=job_listing_summary")) {
+        return new Response('<script>var ajaxSecKey="abcdefghijklmnopqrstuvwxyz123456";</script>', {
+          status: 200,
+          headers: { "set-cookie": "RCM=second; Path=/; Secure" },
+        });
+      }
+      return new Response('<script>var ajaxSecKey="abcdefghijklmnopqrstuvwxyz123456";</script>', {
+        status: 200,
+        headers: { "set-cookie": "JSESSIONID=first; Path=/; Secure" },
+      });
+    };
+
+    const result = await crawlSource({
+      id: "p5-0544-amkor-technology",
+      company: "Amkor Technology",
+      postingUrl: "https://amkor.com/careers/united-states/",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-14T22:00:00Z"));
+
+    expect(requests).toHaveLength(4);
+    expect(requests[0]?.url).toBe("https://career8.successfactors.com/career?company=amkor");
+    expect(requests[1]?.url).toContain("career_ns=job_listing_summary");
+    expect(requests[2]?.body).toContain("c0-methodName=getInitialJobSearchData");
+    expect(requests[3]?.body).toContain("c0-methodName=search");
+    expect(requests[3]?.headers.get("cookie")).toContain("JSESSIONID=first");
+    expect(requests[3]?.headers.get("cookie")).toContain("RCM=second");
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://career8.successfactors.com/career?company=amkor",
+    }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        externalId: "28989",
+        title: "MES & Factory Automation Engineer",
+        location: "United States",
+        locationCountry: "United States",
+        department: "Engineering",
+        employmentType: "Regular Exempt Full-Time Employee",
+        publishedAt: "2026-08-10T07:00:00.000Z",
+        officialUrl: "https://career8.successfactors.com/career?career_ns=job_listing&company=amkor&navBarLevel=JOB_SEARCH&rcm_site_locale=en_US&career_job_req_id=28989&selected_lang=en_US",
+      }),
+      expect.objectContaining({ externalId: "29067", title: "Senior Accounting Manager" }),
+    ]);
+  });
+
+  it("fails Amkor closed when its legacy SuccessFactors search response is not authoritative", async () => {
+    const validInitial = `var s0={};var s1={};var s2=[];var s3={};var s4={};s1.postings=s2;s2[0]=s4;s3.currentPage=1;s3.endRow=1;s3.pageSize=10;s3.startRow=1;s3.totalCount=1;s4.id=28989;s4.postingDate="08/10/2026";s4.title="MES Engineer";dwr.engine._remoteHandleCallback('0','0',{results:s1});`;
+    const result = await crawlSource({
+      id: "p5-0544-amkor-technology",
+      company: "Amkor Technology",
+      postingUrl: "https://amkor.com/careers/united-states/",
+      adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      if (url.includes("getInitialJobSearchData.dwr")) return new Response(validInitial);
+      if (url.includes("careerJobSearchControllerProxy.search.dwr")) return new Response("dwr.engine._remoteHandleException('1','0',{message:'temporary'});");
+      return new Response('<script>var ajaxSecKey="abcdefghijklmnopqrstuvwxyz123456";</script>', {
+        headers: { "set-cookie": "JSESSIONID=first; Path=/; Secure" },
+      });
+    }, new Date("2026-08-14T22:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed",
+      completeListing: false,
+      jobs: [],
+      error: expect.stringContaining("malformed or changing catalog page"),
+    }));
+  });
+
   it("uses Abrigo's public Jobvite board as a complete one-request catalog", async () => {
     const requests: string[] = [];
     const result = await crawlSource({ id: "p2-0068-abrigo", company: "Abrigo", postingUrl: "https://www.abrigo.com/careers/", adapter: "custom" }, async (input) => {
