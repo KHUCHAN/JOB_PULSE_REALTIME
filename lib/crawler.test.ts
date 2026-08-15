@@ -6280,6 +6280,84 @@ Wrong description.
     ]);
   });
 
+  it("requests the first-party US Phenom slice for a scoped global catalog", async () => {
+    const calls: string[] = [];
+    const widgetBodies: Array<Record<string, unknown>> = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      calls.push(String(input));
+      if (String(input) !== "https://careers.siemens-healthineers.com/widgets") {
+        return new Response("unexpected branded page request", { status: 500 });
+      }
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      widgetBodies.push(body);
+      const jobs = [{
+        title: "AI Software Engineering Intern",
+        jobId: "R-2027",
+        reqId: "R-2027",
+        location: "Malvern, Pennsylvania, United States of America",
+        city: "Malvern",
+        state: "Pennsylvania",
+        country: "United States of America",
+        type: "Internship",
+        descriptionTeaser: "Build production healthcare AI systems, data services, and reliable software with an engineering team while receiving structured mentorship throughout the summer internship program.",
+        applyUrl: "https://onehealthineers.wd3.myworkdayjobs.com/SHSJB/job/Malvern/AI-Software-Engineering-Intern_R-2027/apply",
+        postedDate: "2026-08-15T00:00:00.000+0000",
+      }, {
+        title: "Data Platform Engineer",
+        jobId: "R-2026",
+        reqId: "R-2026",
+        location: "Cary, North Carolina, United States of America",
+        city: "Cary",
+        state: "North Carolina",
+        country: "United States of America",
+        type: "Full time",
+        applyUrl: "https://onehealthineers.wd3.myworkdayjobs.com/SHSJB/job/Cary/Data-Platform-Engineer_R-2026/apply",
+        postedDate: "2026-08-15T00:00:00.000+0000",
+      }];
+      if (widgetBodies.length > 1) jobs.reverse();
+      return Response.json({ refineSearch: {
+        status: 200,
+        hits: 2,
+        totalHits: 2,
+        data: { jobs, aggregations: [{ field: "country", value: { "United States of America": 2 } }] },
+      } });
+    };
+
+    const result = await crawlSource({
+      id: "p5-0728-siemens-healthineers",
+      company: "Siemens Healthineers",
+      postingUrl: "https://careers.siemens-healthineers.com/global/en/search-results",
+      adapter: "phenom",
+    }, fetcher, new Date("2026-08-15T00:00:00Z"));
+
+    expect(calls).toEqual([
+      "https://careers.siemens-healthineers.com/widgets",
+      "https://careers.siemens-healthineers.com/widgets",
+    ]);
+    expect(widgetBodies).toEqual([
+      expect.objectContaining({
+        country: "global",
+        selected_fields: {
+          country: ["United States of America", "United States", "USA", "US"],
+        },
+      }),
+      expect.objectContaining({
+        selected_fields: {
+          country: ["United States of America", "United States", "USA", "US"],
+        },
+      }),
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://careers.siemens-healthineers.com/global/search-results",
+      jobs: expect.arrayContaining([expect.objectContaining({
+        title: "AI Software Engineering Intern",
+        locationCountry: "United States of America",
+      })]),
+    }));
+  });
+
   it("uses a direct Lever API for an official Lever board", async () => {
     const calls: string[] = [];
     const fetcher: typeof fetch = async (input) => {

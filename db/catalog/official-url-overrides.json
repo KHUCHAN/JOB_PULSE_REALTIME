@@ -63,7 +63,7 @@
     "audit-row-418": { "url": "https://careers.reliance.com/jobs?page=1", "adapter": "custom" },
     "p5-0720-roku": { "url": "https://www.weareroku.com/jobs/search", "adapter": "custom" },
     "p5-0724-schneider-electric-us": { "url": "https://careers.se.com/jobs", "adapter": "custom" },
-    "p5-0728-siemens-healthineers": { "url": "https://jobs.siemens-healthineers.com/en_US/searchjobs/SearchJobs", "adapter": "custom", "checkedAt": "2026-08-15" },
+    "p5-0728-siemens-healthineers": { "url": "https://careers.siemens-healthineers.com/global/en/search-results", "adapter": "phenom", "checkedAt": "2026-08-15" },
     "p5-1063-starbucks": { "url": "https://apply.starbucks.com/careers", "adapter": "custom" },
     "p1-0015-stoneturn": { "url": "https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=8f429b49-bae5-4749-b26e-36df29852d8d&ccId=19000101_000001&lang=en_US", "adapter": "custom" },
     "p2-0175-toast": { "url": "https://careers.toasttab.com/jobs/search", "adapter": "custom" },

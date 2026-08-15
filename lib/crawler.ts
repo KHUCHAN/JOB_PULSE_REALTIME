@@ -2679,7 +2679,15 @@ const crawlPhenomWidgets = async (source: CrawlSource, fetcher: typeof fetch): P
           isSliderEnable: false,
           keywords: "",
           global: true,
-          selected_fields: {},
+          // Large global Phenom tenants can expose hundreds or thousands of
+          // roles. Ask the first-party widget API for the US slice directly
+          // when the source is explicitly scoped, instead of downloading the
+          // global catalog and guessing from sparse listing labels afterward.
+          // Phenom tenants use both common country labels; unknown values are
+          // harmless because selected_fields is an OR filter.
+          selected_fields: source.regionScope === "us"
+            ? { country: ["United States of America", "United States", "USA", "US"] }
+            : {},
           // A string `sortBy` is ignored by RTX and produces overlapping,
           // relevance-ranked offsets. Phenom's structured sort provides a
           // monotonic posted-date order; overlapping windows below absorb
@@ -2756,9 +2764,16 @@ const crawlPhenomWidgets = async (source: CrawlSource, fetcher: typeof fetch): P
     const verification = await fetchPage(0);
     const initialIds = index.jobs.map((job) => job.externalId ?? job.officialUrl);
     const verificationIds = verification?.jobs.map((job) => job.externalId ?? job.officialUrl) ?? [];
+    const singlePageCatalog = index.totalHits <= pageSize;
+    const verificationIdentitySet = new Set(verificationIds);
+    const sameIdentities = singlePageCatalog
+      ? verificationIds.length === initialIds.length
+        && new Set(initialIds).size === initialIds.length
+        && initialIds.every((identity) => verificationIdentitySet.has(identity))
+      : verificationIds.length === initialIds.length
+        && initialIds.every((identity, position) => verificationIds[position] === identity);
     if (!verification || verification.totalHits !== index.totalHits
-      || verificationIds.length !== initialIds.length
-      || initialIds.some((identity, position) => verificationIds[position] !== identity)) {
+      || !sameIdentities) {
       completeListing = false;
     }
   }
@@ -8609,6 +8624,10 @@ const crawlDow = async (source: CrawlSource, fetcher: typeof fetch): Promise<Sou
 async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
   const discoveryDepth = source.discoveryDepth ?? 0;
   try {
+    if (source.adapter === "phenom" && source.regionScope === "us") {
+      const widgets = await crawlPhenomWidgets(source, fetcher);
+      if (widgets.status === "succeeded") return widgets;
+    }
     const response = await fetchWithTimeout(fetcher, source.postingUrl);
     if (!response.ok) {
       if (isBlockedHttpStatus(response.status)) {
