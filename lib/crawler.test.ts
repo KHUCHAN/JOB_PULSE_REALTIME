@@ -9447,6 +9447,94 @@ HUMAN RESOURCES Posted Date
     ]);
   });
 
+  it("loads every SAIC JSON page through the reader, validates the global catalog, and stores only US roles", async () => {
+    const requests: string[] = [];
+    const entries = Array.from({ length: 205 }, (_, index) => {
+      const id = String(18_100_000 + index);
+      const country = index === 204 ? "Bahrain" : "United States";
+      return {
+        id,
+        talemetry_job_id: id,
+        permalink: `validated-role-${index}`,
+        title: index === 0 ? "Software Engineering Intern" : `Validated Role ${index}`,
+        location: {
+          locality: index === 0 ? "Reston" : "Remote Work",
+          region_abbr: index === 0 ? "VA" : "DC",
+          country,
+          name: index === 0 ? "Reston, VA, United States" : `Remote Work, DC, ${country}`,
+        },
+      };
+    });
+    const result = await crawlSource({
+      id: "p5-0722-saic", company: "SAIC",
+      postingUrl: "https://jobs.saic.com/search/jobs/in/country/united-states", adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === "https://jobs.saic.com/search/jobs.json?per_page=100&page=1") {
+        return new Response("blocked", { status: 403 });
+      }
+      if (url === "https://r.jina.ai/https://jobs.saic.com/sitemap.xml") {
+        return new Response(`Title: Sitemap\n\nMarkdown Content:\n[https://jobs.saic.com/jobs/18100000-validated-role-0](https://jobs.saic.com/jobs/18100000-validated-role-0)\n\n2026-08-15 13:09:58 UTC`);
+      }
+      const target = new URL(url.replace("https://r.jina.ai/", ""));
+      const page = Number(target.searchParams.get("page"));
+      const pageEntries = entries.slice((page - 1) * 100, page * 100);
+      return new Response(`Title:\n\nMarkdown Content:\n${JSON.stringify({
+        current_page: page,
+        per_page: 100,
+        total_entries: entries.length,
+        entries: pageEntries,
+      })}`);
+    }, new Date());
+
+    expect(requests).toEqual([
+      "https://jobs.saic.com/search/jobs.json?per_page=100&page=1",
+      "https://r.jina.ai/https://jobs.saic.com/sitemap.xml",
+      "https://r.jina.ai/https://jobs.saic.com/search/jobs.json?per_page=100&page=1",
+      "https://r.jina.ai/https://jobs.saic.com/search/jobs.json?per_page=100&page=2",
+      "https://r.jina.ai/https://jobs.saic.com/search/jobs.json?per_page=100&page=3",
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: false,
+      resolvedListingUrl: "https://jobs.saic.com/search/jobs/in/country/united-states",
+    }));
+    expect(result.jobs).toHaveLength(204);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "18100000",
+      title: "Software Engineering Intern",
+      employmentType: "Internship",
+      locationCountry: "United States",
+      publishedAt: "2026-08-15T13:09:58.000Z",
+      officialUrl: "https://jobs.saic.com/jobs/18100000-validated-role-0",
+    }));
+    expect(result.jobs.some((job) => job.location?.includes("Bahrain"))).toBe(false);
+  });
+
+  it("fails SAIC closed when the official catalog repeats a global identity", async () => {
+    const duplicate = {
+      id: "18100000", talemetry_job_id: "18100000", permalink: "duplicate-role", title: "Duplicate Role",
+      location: { locality: "Reston", region_abbr: "VA", country: "United States", name: "Reston, VA, United States" },
+    };
+    const conflicting = { ...duplicate, title: "Conflicting Role" };
+    const result = await crawlSource({
+      id: "p5-0722-saic", company: "SAIC",
+      postingUrl: "https://jobs.saic.com/search/jobs/in/country/united-states", adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      if (!url.startsWith("https://r.jina.ai/")) return new Response("blocked", { status: 403 });
+      if (url.endsWith("/sitemap.xml")) return new Response("<urlset></urlset>");
+      return new Response(JSON.stringify({
+        current_page: 1, per_page: 100, total_entries: 2, entries: [duplicate, conflicting],
+      }));
+    }, new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed", completeListing: false, jobs: [],
+      error: "SAIC's official jobs catalog contained invalid or duplicate records.",
+    }));
+  });
+
   it("loads Revolut's reader-rendered careers HTML and keeps only United States roles", async () => {
     const requests: string[] = [];
     const positions = [{
@@ -9470,6 +9558,7 @@ HUMAN RESOURCES Posted Date
       requests.push(url);
       if (!url.startsWith("https://r.jina.ai/")) return new Response("blocked", { status: 403 });
       expect(new Headers(init?.headers).get("x-respond-with")).toBe("html");
+      expect(new Headers(init?.headers).get("x-target-selector")).toBe("script#__NEXT_DATA__");
       return new Response(`<html><script id="__NEXT_DATA__" type="application/json">${JSON.stringify({
         props: { pageProps: { positions } },
       })}</script></html>`);
@@ -9490,6 +9579,43 @@ HUMAN RESOURCES Posted Date
       arrangement: "remote",
       team: "Marketing & Comms",
       officialUrl: "https://www.revolut.com/en-US/careers/position/de51dcd8-b408-4cf0-b737-1568d0b2c472/",
+    })]);
+  });
+
+  it("discovers Revolut's current Next build and loads the smaller official careers JSON fallback", async () => {
+    const requests: Array<{ url: string; selector: string | null }> = [];
+    const buildId = "current-build_2026";
+    const positions = [{
+      id: "de51dcd8-b408-4cf0-b737-1568d0b2c472",
+      text: "Data Science Intern",
+      locations: [{ name: "New York", type: "office", country: "United States" }],
+      description: "Build production models.",
+      team: "Data",
+    }];
+    const result = await crawlSource({
+      id: "p5-1039-revolut", company: "Revolut",
+      postingUrl: "https://www.revolut.com/careers/", adapter: "custom",
+    }, async (input, init) => {
+      const url = String(input);
+      const selector = new Headers(init?.headers).get("x-target-selector");
+      requests.push({ url, selector });
+      if (url === "https://www.revolut.com/en-US/careers/") return new Response("blocked", { status: 403 });
+      if (url.includes("/_next/data/")) {
+        return new Response(`Title:\n\nMarkdown Content:\n${JSON.stringify({ pageProps: { positions } })}`);
+      }
+      if (selector === "script#__NEXT_DATA__") return new Response("reader timeout", { status: 502 });
+      return new Response(`<html><script src="https://www.revolut.com/_next/static/${buildId}/_buildManifest.js" defer></script></html>`);
+    }, new Date());
+
+    expect(requests).toEqual([
+      { url: "https://www.revolut.com/en-US/careers/", selector: null },
+      { url: "https://r.jina.ai/https://www.revolut.com/en-US/careers/", selector: "script#__NEXT_DATA__" },
+      { url: "https://r.jina.ai/https://www.revolut.com/en-US/careers/", selector: "script[src*='_buildManifest']" },
+      { url: `https://r.jina.ai/https://www.revolut.com/_next/data/${buildId}/en-US/careers.json`, selector: null },
+    ]);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: false }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      title: "Data Science Intern", employmentType: "Internship", locationCountry: "United States",
     })]);
   });
 

@@ -10431,6 +10431,229 @@ const crawlAmeripriseJobs = async (source: CrawlSource, fetcher: typeof fetch): 
   };
 };
 
+type SaicLocation = {
+  locality?: unknown;
+  region_abbr?: unknown;
+  country?: unknown;
+  name?: unknown;
+};
+
+type SaicEntry = {
+  id?: unknown;
+  talemetry_job_id?: unknown;
+  permalink?: unknown;
+  title?: unknown;
+  location?: unknown;
+};
+
+type SaicPage = {
+  current_page?: unknown;
+  per_page?: unknown;
+  total_entries?: unknown;
+  entries?: unknown;
+};
+
+const saicListingUrl = "https://jobs.saic.com/search/jobs/in/country/united-states";
+const saicPageSize = 100;
+
+const saicApiUrl = (page: number): string => {
+  const endpoint = new URL("https://jobs.saic.com/search/jobs.json");
+  endpoint.searchParams.set("per_page", String(saicPageSize));
+  endpoint.searchParams.set("page", String(page));
+  return endpoint.href;
+};
+
+const jsonObjectFromReaderBody = (body: string): unknown => {
+  const start = body.indexOf("{");
+  const end = body.lastIndexOf("}");
+  if (start < 0 || end <= start) return null;
+  try {
+    return JSON.parse(body.slice(start, end + 1)) as unknown;
+  } catch {
+    return null;
+  }
+};
+
+const saicPage = (body: string, expectedPage: number): {
+  entries: SaicEntry[];
+  total: number;
+  totalPages: number;
+} | null => {
+  const parsed = jsonObjectFromReaderBody(body);
+  if (!parsed || typeof parsed !== "object") return null;
+  const payload = parsed as SaicPage;
+  const currentPage = Number(payload.current_page);
+  const perPage = Number(payload.per_page);
+  const total = Number(payload.total_entries);
+  if (currentPage !== expectedPage || perPage !== saicPageSize
+    || !Number.isSafeInteger(total) || total < 1 || total > 10_000
+    || !Array.isArray(payload.entries)) return null;
+  const totalPages = Math.ceil(total / saicPageSize);
+  if (expectedPage > totalPages) return null;
+  const expectedEntries = Math.min(saicPageSize, total - ((expectedPage - 1) * saicPageSize));
+  return payload.entries.length === expectedEntries
+    ? { entries: payload.entries as SaicEntry[], total, totalPages }
+    : null;
+};
+
+const saicPublishedDates = async (fetcher: typeof fetch): Promise<Map<string, {
+  text: string;
+  iso: string;
+}>> => {
+  const dates = new Map<string, { text: string; iso: string }>();
+  try {
+    const response = await fetchWithTimeout(fetcher, "https://r.jina.ai/https://jobs.saic.com/sitemap.xml", {
+      headers: { accept: "text/plain" },
+    }, false, { attempts: 1, timeoutMs: 15_000 });
+    if (!response.ok) return dates;
+    const body = await response.text();
+    const record = (url: string, text: string): void => {
+      const iso = normalizedDate(text);
+      if (iso) dates.set(url, { text: text.trim(), iso });
+    };
+    for (const match of body.matchAll(
+      /<loc>\s*(https:\/\/jobs\.saic\.com\/jobs\/\d+-[a-z0-9-]+)\/?\s*<\/loc>\s*<lastmod>\s*([^<]+?)\s*<\/lastmod>/gi,
+    )) {
+      record(match[1], match[2]);
+    }
+    for (const match of body.matchAll(
+      /\[(https:\/\/jobs\.saic\.com\/jobs\/\d+-[a-z0-9-]+)\]\((https:\/\/jobs\.saic\.com\/jobs\/\d+-[a-z0-9-]+)\)\s+([^\r\n]+)/gi,
+    )) {
+      if (match[1] === match[2]) record(match[1], match[3]);
+    }
+  } catch {
+    // Published dates enrich the catalog but never block a validated listing.
+  }
+  return dates;
+};
+
+const saicJobs = (
+  entries: SaicEntry[],
+  source: CrawlSource,
+  publishedDates: Map<string, { text: string; iso: string }>,
+): CrawledJob[] | null => {
+  const identities = new Map<string, string>();
+  const jobs: CrawledJob[] = [];
+  for (const entry of entries) {
+    const id = asText(entry.id);
+    const talemetryId = asText(entry.talemetry_job_id);
+    const permalink = asText(entry.permalink);
+    const title = asText(entry.title);
+    if (!id || !/^\d{6,}$/.test(id) || talemetryId !== id || !permalink
+      || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(permalink) || !title
+      || !entry.location || typeof entry.location !== "object") return null;
+    const location = entry.location as SaicLocation;
+    const locationName = asText(location.name);
+    const country = asText(location.country);
+    if (!locationName || !country) return null;
+    const signature = JSON.stringify([
+      id, talemetryId, permalink, title, locationName, country,
+      asText(location.locality), asText(location.region_abbr),
+    ]);
+    const previous = identities.get(id);
+    if (previous && previous !== signature) return null;
+    if (previous) continue;
+    identities.set(id, signature);
+    if (country.toLocaleLowerCase() !== "united states") continue;
+    const officialUrl = `https://jobs.saic.com/jobs/${id}-${permalink}`;
+    const published = publishedDates.get(officialUrl);
+    const programs = classifyJobPrograms(title).keys;
+    jobs.push({
+      externalId: id,
+      title,
+      company: source.company,
+      location: locationName,
+      arrangement: /\bremote\b/i.test(locationName) ? "remote" : "onsite",
+      employmentType: programs.includes("coop") ? "Co-op"
+        : programs.includes("internship") ? "Internship" : null,
+      summary: null,
+      locationCity: asText(location.locality),
+      locationState: asText(location.region_abbr),
+      locationCountry: "United States",
+      requisitionId: id,
+      ...(published ? { sourcePostedText: published.text, sourceUpdatedAt: published.iso } : {}),
+      officialUrl,
+      publishedAt: published?.iso ?? null,
+    });
+  }
+  return uniqueJobs(jobs);
+};
+
+const crawlSaic = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let directStatus: number | null = null;
+  const loadCatalog = async (reader: boolean): Promise<{ entries: SaicEntry[]; responseStatus: number } | null> => {
+    const fetchPage = async (page: number): Promise<{ payload: ReturnType<typeof saicPage>; status: number } | null> => {
+      const official = saicApiUrl(page);
+      const endpoint = reader ? `https://r.jina.ai/${official}` : official;
+      try {
+        const response = await fetchWithTimeout(fetcher, endpoint, {
+          headers: { accept: reader ? "text/plain" : "application/json" },
+        }, !reader, { attempts: 1, timeoutMs: reader ? 15_000 : 7_000 });
+        if (!reader) directStatus = response.status;
+        if (!response.ok) return null;
+        const payload = saicPage(await response.text(), page);
+        return payload ? { payload, status: response.status } : null;
+      } catch {
+        return null;
+      }
+    };
+
+    const first = await fetchPage(1);
+    if (!first?.payload) return null;
+    const { total, totalPages } = first.payload;
+    const pages = new Map<number, SaicEntry[]>([[1, first.payload.entries]]);
+    const remaining = Array.from({ length: totalPages - 1 }, (_, index) => index + 2);
+    for (let index = 0; index < remaining.length; index += 5) {
+      const pageNumbers = remaining.slice(index, index + 5);
+      const responses = await Promise.all(pageNumbers.map((page) => fetchPage(page)));
+      for (let offset = 0; offset < pageNumbers.length; offset += 1) {
+        const response = responses[offset];
+        if (!response?.payload || response.payload.total !== total || response.payload.totalPages !== totalPages) return null;
+        pages.set(pageNumbers[offset], response.payload.entries);
+      }
+    }
+    const entries = Array.from({ length: totalPages }, (_, index) => pages.get(index + 1) ?? []).flat();
+    return entries.length === total ? { entries, responseStatus: first.status } : null;
+  };
+
+  const direct = await loadCatalog(false);
+  // Start date enrichment alongside the reader catalog so the optional
+  // sitemap does not add another full network round to this large source.
+  const publishedDatesPromise = saicPublishedDates(fetcher);
+  const catalog = direct ?? await loadCatalog(true);
+  if (!catalog) {
+    return {
+      status: isBlockedHttpStatus(directStatus) ? "blocked" : "failed",
+      responseStatus: directStatus,
+      completeListing: false,
+      jobs: [],
+      error: "SAIC's validated official jobs catalog was unavailable.",
+    };
+  }
+  const dates = await publishedDatesPromise;
+  const jobs = saicJobs(catalog.entries, source, dates);
+  if (!jobs) {
+    return {
+      status: "failed",
+      responseStatus: catalog.responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: "SAIC's official jobs catalog contained invalid or duplicate records.",
+    };
+  }
+  return {
+    status: "succeeded",
+    responseStatus: catalog.responseStatus,
+    // Reader snapshots can lag, and SAIC's upstream total counts a handful of
+    // byte-identical duplicate rows. The validated feed is therefore safe for
+    // additions and updates, but never authorizes closing an unseen job.
+    completeListing: false,
+    jobs,
+    resolvedListingUrl: saicListingUrl,
+    error: null,
+  };
+};
+
 type RevolutPosition = {
   id?: unknown;
   text?: unknown;
@@ -10509,15 +10732,23 @@ const revolutJobs = (positions: RevolutPosition[], source: CrawlSource): Crawled
 
 const crawlRevolut = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
   const candidates = [
-    { endpoint: revolutListingUrl, reader: false },
-    { endpoint: `https://r.jina.ai/${revolutListingUrl}`, reader: true },
+    { endpoint: revolutListingUrl, reader: false, targetSelector: null },
+    {
+      endpoint: `https://r.jina.ai/${revolutListingUrl}`,
+      reader: true,
+      targetSelector: "script#__NEXT_DATA__",
+    },
   ];
   let directStatus: number | null = null;
   for (const candidate of candidates) {
     try {
       const response = await fetchWithTimeout(fetcher, candidate.endpoint, {
         headers: candidate.reader
-          ? { accept: "text/plain", "x-respond-with": "html" }
+          ? {
+            accept: "text/plain",
+            "x-respond-with": "html",
+            ...(candidate.targetSelector ? { "x-target-selector": candidate.targetSelector } : {}),
+          }
           : { accept: "text/html,application/xhtml+xml" },
       }, !candidate.reader, { attempts: 1, timeoutMs: candidate.reader ? 18_000 : 8_000 });
       if (!candidate.reader) directStatus = response.status;
@@ -10536,8 +10767,51 @@ const crawlRevolut = async (source: CrawlSource, fetcher: typeof fetch): Promise
         error: null,
       };
     } catch {
-      // Continue to the reader-backed copy of the same first-party payload.
+      // Continue to the next bounded representation of the first-party data.
     }
+  }
+
+  // If targeting the embedded payload is unavailable, discover the current
+  // Next.js build id from a tiny first-party script tag and request the exact
+  // official careers JSON through the same read-only reader bridge. This
+  // avoids pinning a build id that Revolut rotates during deployments.
+  try {
+    const readerPage = `https://r.jina.ai/${revolutListingUrl}`;
+    const manifestResponse = await fetchWithTimeout(fetcher, readerPage, {
+      headers: {
+        accept: "text/plain",
+        "x-respond-with": "html",
+        "x-target-selector": "script[src*='_buildManifest']",
+      },
+    }, false, { attempts: 1, timeoutMs: 12_000 });
+    if (manifestResponse.ok) {
+      const manifestBody = await manifestResponse.text();
+      const buildId = manifestBody.match(
+        /https:\/\/www\.revolut\.com\/_next\/static\/([A-Za-z0-9_-]{8,80})\/_buildManifest\.js/i,
+      )?.[1];
+      if (buildId) {
+        const officialDataUrl = `https://www.revolut.com/_next/data/${buildId}/en-US/careers.json`;
+        const dataResponse = await fetchWithTimeout(fetcher, `https://r.jina.ai/${officialDataUrl}`, {
+          headers: { accept: "text/plain" },
+        }, false, { attempts: 1, timeoutMs: 18_000 });
+        if (dataResponse.ok) {
+          const positions = revolutPayload(await dataResponse.text());
+          const jobs = positions ? revolutJobs(positions, source) : null;
+          if (jobs) {
+            return {
+              status: "succeeded",
+              responseStatus: dataResponse.status,
+              completeListing: false,
+              jobs,
+              resolvedListingUrl: revolutListingUrl,
+              error: null,
+            };
+          }
+        }
+      }
+    }
+  } catch {
+    // All reader fallbacks are addition-only and fail closed.
   }
   return {
     status: isBlockedHttpStatus(directStatus) ? "blocked" : "failed",
@@ -15428,6 +15702,7 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   if (["audit-row-536", "p2-0103-fbi", "p4-0268-fbi-los-angeles-field-office"].includes(source.id)) {
     return crawlFbiJobs(source, fetcher);
   }
+  if (source.id === "p5-0722-saic") return crawlSaic(source, fetcher);
   if (source.id === "p5-1039-revolut") return crawlRevolut(source, fetcher);
   if (source.id === "p5-0935-hologic") return crawlHologic(source, fetcher);
   if (source.id === "audit-row-321") return crawlBorgWarner(source, fetcher);
