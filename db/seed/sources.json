@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:696143200925dc3d620f4352fd6793df6f69f2babcea4bd78624473f472435c5",
+  "version": "v2:sha256:7f716d2f87e863cdd0925967f713c99c86a6f8db2dda88f039172a07a1d6bf91",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -2271,10 +2271,10 @@
       "id": "audit-row-368",
       "masterRow": 368,
       "company": "Henry Schein",
-      "postingUrl": "https://www.henryschein.com/us-en/Corporate/Career/JobSearch.aspx",
+      "postingUrl": "https://henryschein.wd1.myworkdayjobs.com/External_Careers",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",

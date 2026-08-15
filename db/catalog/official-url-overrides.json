@@ -108,7 +108,7 @@
     "audit-row-350": { "url": "https://www.echostar.com/gfj/", "adapter": "custom" },
     "audit-row-355": { "url": "https://equitable.com/careers-at-equitable", "adapter": "custom" },
     "audit-row-356": { "url": "https://app.eightfold.ai/careers?domain=elcompanies.com", "adapter": "custom" },
-    "audit-row-368": { "url": "https://www.henryschein.com/us-en/Corporate/Career/JobSearch.aspx", "adapter": "custom" },
+    "audit-row-368": { "url": "https://henryschein.wd1.myworkdayjobs.com/External_Careers", "adapter": "workday" },
     "p2-0113-golden-1-credit-union": { "url": "https://jobs.dayforcehcm.com/en-US/golden1/CANDIDATEPORTAL", "adapter": "dayforce" },
     "p5-1082-trinetx": { "url": "https://jobs.dayforcehcm.com/en-US/trinetx1/CANDIDATEPORTAL", "adapter": "dayforce" },
     "legacy-row-826": { "url": "https://jobs.dayforcehcm.com/en-US/ibgllc/CANDIDATEPORTAL/", "adapter": "dayforce" },
