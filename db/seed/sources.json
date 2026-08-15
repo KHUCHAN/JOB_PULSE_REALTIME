@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:c764556e813f4a3f72821800fd41b52a3147c18d0fec01ad9a7169ac8b73cefe",
+  "version": "v2:sha256:53d0af1b19fe747be48bd186a7653f36c51f26f8ae683f43e7a1c122423c4a57",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -4776,7 +4776,7 @@
       "id": "p2-0089-cincinnati-financial",
       "masterRow": 1240,
       "company": "Cincinnati Financial",
-      "postingUrl": "https://www.cinfin.com/cincinnati-insurance-careers/openings",
+      "postingUrl": "https://cinfin.taleo.net/careersection/ex/jobsearch.ftl?lang=en",
       "talentUrl": "https://cinfin.taleo.net/careersection/profile.jss?type=1&portal=101430233",
       "channel": "공식 Talent Community/후보자 프로필",
       "adapter": "custom",
@@ -4784,7 +4784,7 @@
       "confidence": "medium",
       "resumeUpload": "available",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-08",
+      "checkedAt": "2026-08-15",
       "enabled": true
     },
     {
@@ -22435,7 +22435,7 @@
       "officialUrl": "https://cinfin.taleo.net/careersection/profile.jss?type=1&portal=101430233",
       "resumeUpload": "available",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-08"
+      "checkedAt": "2026-08-15"
     },
     {
       "id": "talent-p2-0104-fidelity-investments",

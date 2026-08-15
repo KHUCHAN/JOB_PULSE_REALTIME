@@ -4744,6 +4744,469 @@ const crawlCamtekCareers = async (source: CrawlSource, fetcher: typeof fetch): P
   }
 };
 
+type PaycomCareerArcLocation = {
+  id?: unknown;
+  canonical_name?: unknown;
+  city?: unknown;
+  country_code?: unknown;
+  lat?: unknown;
+  lng?: unknown;
+  postal_code?: unknown;
+  state?: unknown;
+};
+
+type PaycomCareerArcEntry = {
+  id?: unknown;
+  apply_url?: unknown;
+  brand?: { id?: unknown; name?: unknown } | null;
+  categories?: unknown;
+  description?: unknown;
+  employment_type?: unknown;
+  is_unmappable?: unknown;
+  locations?: unknown;
+  remote?: unknown;
+  title?: unknown;
+};
+
+type PaycomCareerArcPayload = {
+  entries?: unknown;
+  meta?: {
+    links?: { next?: unknown } | null;
+    total_count?: unknown;
+    total_pages?: unknown;
+    page?: unknown;
+    per_page?: unknown;
+  } | null;
+};
+
+const PAYCOM_LISTING_URL = "https://www.paycom.com/careers/job-map/";
+const PAYCOM_CAREERARC_MAP_URL = "https://app.careerarc.com/job_maps/401";
+const PAYCOM_CAREERARC_API_URL = "https://app.careerarc.com/api/job_maps/401/job_postings";
+
+const paycomHtmlSection = (html: string, heading: RegExp, nextHeading: RegExp): string | null => {
+  const headings = [...html.matchAll(/<strong\b[^>]*>([\s\S]*?)<\/strong>/gi)];
+  const start = headings.find((match) => heading.test(icimsText(match[1]) ?? ""));
+  if (start?.index == null) return null;
+  const startAt = start.index + start[0].length;
+  const following = headings.find((match) => (match.index ?? 0) >= startAt
+    && nextHeading.test(icimsText(match[1]) ?? ""));
+  return icimsText(html.slice(startAt, following?.index ?? html.length));
+};
+
+const paycomSalaryFields = (
+  description: string,
+): Pick<CrawledJob, "salaryMin" | "salaryMax" | "salaryCurrency" | "salaryInterval"> => {
+  const salary = description.match(
+    /\bsalary(?:\s+range)?(?:\s+is|\s+of|:)?\s+[\s\S]{0,80}?\$\s*([\d,]+(?:\.\d+)?)\s*[–—-]\s*\$\s*([\d,]+(?:\.\d+)?)([\s\S]{0,50})/i,
+  );
+  if (!salary) return {};
+  const salaryMin = Number(salary[1].replace(/,/g, ""));
+  const salaryMax = Number(salary[2].replace(/,/g, ""));
+  if (!Number.isFinite(salaryMin) || !Number.isFinite(salaryMax) || salaryMin < 0 || salaryMax < salaryMin) return {};
+  const interval = /\b(?:per\s+)?(?:hour|hourly)\b/i.test(salary[3])
+    ? "hour"
+    : /\b(?:per\s+)?(?:annum|annual(?:ly)?|year(?:ly)?)\b/i.test(salary[3]) ? "year" : null;
+  return {
+    salaryMin,
+    salaryMax,
+    salaryCurrency: "USD",
+    ...(interval ? { salaryInterval: interval } : {}),
+  };
+};
+
+const paycomCareerArcJob = (entry: PaycomCareerArcEntry, source: CrawlSource): CrawledJob | null => {
+  const id = Number(entry.id);
+  const title = asText(entry.title);
+  const descriptionHtml = asText(entry.description);
+  const description = icimsText(descriptionHtml);
+  const categories = Array.isArray(entry.categories)
+    ? entry.categories.flatMap((value) => value && typeof value === "object" ? asText((value as { name?: unknown }).name) ?? [] : [])
+    : [];
+  const locations = Array.isArray(entry.locations) ? entry.locations as PaycomCareerArcLocation[] : [];
+  const rawApplyUrl = asText(entry.apply_url);
+  if (!Number.isSafeInteger(id) || id <= 0 || !title || !descriptionHtml || !description
+    || Number(entry.brand?.id) !== 2276 || asText(entry.brand?.name) !== "Paycom"
+    || entry.is_unmappable !== false || typeof entry.remote !== "boolean"
+    || categories.length === 0 || locations.length === 0 || locations.length > 10 || !rawApplyUrl) return null;
+  let advertisedUrl: URL;
+  try {
+    advertisedUrl = new URL(rawApplyUrl);
+  } catch {
+    return null;
+  }
+  if (advertisedUrl.origin !== "https://app.careerarc.com" || advertisedUrl.username || advertisedUrl.password
+    || advertisedUrl.port || advertisedUrl.hash || advertisedUrl.pathname !== `/job_postings/${id}`
+    || advertisedUrl.searchParams.size !== 4
+    || advertisedUrl.searchParams.get("ctm_campaign") !== "job_map:401"
+    || advertisedUrl.searchParams.get("ctm_company") !== "459"
+    || advertisedUrl.searchParams.get("ctm_source") !== "5"
+    || advertisedUrl.searchParams.get("ctm_target") !== `job_posting:${id}`) return null;
+  const normalizedLocations = locations.flatMap((location) => {
+    const name = asText(location.canonical_name);
+    const city = asText(location.city);
+    const state = asText(location.state);
+    const postalCode = asText(location.postal_code);
+    const latitude = typeof location.lat === "number" && Number.isFinite(location.lat) ? location.lat : null;
+    const longitude = typeof location.lng === "number" && Number.isFinite(location.lng) ? location.lng : null;
+    const locationId = Number(location.id);
+    if (!name || !city || !state || !postalCode || latitude === null || longitude === null
+      || !Number.isSafeInteger(locationId) || locationId <= 0
+      || asText(location.country_code) !== "USA") return [];
+    return [{ name, city, state, postalCode, latitude, longitude, id: locationId }];
+  });
+  if (normalizedLocations.length !== locations.length) return null;
+  const primary = normalizedLocations[0];
+  const programs = classifyJobPrograms(title).keys;
+  const listedEmploymentType = asText(entry.employment_type);
+  const responsibilities = paycomHtmlSection(descriptionHtml, /^responsibilities$/i, /^(?:qualifications|requirements)$/i);
+  const qualifications = paycomHtmlSection(
+    descriptionHtml,
+    /^(?:qualifications|requirements)$/i,
+    /^(?:preferred qualifications|paycom is an equal opportunity employer)/i,
+  );
+  const officialUrl = `https://app.careerarc.com/job_postings/${id}`;
+  return {
+    externalId: String(id),
+    title,
+    company: source.company,
+    location: primary.name,
+    arrangement: entry.remote ? "remote" : "onsite",
+    employmentType: programs.includes("coop")
+      ? "Co-op"
+      : programs.includes("internship") || categories.some((category) => /^internship$/i.test(category))
+        ? "Internship"
+        : listedEmploymentType && !/^other$/i.test(listedEmploymentType)
+          ? normalizeEmploymentType(listedEmploymentType) ?? listedEmploymentType
+          : null,
+    summary: description.slice(0, 1_200),
+    description,
+    ...(responsibilities ? { responsibilities } : {}),
+    ...(qualifications ? { qualifications } : {}),
+    department: categories.join("; "),
+    jobFunction: categories.join("; "),
+    locationCity: primary.city,
+    locationState: primary.state,
+    locationCountry: "United States",
+    locationPostalCode: primary.postalCode,
+    latitude: primary.latitude,
+    longitude: primary.longitude,
+    ...(normalizedLocations.length > 1 ? { secondaryLocations: normalizedLocations.slice(1).map(({ name }) => name) } : {}),
+    ...paycomSalaryFields(description),
+    requisitionId: String(id),
+    rawPayload: {
+      careerArcJobMapId: 401,
+      careerArcBrandId: 2276,
+      categoryNames: categories,
+      locationIds: normalizedLocations.map(({ id: locationId }) => locationId),
+    },
+    officialUrl,
+    publishedAt: null,
+  };
+};
+
+const crawlPaycomCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  let failureStatus: number | null = null;
+  try {
+    const listingResponse = await fetchWithTimeout(fetcher, PAYCOM_LISTING_URL, {
+      headers: { accept: "text/html,application/xhtml+xml" },
+    }, true, { attempts: 1, timeoutMs: 10_000 });
+    responseStatus = listingResponse.status;
+    if (!listingResponse.ok) {
+      failureStatus = listingResponse.status;
+      throw new Error(`Paycom job map returned HTTP ${listingResponse.status}.`);
+    }
+    const listingHtml = await listingResponse.text();
+    const escapedMapUrl = PAYCOM_CAREERARC_MAP_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (!new RegExp(`<iframe\\b[^>]*src=["']${escapedMapUrl}/?["']`, "i").test(listingHtml)) {
+      throw new Error("Paycom job map no longer exposes its verified CareerArc board.");
+    }
+
+    const fetchPage = async (page: number): Promise<PaycomCareerArcPayload> => {
+      const endpoint = new URL(PAYCOM_CAREERARC_API_URL);
+      endpoint.searchParams.set("page", String(page));
+      endpoint.searchParams.set("per_page", "25");
+      const response = await fetchWithTimeout(fetcher, endpoint, {
+        headers: { accept: "application/json", referer: PAYCOM_CAREERARC_MAP_URL },
+      }, true, { attempts: 1, timeoutMs: 10_000 });
+      responseStatus = response.status;
+      if (!response.ok) {
+        failureStatus = response.status;
+        throw new Error(`Paycom CareerArc feed returned HTTP ${response.status}.`);
+      }
+      return await response.json() as PaycomCareerArcPayload;
+    };
+
+    const first = await fetchPage(1);
+    const total = Number(first.meta?.total_count);
+    const totalPages = Number(first.meta?.total_pages);
+    const perPage = Number(first.meta?.per_page);
+    if (!Number.isSafeInteger(total) || total < 1 || total > 500
+      || !Number.isSafeInteger(totalPages) || totalPages < 1 || totalPages > 20
+      || perPage !== 25 || Number(first.meta?.page) !== 1
+      || totalPages !== Math.ceil(total / perPage)) {
+      throw new Error("Paycom CareerArc feed returned invalid pagination metadata.");
+    }
+    const pages = new Map<number, PaycomCareerArcPayload>([[1, first]]);
+    for (let page = 2; page <= totalPages; page += 6) {
+      const numbers = Array.from({ length: Math.min(6, totalPages - page + 1) }, (_, index) => page + index);
+      const values = await Promise.all(numbers.map(async (pageNumber) => ({ pageNumber, payload: await fetchPage(pageNumber) })));
+      values.forEach(({ pageNumber, payload }) => pages.set(pageNumber, payload));
+    }
+    const rawEntries: PaycomCareerArcEntry[] = [];
+    for (let page = 1; page <= totalPages; page += 1) {
+      const payload = pages.get(page);
+      const entries = Array.isArray(payload?.entries) ? payload.entries as PaycomCareerArcEntry[] : [];
+      const expected = Math.min(perPage, total - (page - 1) * perPage);
+      if (!payload || Number(payload.meta?.total_count) !== total || Number(payload.meta?.total_pages) !== totalPages
+        || Number(payload.meta?.page) !== page || Number(payload.meta?.per_page) !== perPage || entries.length !== expected) {
+        throw new Error("Paycom CareerArc feed returned an incomplete page.");
+      }
+      const next = asText(payload.meta?.links?.next);
+      if (page < totalPages) {
+        const expectedNext = new URL(PAYCOM_CAREERARC_API_URL);
+        expectedNext.searchParams.set("page", String(page + 1));
+        expectedNext.searchParams.set("per_page", String(perPage));
+        if (!next || new URL(next).href !== expectedNext.href) throw new Error("Paycom CareerArc feed returned an invalid page cursor.");
+      } else if (next) {
+        throw new Error("Paycom CareerArc feed advertised a page after its final page.");
+      }
+      rawEntries.push(...entries);
+    }
+    const rawIds = rawEntries.map((entry) => Number(entry.id));
+    const jobs = rawEntries.flatMap((entry) => paycomCareerArcJob(entry, source) ?? []);
+    if (rawEntries.length !== total || jobs.length !== total
+      || new Set(rawIds).size !== total || new Set(jobs.map((job) => job.officialUrl)).size !== total) {
+      throw new Error("Paycom CareerArc feed returned duplicate or unusable job records.");
+    }
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: true,
+      jobs,
+      resolvedListingUrl: PAYCOM_LISTING_URL,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: isBlockedHttpStatus(failureStatus ?? responseStatus) ? "blocked" : "failed",
+      responseStatus: failureStatus ?? responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Paycom careers crawler error.",
+    };
+  }
+};
+
+type CoastCentralOpening = {
+  externalId: string;
+  title: string;
+  description: string;
+  officialUrl: string;
+  validThrough: string | null;
+  locationCity: string;
+};
+
+const COAST_CENTRAL_LISTING_URL = "https://www.coastccu.org/community/careers/";
+const COAST_CENTRAL_FORM_URL = "https://copilot.formstack.com/start-workflow/21b99460-89d4-402b-96cb-61323a3cd8d3";
+
+const coastCentralApplyUrl = (html: string): string | null => {
+  const anchor = anchorsFromHtml(html).find(({ text }) => /^apply now$/i.test(text));
+  if (!anchor) return null;
+  try {
+    const url = new URL(anchor.href, COAST_CENTRAL_LISTING_URL);
+    if (url.origin !== "https://www.coastccu.org" || url.pathname !== "/speed-bump/" || url.hash
+      || url.searchParams.size !== 2 || url.searchParams.get("url") !== COAST_CENTRAL_FORM_URL
+      || url.searchParams.get("prev") !== COAST_CENTRAL_LISTING_URL) return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+};
+
+const coastCentralCity = (description: string): string | null => [
+  "Crescent City",
+  "McKinleyville",
+  "Eureka",
+  "Arcata",
+  "Fortuna",
+  "Willow Creek",
+  "Garberville",
+].find((city) => new RegExp(`\\b${city.replace(" ", "\\s+")}\\b`, "i").test(description)) ?? null;
+
+const coastCentralSalaryFields = (
+  description: string,
+): Pick<CrawledJob, "salaryMin" | "salaryMax" | "salaryCurrency" | "salaryInterval"> => {
+  const match = description.match(/\bSalary(?:\s+range)?\s+(?:is\s+)?\$\s*([\d,]+(?:\.\d+)?)\s*[–—-]\s*\$\s*([\d,]+(?:\.\d+)?)\s*(?:\/\s*(hour)|(?:annual|annually|per\s+year))/i);
+  if (!match) return {};
+  const salaryMin = Number(match[1].replace(/,/g, ""));
+  const salaryMax = Number(match[2].replace(/,/g, ""));
+  if (!Number.isFinite(salaryMin) || !Number.isFinite(salaryMax) || salaryMin < 0 || salaryMax < salaryMin) return {};
+  return {
+    salaryMin,
+    salaryMax,
+    salaryCurrency: "USD",
+    salaryInterval: match[3] ? "hour" : "year",
+  };
+};
+
+const coastCentralOpenings = (html: string): CoastCentralOpening[] | null => {
+  const sectionStart = html.search(/<h2\b[^>]*>\s*Current Openings\b/i);
+  if (sectionStart < 0) return null;
+  const sectionTail = html.slice(sectionStart);
+  const sectionEnd = sectionTail.search(/<\/section>/i);
+  if (sectionEnd < 0) return null;
+  const section = sectionTail.slice(0, sectionEnd);
+  const starts = [...section.matchAll(/<div\b[^>]*class=["'](?:[^"']+\s)?co-accordion(?:\s[^"']*)?["'][^>]*>/gi)]
+    .map((match) => match.index ?? 0);
+  if (starts.length === 0 || starts.length > 30) return null;
+  const blocks = starts.map((start, index) => section.slice(start, starts[index + 1] ?? section.length));
+  const openings: CoastCentralOpening[] = [];
+  for (const block of blocks) {
+    const title = icimsText(block.match(
+      /<button\b[^>]*class=["'](?:[^"']+\s)?co-accordion--trigger(?:\s[^"']*)?["'][^>]*>[\s\S]*?<span\b[^>]*>([\s\S]*?)<\/span>/i,
+    )?.[1]);
+    const descriptionHtml = block.match(
+      /<div\b[^>]*class=["'](?:[^"']+\s)?co-accordion--content(?:\s[^"']*)?["'][^>]*>([\s\S]*)$/i,
+    )?.[1] ?? null;
+    const description = icimsText(descriptionHtml);
+    if (!title || !descriptionHtml || !description) return null;
+    const pdf = anchorsFromHtml(descriptionHtml).find(({ href, text }) =>
+      /full job description/i.test(text) && /\.pdf(?:[?#]|$)/i.test(href));
+    if (/^secret shoppers?$/i.test(title) && !pdf) continue;
+    if (!pdf || !jobIdentityText(pdf.text).startsWith(jobIdentityText(title))) return null;
+    let officialUrl: URL;
+    try {
+      officialUrl = new URL(pdf.href, COAST_CENTRAL_LISTING_URL);
+    } catch {
+      return null;
+    }
+    if (!/https?:/.test(officialUrl.protocol) || officialUrl.hostname !== "www.coastccu.org"
+      || officialUrl.username || officialUrl.password || officialUrl.port) return null;
+    officialUrl.protocol = "https:";
+    const pathIdentity = officialUrl.pathname.match(/^\/wp-content\/uploads\/(\d{4})\/(\d{2})\/([^/]+)\.pdf$/i);
+    if (!pathIdentity || officialUrl.origin !== "https://www.coastccu.org" || officialUrl.search || officialUrl.hash) return null;
+    const locationCity = coastCentralCity(description);
+    if (!locationCity) return null;
+    const deadline = description.match(/\bDeadline to apply is\b[^.]*?\b(\d{1,2})\/(\d{1,2})\b/i);
+    const validThrough = deadline
+      ? new Date(Date.UTC(Number(pathIdentity[1]), Number(deadline[1]) - 1, Number(deadline[2]))).toISOString()
+      : null;
+    openings.push({
+      externalId: pathIdentity[3].toLocaleLowerCase(),
+      title,
+      description,
+      officialUrl: officialUrl.href,
+      validThrough,
+      locationCity,
+    });
+  }
+  if (openings.length === 0 || new Set(openings.map(({ externalId }) => externalId)).size !== openings.length
+    || new Set(openings.map(({ officialUrl }) => officialUrl)).size !== openings.length) return null;
+  return openings;
+};
+
+const coastCentralJob = (
+  opening: CoastCentralOpening,
+  source: CrawlSource,
+  applyUrl: string,
+  sourceUpdatedAt: string | null,
+): CrawledJob => {
+  const programs = classifyJobPrograms(opening.title).keys;
+  const benefits = opening.description.match(/\bBenefits include\s+([^.]*)/i)?.[1]?.trim() ?? null;
+  return {
+    externalId: opening.externalId,
+    title: opening.title,
+    company: source.company,
+    location: `${opening.locationCity}, CA`,
+    arrangement: "onsite",
+    employmentType: programs.includes("coop")
+      ? "Co-op"
+      : programs.includes("internship")
+        ? "Internship"
+        : /\bfull[- ]time\b/i.test(opening.description) ? "Full-time"
+          : /\bpart[- ]time\b/i.test(opening.description) ? "Part-time" : null,
+    summary: opening.description.slice(0, 1_200),
+    description: opening.description,
+    locationCity: opening.locationCity,
+    locationState: "CA",
+    locationCountry: "United States",
+    ...coastCentralSalaryFields(opening.description),
+    ...(benefits ? { benefits } : {}),
+    requisitionId: opening.externalId,
+    applyUrl,
+    ...(sourceUpdatedAt ? { sourceUpdatedAt } : {}),
+    ...(opening.validThrough ? { validThrough: opening.validThrough } : {}),
+    rawPayload: { officialPdf: opening.officialUrl, applicationWorkflow: COAST_CENTRAL_FORM_URL },
+    officialUrl: opening.officialUrl,
+    publishedAt: null,
+  };
+};
+
+const crawlCoastCentralCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  let failureStatus: number | null = null;
+  try {
+    const response = await fetchWithTimeout(fetcher, COAST_CENTRAL_LISTING_URL, {
+      headers: { accept: "text/html,application/xhtml+xml" },
+    }, true, { attempts: 1, timeoutMs: 10_000 });
+    responseStatus = response.status;
+    if (!response.ok) {
+      failureStatus = response.status;
+      throw new Error(`Coast Central careers returned HTTP ${response.status}.`);
+    }
+    const html = await response.text();
+    const openings = coastCentralOpenings(html);
+    const applyUrl = coastCentralApplyUrl(html);
+    const pageUpdatedAt = normalizedDate(html.match(
+      /<meta\b[^>]*property=["']article:modified_time["'][^>]*content=["']([^"']+)["']/i,
+    )?.[1]);
+    if (!openings || !applyUrl || !pageUpdatedAt) {
+      throw new Error("Coast Central careers returned an empty or malformed openings section.");
+    }
+    const updated = new Map<string, string | null>();
+    for (let index = 0; index < openings.length; index += 6) {
+      const values = await Promise.all(openings.slice(index, index + 6).map(async (opening) => {
+        try {
+          const pdf = await fetchWithTimeout(fetcher, opening.officialUrl, {
+            method: "HEAD",
+            headers: { accept: "application/pdf", referer: COAST_CENTRAL_LISTING_URL },
+          }, true, { attempts: 1, timeoutMs: 8_000 });
+          if (!pdf.ok || !/^application\/pdf\b/i.test(pdf.headers.get("content-type") ?? "")
+            || (pdf.url && pdf.url !== opening.officialUrl)) {
+            failureStatus ??= pdf.status;
+            return { opening, valid: false, modifiedAt: null };
+          }
+          return { opening, valid: true, modifiedAt: normalizedDate(pdf.headers.get("last-modified")) ?? pageUpdatedAt };
+        } catch {
+          return { opening, valid: false, modifiedAt: null };
+        }
+      }));
+      for (const value of values) if (value.valid) updated.set(value.opening.officialUrl, value.modifiedAt);
+    }
+    const jobs = openings.flatMap((opening) => updated.has(opening.officialUrl)
+      ? [coastCentralJob(opening, source, applyUrl, updated.get(opening.officialUrl) ?? pageUpdatedAt)]
+      : []);
+    if (jobs.length !== openings.length) throw new Error("Coast Central job-description PDFs were incomplete or unavailable.");
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: true,
+      jobs,
+      resolvedListingUrl: COAST_CENTRAL_LISTING_URL,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: isBlockedHttpStatus(failureStatus ?? responseStatus) ? "blocked" : "failed",
+      responseStatus: failureStatus ?? responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Coast Central careers crawler error.",
+    };
+  }
+};
+
 type WayfairCareerJob = {
   id?: unknown;
   eid?: unknown;
@@ -13912,6 +14375,454 @@ const taleoV2Config = (value: string): { endpoint: URL; org: string; cws: string
   }
 };
 
+type TaleoClassicRequisition = {
+  jobId?: unknown;
+  contestNo?: unknown;
+  column?: unknown;
+  linkedColumn?: unknown;
+  locationsColumns?: unknown;
+};
+
+type TaleoClassicFacet = {
+  id?: unknown;
+  facetValueResults?: unknown;
+};
+
+type TaleoClassicSearchPayload = {
+  requisitionList?: unknown;
+  facetResults?: unknown;
+  pagingData?: {
+    currentPageNo?: unknown;
+    pageSize?: unknown;
+    totalCount?: unknown;
+  } | null;
+  careerSectionUnAvailable?: unknown;
+};
+
+type CincinnatiTaleoSummary = {
+  jobId: string;
+  contestNo: string;
+  title: string;
+  locations: string[];
+  officialUrl: string;
+  applyUrl: string;
+};
+
+const CINCINNATI_CORPORATE_LISTING_URL = "https://www.cinfin.com/cincinnati-insurance-careers/openings";
+const CINCINNATI_TALEO_LISTING_URL = "https://cinfin.taleo.net/careersection/ex/jobsearch.ftl?lang=en";
+const CINCINNATI_TALEO_SEARCH_URL = "https://cinfin.taleo.net/careersection/rest/jobboard/searchjobs?lang=en&portal=101430233";
+
+const taleoClassicSearchBody = (pageNo: number): string => JSON.stringify({
+  fieldData: { fields: { KEYWORD: "", CATEGORY: "" }, valid: true },
+  filterSelectionParam: {
+    searchFilterSelections: ["JOB_TYPE", "LOCATION", "JOB_FIELD", "STUDY_LEVEL"]
+      .map((id) => ({ id, selectedValues: [] })),
+  },
+  sortingSelection: { sortBySelectionParam: "5", ascendingSortingOrder: true },
+  multilineEnabled: true,
+  pageNo,
+});
+
+const taleoClassicSummary = (value: TaleoClassicRequisition): CincinnatiTaleoSummary | null => {
+  const jobId = asText(value.jobId);
+  const contestNo = asText(value.contestNo);
+  const columns = Array.isArray(value.column) ? value.column : null;
+  const title = asText(columns?.[0]);
+  if (!jobId || !/^\d{3,12}$/.test(jobId) || !contestNo || !/^\d{5,12}$/.test(contestNo)
+    || !columns || columns.length !== 3 || asText(columns[1]) !== contestNo || !title
+    || Number(value.linkedColumn) !== 0 || !Array.isArray(value.locationsColumns)
+    || value.locationsColumns.length !== 1 || Number(value.locationsColumns[0]) !== 2) return null;
+  let locations: unknown;
+  try {
+    locations = JSON.parse(asText(columns[2]) ?? "");
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(locations) || locations.length < 1 || locations.length > 40
+    || locations.some((location) => typeof location !== "string" || !location.trim())) return null;
+  const normalizedLocations = locations.map((location) => String(location).trim());
+  const official = new URL("https://cinfin.taleo.net/careersection/ex/jobdetail.ftl");
+  official.searchParams.set("job", contestNo);
+  const apply = new URL("https://cinfin.taleo.net/careersection/application.jss");
+  apply.searchParams.set("type", "1");
+  apply.searchParams.set("lang", "en");
+  apply.searchParams.set("portal", "101430233");
+  apply.searchParams.set("reqNo", jobId);
+  return { jobId, contestNo, title, locations: normalizedLocations, officialUrl: official.href, applyUrl: apply.href };
+};
+
+const taleoClassicStringArray = (html: string): string[] | null => {
+  const marker = /api\.fillList\(\s*['"]requisitionDescriptionInterface['"]\s*,\s*['"]descRequisition['"]\s*,\s*\[/g;
+  const match = marker.exec(html);
+  if (!match) return null;
+  let cursor = marker.lastIndex;
+  const values: string[] = [];
+  const whitespace = /\s/;
+  const readEscape = (): string | null => {
+    const escaped = html[cursor++];
+    if (escaped == null) return null;
+    if (escaped === "n") return "\n";
+    if (escaped === "r") return "\r";
+    if (escaped === "t") return "\t";
+    if (escaped === "b") return "\b";
+    if (escaped === "f") return "\f";
+    if (escaped === "v") return "\v";
+    if (escaped === "u" || escaped === "x") {
+      const length = escaped === "u" ? 4 : 2;
+      const code = html.slice(cursor, cursor + length);
+      if (!new RegExp(`^[0-9a-f]{${length}}$`, "i").test(code)) return null;
+      cursor += length;
+      return String.fromCharCode(Number.parseInt(code, 16));
+    }
+    return escaped;
+  };
+  while (cursor < html.length) {
+    while (whitespace.test(html[cursor] ?? "")) cursor += 1;
+    if (html[cursor] === "]") return values;
+    if (values.length > 0) {
+      if (html[cursor] !== ",") return null;
+      cursor += 1;
+      while (whitespace.test(html[cursor] ?? "")) cursor += 1;
+    }
+    const quote = html[cursor++];
+    if (quote !== "'" && quote !== '"') return null;
+    let value = "";
+    let closed = false;
+    while (cursor < html.length) {
+      const character = html[cursor++];
+      if (character === quote) {
+        closed = true;
+        break;
+      }
+      if (character === "\\") {
+        const decoded = readEscape();
+        if (decoded == null) return null;
+        value += decoded;
+      } else {
+        value += character;
+      }
+    }
+    if (!closed || values.length >= 80) return null;
+    values.push(value);
+  }
+  return null;
+};
+
+const taleoClassicRichText = (value: string | undefined): string | null => {
+  if (!value) return null;
+  const encoded = value.replace(/^!\*!/, "");
+  try {
+    return icimsText(decodeURIComponent(encoded.replace(/%(?![0-9a-f]{2})/gi, "%25")));
+  } catch {
+    return null;
+  }
+};
+
+const cincinnatiPrimaryLocation = (locations: string[]): {
+  location: string;
+  arrangement: CrawledJob["arrangement"];
+  city: string | null;
+  state: string | null;
+} => {
+  const location = locations.join("; ");
+  const structured = locations.find((value) => /^[A-Z]{2}-.+/.test(value));
+  const match = structured?.match(/^([A-Z]{2})-(.+)$/);
+  return {
+    location,
+    arrangement: locations.some((value) => /^remote$/i.test(value)) ? "remote" : "unknown",
+    city: match?.[2] ?? null,
+    state: match?.[1] ?? null,
+  };
+};
+
+const cincinnatiSalaryFields = (
+  description: string | null,
+): Pick<CrawledJob, "salaryMin" | "salaryMax" | "salaryCurrency" | "salaryInterval"> => {
+  if (!description) return {};
+  const range = description.match(
+    /(?:pay range|salary(?: range)?)(?:\s+for this position)?\s+(?:is\s+)?[\s\S]{0,80}?\$\s*([\d,]+(?:\.\d+)?)\s*[–—-]\s*\$\s*([\d,]+(?:\.\d+)?)([\s\S]{0,50})/i,
+  );
+  if (!range) return {};
+  const salaryMin = Number(range[1].replace(/,/g, ""));
+  const salaryMax = Number(range[2].replace(/,/g, ""));
+  if (!Number.isFinite(salaryMin) || !Number.isFinite(salaryMax)) return {};
+  const intervalText = range[3];
+  return {
+    salaryMin,
+    salaryMax,
+    salaryCurrency: "USD",
+    ...(/\b(?:per\s+)?hour\b/i.test(intervalText)
+      ? { salaryInterval: "hour" }
+      : /\b(?:annual(?:ly)?|per\s+year|yearly)\b/i.test(intervalText) ? { salaryInterval: "year" } : {}),
+  };
+};
+
+const cincinnatiSummaryJob = (summary: CincinnatiTaleoSummary, source: CrawlSource): CrawledJob => {
+  const primary = cincinnatiPrimaryLocation(summary.locations);
+  const programs = classifyJobPrograms(summary.title).keys;
+  return {
+    externalId: summary.jobId,
+    title: summary.title,
+    company: source.company,
+    location: primary.location,
+    arrangement: primary.arrangement,
+    employmentType: programs.includes("coop") ? "Co-op" : programs.includes("internship") ? "Internship" : null,
+    summary: null,
+    ...(summary.locations.length > 1 ? { secondaryLocations: summary.locations.slice(1) } : {}),
+    ...(primary.city ? { locationCity: primary.city } : {}),
+    ...(primary.state ? { locationState: primary.state } : {}),
+    locationCountry: "United States",
+    requisitionId: summary.contestNo,
+    applyUrl: summary.applyUrl,
+    rawPayload: { taleoPortal: "101430233", taleoInternalJobId: summary.jobId },
+    officialUrl: summary.officialUrl,
+    publishedAt: null,
+  };
+};
+
+const cincinnatiDetailJob = (
+  summary: CincinnatiTaleoSummary,
+  html: string,
+  source: CrawlSource,
+): CrawledJob | null => {
+  const values = taleoClassicStringArray(html);
+  const metaTitle = icimsText(html.match(/<meta\b[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']/i)?.[1]);
+  const internalId = values?.[0]?.trim();
+  const title = values?.[9]?.trim();
+  const contestNo = values?.[10]?.trim();
+  const rawLocation = values?.[11]?.trim();
+  const description = taleoClassicRichText(values?.[12]);
+  const qualifications = taleoClassicRichText(values?.[14]);
+  if (!values || values.length < 15 || internalId !== summary.jobId || contestNo !== summary.contestNo
+    || !title || jobIdentityText(title) !== jobIdentityText(summary.title)
+    || !metaTitle || jobIdentityText(metaTitle) !== jobIdentityText(summary.title)
+    || !rawLocation || !description || !qualifications
+    || !new RegExp(`name=["']requisitionno["'][^>]*value=["']${summary.jobId}["']`, "i").test(html)) return null;
+  const job = cincinnatiSummaryJob(summary, source);
+  const arrangementText = [description, rawLocation, ...summary.locations].join(" ");
+  return {
+    ...job,
+    arrangement: /\bremote\b/i.test(arrangementText)
+      ? "remote"
+      : /\bhybrid\b/i.test(arrangementText) ? "hybrid" : "onsite",
+    summary: description.slice(0, 1_200),
+    description,
+    qualifications,
+    ...cincinnatiSalaryFields(description),
+    rawPayload: { ...job.rawPayload, taleoDetailLocation: rawLocation },
+  };
+};
+
+const cincinnatiTaleoFacets = (values: unknown, total: number): CrawledFacet[] | null => {
+  if (!Array.isArray(values)) return null;
+  const expected = new Set(["JOB_TYPE", "LOCATION", "JOB_FIELD", "STUDY_LEVEL"]);
+  const facets = (values as TaleoClassicFacet[]).flatMap((facet): CrawledFacet[] => {
+    const id = asText(facet.id);
+    if (!id || !expected.has(id) || !Array.isArray(facet.facetValueResults)) return [];
+    const facetValues = facet.facetValueResults.flatMap((raw): CrawledFacet["values"] => {
+      if (!raw || typeof raw !== "object") return [];
+      const value = raw as { id?: unknown; text?: unknown; quantity?: unknown };
+      const key = asText(value.id);
+      const label = asText(value.text);
+      const count = Number(value.quantity);
+      return key && label && Number.isSafeInteger(count) && count >= 0 && count <= total * 40
+        ? [{ key, label, count }]
+        : [];
+    });
+    if (facetValues.length !== facet.facetValueResults.length
+      || new Set(facetValues.map(({ key }) => key)).size !== facetValues.length) return [];
+    return [{
+      key: id.toLocaleLowerCase(),
+      label: id.split("_").map((part) => `${part[0]}${part.slice(1).toLocaleLowerCase()}`).join(" "),
+      values: facetValues,
+    }];
+  });
+  return facets.length === expected.size && new Set(facets.map(({ key }) => key)).size === expected.size
+    ? facets
+    : null;
+};
+
+const crawlCincinnatiTaleo = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  let failureStatus: number | null = null;
+  try {
+    const corporateResponse = await fetchWithTimeout(fetcher, CINCINNATI_CORPORATE_LISTING_URL, {
+      headers: { accept: "text/html,application/xhtml+xml" },
+    }, true, { attempts: 1, timeoutMs: 10_000 });
+    responseStatus = corporateResponse.status;
+    if (!corporateResponse.ok) {
+      failureStatus = corporateResponse.status;
+      throw new Error(`Cincinnati Financial careers returned HTTP ${corporateResponse.status}.`);
+    }
+    const corporateHtml = await corporateResponse.text();
+    const officialBoard = anchorsFromHtml(corporateHtml).some(({ href }) => {
+      try {
+        const url = new URL(href, CINCINNATI_CORPORATE_LISTING_URL);
+        return url.origin === "https://cinfin.taleo.net" && url.pathname === "/careersection/ex/jobsearch.ftl"
+          && url.username === "" && url.password === "" && url.port === "" && url.hash === ""
+          && url.searchParams.size === 1 && url.searchParams.get("lang") === "en";
+      } catch {
+        return false;
+      }
+    });
+    if (!officialBoard) throw new Error("Cincinnati Financial no longer links its verified Taleo board.");
+
+    const boardResponse = await fetchWithTimeout(fetcher, CINCINNATI_TALEO_LISTING_URL, {
+      headers: { accept: "text/html,application/xhtml+xml" },
+    }, true, { attempts: 1, timeoutMs: 10_000 });
+    responseStatus = boardResponse.status;
+    if (!boardResponse.ok) {
+      failureStatus = boardResponse.status;
+      throw new Error(`Cincinnati Financial Taleo board returned HTTP ${boardResponse.status}.`);
+    }
+    const boardHtml = await boardResponse.text();
+    if (!/portalNo\s*:\s*['"]101430233['"]/i.test(boardHtml)
+      || !/urlCode\s*:\s*['"]ex['"]/i.test(boardHtml)
+      || !/<meta\b[^>]*name=["']author["'][^>]*content=["']Cincinnati Financial["']/i.test(boardHtml)
+      || ["JOB_TYPE", "LOCATION", "JOB_FIELD", "STUDY_LEVEL"]
+        .some((id) => !new RegExp(`<div\\b[^>]*id=["']filter-${id}["']`, "i").test(boardHtml))) {
+      throw new Error("Cincinnati Financial Taleo board returned invalid public search configuration.");
+    }
+
+    const fetchSearchPage = async (pageNo: number): Promise<TaleoClassicSearchPayload> => {
+      const response = await fetchWithTimeout(fetcher, CINCINNATI_TALEO_SEARCH_URL, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+          cookie: "locale=en",
+          referer: CINCINNATI_TALEO_LISTING_URL,
+          tz: "GMT-07:00",
+          tzname: "America/Los_Angeles",
+        },
+        body: taleoClassicSearchBody(pageNo),
+      }, true, { attempts: 1, timeoutMs: 10_000 });
+      responseStatus = response.status;
+      if (!response.ok) {
+        failureStatus = response.status;
+        throw new Error(`Cincinnati Financial Taleo search returned HTTP ${response.status}.`);
+      }
+      return await response.json() as TaleoClassicSearchPayload;
+    };
+    const firstPage = await fetchSearchPage(1);
+    const total = Number(firstPage.pagingData?.totalCount);
+    const pageSize = Number(firstPage.pagingData?.pageSize);
+    const totalPages = Math.ceil(total / pageSize);
+    if (!Number.isSafeInteger(total) || total < 1 || total > 500 || pageSize !== 25
+      || !Number.isSafeInteger(totalPages) || totalPages < 1 || totalPages > 20) {
+      throw new Error("Cincinnati Financial Taleo search returned invalid catalog metadata.");
+    }
+    const fetchPass = async (seed?: TaleoClassicSearchPayload): Promise<TaleoClassicSearchPayload[]> => {
+      const pages = new Map<number, TaleoClassicSearchPayload>();
+      if (seed) pages.set(1, seed);
+      const firstMissing = seed ? 2 : 1;
+      for (let page = firstMissing; page <= totalPages; page += 6) {
+        const pageNumbers = Array.from({ length: Math.min(6, totalPages - page + 1) }, (_, index) => page + index);
+        const responses = await Promise.all(pageNumbers.map(async (pageNo) => ({ pageNo, payload: await fetchSearchPage(pageNo) })));
+        responses.forEach(({ pageNo, payload }) => pages.set(pageNo, payload));
+      }
+      return Array.from({ length: totalPages }, (_, index) => pages.get(index + 1)!);
+    };
+    const normalizePass = (pages: TaleoClassicSearchPayload[]): CincinnatiTaleoSummary[] | null => {
+      const summaries: CincinnatiTaleoSummary[] = [];
+      for (let index = 0; index < pages.length; index += 1) {
+        const pageNo = index + 1;
+        const page = pages[index];
+        const rows = Array.isArray(page.requisitionList) ? page.requisitionList as TaleoClassicRequisition[] : null;
+        const expected = Math.min(pageSize, total - index * pageSize);
+        if (page.careerSectionUnAvailable !== false || Number(page.pagingData?.currentPageNo) !== pageNo
+          || Number(page.pagingData?.pageSize) !== pageSize || Number(page.pagingData?.totalCount) !== total
+          || !rows || rows.length !== expected) return null;
+        const pageSummaries = rows.flatMap((row) => taleoClassicSummary(row) ?? []);
+        if (pageSummaries.length !== rows.length) return null;
+        summaries.push(...pageSummaries);
+      }
+      return summaries.length === total
+        && new Set(summaries.map(({ jobId }) => jobId)).size === total
+        && new Set(summaries.map(({ contestNo }) => contestNo)).size === total
+        && new Set(summaries.map(({ officialUrl }) => officialUrl)).size === total
+        ? summaries
+        : null;
+    };
+    const firstPassPages = await fetchPass(firstPage);
+    const firstPass = normalizePass(firstPassPages);
+    const secondPassPages = await fetchPass();
+    const secondPass = normalizePass(secondPassPages);
+    if (!firstPass || !secondPass
+      || firstPass.map(({ jobId, contestNo }) => `${jobId}:${contestNo}`).join("|")
+        !== secondPass.map(({ jobId, contestNo }) => `${jobId}:${contestNo}`).join("|")) {
+      throw new Error("Cincinnati Financial Taleo catalog changed or became inconsistent during pagination.");
+    }
+    const facets = cincinnatiTaleoFacets(secondPassPages[0].facetResults, total);
+    if (!facets) throw new Error("Cincinnati Financial Taleo search returned malformed native facets.");
+
+    // Two complete snapshots cost 2 * totalPages requests. Keep enough headroom
+    // under the 50-request source ceiling for provenance pages and rotating
+    // detail hydration, even if this board grows to the validated 500-job cap.
+    const detailBatchSize = Math.min(pageSize, Math.max(1, 46 - 2 * totalPages));
+    const totalDetailPages = Math.ceil(total / detailBatchSize);
+    const requestedPage = Math.min(Math.max(Math.trunc(source.crawlPageCursor ?? 1), 1), totalDetailPages);
+    const detailSummaries = secondPass.slice(
+      (requestedPage - 1) * detailBatchSize,
+      requestedPage * detailBatchSize,
+    );
+    const enriched = new Map<string, CrawledJob>();
+    let detailFailures = 0;
+    for (let index = 0; index < detailSummaries.length; index += 6) {
+      const values = await Promise.all(detailSummaries.slice(index, index + 6).map(async (summary) => {
+        try {
+          const response = await fetchWithTimeout(fetcher, summary.officialUrl, {
+            headers: {
+              accept: "text/html,application/xhtml+xml",
+              cookie: "locale=en",
+              referer: CINCINNATI_TALEO_LISTING_URL,
+            },
+          }, true, { attempts: 1, timeoutMs: 10_000 });
+          responseStatus = response.status;
+          if (!response.ok) {
+            failureStatus ??= response.status;
+            return null;
+          }
+          return cincinnatiDetailJob(summary, await response.text(), source);
+        } catch {
+          return null;
+        }
+      }));
+      for (const [offset, job] of values.entries()) {
+        if (job) enriched.set(detailSummaries[index + offset].officialUrl, job);
+        else detailFailures += 1;
+      }
+    }
+    const jobs = secondPass.map((summary) => enriched.get(summary.officialUrl) ?? cincinnatiSummaryJob(summary, source));
+    const detailsComplete = detailFailures === 0 && enriched.size === detailSummaries.length;
+    const cycleComplete = detailsComplete && requestedPage === totalDetailPages;
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: true,
+      jobs,
+      facets,
+      ...(totalDetailPages > 1 || source.crawlPageCursor != null ? {
+        pagination: {
+          nextPage: detailsComplete ? (cycleComplete ? 1 : requestedPage + 1) : requestedPage,
+          cycleComplete,
+          totalPages: totalDetailPages,
+        },
+      } : {}),
+      resolvedListingUrl: CINCINNATI_TALEO_LISTING_URL,
+      error: detailsComplete ? null : `${detailFailures} Cincinnati Financial Taleo detail pages were unavailable or inconsistent.`,
+    };
+  } catch (error) {
+    return {
+      status: isBlockedHttpStatus(failureStatus ?? responseStatus) ? "blocked" : "failed",
+      responseStatus: failureStatus ?? responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Cincinnati Financial Taleo crawler error.",
+    };
+  }
+};
+
 const taleoV2Jobs = (html: string, source: CrawlSource): CrawledJob[] => [...html.matchAll(
   /<h4\b[^>]*class=["'][^"']*oracletaleocwsv2-head-title[^"']*["'][^>]*>\s*<a\b[^>]*href=["']([^"']*viewRequisition[^"']*\brid=(\d+)[^"']*)["'][^>]*>([\s\S]*?)<\/a><\/h4>\s*<div\b[^>]*tabindex=["']0["'][^>]*>([\s\S]*?)<\/div>\s*<div\b[^>]*tabindex=["']0["'][^>]*>([\s\S]*?)<\/div>/gi,
 )].map((match) => {
@@ -17253,6 +18164,15 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-0840-camtek") {
     return crawlCamtekCareers(source, fetcher);
+  }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p4-0472-paycom") {
+    return crawlPaycomCareers(source, fetcher);
+  }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p2-0034-coast-central-cu") {
+    return crawlCoastCentralCareers(source, fetcher);
+  }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p2-0089-cincinnati-financial") {
+    return crawlCincinnatiTaleo(source, fetcher);
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-1104-wayfair") {
     return crawlWayfairCareers(source, fetcher);

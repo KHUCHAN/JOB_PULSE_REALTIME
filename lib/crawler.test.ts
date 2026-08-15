@@ -11724,6 +11724,359 @@ HUMAN RESOURCES Posted Date
     }));
   });
 
+  it("collects Paycom's complete official CareerArc catalog with rich job fields", async () => {
+    const listingUrl = "https://www.paycom.com/careers/job-map/";
+    const apiUrl = "https://app.careerarc.com/api/job_maps/401/job_postings";
+    const entry = (id: number) => ({
+      id,
+      title: id === 7_000_001 ? "Software Development Intern" : `Payroll Specialist ${id}`,
+      description: `<p>Build reliable products for clients.</p><strong>Responsibilities</strong><ul><li>Develop production systems.</li></ul><strong>Qualifications</strong><ul><li>Experience with TypeScript.</li></ul><strong>Paycom is an Equal Opportunity Employer</strong><p>Salary range is $25 - $30 per hour.</p>`,
+      apply_url: `https://app.careerarc.com/job_postings/${id}?ctm_campaign=job_map%3A401&ctm_company=459&ctm_source=5&ctm_target=job_posting%3A${id}`,
+      brand: { id: 2276, name: "Paycom" },
+      categories: [{ id: 10, name: id === 7_000_001 ? "Internship" : "Operations" }],
+      employment_type: "Other",
+      is_unmappable: false,
+      remote: false,
+      locations: [{
+        id: id + 100,
+        canonical_name: "Oklahoma City, OK, US",
+        city: "Oklahoma City",
+        state: "OK",
+        postal_code: "73142",
+        country_code: "USA",
+        lat: 35.55,
+        lng: -97.64,
+      }],
+    });
+    const entries = Array.from({ length: 26 }, (_, index) => entry(7_000_001 + index));
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p4-0472-paycom",
+      company: "Paycom",
+      postingUrl: listingUrl,
+      adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === listingUrl) {
+        return new Response(`<iframe src="https://app.careerarc.com/job_maps/401"></iframe>`);
+      }
+      const page = Number(new URL(url).searchParams.get("page"));
+      const pageEntries = page === 1 ? entries.slice(0, 25) : entries.slice(25);
+      return Response.json({
+        entries: pageEntries,
+        meta: {
+          total_count: 26,
+          total_pages: 2,
+          page,
+          per_page: 25,
+          links: { next: page === 1 ? `${apiUrl}?page=2&per_page=25` : null },
+        },
+      });
+    }, new Date("2026-08-15T16:00:00Z"));
+
+    expect(requests).toEqual([listingUrl, `${apiUrl}?page=1&per_page=25`, `${apiUrl}?page=2&per_page=25`]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      responseStatus: 200,
+      completeListing: true,
+      resolvedListingUrl: listingUrl,
+      error: null,
+    }));
+    expect(result.jobs).toHaveLength(26);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "7000001",
+      requisitionId: "7000001",
+      title: "Software Development Intern",
+      location: "Oklahoma City, OK, US",
+      locationCity: "Oklahoma City",
+      locationState: "OK",
+      locationCountry: "United States",
+      locationPostalCode: "73142",
+      arrangement: "onsite",
+      employmentType: "Internship",
+      department: "Internship",
+      responsibilities: "Develop production systems.",
+      qualifications: "Experience with TypeScript.",
+      salaryMin: 25,
+      salaryMax: 30,
+      salaryCurrency: "USD",
+      salaryInterval: "hour",
+      officialUrl: "https://app.careerarc.com/job_postings/7000001",
+    }));
+    expect(result.jobs[0]).not.toHaveProperty("applyUrl");
+  });
+
+  it("fails Paycom closed when CareerArc repeats a job identity", async () => {
+    const listingUrl = "https://www.paycom.com/careers/job-map/";
+    const duplicate = {
+      id: 7_000_001,
+      title: "Software Development Intern",
+      description: "<p>Build reliable products.</p>",
+      apply_url: "https://app.careerarc.com/job_postings/7000001?ctm_campaign=job_map%3A401&ctm_company=459&ctm_source=5&ctm_target=job_posting%3A7000001",
+      brand: { id: 2276, name: "Paycom" },
+      categories: [{ id: 10, name: "Internship" }],
+      employment_type: "Other",
+      is_unmappable: false,
+      remote: false,
+      locations: [{ id: 1, canonical_name: "Oklahoma City, OK, US", city: "Oklahoma City", state: "OK", postal_code: "73142", country_code: "USA", lat: 35.55, lng: -97.64 }],
+    };
+    const result = await crawlSource({
+      id: "p4-0472-paycom", company: "Paycom", postingUrl: listingUrl, adapter: "custom",
+    }, async (input) => String(input) === listingUrl
+      ? new Response(`<iframe src="https://app.careerarc.com/job_maps/401"></iframe>`)
+      : Response.json({
+          entries: [duplicate, duplicate],
+          meta: { total_count: 2, total_pages: 1, page: 1, per_page: 25, links: { next: null } },
+        }), new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed",
+      completeListing: false,
+      jobs: [],
+      error: "Paycom CareerArc feed returned duplicate or unusable job records.",
+    }));
+  });
+
+  it("collects Coast Central's current employee openings and validates every official PDF", async () => {
+    const listingUrl = "https://www.coastccu.org/community/careers/";
+    const applyUrl = "https://www.coastccu.org/speed-bump/?url=https%3A%2F%2Fcopilot.formstack.com%2Fstart-workflow%2F21b99460-89d4-402b-96cb-61323a3cd8d3&prev=https%3A%2F%2Fwww.coastccu.org%2Fcommunity%2Fcareers%2F";
+    const pdfOne = "https://www.coastccu.org/wp-content/uploads/2026/08/Business-Portfolio-Officer.pdf";
+    const pdfTwo = "https://www.coastccu.org/wp-content/uploads/2026/08/Member-Services-Representative.pdf";
+    const accordion = (title: string, body: string, pdf?: string) => `<div class="co-accordion">
+      <button class="co-accordion--trigger"><span>${title}</span></button>
+      <div class="co-accordion--content"><p>${body}</p>${pdf ? `<a href="${pdf}">${title} Full Job Description</a>` : ""}</div></div>`;
+    const html = `<meta property="article:modified_time" content="2026-08-14T22:24:22+00:00">
+      <a href="${applyUrl}">Apply Now</a><h2>Current Openings</h2><section>
+      ${accordion("Business Portfolio Officer", "This full-time role is based in Eureka. Salary range is $85,000 - $105,000 annually. Benefits include health insurance. Deadline to apply is 8/28.", pdfOne)}
+      ${accordion("Member Services Representative", "This part-time role is based in McKinleyville. Salary range is $21.50 - $25.00 / hour. Deadline to apply is 8/23.", pdfTwo)}
+      ${accordion("Secret Shoppers", "Help us review branch service.")}</section>`;
+    const requests: Array<{ url: string; method: string }> = [];
+    const result = await crawlSource({
+      id: "p2-0034-coast-central-cu",
+      company: "Coast Central Credit Union",
+      postingUrl: listingUrl,
+      adapter: "custom",
+    }, async (input, init) => {
+      const url = String(input);
+      requests.push({ url, method: init?.method ?? "GET" });
+      if (url === listingUrl) return new Response(html);
+      return new Response(null, {
+        status: 200,
+        headers: { "content-type": "application/pdf", "last-modified": "Fri, 14 Aug 2026 22:24:22 GMT" },
+      });
+    }, new Date("2026-08-15T16:00:00Z"));
+
+    expect(requests).toEqual([
+      { url: listingUrl, method: "GET" },
+      { url: pdfOne, method: "HEAD" },
+      { url: pdfTwo, method: "HEAD" },
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      responseStatus: 200,
+      completeListing: true,
+      resolvedListingUrl: listingUrl,
+      error: null,
+    }));
+    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      title: "Business Portfolio Officer",
+      location: "Eureka, CA",
+      locationCity: "Eureka",
+      locationState: "CA",
+      locationCountry: "United States",
+      employmentType: "Full-time",
+      salaryMin: 85_000,
+      salaryMax: 105_000,
+      salaryCurrency: "USD",
+      salaryInterval: "year",
+      benefits: "health insurance",
+      validThrough: "2026-08-28T00:00:00.000Z",
+      sourceUpdatedAt: "2026-08-14T22:24:22.000Z",
+      officialUrl: pdfOne,
+      applyUrl,
+    }));
+    expect(result.jobs.some((job) => /secret shopper/i.test(job.title))).toBe(false);
+  });
+
+  it("fails Coast Central closed when an advertised job PDF is unavailable", async () => {
+    const listingUrl = "https://www.coastccu.org/community/careers/";
+    const pdfUrl = "https://www.coastccu.org/wp-content/uploads/2026/08/Business-Portfolio-Officer.pdf";
+    const html = `<meta property="article:modified_time" content="2026-08-14T22:24:22+00:00">
+      <a href="https://www.coastccu.org/speed-bump/?url=https%3A%2F%2Fcopilot.formstack.com%2Fstart-workflow%2F21b99460-89d4-402b-96cb-61323a3cd8d3&prev=https%3A%2F%2Fwww.coastccu.org%2Fcommunity%2Fcareers%2F">Apply Now</a>
+      <h2>Current Openings</h2><section><div class="co-accordion"><button class="co-accordion--trigger"><span>Business Portfolio Officer</span></button>
+      <div class="co-accordion--content"><p>Full-time role in Eureka. Deadline to apply is 8/28.</p>
+      <a href="${pdfUrl}">Business Portfolio Officer Full Job Description</a></div></div></section>`;
+    const result = await crawlSource({
+      id: "p2-0034-coast-central-cu", company: "Coast Central Credit Union", postingUrl: listingUrl, adapter: "custom",
+    }, async (input) => String(input) === listingUrl
+      ? new Response(html)
+      : new Response("missing", { status: 404 }), new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed",
+      responseStatus: 404,
+      completeListing: false,
+      jobs: [],
+      error: "Coast Central job-description PDFs were incomplete or unavailable.",
+    }));
+  });
+
+  it("collects Cincinnati Financial's stable Taleo catalog and rotates rich-detail hydration", async () => {
+    const corporateUrl = "https://www.cinfin.com/cincinnati-insurance-careers/openings";
+    const boardUrl = "https://cinfin.taleo.net/careersection/ex/jobsearch.ftl?lang=en";
+    const searchUrl = "https://cinfin.taleo.net/careersection/rest/jobboard/searchjobs?lang=en&portal=101430233";
+    const summaries = Array.from({ length: 26 }, (_, index) => ({
+      jobId: String(170_000 + index),
+      contestNo: String(2_700_000 + index),
+      title: index === 0 ? "Data Science Intern" : `Insurance Analyst ${index}`,
+      location: index === 1 ? "Remote" : "OH-Fairfield",
+    }));
+    const facets = [
+      { id: "JOB_TYPE", facetValueResults: [{ id: "1", text: "Standard", quantity: "25" }, { id: "2", text: "Internship", quantity: "1" }] },
+      { id: "LOCATION", facetValueResults: [{ id: "oh", text: "Ohio", quantity: "25" }, { id: "remote", text: "Remote", quantity: "1" }] },
+      { id: "JOB_FIELD", facetValueResults: [{ id: "analytics", text: "Analytics", quantity: "26" }] },
+      { id: "STUDY_LEVEL", facetValueResults: [{ id: "6", text: "Bachelor's Degree", quantity: "26" }] },
+    ];
+    const resultRow = (summary: typeof summaries[number]) => ({
+      hotJob: false,
+      addedToJobCart: false,
+      draft: false,
+      alreadyAppliedOn: false,
+      toReApply: false,
+      jobId: summary.jobId,
+      contestNo: summary.contestNo,
+      column: [summary.title, summary.contestNo, JSON.stringify([summary.location])],
+      linkedColumn: 0,
+      locationsColumns: [2],
+    });
+    const searchPayload = (pageNo: number) => ({
+      requisitionList: (pageNo === 1 ? summaries.slice(0, 25) : summaries.slice(25)).map(resultRow),
+      facetResults: facets,
+      pagingData: { currentPageNo: pageNo, pageSize: 25, totalCount: 26 },
+      careerSectionUnAvailable: false,
+    });
+    const detail = (summary: typeof summaries[number]) => {
+      const description = encodeURIComponent(`<p>Build production analytics and travel 50%.</p><p>The pay range for this position is <strong>$26.44 - $31.25</strong> per hour.</p>`);
+      const qualifications = encodeURIComponent("<p>Python and SQL experience.</p>");
+      const rawLocation = summary.location === "Remote" ? "US-Remote" : "US-OH-Fairfield";
+      const values = [
+        summary.jobId, "true", summary.jobId, "false", `Submission for ${summary.title}`, "false",
+        summary.jobId, "false", "true", summary.title, summary.contestNo, rawLocation,
+        `!*!${description}`, `!*!${description}`, `!*!${qualifications}`,
+      ];
+      return `<meta property="og:title" content="${summary.title}"><input name="requisitionno" value="${summary.jobId}">
+        <script>api.fillList("requisitionDescriptionInterface", "descRequisition", ${JSON.stringify(values)});</script>`;
+    };
+    const requestCounts = { corporate: 0, board: 0, search: 0, detail: 0 };
+    const result = await crawlSource({
+      id: "p2-0089-cincinnati-financial",
+      company: "Cincinnati Financial",
+      postingUrl: corporateUrl,
+      adapter: "custom",
+      crawlPageCursor: 1,
+    }, async (input, init) => {
+      const url = String(input);
+      if (url === corporateUrl) {
+        requestCounts.corporate += 1;
+        return new Response(`<a href="${boardUrl}">Explore Openings</a>`);
+      }
+      if (url === boardUrl) {
+        requestCounts.board += 1;
+        return new Response(`<meta name="author" content="Cincinnati Financial"><script>portalNo: "101430233", urlCode: "ex"</script>
+          <div id="filter-JOB_TYPE"></div><div id="filter-LOCATION"></div><div id="filter-JOB_FIELD"></div><div id="filter-STUDY_LEVEL"></div>`);
+      }
+      if (url === searchUrl) {
+        requestCounts.search += 1;
+        const body = JSON.parse(String(init?.body)) as { pageNo: number };
+        return Response.json(searchPayload(body.pageNo));
+      }
+      requestCounts.detail += 1;
+      const contestNo = new URL(url).searchParams.get("job");
+      const summary = summaries.find((candidate) => candidate.contestNo === contestNo);
+      return summary ? new Response(detail(summary)) : new Response("missing", { status: 404 });
+    }, new Date("2026-08-15T16:00:00Z"));
+
+    expect(requestCounts).toEqual({ corporate: 1, board: 1, search: 4, detail: 25 });
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      responseStatus: 200,
+      completeListing: true,
+      resolvedListingUrl: boardUrl,
+      error: null,
+      pagination: { nextPage: 2, cycleComplete: false, totalPages: 2 },
+    }));
+    expect(result.jobs).toHaveLength(26);
+    expect(result.jobs.filter((job) => job.description)).toHaveLength(25);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "170000",
+      requisitionId: "2700000",
+      title: "Data Science Intern",
+      location: "OH-Fairfield",
+      locationCity: "Fairfield",
+      locationState: "OH",
+      locationCountry: "United States",
+      arrangement: "onsite",
+      employmentType: "Internship",
+      qualifications: "Python and SQL experience.",
+      salaryMin: 26.44,
+      salaryMax: 31.25,
+      salaryCurrency: "USD",
+      salaryInterval: "hour",
+      officialUrl: "https://cinfin.taleo.net/careersection/ex/jobdetail.ftl?job=2700000",
+      applyUrl: "https://cinfin.taleo.net/careersection/application.jss?type=1&lang=en&portal=101430233&reqNo=170000",
+    }));
+    expect(result.jobs[25]).toEqual(expect.objectContaining({ title: "Insurance Analyst 25" }));
+    expect(result.jobs[25]).not.toHaveProperty("description");
+    expect(result.facets?.map(({ key }) => key)).toEqual(["job_type", "location", "job_field", "study_level"]);
+  });
+
+  it("fails Cincinnati Financial closed when its two Taleo catalog snapshots disagree", async () => {
+    const corporateUrl = "https://www.cinfin.com/cincinnati-insurance-careers/openings";
+    const boardUrl = "https://cinfin.taleo.net/careersection/ex/jobsearch.ftl?lang=en";
+    const searchUrl = "https://cinfin.taleo.net/careersection/rest/jobboard/searchjobs?lang=en&portal=101430233";
+    let searchCalls = 0;
+    let detailCalls = 0;
+    const row = (jobId: string, contestNo: string) => ({
+      jobId,
+      contestNo,
+      column: ["Data Analyst", contestNo, JSON.stringify(["OH-Fairfield"])],
+      linkedColumn: 0,
+      locationsColumns: [2],
+    });
+    const facetResults = ["JOB_TYPE", "LOCATION", "JOB_FIELD", "STUDY_LEVEL"]
+      .map((id) => ({ id, facetValueResults: [{ id: "1", text: id, quantity: "1" }] }));
+    const result = await crawlSource({
+      id: "p2-0089-cincinnati-financial", company: "Cincinnati Financial", postingUrl: corporateUrl, adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      if (url === corporateUrl) return new Response(`<a href="${boardUrl}">Explore Openings</a>`);
+      if (url === boardUrl) return new Response(`<meta name="author" content="Cincinnati Financial"><script>portalNo: "101430233", urlCode: "ex"</script>
+        <div id="filter-JOB_TYPE"></div><div id="filter-LOCATION"></div><div id="filter-JOB_FIELD"></div><div id="filter-STUDY_LEVEL"></div>`);
+      if (url === searchUrl) {
+        searchCalls += 1;
+        return Response.json({
+          requisitionList: [searchCalls === 1 ? row("170000", "2700000") : row("170001", "2700001")],
+          facetResults,
+          pagingData: { currentPageNo: 1, pageSize: 25, totalCount: 1 },
+          careerSectionUnAvailable: false,
+        });
+      }
+      detailCalls += 1;
+      return new Response("unexpected");
+    }, new Date());
+
+    expect(searchCalls).toBe(2);
+    expect(detailCalls).toBe(0);
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed",
+      completeListing: false,
+      jobs: [],
+      error: "Cincinnati Financial Taleo catalog changed or became inconsistent during pagination.",
+    }));
+  });
+
   it("collects Wayfair's complete US catalog from its first-party job search API", async () => {
     const requests: Array<{ url: string; body: Record<string, unknown>; headers: Headers }> = [];
     const job = (id: number, requisitionId: string, title: string, city: string, state: string) => ({
