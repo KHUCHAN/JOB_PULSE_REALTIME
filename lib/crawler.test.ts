@@ -1409,6 +1409,79 @@ Wrong description.
     expect(result.jobs).toHaveLength(1);
   });
 
+  it("crawls BorgWarner's complete official US catalog and enriches internship details", async () => {
+    const requests: string[] = [];
+    const row = (id: string, title: string, location: string, posted = "Aug 14, 2026") => `
+      <div class="workday-job-result row widget-row">
+        <div class="meta-info"><div id="divDate">${posted}</div><div>${id}</div></div>
+        <div class="bw-global-list-h3"><a class="link" href="https://www.borgwarner.com/careers/job-search?country=united%20states%20of%20america&amp;id=${id}">${title}</a></div>
+        <span class="location mr-8">${location}</span>
+      </div><hr/>`;
+    const listing = (rows: string) => `<span id="resultsStats">3 results</span>${rows}<div class="pager-wrapper"></div>`;
+    const internshipUrl = "https://www.borgwarner.com/careers/job-search?country=united+states+of+america&id=R2026-3203";
+    const detail = `
+      <h1 id="hSingleJobTitle">IT Technician Intern</h1>
+      <p class="bw-workday-icon bw-workday-icon-place">Hendersonville - North Carolina - USA</p>
+      <p class="bw-workday-icon bw-workday-icon-time">Aug 07, 2026</p>
+      <p class="bw-workday-icon bw-workday-icon-option">Full time</p>
+      <p class="bw-workday-icon bw-workday-icon-id">R2026-3203</p>
+      <a id="aApply" href="https://borgwarner.wd5.myworkdayjobs.com/BorgWarner_Careers/job/Hendersonville/IT-Technician-Intern_R2026-3203/apply">Apply</a>
+      <div id="dvSingleJobDescription"><p>Support infrastructure, software, and data-center systems.</p></div>
+      <div class="sfcontent"><hr/></div>`;
+    const result = await crawlSource({
+      id: "audit-row-321", company: "BorgWarner", postingUrl: "https://www.borgwarner.com/careers", adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      requests.push(url);
+      const body = url === internshipUrl ? detail
+        : new URL(url).searchParams.get("page") === "2"
+          ? listing(row("R2026-3204", "Quality Engineer", "Seneca - South Carolina - USA"))
+          : listing([
+              row("R2026-3202", "Data Engineer", "Auburn Hills - Michigan - USA"),
+              row("R2026-3203", "IT Technician Intern", "Hendersonville - North Carolina - USA"),
+            ].join(""));
+      const response = new Response(body);
+      Object.defineProperty(response, "url", { value: url });
+      return response;
+    }, new Date());
+
+    expect(requests).toEqual([
+      "https://www.borgwarner.com/careers/job-search?country=united%20states%20of%20america",
+      "https://www.borgwarner.com/careers/job-search?country=united+states+of+america&page=2",
+      internshipUrl,
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://www.borgwarner.com/careers/job-search?country=united%20states%20of%20america",
+    }));
+    expect(result.jobs).toHaveLength(3);
+    expect(result.jobs.find((job) => job.externalId === "R2026-3203")).toEqual(expect.objectContaining({
+      employmentType: "Internship",
+      locationCountry: "US",
+      requisitionId: "R2026-3203",
+      applyUrl: "https://borgwarner.wd5.myworkdayjobs.com/BorgWarner_Careers/job/Hendersonville/IT-Technician-Intern_R2026-3203/apply",
+      description: "Support infrastructure, software, and data-center systems.",
+      publishedAt: "2026-08-07T00:00:00.000Z",
+    }));
+  });
+
+  it("keeps BorgWarner incomplete when a paginated identity repeats", async () => {
+    const row = (id: string, title: string) => `
+      <div class="workday-job-result"><div id="divDate">Aug 14, 2026</div>
+      <a class="link" href="https://www.borgwarner.com/careers/job-search?id=${id}">${title}</a>
+      <span class="location">Auburn Hills - Michigan - USA</span></div><hr/>`;
+    const listing = (rows: string) => `<span id="resultsStats">3 results</span>${rows}<div class="pager-wrapper"></div>`;
+    const result = await crawlSource({
+      id: "audit-row-321", company: "BorgWarner", postingUrl: "https://www.borgwarner.com/careers", adapter: "custom",
+    }, async (input) => new Response(new URL(String(input)).searchParams.get("page") === "2"
+      ? listing(row("R2026-3202", "Data Engineer"))
+      : listing(row("R2026-3201", "Systems Engineer") + row("R2026-3202", "Data Engineer"))), new Date());
+
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: false }));
+    expect(result.jobs.map((job) => job.externalId)).toEqual(["R2026-3201", "R2026-3202"]);
+  });
+
   it("keeps only US, mixed, and unknown jobs for configured large catalogs", async () => {
     const locations = [
       "Marlborough, MA, United States",

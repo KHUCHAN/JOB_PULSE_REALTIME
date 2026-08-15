@@ -6682,6 +6682,183 @@ const crawlHologic = async (source: CrawlSource, fetcher: typeof fetch): Promise
   }
 };
 
+const borgWarnerListingUrl = "https://www.borgwarner.com/careers/job-search?country=united%20states%20of%20america";
+
+const borgWarnerTotal = (html: string): number | null => {
+  const value = html.match(/\bid=["']resultsStats["'][^>]*>\s*([\d,]+)\s+results?(?:\s+for:)?\s*</i)?.[1];
+  if (!value) return null;
+  const total = Number(value.replaceAll(",", ""));
+  return Number.isSafeInteger(total) && total >= 0 ? total : null;
+};
+
+const borgWarnerDate = (value: string | null): string | null => normalizedDate(value ? `${value} UTC` : null);
+
+const borgWarnerJobsFromHtml = (html: string, source: CrawlSource): CrawledJob[] => [...html.matchAll(
+  /<div\b[^>]*class=["'][^"']*\bworkday-job-result\b[^"']*["'][^>]*>([\s\S]*?)(?=<hr\s*\/?>\s*<div\b[^>]*class=["'][^"']*\bworkday-job-result\b|<div\b[^>]*class=["'][^"']*\bpager-wrapper\b|$)/gi,
+)].flatMap((match): CrawledJob[] => {
+  const block = match[1];
+  const link = block.match(/<a\b[^>]*class=["'][^"']*\blink\b[^"']*["'][^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/i);
+  const title = icimsText(link?.[2]);
+  if (!link || !title) return [];
+  let linked: URL;
+  try {
+    linked = new URL(decodeHtmlAttribute(link[1]), borgWarnerListingUrl);
+  } catch {
+    return [];
+  }
+  const identity = linked.searchParams.get("id")?.trim() ?? "";
+  if (linked.origin !== "https://www.borgwarner.com"
+    || linked.pathname !== "/careers/job-search"
+    || !/^R\d{4}-\d+$/i.test(identity)) return [];
+  const officialUrl = new URL(borgWarnerListingUrl);
+  officialUrl.searchParams.set("id", identity);
+  const posted = icimsText(block.match(/\bid=["']divDate["'][^>]*>([\s\S]*?)<\/div>/i)?.[1]);
+  const locations = [...block.matchAll(/<span\b[^>]*class=["'][^"']*\blocation\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/gi)]
+    .map((entry) => icimsText(entry[1]))
+    .filter((value): value is string => Boolean(value));
+  const location = locations.join("; ") || null;
+  const programs = classifyJobPrograms(title);
+  return [{
+    externalId: identity,
+    requisitionId: identity,
+    title,
+    company: source.company,
+    location,
+    arrangement: /\bremote\b/i.test(location ?? "") ? "remote" : "unknown",
+    employmentType: programs.keys.includes("coop") ? "Co-op"
+      : programs.keys.includes("internship") ? "Internship" : null,
+    summary: null,
+    ...(locations.length > 1 ? { secondaryLocations: locations.slice(1) } : {}),
+    locationCountry: "US",
+    ...(posted ? { sourcePostedText: posted } : {}),
+    officialUrl: officialUrl.href,
+    publishedAt: borgWarnerDate(posted),
+  }];
+});
+
+const borgWarnerDetail = (html: string, expected: CrawledJob): Partial<CrawledJob> | null => {
+  const identity = icimsText(html.match(/<p\b[^>]*class=["'][^"']*\bbw-workday-icon-id\b[^"']*["'][^>]*>([\s\S]*?)<\/p>/i)?.[1]);
+  const title = icimsText(html.match(/<h1\b[^>]*id=["']hSingleJobTitle["'][^>]*>([\s\S]*?)<\/h1>/i)?.[1]);
+  if (!identity || identity !== expected.externalId || !title || title !== expected.title) return null;
+  const descriptionHtml = html.match(/<div\b[^>]*id=["']dvSingleJobDescription["'][^>]*>([\s\S]*?)(?=<div\b[^>]*class=["'][^"']*\bsfcontent\b[^"']*["'][^>]*>\s*<hr|<div\b[^>]*class=["'][^"']*\bmax-width-960\b|$)/i)?.[1];
+  const description = icimsText(descriptionHtml);
+  const apply = html.match(/<a\b[^>]*id=["']aApply["'][^>]*href=["']([^"']+)["']/i)?.[1];
+  let applyUrl: string | null = null;
+  if (apply) {
+    try {
+      const value = new URL(decodeHtmlAttribute(apply));
+      if (value.protocol === "https:" && value.hostname === "borgwarner.wd5.myworkdayjobs.com"
+        && value.pathname.endsWith("/apply")) applyUrl = value.href;
+    } catch {
+      // A listing identity is still authoritative when optional apply enrichment is malformed.
+    }
+  }
+  const location = icimsText(html.match(/<p\b[^>]*class=["'][^"']*\bbw-workday-icon-place\b[^"']*["'][^>]*>([\s\S]*?)<\/p>/i)?.[1]);
+  const posted = icimsText(html.match(/<p\b[^>]*class=["'][^"']*\bbw-workday-icon-time\b[^"']*["'][^>]*>([\s\S]*?)<\/p>/i)?.[1]);
+  const schedule = icimsText(html.match(/<p\b[^>]*class=["'][^"']*\bbw-workday-icon-option\b[^"']*["'][^>]*>([\s\S]*?)<\/p>/i)?.[1]);
+  return {
+    ...(description ? { summary: description.slice(0, 1_200), description } : {}),
+    ...(applyUrl ? { applyUrl } : {}),
+    ...(location ? { location } : {}),
+    ...(posted ? { sourcePostedText: posted, publishedAt: borgWarnerDate(posted) } : {}),
+    ...(schedule ? { shiftSchedule: schedule } : {}),
+  };
+};
+
+const crawlBorgWarner = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  try {
+    const first = await fetchWithTimeout(fetcher, borgWarnerListingUrl, undefined, true, { attempts: 1, timeoutMs: 10_000 });
+    if (!first.ok) return {
+      status: isBlockedHttpStatus(first.status) ? "blocked" : "failed",
+      responseStatus: first.status,
+      completeListing: false,
+      jobs: [],
+      error: `BorgWarner careers returned HTTP ${first.status}.`,
+    };
+    const firstHtml = await first.text();
+    const total = borgWarnerTotal(firstHtml);
+    if (total === null) return {
+      status: "failed",
+      responseStatus: first.status,
+      completeListing: false,
+      jobs: [],
+      error: "BorgWarner careers did not expose an authoritative US result count.",
+    };
+    const jobs = borgWarnerJobsFromHtml(firstHtml, source);
+    if (total === 0) return {
+      status: "succeeded",
+      responseStatus: first.status,
+      completeListing: jobs.length === 0,
+      jobs: [],
+      resolvedListingUrl: borgWarnerListingUrl,
+      error: null,
+    };
+    const pageSize = jobs.length;
+    if (pageSize < 1) return {
+      status: "failed",
+      responseStatus: first.status,
+      completeListing: false,
+      jobs: [],
+      error: "BorgWarner careers returned a nonempty US count without usable jobs.",
+    };
+    const totalPages = Math.ceil(total / pageSize);
+    if (totalPages > 20) return {
+      status: "succeeded",
+      responseStatus: first.status,
+      completeListing: false,
+      jobs: uniqueJobs(jobs),
+      resolvedListingUrl: borgWarnerListingUrl,
+      error: null,
+    };
+    let exactPages = true;
+    const pages = await Promise.all(Array.from({ length: totalPages - 1 }, (_, index) => index + 2).map(async (pageNumber) => {
+      try {
+        const pageUrl = new URL(borgWarnerListingUrl);
+        pageUrl.searchParams.set("page", String(pageNumber));
+        const response = await fetchWithTimeout(fetcher, pageUrl, undefined, true, { attempts: 1, timeoutMs: 10_000 });
+        if (!response.ok) return null;
+        const html = await response.text();
+        if (borgWarnerTotal(html) !== total) return null;
+        const pageJobs = borgWarnerJobsFromHtml(html, source);
+        const expected = pageNumber === totalPages ? total - pageSize * (totalPages - 1) : pageSize;
+        return pageJobs.length === expected ? pageJobs : null;
+      } catch {
+        return null;
+      }
+    }));
+    if (pages.some((pageJobs) => pageJobs === null)) exactPages = false;
+    jobs.push(...pages.flatMap((pageJobs) => pageJobs ?? []));
+    const unique = uniqueJobs(jobs);
+    const detailCandidates = unique.filter((job) => classifyJobPrograms(job.title).keys.length > 0).slice(0, 30);
+    const enriched = await Promise.all(detailCandidates.map(async (job) => {
+      try {
+        const response = await fetchWithTimeout(fetcher, job.officialUrl, undefined, true, { attempts: 1, timeoutMs: 10_000 });
+        if (!response.ok || response.url !== job.officialUrl) return [job.officialUrl, null] as const;
+        return [job.officialUrl, borgWarnerDetail(await response.text(), job)] as const;
+      } catch {
+        return [job.officialUrl, null] as const;
+      }
+    }));
+    const details = new Map(enriched);
+    return {
+      status: "succeeded",
+      responseStatus: first.status,
+      completeListing: exactPages && jobs.length === total && unique.length === total,
+      jobs: unique.map((job) => ({ ...job, ...(details.get(job.officialUrl) ?? {}) })),
+      resolvedListingUrl: borgWarnerListingUrl,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: "failed",
+      responseStatus: null,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown BorgWarner crawler error.",
+    };
+  }
+};
+
 const crawlMediaTek = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
   type PagePayload = {
     jobs?: MediaTekJob[];
@@ -13670,6 +13847,7 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
     return result.status === "succeeded" ? { ...result, resolvedListingUrl: listingUrl } : result;
   }
   if (source.id === "p5-0935-hologic") return crawlHologic(source, fetcher);
+  if (source.id === "audit-row-321") return crawlBorgWarner(source, fetcher);
   if (source.id === "p4-0457-match-group") {
     const listingUrl = "https://join.matchgroupcareers.com/careers?domain=gotinder.com";
     const result = await crawlEightfold({ ...source, postingUrl: listingUrl, adapter: "custom" }, fetcher);
