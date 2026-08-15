@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:535bc902d3da0bade8bec121d7b43f5e9c1d1e28d4b3ea59ccbceaacd3cc85be",
+  "version": "v2:sha256:7309f84f1ff6e7994d0d564b20e23f3a6513519398b5adcd5c4b7c467de421bd",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -10101,15 +10101,15 @@
       "id": "p5-0851-cirrus-logic",
       "masterRow": 2462,
       "company": "Cirrus Logic",
-      "postingUrl": "https://jobs.jobvite.com/careers/cirruslogic/jobs",
+      "postingUrl": "https://jobs.eu.lever.co/cirrus",
       "talentUrl": "https://www.cirrus.com/careers/jobs",
       "channel": "공식 채용공고 검색·지원",
-      "adapter": "custom",
+      "adapter": "lever",
       "verification": "not_audited",
       "confidence": "medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-08",
+      "checkedAt": "2026-08-15",
       "enabled": true
     },
     {
@@ -14211,15 +14211,15 @@
       "id": "legacy-row-780",
       "masterRow": 2780,
       "company": "Albertsons",
-      "postingUrl": "https://careers.smartrecruiters.com/AlbertsonsCompanies",
+      "postingUrl": "https://eofd.fa.us6.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/jobs?mode=location",
       "talentUrl": "https://www.albertsonscompanies.com/careers.html",
       "channel": "공식 Career Portal",
-      "adapter": "smartrecruiters",
+      "adapter": "custom",
       "verification": "career_page_only",
       "confidence": "medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-08",
+      "checkedAt": "2026-08-15",
       "enabled": true
     },
     {
@@ -24531,7 +24531,7 @@
       "officialUrl": "https://www.cirrus.com/careers/jobs",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-08"
+      "checkedAt": "2026-08-15"
     },
     {
       "id": "talent-p5-0852-cityblock-health",
@@ -26667,7 +26667,7 @@
       "officialUrl": "https://www.albertsonscompanies.com/careers.html",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-08"
+      "checkedAt": "2026-08-15"
     },
     {
       "id": "talent-legacy-row-781",

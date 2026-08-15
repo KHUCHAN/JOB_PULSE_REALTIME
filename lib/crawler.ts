@@ -1557,8 +1557,11 @@ export function discoverAts(html: string, _pageUrl: string): DiscoveredAts | nul
   const workdayEndpoint = workday ? workdayFeed(workday[0]) : null;
   if (workdayEndpoint) return { kind: "workday", endpoint: workdayEndpoint };
 
-  const lever = searchable.match(/https?:\/\/jobs\.lever\.co\/([a-z0-9-]+)/i);
-  if (lever) return { kind: "lever", endpoint: `https://api.lever.co/v0/postings/${lever[1]}?mode=json` };
+  const lever = searchable.match(/https?:\/\/jobs(\.eu)?\.lever\.co\/([a-z0-9-]+)/i);
+  if (lever) return {
+    kind: "lever",
+    endpoint: `https://api${lever[1] ?? ""}.lever.co/v0/postings/${lever[2]}?mode=json`,
+  };
 
   const ashby = searchable.match(/https?:\/\/jobs\.ashbyhq\.com\/([^\s"'<>/?#]+)/i);
   if (ashby) return { kind: "ashby", endpoint: `https://api.ashbyhq.com/posting-api/job-board/${ashby[1]}` };
@@ -14486,11 +14489,11 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   if (new URL(source.postingUrl).hostname === "myjobs.adp.com") return crawlAdpMyJobs(source, fetcher);
   if (new URL(source.postingUrl).hostname === "workforcenow.adp.com") return crawlAdpWorkforceNow(source, fetcher);
   if (sourcePage.hostname.endsWith(".icims.com")) return crawlIcims(source, fetcher);
-  if (sourcePage.hostname === "jobs.lever.co") {
+  if (sourcePage.hostname === "jobs.lever.co" || sourcePage.hostname === "jobs.eu.lever.co") {
     const slug = sourcePage.pathname.split("/").filter(Boolean).at(0);
     if (slug) return crawlDiscoveredFeed(source, {
       kind: "lever",
-      endpoint: `https://api.lever.co/v0/postings/${encodeURIComponent(slug)}?mode=json`,
+      endpoint: `https://${sourcePage.hostname === "jobs.eu.lever.co" ? "api.eu.lever.co" : "api.lever.co"}/v0/postings/${encodeURIComponent(slug)}?mode=json`,
     }, fetcher);
   }
   const smartRecruiters = smartRecruitersFeed(source.postingUrl);

@@ -318,6 +318,16 @@ Wrong description.
     });
   });
 
+  it("discovers the matching EU Lever JSON feed from an official careers page", () => {
+    expect(discoverAts(
+      '<a href="https://jobs.eu.lever.co/cirrus">Open jobs</a>',
+      "https://www.cirrus.com/careers/jobs",
+    )).toEqual({
+      kind: "lever",
+      endpoint: "https://api.eu.lever.co/v0/postings/cirrus?mode=json",
+    });
+  });
+
   it("discovers a public Ashby feed from a careers page link", () => {
     expect(discoverAts(
       '<a href="https://jobs.ashbyhq.com/acme">Open jobs</a>',
@@ -6251,6 +6261,39 @@ Wrong description.
         externalId: "sword-1",
         employmentType: "Internship",
         title: "Software Engineering Intern",
+      })],
+    }));
+  });
+
+  it("uses the EU Lever API for an official EU Lever board", async () => {
+    const calls: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      calls.push(String(input));
+      return Response.json([{
+        id: "cirrus-1",
+        text: "Software Engineering Intern",
+        categories: { location: "Austin, TX", commitment: "Intern/Co-op", team: "Software" },
+        descriptionPlain: "Build embedded software.",
+        hostedUrl: "https://jobs.eu.lever.co/cirrus/cirrus-1",
+        createdAt: Date.parse("2026-08-15T00:00:00Z"),
+      }]);
+    };
+
+    const result = await crawlSource({
+      id: "p5-0851-cirrus-logic",
+      company: "Cirrus Logic",
+      postingUrl: "https://jobs.eu.lever.co/cirrus",
+      adapter: "lever",
+    }, fetcher, new Date("2026-08-15T00:00:00Z"));
+
+    expect(calls).toEqual(["https://api.eu.lever.co/v0/postings/cirrus?mode=json"]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      jobs: [expect.objectContaining({
+        externalId: "cirrus-1",
+        title: "Software Engineering Intern",
+        officialUrl: "https://jobs.eu.lever.co/cirrus/cirrus-1",
       })],
     }));
   });
