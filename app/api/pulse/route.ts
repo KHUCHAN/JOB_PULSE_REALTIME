@@ -68,6 +68,7 @@ import {
 } from "../../../lib/resume-alert-service";
 import { verifyGithubActionsOidc } from "../../../lib/github-actions-oidc";
 import { detectUrlAdapter, isSafeCareerListingUrl } from "../../../lib/url-remediation";
+import { normalizeBarclaysJobIdentityRepair } from "../../../lib/verified-job-identity";
 
 export const dynamic = "force-dynamic";
 
@@ -676,6 +677,24 @@ export async function POST(request: Request): Promise<Response> {
       const result = await applyCodexReviews(db(), reviews);
       const alerts = body.dispatch === true ? await runResumeAlerts(db()) : null;
       return json({ ...result, alerts });
+    }
+    if (body.action === "repairBarclaysJobIdentity") {
+      if (!codexReviewAuthorized(request)) return json({ error: "Codex review authorization is required." }, 401);
+      const repair = normalizeBarclaysJobIdentityRepair(body);
+      if (!repair) return json({ error: "A verified Barclays job identity is required." }, 400);
+      const updated = await db().prepare(`
+        UPDATE jobs
+        SET requisition_id = ?, apply_url = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND source_id = 'p4-0225-barclays-us'
+          AND official_url = ? AND status = 'open'
+        RETURNING id
+      `).bind(repair.requisitionId, repair.applyUrl, repair.jobId, repair.officialUrl).first<{ id: string }>();
+      if (!updated) return json({ error: "The current Barclays posting was not found." }, 404);
+      const row = await db().prepare(`
+        SELECT ${jobDetailProjection("j")}
+        FROM jobs j WHERE j.id = ?
+      `).bind(updated.id).first<JobViewRow>();
+      return json(row ? mapJob(row) : null, row ? 200 : 404);
     }
     if (body.action === "setResumeAlertEnabled") {
       const config = gmailRuntimeConfig();
