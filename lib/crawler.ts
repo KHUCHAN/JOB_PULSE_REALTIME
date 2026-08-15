@@ -109,43 +109,74 @@ const US_SCOPED_LARGE_CATALOGS = new Set([
   "audit-row-369", // Hertz
   "audit-row-378", // JLL
   "legacy-row-128", // Wabtec
+  "legacy-row-837", // Mondelez
   "legacy-row-878", // Vertiv
+  "p1-0003-ey",
   "p1-0007-kroll",
+  "p2-0029-capital-one",
   "p2-0032-citi",
   "p2-0041-jpmorgan-chase",
   "p2-0048-metlife",
+  "p2-0050-morgan-stanley",
   "p2-0064-unitedhealth-group",
+  "p4-0208-accenture",
   "p4-0225-barclays-us",
+  "p4-0245-cisco",
   "p4-0285-google",
+  "p4-0289-hcltech",
+  "p4-0292-hsbc-usa",
   "p4-0313-nbcuniversal",
+  "p4-0319-nvidia",
   "p4-0325-oracle",
   "p4-0333-publicis-sapient",
   "p4-0387-wipro",
+  "p4-0394-amazon",
+  "p4-0411-ciphertrace", // Mastercard catalog
+  "p4-0423-dynatrace",
   "p4-0428-exl-service",
   "p4-0436-genpact",
   "p4-0521-zscaler",
   "p5-0523-abb-us",
   "p5-0524-abbott-laboratories",
+  "p5-0527-accenture-federal-services",
   "p5-0538-amazon-2",
   "p5-0543-amgen",
   "p5-0545-anduril-industries",
+  "p5-0550-asml",
+  "p5-0559-boeing",
   "p5-0565-canva",
+  "p5-0586-eaton",
   "p5-0589-electronic-arts",
+  "p5-0619-honeywell",
+  "p5-0624-ibm",
+  "p5-0634-iqvia",
+  "p5-0639-johnson-johnson",
+  "p5-0643-kla-corporation",
+  "p5-0648-labcorp-drug-development",
   "p5-0662-mckesson",
+  "p5-0665-medtronic",
   "p5-0693-optumrx",
   "p5-0694-oracle-health",
   "p5-0699-pepsico",
   "p5-0712-raytheon",
   "p5-0724-schneider-electric-us",
+  "p5-0736-spacex",
+  "p5-0741-stryker",
   "p5-0750-thales-us",
   "p5-0752-tiktok",
+  "p5-0793-amd",
+  "p5-0796-analog-devices",
+  "p5-0798-applied-materials",
   "p5-0803-arista-networks",
   "p5-0860-coherent",
   "p5-0932-hilton",
   "p5-0935-hologic",
+  "p5-0940-infineon",
+  "p5-0960-lam-research",
   "p5-0972-marriott-international",
   "p5-0984-micron-technology",
   "p5-1041-rippling",
+  "p5-1109-western-digital",
 ]);
 
 // These source pages render their ATS client-side (or challenge generic
@@ -3148,6 +3179,149 @@ const crawlEnergyTransferSelectMinds = async (
       completeListing: false,
       jobs: [],
       error: error instanceof Error ? error.message : "Unknown Energy Transfer SelectMinds crawler error.",
+    };
+  }
+};
+
+type DynatraceCoveoResult = {
+  title?: unknown;
+  uri?: unknown;
+  raw?: {
+    job_id?: unknown;
+    team?: unknown;
+    office_locations?: unknown;
+    country?: unknown;
+    seniority?: unknown;
+    technologies?: unknown;
+    flex_option?: unknown;
+    capability?: unknown;
+    employment_type?: unknown;
+    region?: unknown;
+  } | null;
+};
+
+type DynatraceCoveoPayload = {
+  totalCount?: unknown;
+  results?: unknown;
+};
+
+const dynatraceTextArray = (value: unknown): string[] => Array.isArray(value)
+  ? value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim())
+  : [];
+
+const crawlDynatraceCoveo = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const listingUrl = "https://www.dynatrace.com/careers/jobs/?country=United%20States";
+  const endpoint = "https://www.dynatrace.com/api/coveo/search/";
+  let responseStatus: number | null = null;
+  try {
+    const response = await fetchWithTimeout(fetcher, endpoint, {
+      method: "POST",
+      headers: { accept: "application/json", "content-type": "application/json" },
+      body: JSON.stringify({
+        q: null,
+        numberOfResults: 1_000,
+        wildcards: true,
+        fieldsToInclude: [
+          "team", "office_locations", "country", "seniority", "technologies", "flex_option",
+          "capability", "employment_type", "is_karriere_at", "job_id", "region",
+        ],
+        facets: [{
+          field: "country",
+          numberOfValues: 1_000,
+          currentValues: [{ state: "selected", value: "United States" }],
+        }],
+      }),
+    }, true, { attempts: 1, timeoutMs: 10_000 });
+    responseStatus = response.status;
+    if (!response.ok) {
+      throw Object.assign(new Error(`Dynatrace Coveo search returned HTTP ${response.status}.`), { responseStatus: response.status });
+    }
+    const payload = await response.json() as DynatraceCoveoPayload;
+    const total = Number(payload.totalCount);
+    const results = Array.isArray(payload.results) ? payload.results as DynatraceCoveoResult[] : null;
+    if (!Number.isSafeInteger(total) || total < 0 || !results || results.length > 1_000) {
+      throw new Error("Dynatrace Coveo search returned invalid catalog metadata.");
+    }
+    const jobs = results.flatMap((result): CrawledJob[] => {
+      const externalId = asText(result.raw?.job_id);
+      const title = asText(result.title);
+      const uri = asText(result.uri);
+      if (!externalId || !title || !uri) return [];
+      let officialUrl: URL;
+      try {
+        officialUrl = new URL(uri);
+      } catch {
+        return [];
+      }
+      if (officialUrl.origin !== "https://www.dynatrace.com" || officialUrl.username || officialUrl.password
+        || officialUrl.port || officialUrl.search || officialUrl.hash
+        || !/^\/careers\/jobs\/\d+\/$/.test(officialUrl.pathname)) return [];
+      const offices = dynatraceTextArray(result.raw?.office_locations);
+      const countries = dynatraceTextArray(result.raw?.country);
+      if (countries.length !== 1 || countries[0] !== "United States") return [];
+      const teams = dynatraceTextArray(result.raw?.team);
+      const seniority = dynatraceTextArray(result.raw?.seniority);
+      const technologies = dynatraceTextArray(result.raw?.technologies);
+      const flexOptions = dynatraceTextArray(result.raw?.flex_option);
+      const capabilities = dynatraceTextArray(result.raw?.capability);
+      const employmentTypes = dynatraceTextArray(result.raw?.employment_type);
+      const regions = dynatraceTextArray(result.raw?.region);
+      const country = countries.length === 1 ? countries[0] : null;
+      const location = [...offices, ...countries].filter((value, index, values) => values.indexOf(value) === index).join(", ") || null;
+      const arrangementText = flexOptions.join(" ");
+      const programs = classifyJobPrograms(title).keys;
+      const employmentType = programs.includes("coop")
+        ? "Co-op"
+        : programs.includes("internship") ? "Internship" : employmentTypes.join(" / ") || null;
+      return [{
+        externalId,
+        title,
+        company: source.company,
+        location,
+        arrangement: /\bremote\b/i.test(arrangementText)
+          ? "remote"
+          : /\bhybrid\b/i.test(arrangementText)
+            ? "hybrid"
+            : /\boffice(?: based)?\b/i.test(arrangementText) ? "onsite" : "unknown",
+        employmentType,
+        summary: null,
+        ...(teams.length ? { department: teams.join("; ") } : {}),
+        ...(capabilities.length ? { businessUnit: capabilities.join("; ") } : {}),
+        ...(technologies.length ? { skills: technologies } : {}),
+        ...(seniority.length ? { experienceLevel: seniority.join("; ") } : {}),
+        ...(offices.length && !/^remote$/i.test(offices[0]) ? { locationCity: offices[0] } : {}),
+        ...(country ? { locationCountry: country } : {}),
+        ...(offices.length > 1 ? { secondaryLocations: offices.slice(1).map((office) => country ? `${office}, ${country}` : office) } : {}),
+        requisitionId: externalId,
+        rawPayload: { flexOptions, regions },
+        officialUrl: officialUrl.href,
+        publishedAt: null,
+      }];
+    });
+    const externalIds = jobs.map((job) => job.externalId);
+    const officialUrls = jobs.map((job) => job.officialUrl);
+    if (jobs.length !== results.length || new Set(externalIds).size !== externalIds.length
+      || new Set(officialUrls).size !== officialUrls.length) {
+      throw new Error("Dynatrace Coveo search returned duplicate or unusable job identities.");
+    }
+    return {
+      status: "succeeded",
+      responseStatus: response.status,
+      completeListing: results.length === total,
+      jobs,
+      resolvedListingUrl: listingUrl,
+      error: results.length === total ? null : `Dynatrace Coveo search returned ${results.length} of ${total} jobs.`,
+    };
+  } catch (error) {
+    const status = typeof error === "object" && error && "responseStatus" in error
+      ? Number((error as { responseStatus: unknown }).responseStatus)
+      : responseStatus;
+    return {
+      status: isBlockedHttpStatus(status) ? "blocked" : "failed",
+      responseStatus: status,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Dynatrace Coveo crawler error.",
     };
   }
 };
@@ -12465,6 +12639,9 @@ const crawlDayforce = async (
 async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-806") {
     return crawlEnergyTransferSelectMinds(source, fetcher);
+  }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p4-0423-dynatrace") {
+    return crawlDynatraceCoveo(source, fetcher);
   }
   // Apply an ID-pinned feed only at the root. Redirect/candidate recursion
   // keeps the same source ID, so reapplying it at discovery depth 1 would

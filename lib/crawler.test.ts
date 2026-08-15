@@ -3209,7 +3209,7 @@ Wrong description.
     ]);
   });
 
-  it("loads the complete ASML catalog with rich fields from its official search API", async () => {
+  it("loads ASML's complete US-scoped catalog with rich fields from its official search API", async () => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input) => {
       const url = String(input);
@@ -3257,9 +3257,8 @@ Wrong description.
         department: "Data and Analytics", jobFunction: "Software", educationRequirements: "Master",
         experienceLevel: "Student", description: "Build AI systems.", publishedAt: "2026-08-12T00:00:00.000Z",
       }),
-      expect.objectContaining({ externalId: "J-00349554", title: "Software Engineer", publishedAt: "2026-08-11T00:00:00.000Z" }),
     ]);
-    expect(result.facets).toEqual([{ key: "job_type", label: "Job Type", values: [{ key: "Internship", label: "Internship", count: 1 }] }]);
+    expect(result.facets).toBeUndefined();
   });
 
   it("fully paginates a Talemetry JSON feed through the reader when the careers edge blocks requests", async () => {
@@ -8555,6 +8554,91 @@ Wrong description.
       jobs: [],
       error: "Energy Transfer SelectMinds listing omitted a valid token, identity, or first page.",
     }));
+  });
+
+  it("collects Dynatrace's complete US catalog from its first-party Coveo API", async () => {
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const result = await crawlSource({
+      id: "p4-0423-dynatrace",
+      company: "Dynatrace",
+      postingUrl: "https://www.dynatrace.com/careers/jobs/",
+      adapter: "custom",
+    }, async (input, init) => {
+      requests.push({ url: String(input), body: JSON.parse(String(init?.body)) as Record<string, unknown> });
+      return Response.json({
+        totalCount: 2,
+        results: [{
+          title: "Senior Software Engineer",
+          uri: "https://www.dynatrace.com/careers/jobs/1387399300/",
+          raw: {
+            job_id: "JR-1387399300", team: ["Engineering"], office_locations: ["Detroit"],
+            country: ["United States"], seniority: ["Senior"], technologies: ["TypeScript", "AI"],
+            flex_option: ["Hybrid"], capability: ["Product"], employment_type: ["Full time"], region: ["AMER"],
+          },
+        }, {
+          title: "Data Scientist",
+          uri: "https://www.dynatrace.com/careers/jobs/1387399400/",
+          raw: {
+            job_id: "JR-1387399400", team: ["Data"], office_locations: ["Remote"],
+            country: ["United States"], seniority: ["Professional"], technologies: ["Python"],
+            flex_option: ["Remote"], capability: ["AI"], employment_type: ["Part time"], region: ["AMER"],
+          },
+        }],
+      });
+    }, new Date("2026-08-14T12:00:00Z"));
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toEqual({
+      url: "https://www.dynatrace.com/api/coveo/search/",
+      body: expect.objectContaining({
+        numberOfResults: 1_000,
+        facets: [{
+          field: "country", numberOfValues: 1_000,
+          currentValues: [{ state: "selected", value: "United States" }],
+        }],
+      }),
+    });
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: true,
+      resolvedListingUrl: "https://www.dynatrace.com/careers/jobs/?country=United%20States",
+      error: null,
+    }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        externalId: "JR-1387399300", title: "Senior Software Engineer", location: "Detroit, United States",
+        locationCity: "Detroit", locationCountry: "United States", arrangement: "hybrid",
+        department: "Engineering", businessUnit: "Product", skills: ["TypeScript", "AI"],
+        experienceLevel: "Senior", employmentType: "Full time", requisitionId: "JR-1387399300",
+        officialUrl: "https://www.dynatrace.com/careers/jobs/1387399300/",
+      }),
+      expect.objectContaining({
+        externalId: "JR-1387399400", location: "Remote, United States", arrangement: "remote",
+        locationCountry: "United States", employmentType: "Part time",
+      }),
+    ]);
+  });
+
+  it("fails Dynatrace closed when its US-filtered Coveo response contains a non-US or duplicate identity", async () => {
+    for (const results of [[{
+      title: "Software Engineer", uri: "https://www.dynatrace.com/careers/jobs/1387399500/",
+      raw: { job_id: "JR-1387399500", office_locations: ["Vienna"], country: ["Austria"] },
+    }], [{
+      title: "Software Engineer", uri: "https://www.dynatrace.com/careers/jobs/1387399500/",
+      raw: { job_id: "JR-1387399500", office_locations: ["Detroit"], country: ["United States"] },
+    }, {
+      title: "Data Scientist", uri: "https://www.dynatrace.com/careers/jobs/1387399600/",
+      raw: { job_id: "JR-1387399500", office_locations: ["Boston"], country: ["United States"] },
+    }]]) {
+      const result = await crawlSource({
+        id: "p4-0423-dynatrace", company: "Dynatrace",
+        postingUrl: "https://www.dynatrace.com/careers/jobs/", adapter: "custom",
+      }, async () => Response.json({ totalCount: results.length, results }), new Date());
+
+      expect(result).toEqual(expect.objectContaining({
+        status: "failed", completeListing: false, jobs: [],
+        error: "Dynatrace Coveo search returned duplicate or unusable job identities.",
+      }));
+    }
   });
 
   it("recovers once from a transient repeated Dayforce offset page", async () => {
