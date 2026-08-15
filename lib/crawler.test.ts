@@ -4419,7 +4419,7 @@ Wrong description.
     expect(result.completeListing).toBe(true);
   });
 
-  it("confirms Oracle's stable short final page before trusting its visible count", async () => {
+  it("confirms Oracle's stable short final page before advancing the crawl cycle", async () => {
     const offsets: number[] = [];
     const fetcher: typeof fetch = async (input) => {
       const url = String(input);
@@ -4443,8 +4443,112 @@ Wrong description.
     }, fetcher, new Date());
 
     expect(offsets.filter((offset) => offset === 100)).toHaveLength(2);
-    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: false,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 5 },
+    }));
     expect(result.jobs).toHaveLength(108);
+  });
+
+  it("accepts a stable short Oracle page in the middle of a catalog", async () => {
+    const offsets: number[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.includes("/hcmUI/CandidateExperience/")) {
+        return new Response('<script src="https://acme.fa.us2.oraclecloud.com/hcmUI/app.js"></script>');
+      }
+      const finder = new URL(url).searchParams.get("finder") ?? "";
+      const offset = Number(finder.match(/offset=(\d+)/)?.[1] ?? 0);
+      offsets.push(offset);
+      const count = offset === 25 ? 24 : 25;
+      const firstId = offset === 50 ? 51 : offset + 1;
+      return Response.json({ items: [{
+        TotalJobsCount: 75,
+        requisitionList: Array.from({ length: count }, (_, index) => ({
+          Id: firstId + index,
+          Title: `Role ${firstId + index}`,
+        })),
+      }] });
+    };
+
+    const result = await crawlSource({
+      id: "oracle-hidden-middle", company: "Acme",
+      postingUrl: "https://acme.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/jobs",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(offsets.filter((offset) => offset === 25)).toHaveLength(2);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: false,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 3 },
+    }));
+    expect(result.jobs).toHaveLength(74);
+  });
+
+  it("stops before an unstable short Oracle page in the middle of a catalog", async () => {
+    let shortPageCalls = 0;
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.includes("/hcmUI/CandidateExperience/")) {
+        return new Response('<script src="https://acme.fa.us2.oraclecloud.com/hcmUI/app.js"></script>');
+      }
+      const finder = new URL(url).searchParams.get("finder") ?? "";
+      const offset = Number(finder.match(/offset=(\d+)/)?.[1] ?? 0);
+      const count = offset === 25 ? (shortPageCalls++ === 0 ? 24 : 23) : 25;
+      return Response.json({ items: [{
+        TotalJobsCount: 75,
+        requisitionList: Array.from({ length: count }, (_, index) => ({
+          Id: offset + index + 1,
+          Title: `Role ${offset + index + 1}`,
+        })),
+      }] });
+    };
+
+    const result = await crawlSource({
+      id: "oracle-changing-middle", company: "Acme",
+      postingUrl: "https://acme.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/jobs",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: false,
+      pagination: { nextPage: 2, cycleComplete: false, totalPages: 3 },
+    }));
+    expect(result.jobs).toHaveLength(25);
+  });
+
+  it("keeps stable short Oracle confirmations inside the source request ceiling", async () => {
+    const total = 2_500;
+    const offsets: number[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.includes("/hcmUI/CandidateExperience/")) {
+        return new Response('<script src="https://acme.fa.us2.oraclecloud.com/hcmUI/app.js"></script>');
+      }
+      const finder = new URL(url).searchParams.get("finder") ?? "";
+      const offset = Number(finder.match(/offset=(\d+)/)?.[1] ?? 0);
+      offsets.push(offset);
+      return Response.json({ items: [{
+        TotalJobsCount: total,
+        requisitionList: Array.from({ length: 24 }, (_, index) => ({
+          Id: offset + index + 1,
+          Title: `Role ${offset + index + 1}`,
+        })),
+      }] });
+    };
+
+    const result = await crawlSource({
+      id: "oracle-many-hidden", company: "Acme",
+      postingUrl: "https://acme.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/jobs",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(offsets.length).toBeLessThanOrEqual(49);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: false,
+      pagination: { nextPage: 25, cycleComplete: false, totalPages: 100 },
+    }));
+    expect(result.jobs).toHaveLength(576);
   });
 
   it("does not authorize Oracle closures when the short final page changes on confirmation", async () => {

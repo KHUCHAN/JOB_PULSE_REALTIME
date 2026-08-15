@@ -2076,11 +2076,16 @@ async function crawlOracle(
     const pageSize = 25;
     // One request is spent discovering Oracle from the public listing page.
     // Keep the remaining API work inside the source-wide 50-request budget.
-    // Reserve one request for confirming a stable short final page. Some
-    // Oracle tenants advertise a count that includes hidden requisitions.
+    // Some Oracle tenants advertise a count that includes hidden requisitions.
+    // Bound page requests plus stable-short-page confirmations so the listing
+    // discovery request and API work remain within the source-wide ceiling.
     const maxPagesPerPass = 48;
+    const maxApiRequests = 49;
     let apiRequests = 0;
     const fetchPage = async (pageNumber: number): Promise<{ responseStatus: number; total: number; page: OracleJob[] }> => {
+      if (apiRequests >= maxApiRequests) {
+        throw new Error("Oracle Recruiting request budget was exhausted.");
+      }
       apiRequests += 1;
       const offset = (pageNumber - 1) * pageSize;
       const endpoint = new URL("/hcmRestApi/resources/latest/recruitingCEJobRequisitions", oracle.apiOrigin);
@@ -2121,19 +2126,19 @@ async function crawlOracle(
       pageNumber: number,
       result: Awaited<ReturnType<typeof fetchPage>>,
       advertisedTotal: number,
-      advertisedTotalPages: number,
-    ): Promise<{ jobs: CrawledJob[]; effectiveTotal: number } | null> => {
+    ): Promise<{ jobs: CrawledJob[] } | null> => {
       const expected = advertisedTotal === 0
         ? 0
         : Math.min(pageSize, Math.max(0, advertisedTotal - (pageNumber - 1) * pageSize));
       const normalized = normalizePage(result.page);
       if (normalized.length !== result.page.length) return null;
-      if (result.page.length === expected) return { jobs: normalized, effectiveTotal: advertisedTotal };
-      if (pageNumber !== advertisedTotalPages || result.page.length >= expected) return null;
+      if (result.page.length === expected) return { jobs: normalized };
+      if (result.page.length > expected || apiRequests >= maxApiRequests) return null;
 
-      // A short final page is authoritative only after an identical second
-      // response. This handles Oracle's visible-count mismatch without
-      // turning a transient truncation into mass stale-job closure.
+      // Oracle's advertised total can include hidden requisitions, so a stable
+      // short page may occur anywhere in the catalog rather than only at the
+      // end. Confirm the exact identities before advancing the checkpoint;
+      // this keeps transient truncation from authorizing stale-job closure.
       const retry = await fetchPage(pageNumber);
       const identities = result.page.map((job) => String(job.Id ?? ""));
       const retryIdentities = retry.page.map((job) => String(job.Id ?? ""));
@@ -2142,7 +2147,7 @@ async function crawlOracle(
         || identities.some((id, index) => id !== retryIdentities[index])) return null;
       const retriedJobs = normalizePage(retry.page);
       return retriedJobs.length === retry.page.length
-        ? { jobs: retriedJobs, effectiveTotal: (pageNumber - 1) * pageSize + retry.page.length }
+        ? { jobs: retriedJobs }
         : null;
     };
 
@@ -2156,25 +2161,31 @@ async function crawlOracle(
       total = first.total;
       totalPages = Math.max(1, Math.ceil(total / pageSize));
     }
-    const firstPage = await validatePage(startPage, first, total, totalPages);
+    const firstPage = await validatePage(startPage, first, total);
     if (!firstPage) {
       throw new Error("Oracle Recruiting returned an incomplete or unusable catalog page.");
     }
-    total = firstPage.effectiveTotal;
-    totalPages = Math.max(1, Math.ceil(total / pageSize));
     const jobs = [...firstPage.jobs];
-    const availableAdditionalPages = Math.max(0, maxPagesPerPass - apiRequests);
-    const endPage = Math.min(totalPages, startPage + availableAdditionalPages);
-    const pageNumbers = Array.from({ length: Math.max(0, endPage - startPage) }, (_, index) => startPage + index + 1);
     let firstFailedPage: number | null = null;
     let lastSuccessfulPage = startPage;
-    for (let index = 0; index < pageNumbers.length && firstFailedPage === null; index += 8) {
-      const batchNumbers = pageNumbers.slice(index, index + 8);
+    while (lastSuccessfulPage < totalPages && firstFailedPage === null) {
+      // Reserve one confirmation request for every page in the batch. When a
+      // page is full the reservation is released to a later batch, preserving
+      // the previous 48-page fast path while keeping worst-case source work at
+      // one discovery request plus at most 49 Oracle API requests.
+      const remainingRequests = maxApiRequests - apiRequests;
+      const batchSize = Math.min(
+        8,
+        totalPages - lastSuccessfulPage,
+        Math.floor(remainingRequests / 2),
+      );
+      if (batchSize < 1) break;
+      const batchNumbers = Array.from({ length: batchSize }, (_, index) => lastSuccessfulPage + index + 1);
       const pages = await Promise.all(batchNumbers.map(async (pageNumber) => {
         try {
           const result = await fetchPage(pageNumber);
           if (result.total !== total) return null;
-          return validatePage(pageNumber, result, total, totalPages);
+          return validatePage(pageNumber, result, total);
         } catch {
           return null;
         }
@@ -2183,8 +2194,6 @@ async function crawlOracle(
       const usableCount = failedIndex === -1 ? pages.length : failedIndex;
       for (const page of pages.slice(0, usableCount)) {
         if (!page) continue;
-        total = page.effectiveTotal;
-        totalPages = Math.max(1, Math.ceil(total / pageSize));
         jobs.push(...page.jobs);
       }
       lastSuccessfulPage += usableCount;
@@ -2193,13 +2202,18 @@ async function crawlOracle(
     const unique = uniqueJobs(jobs);
     if (unique.length !== jobs.length) throw new Error("Oracle Recruiting repeated job identities across catalog pages.");
     const cycleComplete = firstFailedPage === null && lastSuccessfulPage === totalPages;
-    const completeListing = startPage === 1 && cycleComplete && totalPages <= maxPagesPerPass && unique.length === total;
+    // A hidden-requisition count mismatch is safe for checkpoint progress but
+    // not for single-pass stale closure. Only an exact advertised catalog is
+    // complete immediately; stable short catalogs close unseen rows after the
+    // existing two-cycle checkpoint guard.
+    const completeListing = startPage === 1 && cycleComplete && totalPages <= maxPagesPerPass
+      && unique.length === total;
     return {
       status: "succeeded",
       responseStatus: first.responseStatus,
       completeListing,
       jobs: unique,
-      ...(!completeListing && totalPages > 1 ? {
+      ...(!completeListing ? {
         pagination: {
           nextPage: cycleComplete ? 1 : firstFailedPage ?? lastSuccessfulPage + 1,
           cycleComplete,
