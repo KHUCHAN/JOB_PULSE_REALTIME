@@ -219,6 +219,7 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
   "p5-1039-revolut",
   "p5-1041-rippling",
   "p5-1050-samsung-semiconductor",
+  "p5-1104-wayfair",
   "p5-1109-western-digital",
   // Additional catalogs with at least 1,000 live rows in the 2026-08-15
   // production audit. Native ATS filters are used where available; otherwise
@@ -3764,6 +3765,223 @@ const crawlAvanadeCoveo = async (source: CrawlSource, fetcher: typeof fetch): Pr
       completeListing: false,
       jobs: [],
       error: error instanceof Error ? error.message : "Unknown Avanade Coveo crawler error.",
+    };
+  }
+};
+
+type WayfairCareerJob = {
+  id?: unknown;
+  eid?: unknown;
+  requisitionId?: unknown;
+  title?: unknown;
+  briefDescription?: unknown;
+  description?: unknown;
+  lastUpdatedDate?: unknown;
+  createdDate?: unknown;
+  jobTypeId?: unknown;
+  jobTypeDisplayName?: unknown;
+  isActive?: unknown;
+  isHidden?: unknown;
+  location?: {
+    id?: unknown;
+    name?: unknown;
+    city?: unknown;
+    country?: unknown;
+    countryId?: unknown;
+    state?: unknown;
+    stateId?: unknown;
+  } | null;
+  category?: { id?: unknown; name?: unknown; description?: unknown; teamId?: unknown } | null;
+  teamId?: unknown;
+  teamName?: unknown;
+  applyLink?: unknown;
+  structuredDataApplyLink?: unknown;
+  system?: unknown;
+  minSalaryRange?: unknown;
+  maxSalaryRange?: unknown;
+  currencyType?: unknown;
+  payRateType?: unknown;
+};
+
+type WayfairCareerPayload = {
+  jobListData?: unknown;
+  validLocations?: {
+    filtersCount?: { countryJobCount?: Record<string, unknown> } | null;
+  } | null;
+};
+
+const WAYFAIR_LISTING_URL = "https://www.wayfair.com/careers/jobs";
+const WAYFAIR_JOB_SEARCH_ENDPOINT = "https://www.wayfair.com/a/careers/careers/job_search_data";
+
+const wayfairText = (value: unknown): string | null => {
+  const text = plainText(asText(value));
+  if (!text) return null;
+  const decoded = decodeHtmlAttribute(text)
+    .replace(/&#x([0-9a-f]+);/gi, (_match, digits: string) => String.fromCodePoint(Number.parseInt(digits, 16)))
+    .replace(/&#(\d+);/g, (_match, digits: string) => String.fromCodePoint(Number.parseInt(digits, 10)))
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&rsquo;/gi, "’")
+    .replace(/&lsquo;/gi, "‘")
+    .replace(/&rdquo;/gi, "”")
+    .replace(/&ldquo;/gi, "“")
+    .replace(/&ndash;/gi, "–")
+    .replace(/&mdash;/gi, "—")
+    .replace(/\s+/g, " ")
+    .trim();
+  return decoded || null;
+};
+
+const wayfairDate = (value: unknown): string | null => {
+  const text = asText(value);
+  if (!text) return null;
+  const utcText = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(text) ? `${text}Z` : text;
+  const date = new Date(utcText);
+  return Number.isNaN(date.valueOf()) ? null : date.toISOString();
+};
+
+const wayfairNumber = (value: unknown): number | null =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+
+const crawlWayfairCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  try {
+    const response = await fetchWithTimeout(fetcher, WAYFAIR_JOB_SEARCH_ENDPOINT, {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json",
+        origin: "https://www.wayfair.com",
+        referer: `${WAYFAIR_LISTING_URL}?countryIds=1`,
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36",
+      },
+      body: JSON.stringify({
+        categoryIds: [],
+        teamIds: [],
+        locationIds: [],
+        countryIds: [1],
+        teamCategoryIds: [],
+        stateIds: [],
+        selectedJobTypeIds: [],
+        keywords: "",
+      }),
+    }, true, { attempts: 1, timeoutMs: 20_000 });
+    responseStatus = response.status;
+    if (!response.ok) {
+      throw Object.assign(new Error(`Wayfair job search returned HTTP ${response.status}.`), {
+        responseStatus: response.status,
+      });
+    }
+    const payload = await response.json() as WayfairCareerPayload;
+    const records = Array.isArray(payload.jobListData) ? payload.jobListData as WayfairCareerJob[] : null;
+    const expected = Number(payload.validLocations?.filtersCount?.countryJobCount?.["1"]);
+    if (!records || records.length < 1 || records.length > 2_000 || !Number.isSafeInteger(expected)
+      || expected < 1 || expected !== records.length) {
+      throw new Error("Wayfair job search returned invalid US catalog metadata.");
+    }
+    const jobs = records.flatMap((job): CrawledJob[] => {
+      const internalId = typeof job.id === "number" && Number.isSafeInteger(job.id) ? job.id : null;
+      const externalId = asText(job.requisitionId);
+      const eid = asText(job.eid);
+      const title = asText(job.title);
+      const country = asText(job.location?.country);
+      const countryId = Number(job.location?.countryId);
+      const publishedAt = wayfairDate(job.createdDate);
+      const sourceUpdatedAt = wayfairDate(job.lastUpdatedDate);
+      const rawApplyLink = asText(job.applyLink);
+      const structuredApplyLink = asText(job.structuredDataApplyLink);
+      if (internalId === null || !externalId || eid !== externalId || !title || country !== "United States"
+        || countryId !== 1 || job.isActive !== true || job.isHidden !== false || !publishedAt || !sourceUpdatedAt
+        || !rawApplyLink || structuredApplyLink !== rawApplyLink) return [];
+      let officialUrl: URL;
+      try {
+        officialUrl = new URL(rawApplyLink);
+      } catch {
+        return [];
+      }
+      if (officialUrl.origin !== "https://wayfair.avature.net" || officialUrl.username || officialUrl.password
+        || officialUrl.port || officialUrl.pathname !== "/en_US/careers" || officialUrl.hash
+        || officialUrl.searchParams.size !== 1 || officialUrl.searchParams.get("folderId") !== externalId) return [];
+      const description = wayfairText(job.description);
+      const briefDescription = wayfairText(job.briefDescription);
+      if (!description) return [];
+      const location = asText(job.location?.name);
+      const city = asText(job.location?.city);
+      const state = asText(job.location?.state);
+      const category = asText(job.category?.name);
+      const team = asText(job.teamName);
+      const listedEmploymentType = asText(job.jobTypeDisplayName);
+      const programs = classifyJobPrograms(title).keys;
+      const arrangementText = [title, location, description].filter(Boolean).join(" ");
+      const payRateType = asText(job.payRateType);
+      const salaryInterval = payRateType && /hour/i.test(payRateType)
+        ? "hour"
+        : payRateType && /salary|year/i.test(payRateType) ? "year" : payRateType;
+      return [{
+        externalId,
+        title,
+        company: source.company,
+        location,
+        arrangement: /\bremote\b/i.test(arrangementText)
+          ? "remote"
+          : /\bhybrid\b/i.test(arrangementText)
+            ? "hybrid"
+            : "onsite",
+        employmentType: programs.includes("coop")
+          ? "Co-op"
+          : programs.includes("internship")
+            ? "Internship"
+            : normalizeEmploymentType(listedEmploymentType) ?? listedEmploymentType,
+        summary: (briefDescription ?? description).slice(0, 1_200),
+        description,
+        ...(category ? { department: category, jobFunction: category } : {}),
+        ...(team ? { team } : {}),
+        ...(city ? { locationCity: city } : {}),
+        ...(state ? { locationState: state } : {}),
+        locationCountry: country,
+        ...(wayfairNumber(job.minSalaryRange) !== null ? { salaryMin: wayfairNumber(job.minSalaryRange) } : {}),
+        ...(wayfairNumber(job.maxSalaryRange) !== null ? { salaryMax: wayfairNumber(job.maxSalaryRange) } : {}),
+        ...(asText(job.currencyType) ? { salaryCurrency: asText(job.currencyType) } : {}),
+        ...(salaryInterval ? { salaryInterval } : {}),
+        requisitionId: externalId,
+        applyUrl: officialUrl.href,
+        sourcePostedText: publishedAt.slice(0, 10),
+        sourceUpdatedAt,
+        rawPayload: {
+          internalId,
+          system: job.system,
+          categoryId: job.category?.id,
+          teamId: job.teamId,
+          locationId: job.location?.id,
+          jobTypeId: job.jobTypeId,
+        },
+        officialUrl: officialUrl.href,
+        publishedAt,
+      }];
+    });
+    const identities = jobs.map((job) => job.externalId);
+    const urls = jobs.map((job) => job.officialUrl);
+    if (jobs.length !== records.length || new Set(identities).size !== identities.length
+      || new Set(urls).size !== urls.length) {
+      throw new Error("Wayfair job search returned duplicate or unusable US job identities.");
+    }
+    return {
+      status: "succeeded",
+      responseStatus: response.status,
+      completeListing: true,
+      jobs,
+      resolvedListingUrl: WAYFAIR_LISTING_URL,
+      error: null,
+    };
+  } catch (error) {
+    const status = typeof error === "object" && error && "responseStatus" in error
+      ? Number((error as { responseStatus: unknown }).responseStatus)
+      : responseStatus;
+    return {
+      status: isBlockedHttpStatus(status) ? "blocked" : "failed",
+      responseStatus: status,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Wayfair careers crawler error.",
     };
   }
 };
@@ -15867,6 +16085,9 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p4-0222-avanade") {
     return crawlAvanadeCoveo(source, fetcher);
+  }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-1104-wayfair") {
+    return crawlWayfairCareers(source, fetcher);
   }
   // Apply an ID-pinned feed only at the root. Redirect/candidate recursion
   // keeps the same source ID, so reapplying it at discovery depth 1 would

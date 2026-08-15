@@ -11185,6 +11185,116 @@ HUMAN RESOURCES Posted Date
     }));
   });
 
+  it("collects Wayfair's complete US catalog from its first-party job search API", async () => {
+    const requests: Array<{ url: string; body: Record<string, unknown>; headers: Headers }> = [];
+    const job = (id: number, requisitionId: string, title: string, city: string, state: string) => ({
+      id,
+      eid: requisitionId,
+      requisitionId,
+      title,
+      briefDescription: `<p>${title} summary.</p>`,
+      description: `<p>${title} builds data products &amp; services.</p>`,
+      lastUpdatedDate: "2026-08-14T15:47:22.337000",
+      createdDate: "2026-08-12T12:16:20.350000",
+      jobTypeId: 1,
+      jobTypeDisplayName: "Full-time",
+      isActive: true,
+      isHidden: false,
+      location: { id: id + 100, name: `${city}, ${state}`, city, country: "United States", countryId: 1, state, stateId: 20 },
+      category: { id: 6, name: "Software Engineering", description: "Engineering", teamId: 1 },
+      teamId: 1,
+      teamName: "Engineering & Technology",
+      applyLink: `https://wayfair.avature.net/en_US/careers?folderId=${requisitionId}`,
+      structuredDataApplyLink: `https://wayfair.avature.net/en_US/careers?folderId=${requisitionId}`,
+      system: 2,
+      minSalaryRange: 90_000,
+      maxSalaryRange: 120_000,
+      currencyType: "USD",
+      payRateType: "Salary",
+    });
+    const result = await crawlSource({
+      id: "p5-1104-wayfair",
+      company: "Wayfair",
+      postingUrl: "https://www.aboutwayfair.com/careers",
+      adapter: "custom",
+    }, async (input, init) => {
+      requests.push({
+        url: String(input),
+        body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+        headers: new Headers(init?.headers),
+      });
+      return Response.json({
+        jobListData: [
+          job(60_001, "12001", "Software Engineer", "Boston", "Massachusetts"),
+          job(60_002, "12002", "Data Scientist", "New York", "New York"),
+        ],
+        validLocations: { filtersCount: { countryJobCount: { 1: 2 } } },
+      });
+    }, new Date("2026-08-15T12:00:00Z"));
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toEqual(expect.objectContaining({
+      url: "https://www.wayfair.com/a/careers/careers/job_search_data",
+      body: expect.objectContaining({ countryIds: [1], selectedJobTypeIds: [], keywords: "" }),
+    }));
+    expect(requests[0].headers.get("referer")).toBe("https://www.wayfair.com/careers/jobs?countryIds=1");
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://www.wayfair.com/careers/jobs",
+      error: null,
+    }));
+    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "12001",
+      title: "Software Engineer",
+      location: "Boston, Massachusetts",
+      locationCity: "Boston",
+      locationState: "Massachusetts",
+      locationCountry: "United States",
+      employmentType: "Full-time",
+      department: "Software Engineering",
+      team: "Engineering & Technology",
+      salaryMin: 90_000,
+      salaryMax: 120_000,
+      salaryCurrency: "USD",
+      salaryInterval: "year",
+      requisitionId: "12001",
+      officialUrl: "https://wayfair.avature.net/en_US/careers?folderId=12001",
+      applyUrl: "https://wayfair.avature.net/en_US/careers?folderId=12001",
+      publishedAt: "2026-08-12T12:16:20.350Z",
+      sourceUpdatedAt: "2026-08-14T15:47:22.337Z",
+      description: "Software Engineer builds data products & services.",
+    }));
+  });
+
+  it("fails Wayfair closed when its US total or job identities are inconsistent", async () => {
+    const duplicate = {
+      id: 60_001, eid: "12001", requisitionId: "12001", title: "Software Engineer",
+      briefDescription: "Build software.", description: "Build software.",
+      lastUpdatedDate: "2026-08-14T15:47:22.337000", createdDate: "2026-08-12T12:16:20.350000",
+      jobTypeId: 1, jobTypeDisplayName: "Full-time", isActive: true, isHidden: false,
+      location: { id: 1, name: "Boston, MA", city: "Boston", country: "United States", countryId: 1, state: "Massachusetts", stateId: 20 },
+      category: { id: 6, name: "Software Engineering", teamId: 1 }, teamId: 1, teamName: "Engineering",
+      applyLink: "https://wayfair.avature.net/en_US/careers?folderId=12001",
+      structuredDataApplyLink: "https://wayfair.avature.net/en_US/careers?folderId=12001", system: 2,
+    };
+    for (const payload of [
+      { jobListData: [duplicate], validLocations: { filtersCount: { countryJobCount: { 1: 2 } } } },
+      { jobListData: [duplicate, duplicate], validLocations: { filtersCount: { countryJobCount: { 1: 2 } } } },
+    ]) {
+      const result = await crawlSource({
+        id: "p5-1104-wayfair", company: "Wayfair",
+        postingUrl: "https://www.aboutwayfair.com/careers", adapter: "custom",
+      }, async () => Response.json(payload), new Date());
+      expect(result).toEqual(expect.objectContaining({
+        status: "failed",
+        completeListing: false,
+        jobs: [],
+      }));
+    }
+  });
+
   it("collects Dynatrace's complete US catalog from its first-party Coveo API", async () => {
     const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
     const result = await crawlSource({
