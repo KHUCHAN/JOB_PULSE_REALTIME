@@ -334,6 +334,7 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
   "p5-1063-starbucks",
   "p5-1073-target",
   "p5-1079-the-home-depot",
+  "p5-1086-tsmc-arizona",
   "p5-1090-university-of-miami-health",
   "p5-1091-upmc",
   "p5-0687-northrop-grumman",
@@ -451,6 +452,10 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
     adapter: "ashby",
   },
   "p5-1082-trinetx": { listingUrl: "https://jobs.dayforcehcm.com/en-US/trinetx1/CANDIDATEPORTAL", adapter: "dayforce" },
+  "p5-1086-tsmc-arizona": {
+    listingUrl: "https://ro.careers.tsmc.com/go/CorporateJobs/4716710/?q=&locationsearch=USA&sortColumn=referencedate&sortDirection=desc",
+    adapter: "custom",
+  },
   "p4-0207-8am": {
     discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/affinipay1/jobs?content=true" },
     listingUrl: "https://job-boards.greenhouse.io/affinipay1",
@@ -8379,7 +8384,15 @@ const successFactorsJobsFromHtml = (html: string, source: CrawlSource): CrawledJ
     const department = field("jobDepartment") ?? field("jobFacility");
     const shiftSchedule = field("jobShifttype");
     const locationParts = location?.split(",").map((value) => value.trim()).filter(Boolean) ?? [];
-    const usLocation = /^(?:US|USA|United States)$/i.test(locationParts.at(-1) ?? "");
+    const lastLocationPart = locationParts.at(-1) ?? "";
+    const countryIndex = locationParts.length >= 4 && /\d/.test(lastLocationPart)
+      ? locationParts.length - 2
+      : locationParts.length >= 3 || /^(?:US|USA|United States)$/i.test(lastLocationPart)
+        ? locationParts.length - 1
+        : -1;
+    const rawCountry = countryIndex >= 0 ? locationParts[countryIndex] : null;
+    const usLocation = /^(?:US|USA|United States)$/i.test(rawCountry ?? "");
+    const locationCountry = usLocation ? "United States" : rawCountry;
     const programs = classifyJobPrograms(title).keys;
     const arrangement = /\bremote\b/i.test(`${location ?? ""} ${shiftSchedule ?? ""}`)
       ? "remote"
@@ -8399,8 +8412,8 @@ const successFactorsJobsFromHtml = (html: string, source: CrawlSource): CrawledJ
       department,
       ...(shiftSchedule ? { shiftSchedule } : {}),
       ...(locationParts.length >= 2 ? { locationCity: locationParts[0] } : {}),
-      ...(usLocation && locationParts.length >= 3 ? { locationState: locationParts.at(-2) } : {}),
-      ...(usLocation ? { locationCountry: "United States" } : {}),
+      ...(usLocation && countryIndex >= 2 ? { locationState: locationParts[countryIndex - 1] } : {}),
+      ...(locationCountry ? { locationCountry } : {}),
       requisitionId: externalId,
       officialUrl: officialUrl.href,
       publishedAt: null,

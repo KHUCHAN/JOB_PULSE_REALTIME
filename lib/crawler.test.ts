@@ -2344,6 +2344,38 @@ HUMAN RESOURCES Posted Date
     ]);
   });
 
+  it("uses TSMC's live official SuccessFactors catalog when its legacy frontend is blocked", async () => {
+    const requests: string[] = [];
+    const listingUrl = "https://ro.careers.tsmc.com/go/CorporateJobs/4716710/?q=&locationsearch=USA&sortColumn=referencedate&sortDirection=desc";
+    const result = await crawlSource({
+      id: "p5-1086-tsmc-arizona",
+      company: "TSMC Arizona",
+      postingUrl: "https://careers.tsmc.com/en_US/careers/SearchJobs",
+      adapter: "custom",
+    }, async (input) => {
+      requests.push(String(input));
+      return new Response([
+        '<link href="https://rmkcdn.successfactors.com/theme.css">',
+        '<span class="paginationLabel">Results <b>1 – 2</b> of <b>2</b></span>',
+        '<tr class="data-row"><a class="jobTitle-link" href="/job/Phoenix-Summer-2027-TSMC-AZ-Internship-Opportunities-Engineering-Roles-AZ-85083/7312/">[Summer 2027] TSMC AZ Internship Opportunities - Engineering Roles</a><span class="jobLocation">Phoenix, AZ, US, 85083</span></tr>',
+        '<tr class="data-row"><a class="jobTitle-link" href="/job/Kumamoto-HR-Operation-Manager-43/7679/">HR Operation Manager</a><span class="jobLocation">Kumamoto, 43, JP</span></tr>',
+      ].join(""));
+    }, new Date("2026-08-15T19:00:00Z"));
+
+    expect(requests).toEqual([listingUrl]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: listingUrl,
+    }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "7312",
+      title: "[Summer 2027] TSMC AZ Internship Opportunities - Engineering Roles",
+      locationCountry: "United States",
+      employmentType: "Internship",
+    })]);
+  });
+
   it("fully paginates a TalentHub job search", async () => {
     const requests: string[] = [];
     const page = (current: number) => [
