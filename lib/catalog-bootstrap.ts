@@ -39,6 +39,11 @@ interface CatalogDb {
   prepare(sql: string): CatalogStatement;
 }
 
+export interface CatalogCrawlPolicy {
+  version: string;
+  sourceIds: readonly string[];
+}
+
 const chunks = <T>(items: T[], size: number): T[][] => {
   const result: T[][] = [];
   for (let index = 0; index < items.length; index += size) result.push(items.slice(index, index + size));
@@ -48,17 +53,17 @@ const chunks = <T>(items: T[], size: number): T[][] => {
 export async function ensureCatalogSeeded(
   database: CatalogDb,
   seed: CatalogSeed,
+  crawlPolicy?: CatalogCrawlPolicy,
 ): Promise<{ seeded: boolean; sources: number; talentTargets: number }> {
   const existing = await database.prepare(`
     SELECT
       (SELECT count(*) FROM sources) AS count,
-      (SELECT value FROM catalog_state WHERE key = 'sources') AS version
-  `).first() as { count: number; version: string | null } | null;
-  if (existing?.version === seed.version) {
-    return { seeded: false, sources: existing?.count ?? 0, talentTargets: 0 };
-  }
+      (SELECT value FROM catalog_state WHERE key = 'sources') AS version,
+      (SELECT value FROM catalog_state WHERE key = 'crawler_scope_policy') AS crawl_policy_version
+  `).first() as { count: number; version: string | null; crawl_policy_version: string | null } | null;
+  const seedIsCurrent = existing?.version === seed.version;
 
-  for (const batch of chunks(seed.sources, 500)) {
+  for (const batch of seedIsCurrent ? [] : chunks(seed.sources, 500)) {
     // A persisted page cursor belongs to one exact listing URL and adapter.
     // Drop it before changing either value so the new catalog always starts at
     // page one. Deleting first is deliberately fail-safe: if the following
@@ -104,7 +109,7 @@ export async function ensureCatalogSeeded(
     `).bind(JSON.stringify(batch)).run();
   }
 
-  for (const batch of chunks(seed.talentTargets, 500)) {
+  for (const batch of seedIsCurrent ? [] : chunks(seed.talentTargets, 500)) {
     await database.prepare(`
       INSERT INTO talent_targets (
         id, source_id, official_url, resume_upload, job_alerts, checked_at
@@ -122,11 +127,41 @@ export async function ensureCatalogSeeded(
     `).bind(JSON.stringify(batch)).run();
   }
 
-  await database.prepare(`
-    INSERT INTO catalog_state (key, value, updated_at)
-    VALUES (?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP
-  `).bind("sources", seed.version).run();
+  if (!seedIsCurrent) {
+    await database.prepare(`
+      INSERT INTO catalog_state (key, value, updated_at)
+      VALUES (?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP
+    `).bind("sources", seed.version).run();
+  }
 
-  return { seeded: true, sources: seed.sources.length, talentTargets: seed.talentTargets.length };
+  if (crawlPolicy && existing?.crawl_policy_version !== crawlPolicy.version) {
+    for (const batch of chunks([...new Set(crawlPolicy.sourceIds)], 400)) {
+      // A policy change is a listing-identity change even when the public URL
+      // stays the same. Restart each affected catalog at page one so a global
+      // cursor can never skip the beginning of its new US-scoped cycle.
+      await database.prepare(`
+        DELETE FROM catalog_state
+        WHERE key IN (
+          SELECT 'crawl_page_checkpoint:' || value FROM json_each(?)
+        )
+      `).bind(JSON.stringify(batch)).run();
+      await database.prepare(`
+        UPDATE sources
+        SET next_crawl_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        WHERE id IN (SELECT value FROM json_each(?))
+      `).bind(JSON.stringify(batch)).run();
+    }
+    // Publish the marker last. If a request is interrupted above, the next
+    // request sees the old version and retries the idempotent reset.
+    await database.prepare(`
+      INSERT INTO catalog_state (key, value, updated_at)
+      VALUES (?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP
+    `).bind("crawler_scope_policy", crawlPolicy.version).run();
+  }
+
+  return seedIsCurrent
+    ? { seeded: false, sources: existing?.count ?? 0, talentTargets: 0 }
+    : { seeded: true, sources: seed.sources.length, talentTargets: seed.talentTargets.length };
 }

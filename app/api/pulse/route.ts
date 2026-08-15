@@ -12,7 +12,14 @@ import type {
   TalentTarget,
 } from "../../../lib/domain";
 import { runDueCrawls, runSpecificCrawls, type PersistedSource } from "../../../lib/crawl-runner";
-import { jobsFromTeslaState, type CrawledFacet, type CrawledJob, type TeslaState } from "../../../lib/crawler";
+import {
+  jobsFromTeslaState,
+  LARGE_CATALOG_US_SCOPE_POLICY_VERSION,
+  US_SCOPED_LARGE_CATALOGS,
+  type CrawledFacet,
+  type CrawledJob,
+  type TeslaState,
+} from "../../../lib/crawler";
 import { normalizeBrowserJobSnapshot } from "../../../lib/browser-crawl-ingest";
 import { shouldRecordBrowserResult } from "../../../lib/browser-fallback-selection";
 import { ensureCatalogSeeded, type CatalogSeed } from "../../../lib/catalog-bootstrap";
@@ -63,6 +70,11 @@ import { verifyGithubActionsOidc } from "../../../lib/github-actions-oidc";
 import { detectUrlAdapter, isSafeCareerListingUrl } from "../../../lib/url-remediation";
 
 export const dynamic = "force-dynamic";
+
+const largeCatalogCrawlPolicy = {
+  version: LARGE_CATALOG_US_SCOPE_POLICY_VERSION,
+  sourceIds: [...US_SCOPED_LARGE_CATALOGS],
+} as const;
 
 const json = (value: unknown, status = 200): Response =>
   Response.json(value, { status, headers: { "Cache-Control": "private, no-store" } });
@@ -500,7 +512,7 @@ async function overview(): Promise<OverviewSnapshot> {
 
 export async function GET(request: Request): Promise<Response> {
   try {
-    await ensureCatalogSeeded(db(), catalogSeed as CatalogSeed);
+    await ensureCatalogSeeded(db(), catalogSeed as CatalogSeed, largeCatalogCrawlPolicy);
     const url = new URL(request.url);
     const resource = url.searchParams.get("resource");
     if (resource === "jobs") return json(await jobsFor(url));
@@ -542,7 +554,7 @@ export async function GET(request: Request): Promise<Response> {
 
 export async function POST(request: Request): Promise<Response> {
   try {
-    await ensureCatalogSeeded(db(), catalogSeed as CatalogSeed);
+    await ensureCatalogSeeded(db(), catalogSeed as CatalogSeed, largeCatalogCrawlPolicy);
     const body = await request.json() as Record<string, unknown>;
     if (body.action === "updateJobState") {
       const state = body.state as JobState;

@@ -132,6 +132,26 @@ describe("runtime catalog bootstrap", () => {
     expect(sqlite.prepare("SELECT value FROM catalog_state WHERE key = ?").get(
       `crawl_page_checkpoint:${seed.sources[1].id}`,
     )).toEqual({ value: JSON.stringify({ nextPage: 7 }) });
+
+    sqlite.prepare("UPDATE sources SET next_crawl_at = '2099-01-01 00:00:00' WHERE id = ?").run(seed.sources[0].id);
+    sqlite.prepare("INSERT INTO catalog_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(
+      `crawl_page_checkpoint:${seed.sources[0].id}`, JSON.stringify({ nextPage: 19 }),
+    );
+    expect(await ensureCatalogSeeded(database, {
+      ...seed,
+      version: "catalog-v2",
+      sources: [{ ...seed.sources[0], postingUrl: "https://example.com/updated" }],
+    }, {
+      version: "large-us-test-v1",
+      sourceIds: [seed.sources[0].id],
+    })).toEqual({ seeded: false, sources: 1, talentTargets: 0 });
+    expect(sqlite.prepare("SELECT value FROM catalog_state WHERE key = ?").get(
+      `crawl_page_checkpoint:${seed.sources[0].id}`,
+    )).toBeUndefined();
+    expect(sqlite.prepare("SELECT next_crawl_at < '2099' AS due FROM sources WHERE id = ?").get(seed.sources[0].id))
+      .toEqual({ due: 1 });
+    expect(sqlite.prepare("SELECT value FROM catalog_state WHERE key = 'crawler_scope_policy'").get())
+      .toEqual({ value: "large-us-test-v1" });
     sqlite.close();
   });
 });

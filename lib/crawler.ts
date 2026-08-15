@@ -107,7 +107,8 @@ type VerifiedSourceFeed = {
 // checkpoint segments, and changing scope between segments would make stale
 // closure nondeterministic. Unknown and mixed/global roles remain visible so
 // an incomplete location never causes a potentially relevant US role to drop.
-const US_SCOPED_LARGE_CATALOGS = new Set([
+export const LARGE_CATALOG_US_SCOPE_POLICY_VERSION = "large-us-v2";
+export const US_SCOPED_LARGE_CATALOGS = new Set([
   "audit-row-319", // Baker Hughes
   "audit-row-359", // FedEx
   "audit-row-369", // Hertz
