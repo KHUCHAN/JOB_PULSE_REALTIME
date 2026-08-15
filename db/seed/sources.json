@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:53d0af1b19fe747be48bd186a7653f36c51f26f8ae683f43e7a1c122423c4a57",
+  "version": "v2:sha256:96c1cd114ba8196d33b1ff2a915e753f454ff02f392b760740429ae79b29ec39",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -15051,7 +15051,7 @@
       "id": "legacy-row-836",
       "masterRow": 2836,
       "company": "Molson Coors Beverage",
-      "postingUrl": "https://www.molsoncoors.com/careers",
+      "postingUrl": "https://jobs.molsoncoors.com/search/?q=&locationsearch=US&sortColumn=referencedate&sortDirection=desc&locale=en_US",
       "talentUrl": "https://jobs.molsoncoors.com/",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -15059,7 +15059,7 @@
       "confidence": "high-medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-08",
+      "checkedAt": "2026-08-15",
       "enabled": true
     },
     {
@@ -27115,7 +27115,7 @@
       "officialUrl": "https://jobs.molsoncoors.com/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-08"
+      "checkedAt": "2026-08-15"
     },
     {
       "id": "talent-legacy-row-837",

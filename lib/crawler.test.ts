@@ -2343,6 +2343,44 @@ HUMAN RESOURCES Posted Date
     expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true, jobs: [] }));
   });
 
+  it("uses Molson Coors' official US SuccessFactors catalog and preserves its posted date", async () => {
+    const requests: string[] = [];
+    const row = (id: number, title: string, location: string, date: string) => `<tr class="data-row">
+      <td><a class="jobTitle-link" href="/job/${title.replaceAll(" ", "-")}/${id}/">${title}</a>
+        <span class="jobLocation">${location}</span><span class="jobDate">${date}</span></td>
+      <td><span class="jobDepartment">Operations</span></td></tr>`;
+    const result = await crawlSource({
+      id: "legacy-row-836",
+      company: "Molson Coors Beverage",
+      postingUrl: "https://www.molsoncoors.com/careers",
+      adapter: "custom",
+    }, async (input) => {
+      requests.push(String(input));
+      return new Response([
+        '<link href="https://rmkcdn.successfactors.com/theme.css">',
+        '<span class="paginationLabel">Results <b>1 – 2</b> of <b>2</b></span>',
+        row(1416323533, "Senior Internal Auditor", "Milwaukee, WI, US", "Aug 15, 2026"),
+        row(1416323999, "Brewing Specialist", "Toronto, ON, CA", "Aug 14, 2026"),
+      ].join(""));
+    }, new Date("2026-08-15T22:00:00Z"));
+
+    const listingUrl = "https://jobs.molsoncoors.com/search/?q=&locationsearch=US&sortColumn=referencedate&sortDirection=desc&locale=en_US";
+    expect(requests).toEqual([listingUrl]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: listingUrl,
+    }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        externalId: "1416323533",
+        title: "Senior Internal Auditor",
+        locationCountry: "United States",
+        publishedAt: "2026-08-15T07:00:00.000Z",
+      }),
+    ]);
+  });
+
   it("fully paginates a SuccessFactors HTML job search", async () => {
     const requests: string[] = [];
     const page = (start: number) => [

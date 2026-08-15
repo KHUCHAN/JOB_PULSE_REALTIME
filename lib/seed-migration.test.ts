@@ -190,6 +190,7 @@ describe("large catalog US scope migration", () => {
     const wayfairRefresh = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0103_snapshot.json"), "utf8"));
     const salesforceRefresh = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0104_snapshot.json"), "utf8"));
     const cincinnatiRefresh = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0105_snapshot.json"), "utf8"));
+    const molsonCoorsRefresh = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0106_snapshot.json"), "utf8"));
     const currentJournal = JSON.parse(readFileSync(resolve(drizzlePath, "meta/_journal.json"), "utf8"));
 
     expect(current.prevId).toBe(previous.id);
@@ -198,13 +199,14 @@ describe("large catalog US scope migration", () => {
     expect(wayfairRefresh.prevId).toBe(requeued.id);
     expect(salesforceRefresh.prevId).toBe(wayfairRefresh.id);
     expect(cincinnatiRefresh.prevId).toBe(salesforceRefresh.id);
+    expect(molsonCoorsRefresh.prevId).toBe(cincinnatiRefresh.id);
     expect(currentJournal.entries.find((entry: { tag: string }) => entry.tag === "0100_large_catalog_us_scope")).toMatchObject({
       idx: 100,
       tag: "0100_large_catalog_us_scope",
     });
     expect(currentJournal.entries.at(-1)).toMatchObject({
-      idx: 105,
-      tag: "0105_refresh_sources_20260815174022",
+      idx: 106,
+      tag: "0106_refresh_sources_20260815221250",
     });
   });
 

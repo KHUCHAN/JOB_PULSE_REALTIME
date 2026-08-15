@@ -125,6 +125,7 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
   "audit-row-369", // Hertz
   "audit-row-378", // JLL
   "legacy-row-128", // Wabtec
+  "legacy-row-836", // Molson Coors Beverage
   "legacy-row-837", // Mondelez
   "legacy-row-878", // Vertiv
   "p1-0003-ey",
@@ -374,6 +375,12 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
   },
   "legacy-row-815": {
     listingUrl: "https://talent.fmjobs.com/careers?domain=fcx.com&query=*",
+    adapter: "custom",
+  },
+  "legacy-row-836": {
+    // The corporate careers page redirects through a client-rendered shell.
+    // This first-party SAP listing is the stable, server-rendered US catalog.
+    listingUrl: "https://jobs.molsoncoors.com/search/?q=&locationsearch=US&sortColumn=referencedate&sortDirection=desc&locale=en_US",
     adapter: "custom",
   },
   "legacy-row-792": {
@@ -8468,6 +8475,7 @@ const successFactorsJobsFromHtml = (html: string, source: CrawlSource): CrawledJ
     const location = field("jobLocation");
     const department = field("jobDepartment") ?? field("jobFacility");
     const shiftSchedule = field("jobShifttype");
+    const postedText = field("jobDate");
     const locationParts = location?.split(",").map((value) => value.trim()).filter(Boolean) ?? [];
     const lastLocationPart = locationParts.at(-1) ?? "";
     const countryIndex = locationParts.length >= 4 && /\d/.test(lastLocationPart)
@@ -8501,7 +8509,8 @@ const successFactorsJobsFromHtml = (html: string, source: CrawlSource): CrawledJ
       ...(locationCountry ? { locationCountry } : {}),
       requisitionId: externalId,
       officialUrl: officialUrl.href,
-      publishedAt: null,
+      sourcePostedText: postedText,
+      publishedAt: normalizedDate(postedText),
     }];
   }));
 };
