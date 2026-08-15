@@ -203,6 +203,112 @@ const US_SCOPED_LARGE_CATALOGS = new Set([
   "p5-1041-rippling",
   "p5-1050-samsung-semiconductor",
   "p5-1109-western-digital",
+  // Additional catalogs with at least 1,000 live rows in the 2026-08-15
+  // production audit. Native ATS filters are used where available; otherwise
+  // only positively non-US rows are removed and mixed/unknown rows are kept.
+  "audit-row-305", // Advance Auto Parts
+  "audit-row-313", // Arthur J. Gallagher
+  "audit-row-317", // AutoZone
+  "audit-row-320", // BJ's Wholesale Club
+  "audit-row-322", // BrightSpring Health Services
+  "audit-row-324", // Caesars Entertainment
+  "audit-row-325", // CarMax
+  "audit-row-326", // Carrier Global
+  "audit-row-328", // CBRE Group
+  "audit-row-330", // Charter Communications
+  "audit-row-340", // DaVita
+  "audit-row-345", // Dollar General
+  "audit-row-346", // Dollar Tree
+  "audit-row-356", // Estee Lauder
+  "audit-row-361", // Genuine Parts
+  "audit-row-366", // GXO Logistics
+  "audit-row-377", // Jabil
+  "audit-row-382", // Kohl's
+  "audit-row-389", // Live Nation Entertainment
+  "audit-row-392", // Lululemon athletica
+  "audit-row-407", // O'Reilly Automotive
+  "audit-row-420", // Ross Stores
+  "audit-row-430", // Tractor Supply
+  "audit-row-433", // United Rentals
+  "audit-row-434", // Universal Health Services
+  "audit-row-437", // Waste Management
+  "legacy-row-74", // CACI International
+  "legacy-row-79", // Chipotle Mexican Grill
+  "legacy-row-81", // Cintas
+  "legacy-row-90", // Dick's Sporting Goods
+  "legacy-row-97", // GE Vernova
+  "legacy-row-116", // Quest Diagnostics
+  "legacy-row-124", // Ulta Beauty
+  "legacy-row-129", // Williams-Sonoma
+  "legacy-row-777", // Ace Hardware
+  "legacy-row-780", // Albertsons
+  "legacy-row-792", // Builders FirstSource
+  "legacy-row-797", // Concentrix
+  "legacy-row-805", // EMCOR Group
+  "legacy-row-818", // Global Partners
+  "legacy-row-833", // Macy's
+  "legacy-row-835", // MasTec
+  "legacy-row-849", // Performance Food Group
+  "legacy-row-865", // Sprouts Farmers Market
+  "legacy-row-879", // VF
+  "p2-0067-wells-fargo",
+  "p2-0098-discover",
+  "p4-0223-bae-systems",
+  "p4-0231-bny-mellon",
+  "p4-0263-edward-jones",
+  "p4-0273-fifth-third-bank",
+  "p4-0296-infosys-consulting",
+  "p4-0309-microsoft",
+  "p4-0328-pnc-financial-services",
+  "p4-0377-truist",
+  "p4-0378-u-s-bancorp",
+  "p4-0408-carvana",
+  "p4-0417-cyberark",
+  "p5-0530-aerojet-rocketdyne",
+  "p5-0551-at-t",
+  "p5-0554-bd",
+  "p5-0555-beckman-coulter",
+  "p5-0561-booz-allen-hamilton",
+  "p5-0581-comcast",
+  "p5-0582-commonspirit-health",
+  "p5-0594-essilorluxottica",
+  "p5-0603-general-dynamics-it",
+  "p5-0616-hca-healthcare",
+  "p5-0640-kaiser-permanente",
+  "p5-0647-l3harris",
+  "p5-0651-leidos",
+  "p5-0654-live-nation",
+  "p5-0656-lockheed-martin",
+  "p5-0743-t-mobile",
+  "p5-0746-tenet-healthcare",
+  "p5-0761-verizon",
+  "p5-0763-walmart",
+  "p5-0782-adventhealth",
+  "p5-0783-advocate-health",
+  "p5-0810-atrium-health",
+  "p5-0811-aurora-health-care",
+  "p5-0814-banner-health",
+  "p5-0828-blue-origin",
+  "p5-0830-bon-secours-mercy-health",
+  "p5-0855-cleveland-clinic",
+  "p5-0868-corning",
+  "p5-0869-costco",
+  "p5-0900-eyemed",
+  "p5-0912-geisinger-health",
+  "p5-0923-hackensack-meridian-health",
+  "p5-0948-intermountain-health",
+  "p5-0959-kroger",
+  "p5-0973-mass-general-brigham",
+  "p5-0975-mayo-clinic",
+  "p5-0988-mount-sinai-health-system",
+  "p5-1004-ochsner-health",
+  "p5-1048-sa-photonics",
+  "p5-1053-sentara-health",
+  "p5-1063-starbucks",
+  "p5-1073-target",
+  "p5-1079-the-home-depot",
+  "p5-1090-university-of-miami-health",
+  "p5-1091-upmc",
 ]);
 
 // These source pages render their ATS client-side (or challenge generic
@@ -12343,14 +12449,16 @@ async function crawlEightfold(source: CrawlSource, fetcher: typeof fetch): Promi
       const endpoint = new URL(mode === "pcsx" ? "/api/pcsx/search" : "/api/apply/v2/jobs", origin);
       endpoint.searchParams.set("start", String(start));
       if (mode === "pcsx") {
-        endpoint.searchParams.set("domain", domain);
-        endpoint.searchParams.set("query", "");
-        endpoint.searchParams.set("location", "");
+        // Eightfold applies this location value before counting and paging the
+        // catalog. For a configured high-volume source, use the first-party
+        // server filter so the checkpoint cycle covers the full US slice
+        // instead of a truncated global result set.
+        const location = source.regionScope === "us" ? "United States" : "";
         // Keep the parameter order aligned with the browser client.
         endpoint.searchParams.delete("start");
         endpoint.searchParams.set("domain", domain);
         endpoint.searchParams.set("query", "");
-        endpoint.searchParams.set("location", "");
+        endpoint.searchParams.set("location", location);
         endpoint.searchParams.set("start", String(start));
       } else {
         endpoint.searchParams.set("num", "10");

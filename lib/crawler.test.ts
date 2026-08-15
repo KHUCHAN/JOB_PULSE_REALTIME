@@ -2435,6 +2435,45 @@ Wrong description.
     expect(requests).toContain("https://acme.eightfold.ai/api/pcsx/search?domain=acme.com&query=&location=&start=10");
   });
 
+  it("requests the native United States slice for a configured large Eightfold catalog", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.href);
+      expect(url.searchParams.get("location")).toBe("United States");
+      const start = Number(url.searchParams.get("start"));
+      const count = start === 0 ? 10 : 1;
+      return Response.json({ data: {
+        count: 11,
+        positions: Array.from({ length: count }, (_, index) => ({
+          id: start + index + 1,
+          name: `US Engineer ${start + index + 1}`,
+          location: "Cleveland, OH, United States",
+          atsJobId: `REQ-${start + index + 1}`,
+          positionUrl: `/careers/job/${start + index + 1}`,
+        })),
+      } });
+    };
+
+    const result = await crawlSource({
+      id: "p5-0586-eaton",
+      company: "Eaton",
+      postingUrl: "https://eaton.eightfold.ai/careers?domain=eaton.com",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests).toEqual([
+      "https://eaton.eightfold.ai/api/pcsx/search?domain=eaton.com&query=&location=United+States&start=0",
+      "https://eaton.eightfold.ai/api/pcsx/search?domain=eaton.com&query=&location=United+States&start=10",
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+    }));
+    expect(result.jobs).toHaveLength(11);
+    expect(result.jobs.every((job) => job.location?.includes("United States"))).toBe(true);
+  });
+
   it("routes PayPal's corporate careers home to its official Eightfold job feed", async () => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input) => {

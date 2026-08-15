@@ -145,3 +145,52 @@ describe("tech job area and region migration", () => {
     });
   });
 });
+
+describe("large catalog US scope migration", () => {
+  const drizzlePath = resolve(process.cwd(), "drizzle");
+
+  it("resets old page cursors and schedules every newly scoped source", () => {
+    const sql = readFileSync(resolve(drizzlePath, "0100_large_catalog_us_scope.sql"), "utf8");
+    const sourceIds = JSON.parse(sql.match(/json_each\('(\[[^']+\])'\)/)?.[1] ?? "[]") as string[];
+
+    expect(sourceIds).toHaveLength(103);
+    expect(new Set(sourceIds).size).toBe(103);
+    expect(sql).toContain("DELETE FROM catalog_state");
+    expect(sql).toContain("'crawl_page_checkpoint:' || value");
+    expect(sql).toContain("UPDATE sources SET next_crawl_at = CURRENT_TIMESTAMP");
+    expect(sql).toContain("'crawler_scope_policy', 'large-us-v2'");
+  });
+
+  it("applies cleanly and leaves unrelated checkpoints untouched", async () => {
+    const { DatabaseSync } = await import("node:sqlite");
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec(`
+      CREATE TABLE catalog_state (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT);
+      CREATE TABLE sources (id TEXT PRIMARY KEY, next_crawl_at TEXT, updated_at TEXT);
+      INSERT INTO sources (id, next_crawl_at) VALUES
+        ('p5-0586-eaton', '2099-01-01T00:00:00.000Z'),
+        ('p5-0656-lockheed-martin', '2099-01-01T00:00:00.000Z');
+      INSERT INTO catalog_state (key, value) VALUES
+        ('crawl_page_checkpoint:p5-0586-eaton', '{}'),
+        ('crawl_page_checkpoint:p5-0656-lockheed-martin', '{}');
+    `);
+    sqlite.exec(readFileSync(resolve(drizzlePath, "0100_large_catalog_us_scope.sql"), "utf8"));
+
+    expect(sqlite.prepare("SELECT count(*) AS count FROM catalog_state WHERE key = 'crawl_page_checkpoint:p5-0586-eaton'").get()).toEqual({ count: 1 });
+    expect(sqlite.prepare("SELECT count(*) AS count FROM catalog_state WHERE key = 'crawl_page_checkpoint:p5-0656-lockheed-martin'").get()).toEqual({ count: 0 });
+    expect(sqlite.prepare("SELECT next_crawl_at < '2099' AS due FROM sources WHERE id = 'p5-0656-lockheed-martin'").get()).toEqual({ due: 1 });
+    expect(sqlite.prepare("SELECT value FROM catalog_state WHERE key = 'crawler_scope_policy'").get()).toEqual({ value: "large-us-v2" });
+  });
+
+  it("chains the immutable snapshot and journal after migration 0099", () => {
+    const previous = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0099_snapshot.json"), "utf8"));
+    const current = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0100_snapshot.json"), "utf8"));
+    const currentJournal = JSON.parse(readFileSync(resolve(drizzlePath, "meta/_journal.json"), "utf8"));
+
+    expect(current.prevId).toBe(previous.id);
+    expect(currentJournal.entries.at(-1)).toMatchObject({
+      idx: 100,
+      tag: "0100_large_catalog_us_scope",
+    });
+  });
+});
