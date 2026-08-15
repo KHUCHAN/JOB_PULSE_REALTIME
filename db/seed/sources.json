@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:7f716d2f87e863cdd0925967f713c99c86a6f8db2dda88f039172a07a1d6bf91",
+  "version": "v2:sha256:23d59be71388ff8315a062f7d19a25a403b36e05adcea418a475c02e2bc6dae2",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -3531,10 +3531,10 @@
       "id": "p5-0890-emory-healthcare",
       "masterRow": 452,
       "company": "Emory Healthcare",
-      "postingUrl": "https://www.emoryhealthcare.org/careers",
+      "postingUrl": "https://ehccareers-emory.icims.com/jobs/search?ss=1&searchRelation=keyword_all",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
-      "adapter": "workday",
+      "adapter": "icims",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",

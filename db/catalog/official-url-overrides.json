@@ -43,6 +43,7 @@
     "audit-row-358": { "url": "https://jobs.exeloncorp.com/jobs?page=1", "adapter": "custom" },
     "p4-0432-flashpoint": { "url": "https://jobs.ashbyhq.com/flashpoint.io", "adapter": "ashby" },
     "p5-0909-foundation-medicine": { "url": "https://careers.foundationmedicine.com/jobs/search", "adapter": "custom" },
+    "p5-0890-emory-healthcare": { "url": "https://ehccareers-emory.icims.com/jobs/search?ss=1&searchRelation=keyword_all", "adapter": "icims" },
     "p5-0611-grammarly": { "url": "https://jobs.ashbyhq.com/Superhuman%20Platform%20Inc", "adapter": "ashby" },
     "legacy-row-611": { "url": "https://jobs.ashbyhq.com/Superhuman%20Platform%20Inc", "adapter": "ashby" },
     "p5-0919-greenway-health": { "url": "https://recruit.hirebridge.com/v3/CareerCenter/v2/?cid=6709", "adapter": "custom" },
