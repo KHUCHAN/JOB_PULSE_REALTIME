@@ -3308,6 +3308,39 @@ Wrong description.
     expect(requests).toContain("https://r.jina.ai/https://careers.acme.example/search/jobs.json?per_page=100&page=2");
   });
 
+  it("retries the first Talemetry reader page of a resumed checkpoint", async () => {
+    let resumedPageAttempts = 0;
+    const entries = (page: number) => Array.from({ length: 100 }, (_, index) => ({
+      id: String((page - 1) * 100 + index + 1),
+      talemetry_job_id: String((page - 1) * 100 + index + 1),
+      permalink: `role-${(page - 1) * 100 + index + 1}`,
+      title: `Role ${(page - 1) * 100 + index + 1}`,
+    }));
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (!url.startsWith("https://r.jina.ai/")) return new Response("blocked", { status: 403 });
+      const endpoint = new URL(url.slice("https://r.jina.ai/".length));
+      const page = Number(endpoint.searchParams.get("page") ?? 1);
+      if (page === 2 && resumedPageAttempts++ === 0) {
+        return new Response("rate limited", { status: 429, headers: { "retry-after": "0" } });
+      }
+      return Response.json({ current_page: page, per_page: 100, total_entries: 200, entries: entries(page) });
+    };
+
+    const result = await crawlSource({
+      id: "talemetry-resumed", company: "Acme",
+      postingUrl: "https://careers.acme.example/search/jobs", adapter: "custom",
+      crawlPageCursor: 2,
+    }, fetcher, new Date());
+
+    expect(resumedPageAttempts).toBe(2);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: false,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 2 },
+    }));
+    expect(result.jobs).toHaveLength(100);
+  });
+
   it("supports Talemetry catalogs whose public route is jobs/search", async () => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input) => {

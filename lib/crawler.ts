@@ -4391,14 +4391,29 @@ const crawlTalemetryJson = async (
   const startPage = requestedStart <= totalPages ? requestedStart : 1;
   // The outer careers request, one direct capability probe and a possible
   // first-page reader retry leave room for 46 reader pages without crossing
-  // the 50-request source ceiling. Later cursor windows also reserve the
-  // page-one metadata probe, so they carry at most 45 new pages.
-  const maxTargetPages = startPage === 1 ? 46 : 45;
+  // the 50-request source ceiling. A resumed window also retries its first
+  // target page so one cold/slow reader response cannot strand the cursor;
+  // reserve both attempts and carry at most 44 target pages in that case.
+  const maxTargetPages = startPage === 1 ? 46 : 44;
   const endPage = Math.min(totalPages, startPage + maxTargetPages - 1);
   const pageNumbers = Array.from({ length: endPage - startPage + 1 }, (_, index) => startPage + index);
   const pages = new Map<number, TalemetryPayload | null>();
   if (startPage === 1) pages.set(1, first);
-  const pagesToFetch = pageNumbers.filter((page) => page !== 1);
+  else {
+    const resumedFirst = await fetchPage(startPage, true);
+    pages.set(startPage, resumedFirst);
+    if (!resumedFirst) {
+      return {
+        status: "failed",
+        responseStatus: 200,
+        completeListing: false,
+        jobs: [],
+        pagination: { nextPage: startPage, cycleComplete: false, totalPages },
+        error: "Talemetry returned no consecutive usable catalog pages.",
+      };
+    }
+  }
+  const pagesToFetch = pageNumbers.filter((page) => page !== 1 && page !== startPage);
   for (let index = 0; index < pagesToFetch.length; index += 4) {
     const batch = pagesToFetch.slice(index, index + 4);
     const fetched = await Promise.all(batch.map((page) => fetchPage(page)));
