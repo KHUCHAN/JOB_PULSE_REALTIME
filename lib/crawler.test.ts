@@ -5586,6 +5586,27 @@ Wrong description.
     }));
   });
 
+  it("classifies a 200 HTML Workday interstitial as blocked without leaking its body", async () => {
+    const result = await crawlSource({
+      id: "blocked-workday",
+      company: "Acme",
+      postingUrl: "https://acme.wd5.myworkdayjobs.com/Careers",
+      adapter: "workday",
+    }, async () => new Response("<!DOCTYPE html><title>Challenge</title><p>sensitive marker</p>", {
+      status: 200,
+      headers: { "content-type": "text/html" },
+    }), new Date("2026-08-15T12:30:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "blocked",
+      responseStatus: 200,
+      completeListing: false,
+      jobs: [],
+      error: "Workday returned an HTML interstitial instead of its public JSON catalog.",
+    }));
+    expect(result.error).not.toContain("sensitive marker");
+  });
+
   it("combines Houlihan Lokey's three official Workday catalogs", async () => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input) => {

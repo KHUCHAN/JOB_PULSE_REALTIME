@@ -13249,7 +13249,18 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
       if (!response.ok) {
         throw Object.assign(new Error(`Workday returned HTTP ${response.status}.`), { responseStatus: response.status });
       }
-      return { status: response.status, payload: await response.json() as WorkdayPayload };
+      const text = await response.text();
+      try {
+        return { status: response.status, payload: JSON.parse(text) as WorkdayPayload };
+      } catch {
+        const htmlInterstitial = /^\s*</.test(text);
+        throw Object.assign(new Error(htmlInterstitial
+          ? "Workday returned an HTML interstitial instead of its public JSON catalog."
+          : "Workday returned malformed public catalog JSON."), {
+          responseStatus: response.status,
+          blockedInterstitial: htmlInterstitial,
+        });
+      }
     };
 
     let activeFacets: Record<string, string[]> = {};
@@ -13459,8 +13470,11 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
     const responseStatus = typeof error === "object" && error && "responseStatus" in error
       ? Number((error as { responseStatus: unknown }).responseStatus)
       : null;
+    const blockedInterstitial = typeof error === "object" && error
+      && "blockedInterstitial" in error
+      && (error as { blockedInterstitial: unknown }).blockedInterstitial === true;
     return {
-      status: responseStatus != null && isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+      status: blockedInterstitial || (responseStatus != null && isBlockedHttpStatus(responseStatus)) ? "blocked" : "failed",
       responseStatus,
       completeListing: false,
       jobs: [],
