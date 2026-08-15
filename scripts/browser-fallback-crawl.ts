@@ -9,7 +9,7 @@ import catalogSeed from "../db/seed/sources.json" with { type: "json" };
 import { classifyJobAreas, jobAreaClassificationMarker } from "../lib/job-area-classifier.ts";
 import { classifyJobRegion } from "../lib/job-region-classifier.ts";
 import { jobsFromBrowserAnchors, type BrowserAnchor } from "../lib/browser-job-extractor.ts";
-import { needsBrowserFallback, type LatestCrawlSummary } from "../lib/browser-fallback-selection.ts";
+import { browserRecoveryDue, needsBrowserFallback, type LatestCrawlSummary } from "../lib/browser-fallback-selection.ts";
 import { numericPaginationTargets } from "../lib/browser-pagination.ts";
 import { anchorsFromHtml, extractJobsFromHtml, jobsFromTeslaState, type CrawledFacet, type CrawledJob, type CrawlSource, type TeslaState } from "../lib/crawler.ts";
 import { careerCandidates, isSafeCareerListingUrl } from "../lib/url-remediation.ts";
@@ -114,9 +114,7 @@ const problemSources = async (): Promise<CrawlSource[]> => {
     };
     return sources
       .map((source) => ({ ...source, candidateUrl: candidateUrl(source) }))
-      .filter((source) => source.candidateUrl && (source.health === "failed" || source.health === "blocked"
-        || source.health === "inactive" || (source.health === "healthy" && source.currentJobs === 0))
-        && (!source.nextRunAt || !Number.isFinite(Date.parse(source.nextRunAt)) || Date.parse(source.nextRunAt) <= Date.now()))
+      .filter((source) => source.candidateUrl && browserRecoveryDue(source))
       .sort((left, right) => healthRank(left) - healthRank(right)
         || Date.parse(left.lastCheckedAt ?? "1970-01-01") - Date.parse(right.lastCheckedAt ?? "1970-01-01")
         || left.company.localeCompare(right.company))
