@@ -314,6 +314,7 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
   "p5-0814-banner-health",
   "p5-0828-blue-origin",
   "p5-0830-bon-secours-mercy-health",
+  "p5-0849-christus-health",
   "p5-0855-cleveland-clinic",
   "p5-0868-corning",
   "p5-0869-costco",
@@ -325,6 +326,7 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
   "p5-0973-mass-general-brigham",
   "p5-0975-mayo-clinic",
   "p5-0988-mount-sinai-health-system",
+  "p5-0996-northwell-health",
   "p5-1004-ochsner-health",
   "p5-1048-sa-photonics",
   "p5-1053-sentara-health",
@@ -333,6 +335,8 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
   "p5-1079-the-home-depot",
   "p5-1090-university-of-miami-health",
   "p5-1091-upmc",
+  "p5-0687-northrop-grumman",
+  "legacy-row-100", // Humana
 ]);
 
 // These source pages render their ATS client-side (or challenge generic
@@ -4558,6 +4562,184 @@ const crawlClarotyCareers = async (source: CrawlSource, fetcher: typeof fetch): 
       completeListing: false,
       jobs: [],
       error: error instanceof Error ? error.message : "Unknown Claroty careers crawler error.",
+    };
+  }
+};
+
+type CamtekListingPosition = {
+  uid: string;
+  title: string;
+  department: string | null;
+  location: string;
+  officialUrl: string;
+};
+
+const CAMTEK_LISTING_URL = "https://www.camtek.com/careers/open-positions/";
+
+const camtekListingPositions = (html: string): CamtekListingPosition[] | null => {
+  if (!/<div\b[^>]*class=["'][^"']*\bcareers-list\b[^"']*["'][^>]*\bid=["']list["']/i.test(html)
+    || !/<div\b[^>]*class=["'][^"']*\bbanner-image\b/i.test(html)) return null;
+  const advertisedCards = [...html.matchAll(
+    /<div\b[^>]*class=["'][^"']*\bitem\b[^"']*["'][^>]*>/gi,
+  )].length;
+  const cards = [...html.matchAll(
+    /<div\b[^>]*class=["'][^"']*\bitem\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/gi,
+  )].map((match) => match[1]);
+  if (advertisedCards === 0 || cards.length !== advertisedCards) return null;
+
+  const positions: CamtekListingPosition[] = [];
+  let generalApplicationUid: string | null = null;
+  for (const card of cards) {
+    const title = icimsText(card.match(
+      /<h3\b[^>]*class=["'][^"']*\btitle\b[^"']*["'][^>]*>([\s\S]*?)<\/h3>/i,
+    )?.[1]);
+    const department = icimsText(card.match(
+      /<p\b[^>]*class=["'][^"']*\bdepartment\b[^"']*["'][^>]*>([\s\S]*?)<\/p>/i,
+    )?.[1]);
+    const location = icimsText(card.match(
+      /<p\b[^>]*class=["'][^"']*\blocation\b[^"']*["'][^>]*>([\s\S]*?)<\/p>/i,
+    )?.[1]);
+    const href = decodeHtmlAttribute(card.match(
+      /<a\b[^>]*class=["'][^"']*\bbtn\b[^"']*["'][^>]*href=["']([^"']+)["']/i,
+    )?.[1] ?? "");
+    if (!title || !href) return null;
+    let officialUrl: URL;
+    try {
+      officialUrl = new URL(href);
+    } catch {
+      return null;
+    }
+    const identity = officialUrl.pathname.match(/^\/careers\/open-positions\/([A-Z0-9]{2}\.[A-Z0-9]{3})\/$/i)?.[1]?.toLocaleUpperCase();
+    if (!identity || officialUrl.origin !== "https://www.camtek.com" || officialUrl.search || officialUrl.hash) return null;
+    if (/^didn['’]t find a suitable position\??$/i.test(title)) {
+      if (generalApplicationUid && generalApplicationUid !== identity) return null;
+      generalApplicationUid = identity;
+      continue;
+    }
+    if (!location) return null;
+    positions.push({ uid: identity, title, department, location, officialUrl: officialUrl.href });
+  }
+  if (!generalApplicationUid || positions.length === 0
+    || new Set(positions.map(({ uid }) => uid)).size !== positions.length
+    || new Set(positions.map(({ officialUrl }) => officialUrl)).size !== positions.length) return null;
+  return positions;
+};
+
+const camtekCountry = (location: string): string | null => {
+  if (/\bmigdal ha(?:e|')mek\b/i.test(location)) return "Israel";
+  if (/\b(?:r[oö]srath|bergisch gladbach)\b/i.test(location)) return "Germany";
+  return null;
+};
+
+const camtekDetailJob = (
+  html: string,
+  position: CamtekListingPosition,
+  source: CrawlSource,
+): CrawledJob | null => {
+  const canonical = decodeHtmlAttribute(html.match(
+    /<link\b[^>]*rel=["']canonical["'][^>]*href=["']([^"']+)["']/i,
+  )?.[1] ?? "");
+  const title = icimsText(html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i)?.[1]);
+  const metaHtml = html.match(
+    /<ul\b[^>]*class=["'][^"']*\bmeta\b[^"']*["'][^>]*>([\s\S]*?)<\/ul>/i,
+  )?.[1];
+  const meta = [...(metaHtml ?? "").matchAll(/<li\b[^>]*>([\s\S]*?)<\/li>/gi)]
+    .map((match) => icimsText(match[1]));
+  const detailsHtml = html.match(
+    /<div\b[^>]*class=["'][^"']*\bcareer-text\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/i,
+  )?.[1];
+  const description = icimsText(detailsHtml);
+  const applyUid = html.match(
+    /<script\b[^>]*type=["']comeet-applyform["'][^>]*data-position-uid=["']([^"']+)["'][^>]*>/i,
+  )?.[1]?.toLocaleUpperCase();
+  if (!canonical || canonical !== position.officialUrl || !title
+    || jobIdentityText(title) !== jobIdentityText(position.title)
+    || meta.length !== 3 || meta[0] !== position.department || meta[1] !== position.location
+    || !description || applyUid !== position.uid) return null;
+  const programs = classifyJobPrograms(title).keys;
+  const country = camtekCountry(position.location);
+  const modifiedAt = normalizedDate(html.match(
+    /<meta\b[^>]*property=["']article:modified_time["'][^>]*content=["']([^"']+)["']/i,
+  )?.[1]);
+  const responsibilities = icimsText(detailsHtml?.match(
+    /<(?:p|h[1-6])\b[^>]*>\s*(?:<strong\b[^>]*>)?\s*(?:key\s+)?responsibilities\b[\s\S]*?<\/(?:p|h[1-6])>([\s\S]*?)(?=<h[1-6]\b[^>]*>\s*(?:<strong\b[^>]*>)?\s*(?:requirements|qualifications)\b|$)/i,
+  )?.[1]);
+  const qualifications = icimsText(detailsHtml?.match(
+    /<h[1-6]\b[^>]*>\s*(?:<strong\b[^>]*>)?\s*(?:requirements|qualifications)\b[\s\S]*?<\/h[1-6]>([\s\S]*)$/i,
+  )?.[1]);
+  return {
+    externalId: position.uid,
+    title,
+    company: source.company,
+    location: position.location,
+    arrangement: /\bremote\b/i.test(`${position.location} ${meta[2] ?? ""}`) ? "remote" : "onsite",
+    employmentType: programs.includes("coop")
+      ? "Co-op"
+      : programs.includes("internship") ? "Internship" : normalizeEmploymentType(meta[2]) ?? meta[2] ?? null,
+    summary: description,
+    description,
+    ...(responsibilities ? { responsibilities } : {}),
+    ...(qualifications ? { qualifications } : {}),
+    ...(position.department ? { department: position.department, jobFunction: position.department } : {}),
+    ...(country ? { locationCountry: country } : {}),
+    requisitionId: position.uid,
+    applyUrl: `${position.officialUrl}#apply`,
+    ...(modifiedAt ? { sourceUpdatedAt: modifiedAt } : {}),
+    rawPayload: { comeetUid: position.uid },
+    officialUrl: position.officialUrl,
+    publishedAt: null,
+  };
+};
+
+const crawlCamtekCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  let failureStatus: number | null = null;
+  try {
+    const listingResponse = await fetchWithTimeout(fetcher, CAMTEK_LISTING_URL, {
+      headers: { accept: "text/html", referer: "https://www.camtek.com/careers/" },
+    }, true, { attempts: 1, timeoutMs: 10_000 });
+    responseStatus = listingResponse.status;
+    if (!listingResponse.ok) {
+      failureStatus = listingResponse.status;
+      throw new Error(`Camtek careers returned HTTP ${listingResponse.status}.`);
+    }
+    const positions = camtekListingPositions(await listingResponse.text());
+    if (!positions || positions.length > 48) throw new Error("Camtek careers returned an empty or malformed catalog.");
+
+    const jobs: CrawledJob[] = [];
+    for (let index = 0; index < positions.length; index += 6) {
+      const results = await Promise.all(positions.slice(index, index + 6).map(async (position) => {
+        try {
+          const response = await fetchWithTimeout(fetcher, position.officialUrl, {
+            headers: { accept: "text/html", referer: CAMTEK_LISTING_URL },
+          }, true, { attempts: 1, timeoutMs: 8_000 });
+          if (!response.ok || (response.url && response.url !== position.officialUrl)) {
+            failureStatus ??= response.status;
+            return null;
+          }
+          return camtekDetailJob(await response.text(), position, source);
+        } catch {
+          return null;
+        }
+      }));
+      jobs.push(...results.filter((job): job is CrawledJob => job !== null));
+    }
+    if (jobs.length !== positions.length) throw new Error("Camtek position details were incomplete or inconsistent.");
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: true,
+      jobs,
+      resolvedListingUrl: CAMTEK_LISTING_URL,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: isBlockedHttpStatus(failureStatus ?? responseStatus) ? "blocked" : "failed",
+      responseStatus: failureStatus ?? responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Camtek careers crawler error.",
     };
   }
 };
@@ -17068,6 +17250,9 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p4-0412-claroty") {
     return crawlClarotyCareers(source, fetcher);
+  }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-0840-camtek") {
+    return crawlCamtekCareers(source, fetcher);
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-1104-wayfair") {
     return crawlWayfairCareers(source, fetcher);

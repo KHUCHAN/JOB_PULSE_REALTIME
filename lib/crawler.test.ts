@@ -26,6 +26,15 @@ describe("large catalog content", () => {
     expect((compactJibeContent as (value: string, compact: boolean) => unknown)("x".repeat(5_000), true)).toEqual({ summary: "x".repeat(100) });
     expect((compactJibeContent as (value: string, compact: boolean) => unknown)("Full description", false)).toEqual({ summary: "Full description", description: "Full description" });
   });
+
+  it("US-scopes every production catalog currently above one thousand jobs", () => {
+    expect([...crawlerModule.US_SCOPED_LARGE_CATALOGS]).toEqual(expect.arrayContaining([
+      "p5-0849-christus-health",
+      "p5-0996-northwell-health",
+      "legacy-row-100",
+      "p5-0687-northrop-grumman",
+    ]));
+  });
 });
 
 describe("crawlSource", () => {
@@ -11622,6 +11631,96 @@ HUMAN RESOURCES Posted Date
       completeListing: false,
       jobs: [],
       error: "Claroty position details were incomplete or inconsistent.",
+    }));
+  });
+
+  it("collects Camtek's complete official catalog while excluding its general application form", async () => {
+    const listingUrl = "https://www.camtek.com/careers/open-positions/";
+    const positions = [
+      { uid: "CD.658", title: "AI SW Infrastructure Engineer", department: "R&D", location: "Migdal Haemek" },
+      { uid: "7E.F51", title: "Materialdisponent (m/w/d)", department: "", location: "Rösrath" },
+    ];
+    const card = (position: typeof positions[number]) => `<div class="item read-more-click show">
+      <h3 class="title">${position.title}</h3><p class="department">${position.department}</p>
+      <p class="location">${position.location}</p>
+      <a class="btn green-btn" href="${listingUrl}${position.uid}/">Read More &gt;</a></div>`;
+    const listing = `<div class="careers-list" id="list">${positions.map(card).join("")}
+      <div class="item read-more-click show"><h3 class="title">Didn't find a suitable position?</h3>
+      <p class="department"></p><p class="location"></p>
+      <a class="btn green-btn" href="${listingUrl}C4.317/">Read More &gt;</a></div></div>
+      <div class="banner-image"></div>`;
+    const detail = (position: typeof positions[number]) => `
+      <link rel="canonical" href="${listingUrl}${position.uid}/" />
+      <meta property="article:modified_time" content="2026-08-14T05:51:54+00:00" />
+      <h1>${position.title}</h1><ul class="meta"><li>${position.department}</li><li>${position.location}</li><li>Full-time</li></ul>
+      <div class="career-text"><h2>Description</h2><p>${position.title} builds production systems.</p>
+      <p><strong>Key Responsibilities</strong></p><ul><li>Develop reliable software.</li></ul>
+      <h2>Requirements</h2><ul><li>Engineering experience.</li></ul></div>
+      <script type="comeet-applyform" data-position-uid="${position.uid}"></script>`;
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p5-0840-camtek",
+      company: "Camtek",
+      postingUrl: "https://www.camtek.com/careers/open-positions/",
+      adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === listingUrl) return new Response(listing);
+      const position = positions.find((candidate) => url === `${listingUrl}${candidate.uid}/`);
+      return position ? new Response(detail(position)) : new Response("missing", { status: 404 });
+    }, new Date("2026-08-15T16:00:00Z"));
+
+    expect(requests).toEqual([listingUrl, `${listingUrl}CD.658/`, `${listingUrl}7E.F51/`]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      responseStatus: 200,
+      completeListing: true,
+      resolvedListingUrl: listingUrl,
+      error: null,
+    }));
+    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "CD.658",
+      requisitionId: "CD.658",
+      title: "AI SW Infrastructure Engineer",
+      department: "R&D",
+      location: "Migdal Haemek",
+      locationCountry: "Israel",
+      arrangement: "onsite",
+      employmentType: "Full-time",
+      responsibilities: "Develop reliable software.",
+      qualifications: "Engineering experience.",
+      sourceUpdatedAt: "2026-08-14T05:51:54.000Z",
+      officialUrl: `${listingUrl}CD.658/`,
+      applyUrl: `${listingUrl}CD.658/#apply`,
+    }));
+    expect(result.jobs[1]).toEqual(expect.objectContaining({
+      externalId: "7E.F51",
+      locationCountry: "Germany",
+      employmentType: "Full-time",
+    }));
+    expect(result.jobs.some((job) => job.externalId === "C4.317")).toBe(false);
+  });
+
+  it("fails Camtek closed when a detail identity is incomplete", async () => {
+    const listingUrl = "https://www.camtek.com/careers/open-positions/";
+    const listing = `<div class="careers-list" id="list">
+      <div class="item"><h3 class="title">AI Engineer</h3><p class="department">R&amp;D</p><p class="location">Migdal Haemek</p>
+      <a class="btn" href="${listingUrl}CD.658/">Read More</a></div>
+      <div class="item"><h3 class="title">Didn't find a suitable position?</h3><p class="department"></p><p class="location"></p>
+      <a class="btn" href="${listingUrl}C4.317/">Read More</a></div></div><div class="banner-image"></div>`;
+    const result = await crawlSource({
+      id: "p5-0840-camtek", company: "Camtek", postingUrl: listingUrl, adapter: "custom",
+    }, async (input) => String(input) === listingUrl
+      ? new Response(listing)
+      : new Response(`<link rel="canonical" href="${listingUrl}CD.658/"><h1>Wrong title</h1>`), new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed",
+      completeListing: false,
+      jobs: [],
+      error: "Camtek position details were incomplete or inconsistent.",
     }));
   });
 
