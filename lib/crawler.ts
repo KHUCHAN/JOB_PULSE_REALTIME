@@ -405,6 +405,10 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
     listingUrl: "https://careers.hcltech.com/search/?locale=en_US",
     adapter: "custom",
   },
+  "p4-0329-point-b": {
+    listingUrl: "https://careers.pointb.com/job-search-results/",
+    adapter: "custom",
+  },
   "legacy-row-103": { listingUrl: "https://careers.jetblue.com/search/?q=&locationsearch=&sortColumn=referencedate&sortDirection=desc", adapter: "custom" },
   "legacy-row-110": { listingUrl: "https://jobs.nscorp.com/search/?q=&locationsearch=&sortColumn=referencedate&sortDirection=desc", adapter: "custom" },
   "legacy-row-114": { listingUrl: "https://jobs.pseg.com/search/?q=&locationsearch=&sortColumn=referencedate&sortDirection=desc", adapter: "custom" },

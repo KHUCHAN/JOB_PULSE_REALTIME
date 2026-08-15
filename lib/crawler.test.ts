@@ -9252,6 +9252,52 @@ HUMAN RESOURCES Posted Date
     expect(offsets.sort((a, b) => a - b)).toEqual([0, 0, 100, 200]);
   });
 
+  it("bypasses Point B's intermittent corporate landing page and uses its verified careers catalog", async () => {
+    const requests: string[] = [];
+    const listingUrl = "https://careers.pointb.com/job-search-results/";
+    const result = await crawlSource({
+      id: "p4-0329-point-b",
+      company: "Point B",
+      postingUrl: "https://www.pointb.com/careers",
+      adapter: "custom",
+    }, async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.href);
+      if (url.href === listingUrl) return new Response(`
+        <script>CWS.jobs.set_api("https://jobsapi-google.m-cloud.io/api/"); CWS.jobs.set_options({
+          org_id: "companies/d93dc72e-c873-4787-93c1-ee61a1ae8002", filters: []
+        });</script>
+      `);
+      expect(url.origin + url.pathname).toBe("https://jobsapi-google.m-cloud.io/api/job/search");
+      expect(url.searchParams.get("companyName")).toBe("companies/d93dc72e-c873-4787-93c1-ee61a1ae8002");
+      return Response.json({
+        totalHits: 1,
+        searchResults: [{ job: {
+          id: "23609607",
+          ref: "23609607",
+          title: "Associate, AI & Process Automation",
+          primary_city: "Chicago",
+          primary_state: "IL",
+          primary_country: "US",
+          url: "https://careers.pointb.com/job/23609607/associate-ai-process-automation-chicago-il/",
+        } }],
+      });
+    }, new Date("2026-08-15T18:00:00Z"));
+
+    expect(requests[0]).toBe(listingUrl);
+    expect(requests).not.toContain("https://www.pointb.com/careers");
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: listingUrl,
+      jobs: [expect.objectContaining({
+        externalId: "23609607",
+        title: "Associate, AI & Process Automation",
+        locationCountry: "US",
+      })],
+    }));
+  });
+
   it("caps a Vanguard catalog above 500 jobs without falsely closing unseen jobs", async () => {
     let requests = 0;
     const fetcher: typeof fetch = async (input) => {
