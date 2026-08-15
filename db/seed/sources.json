@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:0b13a537d0ff4a03e5d92d724b627245b85520efc1528d4977ba4fdc44302eb1",
+  "version": "v2:sha256:7bf5309da11cc8a868b0702bddf5d3ecb8f184cd223335e67d33eacfc39221eb",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -5271,7 +5271,7 @@
       "id": "p4-0214-alvarez-marsal",
       "masterRow": 1306,
       "company": "Alvarez & Marsal",
-      "postingUrl": "https://careers.alvarezandmarsal.com/search/jobs",
+      "postingUrl": "https://careers.alvarezandmarsal.com/en/search/jobs/in/country/united-states",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
       "adapter": "custom",

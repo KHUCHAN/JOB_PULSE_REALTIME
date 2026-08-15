@@ -124,7 +124,7 @@
     "audit-row-390": { "url": "https://www.jobs.lkqcorp.com/", "adapter": "custom" },
     "audit-row-393": { "url": "https://www.manpowergroup.com/careers", "adapter": "custom" },
     "p5-0660-masimo": { "url": "https://egcu.fa.us6.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/", "adapter": "custom" },
-    "p4-0214-alvarez-marsal": { "url": "https://careers.alvarezandmarsal.com/search/jobs", "adapter": "custom" },
+    "p4-0214-alvarez-marsal": { "url": "https://careers.alvarezandmarsal.com/en/search/jobs/in/country/united-states", "adapter": "custom" },
     "p4-0298-j-s-held": { "url": "https://careers.smartrecruiters.com/JSHeldLLC", "adapter": "smartrecruiters" },
     "p4-0308-meta": { "url": "https://www.metacareers.com/jobsearch/", "adapter": "custom" },
     "p5-0667-meta-fair": { "url": "https://www.metacareers.com/jobsearch/", "adapter": "custom" },

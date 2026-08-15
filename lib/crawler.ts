@@ -120,6 +120,7 @@ const US_SCOPED_LARGE_CATALOGS = new Set([
   "p2-0050-morgan-stanley",
   "p2-0064-unitedhealth-group",
   "p4-0208-accenture",
+  "p4-0214-alvarez-marsal",
   "p4-0225-barclays-us",
   "p4-0245-cisco",
   "p4-0285-google",
@@ -207,6 +208,10 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
   },
   "p4-0209-aci-worldwide": {
     listingUrl: "https://ebwg.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/jobs",
+    adapter: "custom",
+  },
+  "p4-0214-alvarez-marsal": {
+    listingUrl: "https://careers.alvarezandmarsal.com/en/search/jobs/in/country/united-states",
     adapter: "custom",
   },
   "p4-0289-hcltech": {
@@ -4348,10 +4353,16 @@ const crawlTalemetryJson = async (
   fetcher: typeof fetch,
 ): Promise<SourceCrawlResult | null> => {
   const posting = new URL(source.postingUrl);
-  const route = posting.pathname.match(/\/(search\/jobs|jobs\/search)\/?$/i)?.[1];
-  if (!route) return null;
+  // Talemetry exposes the same JSON catalog behind its public route, including
+  // official locale and country-filtered variants. Retain the full validated
+  // path so a large multinational source can be pinned to its first-party US
+  // catalog instead of downloading the global feed and discarding it later.
+  const catalogPath = posting.pathname.match(
+    /^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?(?:search\/jobs|jobs\/search)(?:\/in\/country\/[a-z0-9-]+)?\/?$/i,
+  )?.[0].replace(/\/$/, "");
+  if (!catalogPath) return null;
   const endpointFor = (page: number) => {
-    const endpoint = new URL(`/${route}.json`, posting.origin);
+    const endpoint = new URL(`${catalogPath}.json`, posting.origin);
     endpoint.searchParams.set("per_page", "100");
     endpoint.searchParams.set("page", String(page));
     return endpoint;

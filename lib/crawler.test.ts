@@ -3367,6 +3367,57 @@ Wrong description.
     expect(requests).toContain("https://r.jina.ai/https://carefirstcareers.ttcportals.com/jobs/search.json?per_page=100&page=1");
   });
 
+  it("pins Alvarez & Marsal to its official US-only Talemetry catalog", async () => {
+    const requests: string[] = [];
+    const listingUrl = "https://careers.alvarezandmarsal.com/en/search/jobs/in/country/united-states";
+    const readerUrl = `https://r.jina.ai/${listingUrl}.json?per_page=100&page=1`;
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === listingUrl || url === `${listingUrl}.json?per_page=100&page=1`) {
+        return new Response("blocked", { status: 403 });
+      }
+      if (url === readerUrl) {
+        return Response.json({
+          current_page: 1,
+          per_page: 100,
+          total_entries: 1,
+          entries: [{
+            id: "19000001",
+            talemetry_job_id: "19000001",
+            permalink: "data-science-intern",
+            title: "Data Science Intern",
+            location: {
+              locality: "New York", region_abbr: "NY",
+              country: "United States", name: "New York, NY",
+            },
+          }],
+        });
+      }
+      return new Response("unexpected", { status: 500 });
+    };
+
+    const result = await crawlSource({
+      id: "p4-0214-alvarez-marsal",
+      company: "Alvarez & Marsal",
+      postingUrl: "https://careers.alvarezandmarsal.com/search/jobs",
+      adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests).toEqual([listingUrl, `${listingUrl}.json?per_page=100&page=1`, readerUrl]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: listingUrl,
+    }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "19000001",
+      title: "Data Science Intern",
+      locationCountry: "United States",
+      officialUrl: "https://careers.alvarezandmarsal.com/jobs/19000001-data-science-intern",
+    })]);
+  });
+
   it("bypasses a stale reader challenge snapshot when the cached response has no jobs", async () => {
     let readerRequests = 0;
     const fetcher: typeof fetch = async (input, init) => {
