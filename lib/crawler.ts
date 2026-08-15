@@ -360,6 +360,10 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
   "audit-row-373": { listingUrl: "https://careers.irco.com/search/?q=&locationsearch=&sortColumn=referencedate&sortDirection=desc", adapter: "custom" },
   "audit-row-406": { listingUrl: "https://jobs.nucor.com/search/?q=&locationsearch=&sortColumn=referencedate&sortDirection=desc", adapter: "custom" },
   "audit-row-430": { listingUrl: "https://www.tractorsupply.careers/search/?q=&locationsearch=&sortColumn=referencedate&sortDirection=desc", adapter: "custom" },
+  "audit-row-440": {
+    listingUrl: "https://jobs.whirlpool.com/careers?domain=whirlpool.com",
+    adapter: "custom",
+  },
   "legacy-row-821": {
     listingUrl: "https://www.group1careers.com/results",
     adapter: "custom",
@@ -424,6 +428,11 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
     listingUrl: "https://nationwide.wd1.myworkdayjobs.com/Nationwide_Career",
     adapter: "workday",
   },
+  "p2-0185-western-alliance-bancorp": {
+    discovered: { kind: "workday", endpoint: "https://westernalliancebank.wd5.myworkdayjobs.com/wday/cxs/westernalliancebank/WAB/jobs" },
+    listingUrl: "https://westernalliancebank.wd5.myworkdayjobs.com/WAB",
+    adapter: "workday",
+  },
   "legacy-row-823": { listingUrl: "https://fa-exty-saasfaprod1.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1", adapter: "custom" },
   "legacy-row-826": { listingUrl: "https://jobs.dayforcehcm.com/en-US/ibgllc/CANDIDATEPORTAL", adapter: "dayforce" },
   "p4-0470-oliver-wyman": {
@@ -469,6 +478,11 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
   "p4-0391-abnormal-security": {
     discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/abnormalsecurity/jobs?content=true" },
     listingUrl: "https://job-boards.greenhouse.io/abnormalsecurity",
+    adapter: "greenhouse",
+  },
+  "p4-0339-rockstar-games": {
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/rockstargames/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/rockstargames",
     adapter: "greenhouse",
   },
   "legacy-row-778": { listingUrl: "https://aecom.jobs/jobs/", adapter: "custom" },

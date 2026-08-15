@@ -8771,6 +8771,44 @@ We are an equal opportunity employer.`;
     expect(result.jobs.map((job) => job.title)).toEqual(["Applied AI Intern"]);
   });
 
+  it("uses Whirlpool's verified Eightfold board instead of its rendered corporate landing page", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "audit-row-440",
+      company: "Whirlpool",
+      postingUrl: "https://www.whirlpoolcareers.com/",
+      adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      requests.push(url);
+      expect(url).toBe("https://jobs.whirlpool.com/api/pcsx/search?domain=whirlpool.com&query=&location=&start=0");
+      return Response.json({
+        data: {
+          count: 1,
+          positions: [{
+            id: 101,
+            name: "Manufacturing Engineer",
+            location: "Benton Harbor,Michigan,USA",
+            ats_job_id: "REQ-101",
+            canonicalPositionUrl: "https://jobs.whirlpool.com/careers/job/101",
+          }],
+        },
+      });
+    }, new Date());
+
+    expect(requests).toHaveLength(1);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://jobs.whirlpool.com/careers?domain=whirlpool.com",
+    }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      title: "Manufacturing Engineer",
+      location: "Benton Harbor,Michigan,USA",
+      officialUrl: "https://jobs.whirlpool.com/careers/job/101",
+    })]);
+  });
+
   it("uses the final redirected locale path before deriving a Phenom search URL", async () => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input) => {
@@ -8980,6 +9018,13 @@ We are an equal opportunity employer.`;
       postingUrl: "https://www.nationwide.com/personal/about-us/careers/explore/",
       endpoint: "https://nationwide.wd1.myworkdayjobs.com/wday/cxs/nationwide/Nationwide_Career/jobs",
       listingUrl: "https://nationwide.wd1.myworkdayjobs.com/Nationwide_Career",
+    },
+    {
+      id: "p2-0185-western-alliance-bancorp",
+      company: "Western Alliance Bancorp",
+      postingUrl: "https://www.westernalliancebancorp.com/careers",
+      endpoint: "https://westernalliancebank.wd5.myworkdayjobs.com/wday/cxs/westernalliancebank/WAB/jobs",
+      listingUrl: "https://westernalliancebank.wd5.myworkdayjobs.com/WAB",
     },
   ])("uses the verified Workday feed for $company without probing its landing page", async ({
     id, company, postingUrl, endpoint, listingUrl,
@@ -9201,6 +9246,7 @@ We are an equal opportunity employer.`;
     ["p4-0367-the-trade-desk", "The Trade Desk", "https://careers.thetradedesk.com/", "https://boards-api.greenhouse.io/v1/boards/thetradedesk/jobs?content=true", "https://job-boards.greenhouse.io/thetradedesk"],
     ["p4-0514-weights-biases", "Weights & Biases", "https://wandb.ai/careers", "https://boards-api.greenhouse.io/v1/boards/weights_and_biases/jobs?content=true", "https://coreweave.com/careers/weights-biases"],
     ["p4-0337-riot-games", "Riot Games", "https://www.riotgames.com/en/work-with-us", "https://boards-api.greenhouse.io/v1/boards/riotgames/jobs?content=true", "https://job-boards.greenhouse.io/riotgames"],
+    ["p4-0339-rockstar-games", "Rockstar Games (Take-Two)", "https://www.rockstargames.com/careers/", "https://boards-api.greenhouse.io/v1/boards/rockstargames/jobs?content=true", "https://job-boards.greenhouse.io/rockstargames"],
     ["p2-0146-oportun", "Oportun", "https://www.oportun.com/careers", "https://boards-api.greenhouse.io/v1/boards/oportun/jobs?content=true", "https://job-boards.greenhouse.io/oportun"],
     ["p4-0430-fastly", "Fastly", "https://www.fastly.com/careers", "https://boards-api.greenhouse.io/v1/boards/fastly/jobs?content=true", "https://job-boards.greenhouse.io/fastly"],
     ["p4-0491-samsara", "Samsara", "https://www.samsara.com/company/careers/roles", "https://boards-api.greenhouse.io/v1/boards/samsara/jobs?content=true", "https://job-boards.greenhouse.io/samsara"],
