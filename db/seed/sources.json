@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:77a1ac675eae359fda16bdd3980524f652de4c7cf1dd9ecfb717ee2e459770e2",
+  "version": "v2:sha256:535bc902d3da0bade8bec121d7b43f5e9c1d1e28d4b3ea59ccbceaacd3cc85be",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -3321,15 +3321,15 @@
       "id": "audit-row-438",
       "masterRow": 438,
       "company": "WESCO International",
-      "postingUrl": "https://careers.smartrecruiters.com/WESCO1",
+      "postingUrl": "https://eklm.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/jobs",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
-      "adapter": "smartrecruiters",
+      "adapter": "custom",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-08",
+      "checkedAt": "2026-08-15",
       "enabled": true
     },
     {

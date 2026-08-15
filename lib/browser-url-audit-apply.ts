@@ -15,6 +15,7 @@ export type OfficialUrlOverrides = {
     adapter: NormalizedSourceRecord["adapter"];
     verification?: string;
     channel?: string;
+    checkedAt?: string;
   }>;
   rejectedRecommendations: string[];
 };
@@ -56,7 +57,7 @@ export function buildRemediatedCatalog(
       evidenceNote: hasOverride
         ? `${postingUrl ? "Official-search-verified careers URL" : "No active company or public careers endpoint found"}; previous URL: ${source.postingUrl}`
         : safeUrl ? `Browser-verified careers URL; previous URL: ${source.postingUrl}` : "Preserved catalog source.",
-      checkedAt: source.checkedAt,
+      checkedAt: override?.checkedAt ?? source.checkedAt,
       adapter: hasOverride ? override.adapter : safeUrl ? result!.adapter : source.adapter,
     };
   });

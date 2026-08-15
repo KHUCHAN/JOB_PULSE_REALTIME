@@ -70,4 +70,38 @@ describe("buildRemediatedCatalog", () => {
       channel: "모회사/승계 조직 공식 채용 경로",
     }));
   });
+
+  it("records a newer official-verification date when the override supplies one", () => {
+    const source = {
+      masterRow: 438,
+      company: "WESCO International",
+      id: "audit-row-438",
+      postingUrl: "https://careers.smartrecruiters.com/WESCO1",
+      talentUrl: null,
+      channel: "Official careers",
+      adapter: "smartrecruiters" as const,
+      verification: "career_only",
+      confidence: "medium",
+      resumeUpload: "job_only" as const,
+      jobAlerts: "unknown" as const,
+      enabled: true,
+      checkedAt: "2026-08-08",
+    };
+
+    const result = buildRemediatedCatalog([source], [], {
+      overrides: {
+        "audit-row-438": {
+          url: "https://eklm.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/jobs",
+          adapter: "custom",
+          checkedAt: "2026-08-15",
+        },
+      },
+      rejectedRecommendations: [],
+    });
+
+    expect(result.records[0]).toEqual(expect.objectContaining({
+      postingUrl: "https://eklm.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/jobs",
+      checkedAt: "2026-08-15",
+    }));
+  });
 });
