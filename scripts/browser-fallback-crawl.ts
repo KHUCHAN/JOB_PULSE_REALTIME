@@ -11,7 +11,7 @@ import { classifyJobRegion } from "../lib/job-region-classifier.ts";
 import { jobsFromBrowserAnchors, type BrowserAnchor } from "../lib/browser-job-extractor.ts";
 import { browserRecoveryDue, needsBrowserFallback, type LatestCrawlSummary } from "../lib/browser-fallback-selection.ts";
 import { numericPaginationTargets } from "../lib/browser-pagination.ts";
-import { anchorsFromHtml, extractJobsFromHtml, jobsFromTeslaState, type CrawledFacet, type CrawledJob, type CrawlSource, type TeslaState } from "../lib/crawler.ts";
+import { anchorsFromHtml, deltaInternshipListingUrl, extractJobsFromHtml, jobsFromTeslaState, type CrawledFacet, type CrawledJob, type CrawlSource, type TeslaState } from "../lib/crawler.ts";
 import { careerCandidates, isSafeCareerListingUrl } from "../lib/url-remediation.ts";
 
 export type BrowserFallbackResult = {
@@ -35,12 +35,23 @@ const headless = process.env.BROWSER_FALLBACK_HEADFUL !== "1";
 const forceAll = process.env.BROWSER_FALLBACK_ALL === "1";
 const targetSourceId = process.env.BROWSER_FALLBACK_SOURCE_ID?.trim() || null;
 const targetSourceIds = new Set((process.env.BROWSER_FALLBACK_SOURCE_IDS ?? "").split(",").map((value) => value.trim()).filter(Boolean));
+const prioritySourceIds = new Set((process.env.BROWSER_FALLBACK_PRIORITY_SOURCE_IDS ?? "").split(",").map((value) => value.trim()).filter(Boolean));
 const productionIngestUrl = process.env.BROWSER_FALLBACK_INGEST_URL?.trim() || null;
 const productionIngestSecret = process.env.BROWSER_FALLBACK_INGEST_SECRET?.trim() || null;
 const liveUrl = process.env.BROWSER_FALLBACK_LIVE_URL?.trim().replace(/\/$/, "") || null;
 const dryRun = process.env.BROWSER_FALLBACK_DRY_RUN === "1";
 
 let cachedOidc = { value: "", expiresAt: 0 };
+
+export const browserListingSource = (source: CrawlSource): CrawlSource => {
+  if (source.id !== "audit-row-342") return source;
+  // Delta's persisted catalog URL can carry a native pagination cursor from
+  // the request crawler. A browser recovery must instead start at the first
+  // page of Delta's exact university-program category or it can repeatedly
+  // ingest an arbitrary page from the unfiltered company catalog.
+  return { ...source, postingUrl: deltaInternshipListingUrl(source.postingUrl) };
+};
+
 const githubOidcToken = async (): Promise<string | null> => {
   if (productionIngestSecret) return productionIngestSecret;
   const requestUrl = process.env.ACTIONS_ID_TOKEN_REQUEST_URL;
@@ -80,11 +91,11 @@ const problemSources = async (): Promise<CrawlSource[]> => {
       id: string; company: string; postingUrl: string | null; adapter: CrawlSource["adapter"];
     }>;
     return sources.flatMap((source): CrawlSource[] => targetSourceIds.has(source.id) && source.postingUrl
-      ? [{ id: source.id, company: source.company, postingUrl: source.postingUrl, adapter: source.adapter }]
+      ? [browserListingSource({ id: source.id, company: source.company, postingUrl: source.postingUrl, adapter: source.adapter })]
       : []);
   }
   if (targetSourceIds.size > 0) return catalogSeed.sources.flatMap((source): CrawlSource[] => targetSourceIds.has(source.id) && source.postingUrl
-    ? [{ id: source.id, company: source.company, postingUrl: source.postingUrl, adapter: source.adapter as CrawlSource["adapter"] }]
+    ? [browserListingSource({ id: source.id, company: source.company, postingUrl: source.postingUrl, adapter: source.adapter as CrawlSource["adapter"] })]
     : []);
   if (liveUrl) {
     const response = await fetch(`${liveUrl}/api/pulse?resource=sources`, { headers: { accept: "application/json" } });
@@ -115,11 +126,12 @@ const problemSources = async (): Promise<CrawlSource[]> => {
     return sources
       .map((source) => ({ ...source, candidateUrl: candidateUrl(source) }))
       .filter((source) => source.candidateUrl && browserRecoveryDue(source))
-      .sort((left, right) => healthRank(left) - healthRank(right)
+      .sort((left, right) => Number(prioritySourceIds.has(right.id)) - Number(prioritySourceIds.has(left.id))
+        || healthRank(left) - healthRank(right)
         || Date.parse(left.lastCheckedAt ?? "1970-01-01") - Date.parse(right.lastCheckedAt ?? "1970-01-01")
         || left.company.localeCompare(right.company))
       .slice(0, Number.isFinite(limit) ? Math.max(1, limit) : 500)
-      .map((source) => ({ id: source.id, company: source.company, postingUrl: source.candidateUrl!, adapter: source.adapter }));
+      .map((source) => browserListingSource({ id: source.id, company: source.company, postingUrl: source.candidateUrl!, adapter: source.adapter }));
   }
   const sql = `WITH latest AS (
     SELECT source_id, status, jobs_seen, ROW_NUMBER() OVER (PARTITION BY source_id ORDER BY started_at DESC) row_number
@@ -140,7 +152,7 @@ const problemSources = async (): Promise<CrawlSource[]> => {
     .filter((row) => !targetSourceId || row.id === targetSourceId)
     .filter((row) => needsBrowserFallback({ status: row.status, jobsSeen: row.jobs_seen }, forceAll))
     .slice(0, Number.isFinite(limit) ? Math.max(1, limit) : 500)
-    .map((row) => ({
+    .map((row) => browserListingSource({
     id: row.id,
     company: row.company,
     postingUrl: row.posting_url,

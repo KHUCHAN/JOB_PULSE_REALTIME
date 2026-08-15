@@ -79,4 +79,9 @@ jobs:
           # staying below the 25-minute job timeout (4 browser workers).
           BROWSER_FALLBACK_LIMIT: "120"
           BROWSER_FALLBACK_CONCURRENCY: "4"
+          # Delta's Avature listing is intentionally protected from Worker
+          # egress and therefore must not sit behind the generic recovery
+          # queue. The script still uses the official listing and verified
+          # official job-detail URLs.
+          BROWSER_FALLBACK_PRIORITY_SOURCE_IDS: audit-row-342
         run: npm run crawler:fallback:browser

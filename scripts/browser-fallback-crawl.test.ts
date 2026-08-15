@@ -1,6 +1,27 @@
 import { describe, expect, it } from "vitest";
 import type { CrawledJob, CrawlSource } from "../lib/crawler";
-import { browserResultClassification, persistenceSql, type BrowserFallbackResult } from "./browser-fallback-crawl";
+import { browserListingSource, browserResultClassification, persistenceSql, type BrowserFallbackResult } from "./browser-fallback-crawl";
+
+describe("browser fallback source normalization", () => {
+  it("starts Delta recovery on the official internship search instead of a stale catalog cursor", () => {
+    expect(browserListingSource({
+      id: "audit-row-342",
+      company: "Delta Air Lines",
+      postingUrl: "https://delta.avature.net/en_US/careers/SearchJobs/?jobOffset=40",
+      adapter: "custom",
+    }).postingUrl).toBe("https://delta.avature.net/en_US/careers/SearchJobs/?2884=75201&2884_format=3665&listFilterMode=1&jobOffset=0");
+  });
+
+  it("leaves unrelated sources unchanged", () => {
+    const source: CrawlSource = {
+      id: "source-1",
+      company: "Acme",
+      postingUrl: "https://jobs.example.com/?page=4",
+      adapter: "custom",
+    };
+    expect(browserListingSource(source)).toBe(source);
+  });
+});
 
 describe("browser fallback persistenceSql", () => {
   it("persists location region and replaces direct managed job areas", () => {

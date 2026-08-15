@@ -4119,18 +4119,27 @@ const readerMarkdown = async (
   return null;
 };
 
+export const deltaInternshipListingUrl = (postingUrl: string): string => {
+  const listing = new URL(postingUrl);
+  listing.pathname = listing.pathname.replace(/\/SearchJobs(?:\/intern)?\/?$/i, "/SearchJobs/");
+  listing.search = "";
+  // Delta exposes the exact Internships, Co-Ops & University Recruiting
+  // Programs category as field 2884/value 75201. The previous free-text
+  // `intern` search also matched words such as "internal" and expanded the
+  // recovery set from 48 actual university roles to 175 noisy results.
+  listing.searchParams.set("2884", "75201");
+  listing.searchParams.set("2884_format", "3665");
+  listing.searchParams.set("listFilterMode", "1");
+  listing.searchParams.set("jobOffset", "0");
+  return listing.href;
+};
+
 const crawlDeltaAvature = async (
   source: CrawlSource,
   fetcher: typeof fetch,
 ): Promise<SourceCrawlResult> => {
-  const listing = new URL(source.postingUrl);
-  // Delta exposes a keyword route that puts the internship/co-op inventory
-  // first. Keep this additive and paged: it recovers the target inventory
-  // quickly without claiming the filtered route is the complete company
-  // catalog (which would make unrelated roles eligible for closure).
-  listing.searchParams.set("search", "intern");
-  listing.searchParams.set("jobOffset", "0");
-  const markdown = await readerMarkdown(listing.href, fetcher, {
+  const listingUrl = deltaInternshipListingUrl(source.postingUrl);
+  const markdown = await readerMarkdown(listingUrl, fetcher, {
     querylessFallback: true,
     richLinks: false,
     nestedProxyFallback: true,
@@ -4141,7 +4150,7 @@ const crawlDeltaAvature = async (
     status: "failed", responseStatus: null, completeListing: false, jobs: [],
     error: "Delta Avature reader listing was unavailable.",
   };
-  const result = await crawlAvatureReaderPages({ ...source, postingUrl: listing.href }, markdown, fetcher);
+  const result = await crawlAvatureReaderPages({ ...source, postingUrl: listingUrl }, markdown, fetcher);
   return result ?? {
     status: "failed", responseStatus: 200, completeListing: false, jobs: [],
     error: "Delta Avature reader listing contained no usable jobs.",
