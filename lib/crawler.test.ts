@@ -1595,6 +1595,56 @@ Wrong description.
     expect(result.jobs.map((job) => job.title)).toEqual(["Software Intern"]);
   });
 
+  it("uses Lincoln Financial's official SuccessFactors catalog and keeps its filter fields", async () => {
+    const requests: string[] = [];
+    const row = (id: number, title: string, location: string, department: string, schedule: string) => `<tr class="data-row">
+      <td><a class="jobTitle-link" href="/job/${title.replaceAll(" ", "-")}/${id}/">${title}</a>
+        <span class="jobLocation">${location}</span><span class="jobFacility">${department}</span><span class="jobShifttype">${schedule}</span></td>
+      <td><span class="jobDepartment">${department}</span></td></tr>`;
+    const result = await crawlSource({
+      id: "p2-0127-lincoln-financial",
+      company: "Lincoln Financial",
+      postingUrl: "https://www.lincolnfinancial.com/careers",
+      adapter: "custom",
+    }, async (input) => {
+      requests.push(String(input));
+      return new Response([
+        '<link href="https://rmkcdn.successfactors.com/theme.css">',
+        '<span class="paginationLabel">Results <b>1 – 2</b> of <b>2</b></span>',
+        row(1410000000, "2027 Data Science Intern", "Radnor, PA, US", "Data Analytics", "Hybrid"),
+        row(1410000001, "Databricks Engineer", "Omaha, NE, US", "Information Technology &amp; Digital", "Remote"),
+      ].join(""));
+    }, new Date("2026-08-15T00:00:00Z"));
+
+    expect(requests).toEqual(["https://jobs.lincolnfinancial.com/go/All-Lincoln-Financial-Jobs/8874000/"]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://jobs.lincolnfinancial.com/go/All-Lincoln-Financial-Jobs/8874000/",
+    }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        externalId: "1410000000",
+        title: "2027 Data Science Intern",
+        location: "Radnor, PA, US",
+        locationCity: "Radnor",
+        locationState: "PA",
+        locationCountry: "United States",
+        arrangement: "hybrid",
+        employmentType: "Internship",
+        department: "Data Analytics",
+        shiftSchedule: "Hybrid",
+        requisitionId: "1410000000",
+      }),
+      expect.objectContaining({
+        externalId: "1410000001",
+        location: "Omaha, NE, US",
+        arrangement: "remote",
+        department: "Information Technology & Digital",
+      }),
+    ]);
+  });
+
   it("fully paginates a TalentHub job search", async () => {
     const requests: string[] = [];
     const page = (current: number) => [
@@ -3533,6 +3583,9 @@ Wrong description.
         employmentType: null,
         summary: "Build trusted data products.",
         description: "Build trusted data products.",
+        locationCity: "San Francisco",
+        locationState: "CA",
+        locationCountry: "United States",
         officialUrl: "https://job-boards.greenhouse.io/acme/jobs/42",
         publishedAt: "2026-08-08T12:00:00.000Z",
       }],
@@ -6783,6 +6836,44 @@ Wrong description.
       resolvedListingUrl: "https://job-boards.greenhouse.io/affirm",
     }));
     expect(result.jobs.map((job) => job.title)).toEqual(["Machine Learning Intern"]);
+  });
+
+  it("replaces OfferUp's consumer jobs marketplace with its official employer Greenhouse board", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p4-0322-offerup",
+      company: "OfferUp",
+      postingUrl: "https://offerup.com/jobs",
+      adapter: "custom",
+    }, async (input) => {
+      requests.push(String(input));
+      return Response.json({ jobs: [{
+        id: 8080461,
+        title: "Software Engineering Intern (Hybrid @ Bellevue, WA)",
+        absolute_url: "https://job-boards.greenhouse.io/offerup/jobs/8080461",
+        location: { name: "Hybrid @ Bellevue, WA" },
+        departments: [{ name: "Engineering" }],
+        first_published: "2026-08-14T17:37:24-04:00",
+      }] });
+    }, new Date("2026-08-15T00:00:00Z"));
+
+    expect(requests).toEqual(["https://boards-api.greenhouse.io/v1/boards/offerup/jobs?content=true"]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://job-boards.greenhouse.io/offerup",
+    }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "8080461",
+      title: "Software Engineering Intern (Hybrid @ Bellevue, WA)",
+      location: "Hybrid @ Bellevue, WA",
+      locationCity: "Bellevue",
+      locationState: "WA",
+      locationCountry: "United States",
+      arrangement: "hybrid",
+      employmentType: "Internship",
+      department: "Engineering",
+    })]);
   });
 
   it("does not re-enter an ID-pinned feed while following its canonical catalog link", async () => {

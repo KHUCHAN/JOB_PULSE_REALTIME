@@ -251,6 +251,10 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
     listingUrl: "https://job-boards.greenhouse.io/alloy",
     adapter: "greenhouse",
   },
+  "p2-0127-lincoln-financial": {
+    listingUrl: "https://jobs.lincolnfinancial.com/go/All-Lincoln-Financial-Jobs/8874000/",
+    adapter: "custom",
+  },
   "audit-row-319": {
     discovered: { kind: "workday", endpoint: "https://bakerhughes.wd5.myworkdayjobs.com/wday/cxs/bakerhughes/BakerHughes/jobs" },
     listingUrl: "https://bakerhughes.wd5.myworkdayjobs.com/BakerHughes",
@@ -425,6 +429,11 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
     discovered: { kind: "smartrecruiters", endpoint: "https://api.smartrecruiters.com/v1/companies/NBCUniversal3/postings" },
     listingUrl: "https://careers.smartrecruiters.com/NBCUniversal3",
     adapter: "smartrecruiters",
+  },
+  "p4-0322-offerup": {
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/offerup/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/offerup",
+    adapter: "greenhouse",
   },
   "legacy-row-128": {
     discovered: { kind: "smartrecruiters", endpoint: "https://api.smartrecruiters.com/v1/companies/Wabtec/postings" },
@@ -1057,6 +1066,45 @@ export const anchorsFromHtml = (html: string): BrowserAnchor[] => [...html.match
   href: decodeHtmlAttribute(match[1] ?? match[2] ?? match[3] ?? ""),
   text: plainText(match[4]) ?? "",
 }));
+
+const greenhouseJobs = (values: GreenhouseJob[], source: CrawlSource): CrawledJob[] => values.map((job) => {
+  const location = job.location?.name ?? null;
+  const metadataText = (job.metadata ?? []).flatMap(({ value }) => typeof value === "string"
+    ? [value]
+    : Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []);
+  const arrangementText = [job.title, location, ...metadataText].filter(Boolean).join(" ");
+  const arrangement = /\bremote\b/i.test(arrangementText)
+    ? "remote"
+    : /\bhybrid\b/i.test(arrangementText)
+      ? "hybrid"
+      : /\b(?:onsite|on-site|in office)\b/i.test(arrangementText)
+        ? "onsite"
+        : "unknown";
+  const normalizedLocation = location?.replace(/^\s*(?:remote|hybrid|onsite|on-site)\s*@\s*/i, "").trim() ?? null;
+  const locationParts = normalizedLocation?.split(",").map((value) => value.trim()).filter(Boolean) ?? [];
+  const locationRegion = classifyJobRegion({ location });
+  const programs = classifyJobPrograms(job.title).keys;
+  return {
+    externalId: String(job.id),
+    title: job.title,
+    company: source.company,
+    location,
+    arrangement,
+    employmentType: programs.some((key) => key === "internship" || key === "coop") ? "Internship" : null,
+    summary: plainText(job.content),
+    description: plainText(job.content),
+    ...(job.departments?.length ? { department: job.departments.map(({ name }) => name).filter(Boolean).join("; ") || null } : {}),
+    ...(job.offices?.length ? { office: job.offices.map(({ name }) => name).filter(Boolean).join("; ") || null } : {}),
+    ...(locationParts.length >= 2 ? { locationCity: locationParts[0] } : {}),
+    ...(locationParts.length >= 2 && /^[A-Z]{2}$/.test(locationParts[1]) ? { locationState: locationParts[1] } : {}),
+    ...(locationRegion === "us" ? { locationCountry: "United States" } : {}),
+    ...(job.requisition_id ? { requisitionId: job.requisition_id } : {}),
+    ...(job.first_published ? { sourceUpdatedAt: normalizedDate(job.updated_at) } : {}),
+    ...((job.metadata?.length || job.departments?.length || job.offices?.length) ? { rawPayload: { metadata: job.metadata ?? [], departments: job.departments ?? [], offices: job.offices ?? [] } } : {}),
+    officialUrl: job.absolute_url,
+    publishedAt: normalizedDate(job.first_published ?? job.updated_at),
+  };
+});
 
 const greenhouseBoard = (postingUrl: string): string | null => {
   const url = new URL(postingUrl);
@@ -1737,23 +1785,7 @@ async function crawlDiscoveredFeed(source: CrawlSource, discovered: DiscoveredAt
         status: "succeeded",
         responseStatus: response.status,
         completeListing: true,
-        jobs: (payload.jobs ?? []).map((job) => ({
-          externalId: String(job.id),
-          title: job.title,
-          company: source.company,
-          location: job.location?.name ?? null,
-          arrangement: "unknown",
-          employmentType: null,
-          summary: plainText(job.content),
-          description: plainText(job.content),
-          ...(job.departments?.length ? { department: job.departments.map(({ name }) => name).filter(Boolean).join("; ") || null } : {}),
-          ...(job.offices?.length ? { office: job.offices.map(({ name }) => name).filter(Boolean).join("; ") || null } : {}),
-          ...(job.requisition_id ? { requisitionId: job.requisition_id } : {}),
-          ...(job.first_published ? { sourceUpdatedAt: normalizedDate(job.updated_at) } : {}),
-          ...((job.metadata?.length || job.departments?.length || job.offices?.length) ? { rawPayload: { metadata: job.metadata ?? [], departments: job.departments ?? [], offices: job.offices ?? [] } } : {}),
-          officialUrl: job.absolute_url,
-          publishedAt: normalizedDate(job.first_published ?? job.updated_at),
-        })),
+        jobs: greenhouseJobs(payload.jobs ?? [], source),
         error: null,
       };
     }
@@ -5230,6 +5262,60 @@ const crawlSuccessFactorsUnified = async (
   };
 };
 
+const successFactorsJobsFromHtml = (html: string, source: CrawlSource): CrawledJob[] => {
+  const rows = [...html.matchAll(/<tr\b[^>]*class=["'][^"']*\bdata-row\b[^"']*["'][^>]*>([\s\S]*?)<\/tr>/gi)];
+  if (rows.length === 0) return jobsFromBrowserAnchors(anchorsFromHtml(html), source);
+  return uniqueJobs(rows.flatMap((match): CrawledJob[] => {
+    const body = match[1] ?? "";
+    const anchor = anchorsFromHtml(body).find(({ href, text }) => text && /\/job\/[^?#]+\/\d+\/?(?:[?#]|$)/i.test(href));
+    if (!anchor) return [];
+    let officialUrl: URL;
+    try {
+      officialUrl = new URL(anchor.href, source.postingUrl);
+    } catch {
+      return [];
+    }
+    if (officialUrl.origin !== new URL(source.postingUrl).origin) return [];
+    const externalId = officialUrl.pathname.split("/").filter(Boolean).at(-1) ?? null;
+    if (!externalId || !/^\d+$/.test(externalId)) return [];
+    const field = (className: string): string | null => {
+      const value = plainText(body.match(new RegExp(`class=["'][^"']*\\b${className}\\b[^"']*["'][^>]*>([\\s\\S]*?)<\\/(?:span|div|td)>`, "i"))?.[1]);
+      return value ? decodeHtmlAttribute(value) : null;
+    };
+    const title = decodeHtmlAttribute(anchor.text).replace(/\s+/g, " ").trim();
+    const location = field("jobLocation");
+    const department = field("jobDepartment") ?? field("jobFacility");
+    const shiftSchedule = field("jobShifttype");
+    const locationParts = location?.split(",").map((value) => value.trim()).filter(Boolean) ?? [];
+    const usLocation = /^(?:US|USA|United States)$/i.test(locationParts.at(-1) ?? "");
+    const programs = classifyJobPrograms(title).keys;
+    const arrangement = /\bremote\b/i.test(`${location ?? ""} ${shiftSchedule ?? ""}`)
+      ? "remote"
+      : /\bhybrid\b/i.test(shiftSchedule ?? "")
+        ? "hybrid"
+        : /\b(?:onsite|on-site|in office)\b/i.test(shiftSchedule ?? "")
+          ? "onsite"
+          : "unknown";
+    return [{
+      externalId,
+      title,
+      company: source.company,
+      location,
+      arrangement,
+      employmentType: programs.some((key) => key === "internship" || key === "coop") ? "Internship" : null,
+      summary: [department, shiftSchedule].filter(Boolean).join(" · ") || null,
+      department,
+      ...(shiftSchedule ? { shiftSchedule } : {}),
+      ...(locationParts.length >= 2 ? { locationCity: locationParts[0] } : {}),
+      ...(usLocation && locationParts.length >= 3 ? { locationState: locationParts.at(-2) } : {}),
+      ...(usLocation ? { locationCountry: "United States" } : {}),
+      requisitionId: externalId,
+      officialUrl: officialUrl.href,
+      publishedAt: null,
+    }];
+  }));
+};
+
 const crawlSuccessFactorsPages = async (
   source: CrawlSource,
   html: string,
@@ -5239,7 +5325,7 @@ const crawlSuccessFactorsPages = async (
   const range = successFactorsRange(html);
   if (!range) return null;
   const paginationHref = anchorsFromHtml(html).find(({ href }) => /[?&]startrow=\d+/i.test(href))?.href;
-  const jobs = jobsFromBrowserAnchors(anchorsFromHtml(html), source);
+  const jobs = successFactorsJobsFromHtml(html, source);
   if (range.total <= range.pageSize) return { status: "succeeded", responseStatus: 200, completeListing: jobs.length >= range.total, jobs: uniqueJobs(jobs), error: null };
   if (!paginationHref) return null;
 
@@ -5252,7 +5338,7 @@ const crawlSuccessFactorsPages = async (
         url.searchParams.set("startrow", String(offset));
         const response = await fetchWithTimeout(fetcher, url);
         if (!response.ok) return null;
-        return jobsFromBrowserAnchors(anchorsFromHtml(await response.text()), source);
+        return successFactorsJobsFromHtml(await response.text(), source);
       } catch {
         return null;
       }
@@ -12333,23 +12419,7 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
       status: "succeeded",
       responseStatus: response.status,
       completeListing: true,
-      jobs: (payload.jobs ?? []).map((job) => ({
-        externalId: String(job.id),
-        title: job.title,
-        company: source.company,
-        location: job.location?.name ?? null,
-        arrangement: "unknown",
-        employmentType: null,
-        summary: plainText(job.content),
-        description: plainText(job.content),
-        ...(job.departments?.length ? { department: job.departments.map(({ name }) => name).filter(Boolean).join("; ") || null } : {}),
-        ...(job.offices?.length ? { office: job.offices.map(({ name }) => name).filter(Boolean).join("; ") || null } : {}),
-        ...(job.requisition_id ? { requisitionId: job.requisition_id } : {}),
-        ...(job.first_published ? { sourceUpdatedAt: normalizedDate(job.updated_at) } : {}),
-        ...((job.metadata?.length || job.departments?.length || job.offices?.length) ? { rawPayload: { metadata: job.metadata ?? [], departments: job.departments ?? [], offices: job.offices ?? [] } } : {}),
-        officialUrl: job.absolute_url,
-        publishedAt: normalizedDate(job.first_published ?? job.updated_at),
-      })),
+      jobs: greenhouseJobs(payload.jobs ?? [], source),
       error: null,
     };
   } catch (error) {
