@@ -11438,6 +11438,104 @@ HUMAN RESOURCES Posted Date
     }));
   });
 
+  it("collects every CFPB opening from the official table and detail JobPosting data", async () => {
+    const listingUrl = "https://www.consumerfinance.gov/about-us/careers/current-openings/";
+    const openings = [
+      { slug: "deputy-general-counsel", title: "Deputy General Counsel", posted: "2026-05-18T00:00:00Z" },
+      { slug: "litigation-attorney", title: "Litigation Attorney", posted: "2026-04-09T00:00:00Z" },
+    ];
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p4-0240-cfpb",
+      company: "CFPB",
+      postingUrl: "https://www.consumerfinance.gov/about-us/careers/",
+      adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === listingUrl) {
+        return new Response(`<table><tbody>${openings.map((opening) => `
+          <tr>
+            <td><a href="/about-us/careers/current-openings/${opening.slug}/">${opening.title}</a></td>
+            <td></td>
+            <td><time datetime="2027-05-14T00:00:00Z">May 14, 2027</time></td>
+            <td>Washington, DC</td>
+          </tr>`).join("")}</tbody></table>`);
+      }
+      const opening = openings.find((candidate) => url === `${listingUrl}${candidate.slug}/`);
+      if (!opening) return new Response("missing", { status: 404 });
+      return new Response(`<script type="application/ld+json">${JSON.stringify({
+        "@context": "https://schema.org",
+        "@type": "JobPosting",
+        title: opening.title,
+        datePosted: opening.posted,
+        validThrough: "2027-05-14T00:00:00Z",
+        description: `<p>${opening.title} protects consumers and leads complex federal work.</p>`,
+        employmentType: "FULL_TIME",
+      })}</script>`);
+    }, new Date("2026-08-15T16:00:00Z"));
+
+    expect(requests).toEqual([
+      listingUrl,
+      `${listingUrl}deputy-general-counsel/`,
+      `${listingUrl}litigation-attorney/`,
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      responseStatus: 200,
+      completeListing: true,
+      resolvedListingUrl: listingUrl,
+      error: null,
+    }));
+    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "deputy-general-counsel",
+      title: "Deputy General Counsel",
+      location: "Washington, DC",
+      locationCity: "Washington",
+      locationState: "DC",
+      locationCountry: "United States",
+      employmentType: "Full-time",
+      officialUrl: `${listingUrl}deputy-general-counsel/`,
+      publishedAt: "2026-05-18T00:00:00.000Z",
+      validThrough: "2027-05-14T00:00:00.000Z",
+      description: "Deputy General Counsel protects consumers and leads complex federal work.",
+    }));
+  });
+
+  it("fails CFPB closed when its authoritative table or a detail page is incomplete", async () => {
+    const source = {
+      id: "p4-0240-cfpb",
+      company: "CFPB",
+      postingUrl: "https://www.consumerfinance.gov/about-us/careers/",
+      adapter: "custom" as const,
+    };
+    const empty = await crawlSource(source, async () => new Response("<main>No table</main>"), new Date());
+    expect(empty).toEqual(expect.objectContaining({
+      status: "failed",
+      completeListing: false,
+      jobs: [],
+      error: "CFPB current openings returned an empty or malformed job table.",
+    }));
+
+    const partial = await crawlSource(source, async (input) => {
+      if (String(input).endsWith("/current-openings/")) {
+        return new Response(`<table><tbody><tr>
+          <td><a href="/about-us/careers/current-openings/data-scientist/">Data Scientist</a></td>
+          <td></td><td><time datetime="2027-05-14T00:00:00Z">May 14, 2027</time></td><td>Washington, DC</td>
+        </tr></tbody></table>`);
+      }
+      return new Response("blocked", { status: 403 });
+    }, new Date());
+    expect(partial).toEqual(expect.objectContaining({
+      status: "blocked",
+      responseStatus: 403,
+      completeListing: false,
+      jobs: [],
+      error: "CFPB current openings detail pages were incomplete or inconsistent.",
+    }));
+  });
+
   it("collects Wayfair's complete US catalog from its first-party job search API", async () => {
     const requests: Array<{ url: string; body: Record<string, unknown>; headers: Headers }> = [];
     const job = (id: number, requisitionId: string, title: string, city: string, state: string) => ({

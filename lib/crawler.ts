@@ -4256,6 +4256,117 @@ const goldmanRoleDetail = async (
   }
 };
 
+type CfpbOpening = {
+  officialUrl: string;
+  slug: string;
+  title: string;
+  location: string;
+  validThrough: string | null;
+};
+
+const CFPB_OPENINGS_URL = "https://www.consumerfinance.gov/about-us/careers/current-openings/";
+
+const cfpbOpeningRows = (html: string): { rawCount: number; openings: CfpbOpening[] } => {
+  const tbody = html.match(/<tbody\b[^>]*>([\s\S]*?)<\/tbody>/i)?.[1];
+  if (!tbody) return { rawCount: 0, openings: [] };
+  const rows = [...tbody.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)];
+  const openings = rows.flatMap((row): CfpbOpening[] => {
+    const anchor = row[1].match(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/i);
+    const cells = [...row[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)]
+      .map((cell) => plainText(cell[1]))
+      .map((cell) => cell ? decodeHtmlAttribute(cell).replace(/\s+/g, " ").trim() : "");
+    const title = plainText(anchor?.[2]);
+    const location = cells[3] ?? "";
+    const validThrough = normalizedDate(row[1].match(/<time\b[^>]*datetime=["']([^"']+)["']/i)?.[1]);
+    if (!anchor?.[1] || !title || !location || cells.length < 4 || !validThrough) return [];
+    let officialUrl: URL;
+    try {
+      officialUrl = new URL(decodeHtmlAttribute(anchor[1]), CFPB_OPENINGS_URL);
+    } catch {
+      return [];
+    }
+    const slug = officialUrl.pathname.match(/^\/about-us\/careers\/current-openings\/([^/]+)\/$/i)?.[1];
+    if (officialUrl.origin !== "https://www.consumerfinance.gov" || officialUrl.search || officialUrl.hash || !slug) return [];
+    return [{ officialUrl: officialUrl.href, slug, title, location, validThrough }];
+  });
+  return { rawCount: rows.length, openings };
+};
+
+const crawlCfpbCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  let failureStatus: number | null = null;
+  try {
+    const listingResponse = await fetchWithTimeout(fetcher, CFPB_OPENINGS_URL, {
+      headers: { accept: "text/html,application/xhtml+xml" },
+    }, true, { attempts: 1, timeoutMs: 10_000 });
+    responseStatus = listingResponse.status;
+    if (!listingResponse.ok) {
+      failureStatus = listingResponse.status;
+      throw new Error(`CFPB current openings returned HTTP ${listingResponse.status}.`);
+    }
+    const parsed = cfpbOpeningRows(await listingResponse.text());
+    if (parsed.rawCount < 1 || parsed.openings.length !== parsed.rawCount || parsed.openings.length > 40) {
+      throw new Error("CFPB current openings returned an empty or malformed job table.");
+    }
+
+    const detailResults = await Promise.all(parsed.openings.map(async (opening): Promise<CrawledJob | null> => {
+      try {
+        const response = await fetchWithTimeout(fetcher, opening.officialUrl, {
+          headers: { accept: "text/html,application/xhtml+xml", referer: CFPB_OPENINGS_URL },
+        }, true, { attempts: 1, timeoutMs: 8_000 });
+        if (!response.ok || (response.url && response.url !== opening.officialUrl)) {
+          failureStatus ??= response.status;
+          return null;
+        }
+        const nodes = jsonLdScripts(await response.text()).flatMap(jobPostingNodes);
+        if (nodes.length !== 1) return null;
+        const job = jsonLdJob({ ...nodes[0], url: opening.officialUrl }, {
+          ...source,
+          postingUrl: opening.officialUrl,
+        });
+        if (!job || jobIdentityText(job.title) !== jobIdentityText(opening.title)
+          || job.officialUrl !== opening.officialUrl
+          || job.validThrough !== opening.validThrough) return null;
+        const locationParts = opening.location.split(",").map((part) => part.trim()).filter(Boolean);
+        const normalized: CrawledJob = {
+          ...job,
+          externalId: opening.slug,
+          location: job.location ?? opening.location,
+          locationCity: job.locationCity ?? locationParts.at(0) ?? null,
+          locationState: job.locationState ?? locationParts.at(1) ?? null,
+          locationCountry: "United States",
+          sourcePostedText: job.publishedAt?.slice(0, 10) ?? null,
+        };
+        return normalized;
+      } catch {
+        return null;
+      }
+    }));
+    const jobs = detailResults.filter((job): job is CrawledJob => job !== null);
+    if (jobs.length !== parsed.openings.length
+      || new Set(jobs.map((job) => job.externalId)).size !== jobs.length
+      || new Set(jobs.map((job) => job.officialUrl)).size !== jobs.length) {
+      throw new Error("CFPB current openings detail pages were incomplete or inconsistent.");
+    }
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: true,
+      jobs,
+      resolvedListingUrl: CFPB_OPENINGS_URL,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: isBlockedHttpStatus(failureStatus ?? responseStatus) ? "blocked" : "failed",
+      responseStatus: failureStatus ?? responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown CFPB careers crawler error.",
+    };
+  }
+};
+
 type WayfairCareerJob = {
   id?: unknown;
   eid?: unknown;
@@ -16756,6 +16867,9 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p2-0039-goldman-sachs") {
     return crawlGoldmanSachs(source, fetcher);
+  }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p4-0240-cfpb") {
+    return crawlCfpbCareers(source, fetcher);
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-1104-wayfair") {
     return crawlWayfairCareers(source, fetcher);
