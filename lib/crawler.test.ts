@@ -11284,40 +11284,32 @@ HUMAN RESOURCES Posted Date
     }));
   });
 
-  it("collects Goldman Sachs' complete US catalog from its official Higher GraphQL API", async () => {
-    const requests: Array<{ operationName: string; variables: Record<string, unknown>; headers: Headers }> = [];
+  it("collects Goldman Sachs' complete US catalog from its official Oracle source API", async () => {
+    const requests: Array<{ url: URL; headers: Headers }> = [];
     const listingItems = [
       {
-        roleId: "177808_GS_CAMPUS",
-        corporateTitle: "Summer Analyst",
-        jobTitle: "2027 | Americas | Bellevue | Engineering | Summer Analyst",
-        jobFunction: "",
-        locations: [{ primary: true, state: "WA", country: "United States", city: "Seattle" }],
-        status: "POSTED",
-        division: "Engineering Division",
-        skills: ["Machine Learning"],
-        jobType: null,
-        externalSource: { sourceId: "177808" },
-        educationLevel: "Bachelor's",
-        startDate: "2026-08-15T15:26:37.497349361Z",
-        gradDegreeStartDate: null,
-        gradDegreeEndDate: null,
+        Id: "177808",
+        Title: "2027 | Americas | Bellevue | Engineering | Summer Analyst",
+        PostedDate: "2026-08-15",
+        PrimaryLocation: "Seattle, WA, United States",
+        PrimaryLocationCountry: "US",
+        WorkplaceType: "",
+        Category: "Summer Analyst",
+        RequisitionType: "Campus",
+        ShortDescriptionStr: " ",
+        secondaryLocations: [],
       },
       {
-        roleId: "fd1eb714-befe-4d52-aa5b-fb0ab29c11bc",
-        corporateTitle: "Associate",
-        jobTitle: "Structured Finance Associate, New York",
-        jobFunction: "Banker - CSG",
-        locations: [{ primary: true, state: "NY", country: "United States", city: "New York" }],
-        status: "POSTED",
-        division: "Global Banking & Markets",
-        skills: [],
-        jobType: { code: "REGULAR", description: "Regular" },
-        externalSource: { sourceId: "176863" },
-        educationLevel: null,
-        startDate: "2026-08-14T22:45:06Z",
-        gradDegreeStartDate: null,
-        gradDegreeEndDate: null,
+        Id: "176863",
+        Title: "Structured Finance Associate, New York",
+        PostedDate: "2026-08-14",
+        PrimaryLocation: "New York, NY, United States",
+        PrimaryLocationCountry: "US",
+        WorkplaceType: "On-site",
+        JobFunction: "Banker - CSG",
+        JobType: "Regular",
+        ShortDescriptionStr: "Structure credit solutions for clients.",
+        secondaryLocations: [],
       },
     ];
     const result = await crawlSource({
@@ -11326,44 +11318,40 @@ HUMAN RESOURCES Posted Date
       postingUrl: "https://higher.gs.com/results",
       adapter: "custom",
     }, async (input, init) => {
-      expect(String(input)).toBe("https://api-higher.gs.com/gateway/api/v1/graphql");
-      const body = JSON.parse(String(init?.body)) as { operationName: string; variables: Record<string, unknown> };
-      requests.push({ ...body, headers: new Headers(init?.headers) });
-      if (body.operationName === "GetRoleById") {
+      const url = new URL(String(input));
+      requests.push({ url, headers: new Headers(init?.headers) });
+      if (url.pathname.includes("/recruitingCEJobRequisitionDetails/")) {
         return Response.json({
-          data: {
-            role: {
-              ...listingItems[0],
-              descriptionHtml: "<p>A nine to ten week summer internship building machine learning systems.</p>",
-              skillset: ["Python", "Machine Learning"],
-              compensation: { minSalary: 110_000, maxSalary: 115_000, currency: "USD" },
-              applyActive: true,
-              externalSource: {
-                sourceId: "177808",
-                secondarySourceId: "300017760680333",
-                applyInExternalSource: true,
-                externalApplicationUrl: "https://hdpc.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/LateralHiring/job/177808/apply/email",
-              },
-            },
-          },
+          ...listingItems[0],
+          RequisitionId: "300017760680333",
+          ExternalPostedStartDate: "2026-08-15T00:00:00+00:00",
+          ExternalPostedEndDate: null,
+          CorporateDescriptionStr: "<p>A nine to ten week summer internship building machine learning systems.</p>",
+          ExternalDescriptionStr: "<br>",
+          OrganizationDescriptionStr: "<p>Engineering builds scalable software and machine learning systems.</p>",
+          Organization: "Engineering Division",
+          JobFunction: "Campus Apply",
+          skills: [{ Name: "Python" }, { Name: "Machine Learning" }],
+          primaryLocationCoordinates: [{ Latitude: "47.60357", Longitude: "-122.32945", CountryCode: "US" }],
         });
       }
-      return Response.json({ data: { roleSearch: { totalCount: 2, items: listingItems } } });
+      return Response.json({
+        items: [{
+          SiteNumber: "CX_3000",
+          SelectedLocationsFacet: "300000000229164",
+          TotalJobsCount: 2,
+          requisitionList: listingItems,
+        }],
+      });
     }, new Date("2026-08-15T16:00:00Z"));
 
     expect(requests).toHaveLength(2);
-    expect(requests[0].operationName).toBe("GetRoles");
-    expect(requests[0].variables).toEqual({
-      searchQueryInput: {
-        page: { pageSize: 100, pageNumber: 0 },
-        sort: { sortStrategy: "POSTED_DATE", sortOrder: "DESC" },
-        filters: [{ filterCategoryType: "LOCATION", filters: [{ filter: "United States", subFilters: [] }] }],
-        experiences: ["CAMPUS", "EARLY_CAREER", "PROFESSIONAL"],
-        searchTerm: "",
-      },
-    });
-    expect(requests[0].headers.get("origin")).toBe("https://higher.gs.com");
-    expect(requests[0].headers.get("x-higher-request-id")).toMatch(/^[0-9a-f-]{36}$/);
+    expect(requests[0].url.origin).toBe("https://hdpc.fa.us2.oraclecloud.com");
+    expect(requests[0].url.pathname).toBe("/hcmRestApi/resources/latest/recruitingCEJobRequisitions");
+    expect(requests[0].url.searchParams.get("finder")).toBe(
+      "findReqs;siteNumber=CX_3000,selectedLocationsFacet=300000000229164,limit=100,offset=0,sortBy=POSTING_DATES_DESC",
+    );
+    expect(requests[0].headers.get("referer")).toBe("https://higher.gs.com/results");
     expect(result).toEqual(expect.objectContaining({
       status: "succeeded",
       responseStatus: 200,
@@ -11385,12 +11373,11 @@ HUMAN RESOURCES Posted Date
       requisitionId: "177808",
       officialUrl: "https://higher.gs.com/roles/177808",
       applyUrl: "https://hdpc.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/LateralHiring/job/177808/apply/email",
-      publishedAt: "2026-08-15T15:26:37.497Z",
-      description: "A nine to ten week summer internship building machine learning systems.",
-      salaryMin: 110_000,
-      salaryMax: 115_000,
-      salaryCurrency: "USD",
-      salaryInterval: "year",
+      publishedAt: "2026-08-15T00:00:00.000Z",
+      description: "A nine to ten week summer internship building machine learning systems. Engineering builds scalable software and machine learning systems.",
+      skills: ["Python", "Machine Learning"],
+      latitude: 47.60357,
+      longitude: -122.32945,
     }));
   });
 
@@ -11401,14 +11388,17 @@ HUMAN RESOURCES Posted Date
       postingUrl: "https://higher.gs.com/results",
       adapter: "custom" as const,
     };
-    const empty = await crawlSource(source, async () => Response.json({
-      data: { roleSearch: { totalCount: 0, items: [] } },
-    }), new Date());
+    const empty = await crawlSource(source, async () => Response.json({ items: [{
+      SiteNumber: "CX_3000",
+      SelectedLocationsFacet: "300000000229164",
+      TotalJobsCount: 0,
+      requisitionList: [],
+    }] }), new Date());
     expect(empty).toEqual(expect.objectContaining({
       status: "failed",
       completeListing: false,
       jobs: [],
-      error: "Goldman Sachs role search returned an empty or malformed first page.",
+      error: "Goldman Sachs Oracle feed returned an empty or malformed first page.",
     }));
 
     const blocked = await crawlSource(source, async () => new Response("blocked", { status: 403 }), new Date());
@@ -11420,37 +11410,31 @@ HUMAN RESOURCES Posted Date
     }));
 
     const role = (id: number) => ({
-      roleId: `${id}_GS_MID_CAREER`,
-      corporateTitle: "Associate",
-      jobTitle: `Operations Associate ${id}`,
-      jobFunction: "Operations",
-      locations: [{ primary: true, state: "NY", country: "United States", city: "New York" }],
-      status: "POSTED",
-      division: "Operations Division",
-      skills: [],
-      jobType: { code: "REGULAR", description: "Regular" },
-      externalSource: { sourceId: String(id) },
-      startDate: "2026-08-14T00:00:00Z",
+      Id: String(id),
+      Title: `Operations Associate ${id}`,
+      PostedDate: "2026-08-14",
+      PrimaryLocation: "New York, NY, United States",
+      PrimaryLocationCountry: "US",
+      JobType: "Regular",
+      ShortDescriptionStr: "Support operations.",
     });
-    const duplicate = await crawlSource(source, async (_input, init) => {
-      const body = JSON.parse(String(init?.body)) as {
-        variables: { searchQueryInput: { page: { pageNumber: number } } };
-      };
-      const pageNumber = body.variables.searchQueryInput.page.pageNumber;
+    const duplicate = await crawlSource(source, async (input) => {
+      const finder = new URL(String(input)).searchParams.get("finder") ?? "";
+      const offset = Number(finder.match(/,offset=(\d+)/)?.[1]);
       return Response.json({
-        data: {
-          roleSearch: {
-            totalCount: 101,
-            items: pageNumber === 0 ? Array.from({ length: 100 }, (_, index) => role(index + 1)) : [role(100)],
-          },
-        },
+        items: [{
+          SiteNumber: "CX_3000",
+          SelectedLocationsFacet: "300000000229164",
+          TotalJobsCount: 101,
+          requisitionList: offset === 0 ? Array.from({ length: 100 }, (_, index) => role(index + 1)) : [role(100)],
+        }],
       });
     }, new Date());
     expect(duplicate).toEqual(expect.objectContaining({
       status: "failed",
       completeListing: false,
       jobs: [],
-      error: "Goldman Sachs role search returned duplicate or unusable job identities.",
+      error: "Goldman Sachs Oracle feed returned duplicate or unusable job identities.",
     }));
   });
 
