@@ -10056,6 +10056,122 @@ type WorkableJob = {
   workplace?: string | null;
 };
 
+type WorkableWidgetJob = {
+  title?: string | null;
+  shortcode?: string | null;
+  employment_type?: string | null;
+  telecommuting?: boolean | null;
+  department?: string | null;
+  url?: string | null;
+  application_url?: string | null;
+  published_on?: string | null;
+  country?: string | null;
+  city?: string | null;
+  state?: string | null;
+  education?: string | null;
+  experience?: string | null;
+  function?: string | null;
+  industry?: string | null;
+  locations?: WorkableLocation[];
+  description?: string | null;
+};
+
+const workableLocationText = (location: WorkableLocation): string | null =>
+  [asText(location.city), asText(location.region), asText(location.country)].filter(Boolean).join(", ") || null;
+
+// Workable's v3 search endpoint throttles Cloudflare Worker egress for some
+// tenants, while its official public widget endpoint remains available. The
+// widget repeats multi-location jobs once per location, so validate every row
+// and merge by the stable public shortcode before declaring it authoritative.
+async function crawlWorkableWidget(
+  source: CrawlSource,
+  page: URL,
+  account: string,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult | null> {
+  const endpoint = new URL(`/api/v1/widget/accounts/${encodeURIComponent(account)}`, page.origin);
+  endpoint.searchParams.set("details", "true");
+  try {
+    const response = await fetchWithTimeout(fetcher, endpoint, {
+      headers: { accept: "application/json" },
+    }, false, { attempts: 1, timeoutMs: 10_000 });
+    if (!response.ok) return null;
+    const payload = await response.json() as { jobs?: WorkableWidgetJob[] };
+    if (!Array.isArray(payload.jobs) || payload.jobs.length === 0) return null;
+
+    const grouped = new Map<string, { job: WorkableWidgetJob; locations: WorkableLocation[] }>();
+    for (const job of payload.jobs) {
+      const shortcode = asText(job.shortcode)?.toUpperCase();
+      const title = asText(job.title);
+      if (!shortcode || !/^[A-F\d]{10}$/.test(shortcode) || !title) return null;
+      const existing = grouped.get(shortcode);
+      if (existing && asText(existing.job.title) !== title) return null;
+      const rowLocation: WorkableLocation = {
+        ...(asText(job.city) ? { city: asText(job.city) } : {}),
+        ...(asText(job.state) ? { region: asText(job.state) } : {}),
+        ...(asText(job.country) ? { country: asText(job.country) } : {}),
+      };
+      const locations = [rowLocation, ...(job.locations ?? [])]
+        .filter((location) => workableLocationText(location));
+      if (existing) existing.locations.push(...locations);
+      else grouped.set(shortcode, { job, locations });
+    }
+
+    const jobs = [...grouped.entries()].map(([shortcode, { job, locations }]): CrawledJob => {
+      const uniqueLocations = [...new Map(locations.map((location) => [workableLocationText(location), location])).values()];
+      const location = uniqueLocations[0] ?? null;
+      const locationText = location ? workableLocationText(location) : null;
+      const description = plainText(job.description);
+      const programs = classifyJobPrograms(asText(job.title)!);
+      const employmentType = programs.keys.some((key) => key === "internship" || key === "coop")
+        ? "Internship"
+        : normalizeEmploymentType(job.employment_type);
+      const applicationUrl = asText(job.application_url);
+      const safeApplyUrl = applicationUrl && (() => {
+        try {
+          const candidate = new URL(applicationUrl);
+          return candidate.origin === page.origin && candidate.pathname === `/j/${shortcode}/apply`
+            ? candidate.href : null;
+        } catch {
+          return null;
+        }
+      })();
+      return {
+        externalId: shortcode,
+        title: asText(job.title)!,
+        company: source.company,
+        location: locationText,
+        arrangement: job.telecommuting ? "remote" : "unknown",
+        employmentType,
+        summary: description?.slice(0, 500) ?? null,
+        ...(description ? { description } : {}),
+        ...(asText(job.department) ? { department: asText(job.department) } : {}),
+        ...(asText(job.function) ? { jobFunction: asText(job.function) } : {}),
+        ...(asText(job.industry) ? { industry: asText(job.industry) } : {}),
+        ...(asText(job.education) ? { educationRequirements: asText(job.education) } : {}),
+        ...(asText(job.experience) ? { experienceLevel: asText(job.experience) } : {}),
+        ...(uniqueLocations.length > 1 ? { secondaryLocations: uniqueLocations.slice(1).map(workableLocationText).filter((value): value is string => Boolean(value)) } : {}),
+        ...(asText(location?.city) ? { locationCity: asText(location?.city) } : {}),
+        ...(asText(location?.region) ? { locationState: asText(location?.region) } : {}),
+        ...(asText(location?.country) ? { locationCountry: asText(location?.country) } : {}),
+        requisitionId: shortcode,
+        ...(safeApplyUrl ? { applyUrl: safeApplyUrl } : {}),
+        officialUrl: new URL(`/${encodeURIComponent(account)}/j/${encodeURIComponent(shortcode)}/`, page.origin).href,
+        publishedAt: normalizedDate(job.published_on),
+      };
+    });
+    return {
+      status: "succeeded",
+      responseStatus: response.status,
+      completeListing: jobs.length === grouped.size,
+      jobs,
+      error: null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function crawlWorkable(source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> {
   const page = new URL(source.postingUrl);
   const account = page.pathname.split("/").filter(Boolean)[0];
@@ -10073,15 +10189,19 @@ async function crawlWorkable(source: CrawlSource, fetcher: typeof fetch): Promis
         method: "POST",
         headers: { accept: "application/json", "content-type": "application/json" },
         body: JSON.stringify(nextPage ? { token: nextPage } : {}),
-      });
+      }, false, { attempts: 1, timeoutMs: 10_000 });
       responseStatus = response.status;
-      if (!response.ok) return {
-        status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
-        responseStatus,
-        completeListing: false,
-        jobs: [],
-        error: `Workable returned HTTP ${response.status}.`,
-      };
+      if (!response.ok) {
+        const widget = await crawlWorkableWidget(source, page, account, fetcher);
+        if (widget) return widget;
+        return {
+          status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
+          responseStatus,
+          completeListing: false,
+          jobs: [],
+          error: `Workable returned HTTP ${response.status}.`,
+        };
+      }
       const payload = await response.json() as { total?: number; results?: WorkableJob[]; nextPage?: string | null };
       if (!Array.isArray(payload.results) || !Number.isFinite(payload.total)) throw new Error("Workable returned an unusable jobs payload.");
       if (successfulPages === 0) total = Number(payload.total);
@@ -10131,6 +10251,8 @@ async function crawlWorkable(source: CrawlSource, fetcher: typeof fetch): Promis
       error: null,
     };
   } catch (error) {
+    const widget = await crawlWorkableWidget(source, page, account, fetcher);
+    if (widget) return widget;
     return {
       status: responseStatus != null && isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
       responseStatus,

@@ -6633,6 +6633,47 @@ Wrong description.
     })]);
   });
 
+  it("falls back to Workable's official widget API when Worker egress is throttled", async () => {
+    const requests: Array<{ url: string; method: string }> = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      requests.push({ url, method: init?.method ?? "GET" });
+      if (url === "https://apply.workable.com/api/v3/accounts/acme/jobs") {
+        return new Response("rate limited", { status: 429 });
+      }
+      expect(url).toBe("https://apply.workable.com/api/v1/widget/accounts/acme?details=true");
+      const common = {
+        title: "Applied AI Intern", shortcode: "ABC123DEF4", employment_type: "Intern",
+        department: "Engineering", function: "Engineering", industry: "Software",
+        application_url: "https://apply.workable.com/j/ABC123DEF4/apply",
+        published_on: "2026-08-14", description: "<p>Build production AI systems.</p>",
+      };
+      return Response.json({ jobs: [
+        { ...common, country: "United States", city: "New York", state: "New York", locations: [{ country: "United States", city: "New York", region: "New York" }] },
+        { ...common, country: "United States", city: "Boston", state: "Massachusetts", locations: [{ country: "United States", city: "Boston", region: "Massachusetts" }] },
+      ] });
+    };
+
+    const result = await crawlSource({
+      id: "workable-widget", company: "Acme", postingUrl: "https://apply.workable.com/acme/", adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests).toEqual([
+      { url: "https://apply.workable.com/api/v3/accounts/acme/jobs", method: "POST" },
+      { url: "https://apply.workable.com/api/v1/widget/accounts/acme?details=true", method: "GET" },
+    ]);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true, responseStatus: 200 }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "ABC123DEF4", title: "Applied AI Intern", employmentType: "Internship",
+      description: "Build production AI systems.", department: "Engineering", jobFunction: "Engineering",
+      industry: "Software", location: "New York, New York, United States",
+      secondaryLocations: ["Boston, Massachusetts, United States"],
+      requisitionId: "ABC123DEF4", applyUrl: "https://apply.workable.com/j/ABC123DEF4/apply",
+      officialUrl: "https://apply.workable.com/acme/j/ABC123DEF4/",
+      publishedAt: "2026-08-14T00:00:00.000Z",
+    })]);
+  });
+
   it("follows an official careers redirect to a Workable board", async () => {
     const fetcher: typeof fetch = async (input, init) => {
       const url = String(input);
