@@ -188,6 +188,7 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
   "p5-0699-pepsico",
   "p5-0709-qualcomm",
   "p5-0712-raytheon",
+  "p5-0722-saic",
   "p5-0724-schneider-electric-us",
   "p5-0728-siemens-healthineers",
   "p5-0736-spacex",
@@ -214,6 +215,7 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
   "p5-0981-merck",
   "p5-0984-micron-technology",
   "p5-0999-nxp-semiconductors",
+  "p5-1039-revolut",
   "p5-1041-rippling",
   "p5-1050-samsung-semiconductor",
   "p5-1109-western-digital",
@@ -7371,7 +7373,7 @@ const crawlPublix = async (source: CrawlSource, fetcher: typeof fetch): Promise<
 
 const sandiaListingUrl = "https://cg.sandia.gov/psc/applicant/EMPLOYEE/HRMS/c/HRS_HRAM_FL.HRS_CG_SEARCH_FL.GBL?PAGE=HRS_APP_SCHJOB_FL";
 
-const sandiaCookieValues = (response: Response): string[] => {
+const peopleSoftCookieValues = (response: Response): string[] => {
   const values = typeof response.headers.getSetCookie === "function"
     ? response.headers.getSetCookie()
     : [response.headers.get("set-cookie")].filter((value): value is string => Boolean(value));
@@ -7380,14 +7382,14 @@ const sandiaCookieValues = (response: Response): string[] => {
     .filter((value) => /^[!#$%&'*+.^_`|~0-9A-Za-z-]+=[^;]*$/.test(value));
 };
 
-const mergeSandiaCookies = (cookies: Map<string, string>, response: Response): void => {
-  for (const pair of sandiaCookieValues(response)) {
+const mergePeopleSoftCookies = (cookies: Map<string, string>, response: Response): void => {
+  for (const pair of peopleSoftCookieValues(response)) {
     const separator = pair.indexOf("=");
     cookies.set(pair.slice(0, separator), pair.slice(separator + 1));
   }
 };
 
-const sandiaCookieHeader = (cookies: Map<string, string>): string =>
+const peopleSoftCookieHeader = (cookies: Map<string, string>): string =>
   [...cookies.entries()].map(([name, value]) => `${name}=${value}`).join("; ");
 
 const sandiaDetailUrl = (identity: string): string => {
@@ -7413,6 +7415,256 @@ const sandiaDate = (value: string | null): string | null => {
   if (!match) return null;
   const date = new Date(Date.UTC(Number(match[3]), Number(match[1]) - 1, Number(match[2])));
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
+};
+
+const fbiListingUrl = "https://apply.fbijobs.gov/psc/ps/EMPLOYEE/HRMS/c/HRS_HRAM_FL.HRS_CG_SEARCH_FL.GBL?Page=HRS_APP_SCHJOB_FL&Action=U&FOCUS=Applicant&SiteId=1";
+
+const fbiDetailUrl = (postingId: string): string | null => {
+  const identity = postingId.match(/^[A-Z0-9]+-(\d+)-(\d+)$/i);
+  if (!identity) return null;
+  const url = new URL(fbiListingUrl);
+  url.search = "";
+  url.searchParams.set("Action", "U");
+  url.searchParams.set("FOCUS", "Applicant");
+  url.searchParams.set("JobOpeningId", identity[1]);
+  url.searchParams.set("Page", "HRS_APP_JBPST_FL");
+  url.searchParams.set("PostingSeq", identity[2]);
+  url.searchParams.set("SiteId", "1");
+  return url.href;
+};
+
+const cleanReaderField = (value: string): string => value
+  .replace(/!\[[^\]]*\]\([^)]+\)/g, " ")
+  .replace(/^[\s*•-]+|[\s*•-]+$/g, "")
+  .replace(/\s+/g, " ")
+  .trim();
+
+const fbiJob = (
+  source: CrawlSource,
+  fields: {
+    title: string;
+    postingType: string;
+    postingId: string;
+    location: string;
+    department: string;
+    posted: string | null;
+  },
+): CrawledJob | null => {
+  const title = icimsText(fields.title);
+  const postingType = icimsText(fields.postingType);
+  const postingId = icimsText(fields.postingId)?.toLocaleUpperCase() ?? null;
+  const location = icimsText(fields.location);
+  const department = icimsText(fields.department);
+  const officialUrl = postingId ? fbiDetailUrl(postingId) : null;
+  if (!title || !postingType || !postingId || !location || !department || !officialUrl) return null;
+  const programs = classifyJobPrograms(title).keys;
+  return {
+    externalId: postingId,
+    requisitionId: postingId,
+    title,
+    company: source.company,
+    location,
+    arrangement: /\bremote\b/i.test(location) ? "remote" : "onsite",
+    employmentType: programs.includes("coop") ? "Co-op"
+      : programs.includes("internship") ? "Internship" : null,
+    summary: postingType,
+    department,
+    locationCountry: "United States",
+    ...(fields.posted ? { sourcePostedText: fields.posted } : {}),
+    officialUrl,
+    publishedAt: sandiaDate(fields.posted),
+  };
+};
+
+const fbiReaderJobs = (markdown: string, source: CrawlSource): {
+  advertised: number | null;
+  rowCount: number | null;
+  jobs: CrawledJob[];
+} => {
+  const advertisedText = markdown.match(/\*\*([\d,]+)\*\*\s+search result\(s\)/i)?.[1];
+  const rowCountText = markdown.match(/(?:^|\n)\s*([\d,]+)\s+rows\s*(?:\n|$)/i)?.[1];
+  const advertised = advertisedText ? Number(advertisedText.replaceAll(",", "")) : null;
+  const rowCount = rowCountText ? Number(rowCountText.replaceAll(",", "")) : null;
+  const jobs = uniqueJobs(markdown.split(/^\*\s+Posting Title\s*$/gmi).slice(1).flatMap((block): CrawledJob[] => {
+    const fields = block.match(
+      /^([\s\S]*?)\s+Posting Type\s*\n\s*\n([\s\S]*?)\s+Posting ID\s*\n\s*\n([A-Z0-9]+-\d+-\d+)\s+Recruiting Location\s*\n\s*\n([\s\S]*?)\s+Department\s*\n\s*\n([\s\S]*?)\s+Posted Date\s*\n\s*\n(\d{1,2}\/\d{1,2}\/\d{4})/i,
+    );
+    if (!fields) return [];
+    const job = fbiJob(source, {
+      title: cleanReaderField(fields[1]),
+      postingType: cleanReaderField(fields[2]),
+      postingId: fields[3],
+      location: cleanReaderField(fields[4]),
+      department: cleanReaderField(fields[5]),
+      posted: fields[6],
+    });
+    return job ? [job] : [];
+  }));
+  return {
+    advertised: Number.isSafeInteger(advertised) && advertised! > 0 ? advertised : null,
+    rowCount: Number.isSafeInteger(rowCount) && rowCount! > 0 ? rowCount : null,
+    jobs,
+  };
+};
+
+const fbiHtmlJobs = (
+  html: string,
+  source: CrawlSource,
+): { total: number | null; rowCount: number; jobs: CrawledJob[] } => {
+  const totalValue = html.match(/<b>\s*([\d,]+)\s*<\/b>\s*search result\(s\)/i)?.[1];
+  const total = totalValue ? Number(totalValue.replaceAll(",", "")) : null;
+  const rows = [...html.matchAll(
+    /<li\b[^>]*class=["'][^"']*\bps_grid-row\b[^"']*["'][^>]*>([\s\S]*?)<\/li>/gi,
+  )].filter((row) => /HRS_APP_JBSCH_I_FB_HRS_JO_PST_ID\$\d+/i.test(row[1]));
+  const jobs = uniqueJobs(rows.flatMap((row): CrawledJob[] => {
+    const body = row[1];
+    const title = sandiaField(body, "SCH_POSTING_TITLE");
+    const postingType = sandiaField(body, "HRS_APP_JBSCH_I_DESCR100");
+    const postingId = sandiaField(body, "HRS_APP_JBSCH_I_FB_HRS_JO_PST_ID");
+    const location = sandiaField(body, "LOCATION");
+    const department = sandiaField(body, "HRS_APP_JBSCH_I_HRS_DEPT_DESCR");
+    if (!title || !postingType || !postingId || !location || !department) return [];
+    const job = fbiJob(source, {
+      title,
+      postingType,
+      postingId,
+      location,
+      department,
+      posted: sandiaField(body, "SCH_OPENED"),
+    });
+    return job ? [job] : [];
+  }));
+  return {
+    total: Number.isSafeInteger(total) && total! > 0 ? total : null,
+    rowCount: rows.length,
+    jobs,
+  };
+};
+
+const crawlFbiJobs = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const readerUrl = `https://r.jina.ai/${fbiListingUrl.replaceAll("&", "%26")}`;
+  let directStatus: number | null = null;
+  let directError = "FBI careers session was unavailable.";
+  try {
+    const cookies = new Map<string, string>();
+    let currentUrl = fbiListingUrl;
+    let response: Response | null = null;
+    for (let hop = 0; hop < 4; hop += 1) {
+      response = await fetchWithTimeout(fetcher, currentUrl, {
+        redirect: "manual",
+        ...(cookies.size ? { headers: { cookie: peopleSoftCookieHeader(cookies) } } : {}),
+      }, true, { attempts: 1, timeoutMs: 15_000 });
+      directStatus = response.status;
+      mergePeopleSoftCookies(cookies, response);
+      if (response.status === 200) break;
+      const location = response.headers.get("location");
+      if (response.status < 300 || response.status >= 400 || !location) break;
+      const next = new URL(location, currentUrl);
+      const expected = new URL(fbiListingUrl);
+      if (next.origin !== expected.origin || next.pathname !== expected.pathname) break;
+      currentUrl = next.href;
+      await response.body?.cancel().catch(() => undefined);
+      response = null;
+    }
+    if (response?.ok) {
+      let html = await response.text();
+      let catalog = fbiHtmlJobs(html, source);
+      const advertisedTotal = catalog.total;
+      if (advertisedTotal !== null && catalog.rowCount > 0
+        && catalog.rowCount === catalog.jobs.length && catalog.jobs.length <= advertisedTotal) {
+        for (let page = 0; catalog.jobs.length < advertisedTotal && page < 5; page += 1) {
+          const request = peopleSoftMoreRequest(html, fbiListingUrl);
+          if (!request) break;
+          const nextResponse = await fetchWithTimeout(fetcher, request.endpoint, {
+            method: "POST",
+            redirect: "manual",
+            headers: {
+              cookie: peopleSoftCookieHeader(cookies),
+              "content-type": "application/x-www-form-urlencoded",
+              referer: currentUrl,
+            },
+            body: request.body,
+          }, true, { attempts: 1, timeoutMs: 15_000 });
+          directStatus = nextResponse.status;
+          mergePeopleSoftCookies(cookies, nextResponse);
+          if (!nextResponse.ok) break;
+          const nextHtml = await nextResponse.text();
+          const nextCatalog = fbiHtmlJobs(nextHtml, source);
+          const nextIdentities = new Set(nextCatalog.jobs.map((job) => job.externalId));
+          if (nextCatalog.total !== advertisedTotal
+            || nextCatalog.rowCount !== nextCatalog.jobs.length
+            || nextCatalog.jobs.length <= catalog.jobs.length
+            || nextCatalog.jobs.length > advertisedTotal
+            || catalog.jobs.some((job) => !nextIdentities.has(job.externalId))) break;
+          html = nextHtml;
+          catalog = nextCatalog;
+        }
+        if (catalog.jobs.length === advertisedTotal) return {
+          status: "succeeded",
+          responseStatus: directStatus,
+          completeListing: true,
+          jobs: catalog.jobs,
+          resolvedListingUrl: fbiListingUrl,
+          error: null,
+        };
+        directError = `FBI careers session returned ${catalog.jobs.length} of ${advertisedTotal} jobs.`;
+      } else {
+        directError = "FBI careers session returned an invalid initial catalog.";
+      }
+    } else {
+      directError = `FBI careers session returned HTTP ${directStatus ?? "unknown"}.`;
+    }
+  } catch (error) {
+    directError = error instanceof Error ? error.message : directError;
+  }
+
+  try {
+    const response = await fetchWithTimeout(fetcher, readerUrl, {
+      headers: {
+        accept: "text/plain",
+        "x-engine": "browser",
+        "x-no-cache": "true",
+        "x-retain-links": "all",
+        "x-wait-for-selector": "li.ps_grid-row",
+      },
+    }, false, { attempts: 1, timeoutMs: 20_000 });
+    if (!response.ok) return {
+      status: isBlockedHttpStatus(response.status) || isBlockedHttpStatus(directStatus) ? "blocked" : "failed",
+      responseStatus: response.status,
+      completeListing: false,
+      jobs: [],
+      error: `${directError} FBI official job search reader returned HTTP ${response.status}.`,
+    };
+    const parsed = fbiReaderJobs(await response.text(), source);
+    const usable = parsed.advertised !== null && parsed.rowCount === parsed.advertised
+      && parsed.jobs.length > 0 && parsed.jobs.length <= parsed.advertised;
+    if (!usable) return {
+      status: "failed",
+      responseStatus: response.status,
+      completeListing: false,
+      jobs: [],
+      error: `${directError} FBI official job search reader was inconsistent (${parsed.jobs.length} jobs, ${String(parsed.rowCount)} rows, ${String(parsed.advertised)} advertised).`,
+    };
+    return {
+      status: "succeeded",
+      responseStatus: response.status,
+      // The browser reader is addition-safe but cannot authorize stale closure.
+      completeListing: false,
+      jobs: parsed.jobs,
+      resolvedListingUrl: fbiListingUrl,
+      error: parsed.jobs.length === parsed.advertised
+        ? null
+        : `${directError} Browser reader captured ${parsed.jobs.length} of ${parsed.advertised} jobs without stale closure.`,
+    };
+  } catch (error) {
+    return {
+      status: isBlockedHttpStatus(directStatus) ? "blocked" : "failed",
+      responseStatus: directStatus,
+      completeListing: false,
+      jobs: [],
+      error: `${directError} ${error instanceof Error ? error.message : "Unknown FBI reader error."}`,
+    };
+  }
 };
 
 const sandiaJobs = (
@@ -7467,18 +7719,21 @@ const sandiaAttribute = (tag: string, name: string): string | null => {
   return value ? decodeHtmlAttribute(value[1] ?? value[2] ?? "") : null;
 };
 
-const sandiaMoreRequest = (html: string): { endpoint: string; body: string } | null => {
+const peopleSoftMoreRequest = (
+  html: string,
+  listingUrl: string,
+): { endpoint: string; body: string } | null => {
   if (!/submitAction_win0\([^,]+,["']HRS_AGNT_RSLT_I\$hdown\$0["']\)/i.test(html)) return null;
   const form = html.match(/<form\b[^>]*(?:id=["']HRS_CG_SEARCH_FL["']|name=["']win0["'])[^>]*>/i)?.[0];
   const action = form ? sandiaAttribute(form, "action") : null;
   if (!action) return null;
   let endpoint: URL;
   try {
-    endpoint = new URL(action, sandiaListingUrl);
+    endpoint = new URL(action, listingUrl);
   } catch {
     return null;
   }
-  const expected = new URL(sandiaListingUrl);
+  const expected = new URL(listingUrl);
   if (endpoint.origin !== expected.origin || endpoint.pathname !== expected.pathname) return null;
   const body = new URLSearchParams();
   for (const match of html.matchAll(/<input\b[^>]*>/gi)) {
@@ -7541,10 +7796,10 @@ const crawlSandia = async (source: CrawlSource, fetcher: typeof fetch): Promise<
     for (let hop = 0; hop < 3; hop += 1) {
       response = await fetchWithTimeout(fetcher, currentUrl, {
         redirect: "manual",
-        ...(cookies.size ? { headers: { cookie: sandiaCookieHeader(cookies) } } : {}),
+        ...(cookies.size ? { headers: { cookie: peopleSoftCookieHeader(cookies) } } : {}),
       }, true, { attempts: 1, timeoutMs: 15_000 });
       responseStatus = response.status;
-      mergeSandiaCookies(cookies, response);
+      mergePeopleSoftCookies(cookies, response);
       if (response.status === 200) break;
       const location = response.headers.get("location");
       if (response.status < 300 || response.status >= 400 || !location) break;
@@ -7577,20 +7832,20 @@ const crawlSandia = async (source: CrawlSource, fetcher: typeof fetch): Promise<
     // malformed, or reordered partial page can never become closure-authoritative.
     const maximumMoreRequests = 25;
     for (let page = 0; catalog.jobs.length < advertisedTotal && page < maximumMoreRequests; page += 1) {
-      const request = sandiaMoreRequest(html);
+      const request = peopleSoftMoreRequest(html, sandiaListingUrl);
       if (!request) break;
       const nextResponse = await fetchWithTimeout(fetcher, request.endpoint, {
         method: "POST",
         redirect: "manual",
         headers: {
-          cookie: sandiaCookieHeader(cookies),
+          cookie: peopleSoftCookieHeader(cookies),
           "content-type": "application/x-www-form-urlencoded",
           referer: currentUrl,
         },
         body: request.body,
       }, true, { attempts: 1, timeoutMs: 15_000 });
       responseStatus = nextResponse.status;
-      mergeSandiaCookies(cookies, nextResponse);
+      mergePeopleSoftCookies(cookies, nextResponse);
       if (!nextResponse.ok) break;
       const nextHtml = await nextResponse.text();
       const nextCatalog = sandiaJobs(nextHtml, source);
@@ -7614,7 +7869,7 @@ const crawlSandia = async (source: CrawlSource, fetcher: typeof fetch): Promise<
         try {
           const detailResponse = await fetchWithTimeout(fetcher, job.officialUrl, {
             redirect: "manual",
-            headers: { cookie: sandiaCookieHeader(cookies) },
+            headers: { cookie: peopleSoftCookieHeader(cookies) },
           }, true, { attempts: 1, timeoutMs: 10_000 });
           if (!detailResponse.ok) return [job.officialUrl, null] as const;
           return [job.officialUrl, sandiaDetail(await detailResponse.text(), job)] as const;
@@ -10087,53 +10342,210 @@ const crawlEogJobs = async (source: CrawlSource, fetcher: typeof fetch): Promise
 
 const crawlAmeripriseJobs = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
   const listingUrl = "https://careers.ameriprise.com/search-jobs/";
-  try {
-    const response = await fetchWithTimeout(fetcher, "https://careers.ameriprise.com/sitemap.xml", {
-      headers: { accept: "application/xml,text/xml;q=0.9" },
-    }, true, { attempts: 1, timeoutMs: 10_000 });
-    if (!response.ok) return { status: isBlockedHttpStatus(response.status) ? "blocked" : "failed", responseStatus: response.status, completeListing: false, jobs: [], error: `Ameriprise sitemap returned HTTP ${response.status}.` };
-    const xml = await response.text();
-    const entries = [...xml.matchAll(/<url\b[^>]*>([\s\S]*?)<\/url>/gi)].flatMap((entry) => {
-      const rawUrl = entry[1].match(/<loc>\s*([\s\S]*?)\s*<\/loc>/i)?.[1];
-      if (!rawUrl) return [];
-      let url: URL;
-      try {
-        url = new URL(decodeHtmlAttribute(rawUrl.trim()));
-      } catch {
-        return [];
+  const sitemapUrl = "https://careers.ameriprise.com/sitemap.xml";
+  const entriesFromBody = (body: string): Array<{
+    url: URL;
+    externalId: string;
+    title: string;
+    lastModified: string | null;
+  }> => {
+    const entries = new Map<string, { url: URL; externalId: string; title: string; lastModified: string | null }>();
+    for (const match of body.matchAll(/https:\/\/careers\.ameriprise\.com\/search-jobs\/([^/\s<\])]+)\/([^/\s<\])]+)\/?/gi)) {
+      const url = new URL(`/search-jobs/${match[1]}/${match[2]}/`, "https://careers.ameriprise.com");
+      const following = body.slice((match.index ?? 0) + match[0].length, (match.index ?? 0) + match[0].length + 400);
+      const lastModified = following.match(/(?:<lastmod>\s*)?(\d{4}-\d{2}-\d{2}T[^\s<]+)/i)?.[1]
+        ?.replace(/<\/lastmod>.*$/i, "") ?? null;
+      const current = entries.get(match[1]);
+      if (!current || (!current.lastModified && lastModified)) {
+        entries.set(match[1], {
+          url,
+          externalId: match[1],
+          title: careerSlugTitle(match[2]),
+          lastModified,
+        });
       }
-      const match = url.pathname.match(/^\/search-jobs\/([^/]+)\/([^/]+)\/$/i);
-      if (url.origin !== "https://careers.ameriprise.com" || !match || url.search || url.hash) return [];
-      const lastModified = entry[1].match(/<lastmod>\s*([\s\S]*?)\s*<\/lastmod>/i)?.[1]?.trim() ?? null;
-      return [{ url, externalId: match[1], title: careerSlugTitle(match[2]), lastModified }];
-    });
-    const jobs = uniqueJobs(entries.map((entry): CrawledJob => {
-      const programs = classifyJobPrograms(entry.title).keys;
+    }
+    return [...entries.values()];
+  };
+  const candidates = [
+    { endpoint: sitemapUrl, reader: false },
+    { endpoint: `https://r.jina.ai/${sitemapUrl}`, reader: true },
+    { endpoint: "https://r.jina.ai/http://careers.ameriprise.com/sitemap.xml", reader: true },
+  ];
+  let directStatus: number | null = null;
+  const failures: string[] = [];
+  for (const candidate of candidates) {
+    try {
+      const response = await fetchWithTimeout(fetcher, candidate.endpoint, {
+        headers: candidate.reader
+          ? { accept: "text/plain", "x-retain-links": "all" }
+          : { accept: "application/xml,text/xml;q=0.9" },
+      }, !candidate.reader, { attempts: 1, timeoutMs: candidate.reader ? 15_000 : 8_000 });
+      if (!candidate.reader) directStatus = response.status;
+      if (!response.ok) {
+        failures.push(`${candidate.reader ? "reader" : "direct"} HTTP ${response.status}`);
+        continue;
+      }
+      const body = await response.text();
+      const entries = entriesFromBody(body);
+      const jobs = uniqueJobs(entries.map((entry): CrawledJob => {
+        const programs = classifyJobPrograms(entry.title).keys;
+        return {
+          externalId: entry.externalId,
+          title: entry.title,
+          company: source.company,
+          location: null,
+          arrangement: "unknown",
+          employmentType: programs.some((key) => key === "internship" || key === "coop") ? "Internship" : null,
+          summary: null,
+          requisitionId: entry.externalId,
+          officialUrl: entry.url.href,
+          sourceUpdatedAt: normalizedDate(entry.lastModified),
+          publishedAt: normalizedDate(entry.lastModified),
+        };
+      }));
+      if (jobs.length === 0 || jobs.length !== entries.length) {
+        failures.push(`${candidate.reader ? "reader" : "direct"} sitemap contained no complete usable job set`);
+        continue;
+      }
       return {
-        externalId: entry.externalId,
-        title: entry.title,
-        company: source.company,
-        location: null,
-        arrangement: "unknown",
-        employmentType: programs.some((key) => key === "internship" || key === "coop") ? "Internship" : null,
-        summary: null,
-        requisitionId: entry.externalId,
-        officialUrl: entry.url.href,
-        sourceUpdatedAt: normalizedDate(entry.lastModified),
-        publishedAt: normalizedDate(entry.lastModified),
+        status: "succeeded",
+        responseStatus: response.status,
+        // A reader copy is an addition-safe recovery surface, not proof that
+        // the origin sitemap was complete at this instant.
+        completeListing: !candidate.reader,
+        jobs,
+        resolvedListingUrl: listingUrl,
+        error: null,
       };
-    }));
-    return {
-      status: jobs.length > 0 ? "succeeded" : "failed",
-      responseStatus: response.status,
-      completeListing: jobs.length > 0 && jobs.length === entries.length,
-      jobs,
-      resolvedListingUrl: listingUrl,
-      error: jobs.length > 0 ? null : "Ameriprise sitemap contained no usable jobs.",
-    };
-  } catch (error) {
-    return { status: "failed", responseStatus: null, completeListing: false, jobs: [], error: error instanceof Error ? error.message : "Unknown Ameriprise crawler error." };
+    } catch {
+      failures.push(`${candidate.reader ? "reader" : "direct"} request failed`);
+    }
   }
+  return {
+    status: isBlockedHttpStatus(directStatus) ? "blocked" : "failed",
+    responseStatus: directStatus,
+    completeListing: false,
+    jobs: [],
+    error: `Ameriprise sitemap was unavailable (${failures.join("; ") || "no usable response"}).`,
+  };
+};
+
+type RevolutPosition = {
+  id?: unknown;
+  text?: unknown;
+  locations?: unknown;
+  description?: unknown;
+  team?: unknown;
+};
+
+type RevolutLocation = { name: string; type: string; country: string };
+
+const revolutListingUrl = "https://www.revolut.com/en-US/careers/";
+
+const revolutPayload = (body: string): RevolutPosition[] | null => {
+  const embedded = body.match(/<script\b[^>]*\bid=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i)?.[1];
+  const candidates = [embedded, body.slice(body.indexOf("{"), body.lastIndexOf("}") + 1)]
+    .filter((value): value is string => Boolean(value));
+  for (const candidate of candidates) {
+    try {
+      const payload = JSON.parse(candidate) as {
+        pageProps?: { positions?: unknown };
+        props?: { pageProps?: { positions?: unknown } };
+      };
+      const positions = payload.pageProps?.positions ?? payload.props?.pageProps?.positions;
+      if (Array.isArray(positions) && positions.length > 0) {
+        return positions as RevolutPosition[];
+      }
+    } catch {
+      // Try the next bounded representation.
+    }
+  }
+  return null;
+};
+
+const revolutJobs = (positions: RevolutPosition[], source: CrawlSource): CrawledJob[] | null => {
+  const identities = new Set<string>();
+  const normalized = positions.flatMap((position): CrawledJob[] => {
+    const externalId = asText(position.id);
+    const title = asText(position.text);
+    if (!externalId || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(externalId) || !title || !Array.isArray(position.locations)) return [];
+    const locations = position.locations.flatMap((location): RevolutLocation[] => {
+      if (!location || typeof location !== "object") return [];
+      const value = location as Record<string, unknown>;
+      const name = asText(value.name);
+      const type = asText(value.type);
+      const country = asText(value.country);
+      return name && type && country ? [{ name, type, country }] : [];
+    });
+    if (locations.length !== position.locations.length || locations.length === 0 || identities.has(externalId)) return [];
+    identities.add(externalId);
+    const usLocations = locations.filter((location) => location.country === "United States");
+    if (usLocations.length === 0) return [];
+    const names = [...new Set(usLocations.map((location) => location.name))];
+    const types = new Set(usLocations.map((location) => location.type.toLocaleLowerCase()));
+    const programs = classifyJobPrograms(title).keys;
+    return [{
+      externalId,
+      title,
+      company: source.company,
+      location: names.join(" · "),
+      arrangement: types.size === 1 && types.has("remote") ? "remote"
+        : types.has("remote") ? "hybrid" : "onsite",
+      employmentType: programs.includes("coop") ? "Co-op"
+        : programs.includes("internship") ? "Internship" : null,
+      summary: asText(position.description),
+      team: asText(position.team),
+      locationCountry: "United States",
+      secondaryLocations: names.slice(1),
+      requisitionId: externalId,
+      officialUrl: new URL(`/en-US/careers/position/${externalId}/`, revolutListingUrl).href,
+      publishedAt: null,
+    }];
+  });
+  // Validate every global record before trusting the filtered US subset.
+  return identities.size === positions.length ? uniqueJobs(normalized) : null;
+};
+
+const crawlRevolut = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const candidates = [
+    { endpoint: revolutListingUrl, reader: false },
+    { endpoint: `https://r.jina.ai/${revolutListingUrl}`, reader: true },
+  ];
+  let directStatus: number | null = null;
+  for (const candidate of candidates) {
+    try {
+      const response = await fetchWithTimeout(fetcher, candidate.endpoint, {
+        headers: candidate.reader
+          ? { accept: "text/plain", "x-respond-with": "html" }
+          : { accept: "text/html,application/xhtml+xml" },
+      }, !candidate.reader, { attempts: 1, timeoutMs: candidate.reader ? 18_000 : 8_000 });
+      if (!candidate.reader) directStatus = response.status;
+      if (!response.ok) continue;
+      const positions = revolutPayload(await response.text());
+      const jobs = positions ? revolutJobs(positions, source) : null;
+      if (!jobs) continue;
+      return {
+        status: "succeeded",
+        responseStatus: response.status,
+        // A reader snapshot may be cached or truncated. Only a directly
+        // fetched first-party page can authorize stale-job closure.
+        completeListing: !candidate.reader,
+        jobs,
+        resolvedListingUrl: revolutListingUrl,
+        error: null,
+      };
+    } catch {
+      // Continue to the reader-backed copy of the same first-party payload.
+    }
+  }
+  return {
+    status: isBlockedHttpStatus(directStatus) ? "blocked" : "failed",
+    responseStatus: directStatus,
+    completeListing: false,
+    jobs: [],
+    error: "Revolut's validated careers page payload was unavailable.",
+  };
 };
 
 const cardinalSlug = (value: string): string => value.toLocaleLowerCase()
@@ -15013,6 +15425,10 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
     const result = await crawlJsonLd({ ...source, postingUrl: listingUrl, adapter: "custom", discoveryDepth: 0 }, fetcher, now);
     return result.status === "succeeded" ? { ...result, resolvedListingUrl: listingUrl } : result;
   }
+  if (["audit-row-536", "p2-0103-fbi", "p4-0268-fbi-los-angeles-field-office"].includes(source.id)) {
+    return crawlFbiJobs(source, fetcher);
+  }
+  if (source.id === "p5-1039-revolut") return crawlRevolut(source, fetcher);
   if (source.id === "p5-0935-hologic") return crawlHologic(source, fetcher);
   if (source.id === "audit-row-321") return crawlBorgWarner(source, fetcher);
   if (source.id === "audit-row-415") return crawlPublix(source, fetcher);

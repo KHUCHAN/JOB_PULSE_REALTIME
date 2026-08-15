@@ -1947,6 +1947,157 @@ Wrong description.
     }));
   });
 
+  it("opens FBI's official PeopleSoft session and expands every result", async () => {
+    const requests: Array<{ url: string; method: string; cookie: string | null; body: string }> = [];
+    const row = (index: number, id: string, title: string, location: string) => `<li class='ps_grid-row psc_rowact'>
+      <span class='ps_box-value' id='SCH_POSTING_TITLE$${index}'>${title}</span>
+      <span class='ps_box-value' id='HRS_APP_JBSCH_I_DESCR100$${index}'>All U.S. Citizens</span>
+      <span class='ps_box-value' id='HRS_APP_JBSCH_I_FB_HRS_JO_PST_ID$${index}'>${id}</span>
+      <span class='ps_box-value' id='LOCATION$${index}'>${location}</span>
+      <span class='ps_box-value' id='HRS_APP_JBSCH_I_HRS_DEPT_DESCR$${index}'>CYBER</span>
+      <span class='ps_box-value' id='SCH_OPENED$${index}'>08/15/2026</span></li>`;
+    const form = (state: number, rows: string, more: boolean) => `<form id='HRS_CG_SEARCH_FL' name='win0' method='post'
+      action='https://apply.fbijobs.gov/psc/ps/EMPLOYEE/HRMS/c/HRS_HRAM_FL.HRS_CG_SEARCH_FL.GBL'>
+      <input type='hidden' name='ICSID' value='fbi-session'>
+      <input type='hidden' name='ICStateNum' value='${state}'>
+      <input type='hidden' name='ICAction' value='None'>
+      <b>2</b> search result(s)${rows}
+      ${more ? `<div onclick="submitAction_win0(document.win0,'HRS_AGNT_RSLT_I$hdown$0')">more</div>` : ""}
+      </form>`;
+    const firstRow = row(0, "USCIT-67001-1", "DATA SCIENTIST, GS-1560-13", "WASHINGTON, DC");
+    const listing = form(1, firstRow, true);
+    const expanded = form(2, `${firstRow}${row(1, "ST-67002-2", "HONORS INTERNSHIP PROGRAM 2027", "NATIONWIDE")}`, false);
+    const result = await crawlSource({
+      id: "p2-0103-fbi", company: "FBI", postingUrl: "https://fbijobs.gov/", adapter: "custom",
+    }, async (input, init) => {
+      const url = String(input);
+      const headers = new Headers(init?.headers);
+      requests.push({ url, method: init?.method ?? "GET", cookie: headers.get("cookie"), body: String(init?.body ?? "") });
+      if (init?.method === "POST") return new Response(expanded, {
+        headers: { "set-cookie": "PS_STATE=expanded; Path=/; HttpOnly" },
+      });
+      if (!url.endsWith("&")) return new Response(null, {
+        status: 302,
+        headers: { location: `${url}&`, "set-cookie": "PSJSESSIONID=fbi-one; Path=/; HttpOnly" },
+      });
+      return new Response(listing, { headers: { "set-cookie": "PS_TOKEN=fbi-token; Path=/; HttpOnly" } });
+    }, new Date());
+
+    expect(requests).toHaveLength(3);
+    expect(requests[1].cookie).toContain("PSJSESSIONID=fbi-one");
+    expect(requests[2].cookie).toContain("PSJSESSIONID=fbi-one");
+    expect(requests[2].cookie).toContain("PS_TOKEN=fbi-token");
+    expect(new URLSearchParams(requests[2].body).get("ICAction")).toBe("HRS_AGNT_RSLT_I$hdown$0");
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: true,
+      resolvedListingUrl: "https://apply.fbijobs.gov/psc/ps/EMPLOYEE/HRMS/c/HRS_HRAM_FL.HRS_CG_SEARCH_FL.GBL?Page=HRS_APP_SCHJOB_FL&Action=U&FOCUS=Applicant&SiteId=1",
+    }));
+    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs[1]).toEqual(expect.objectContaining({
+      externalId: "ST-67002-2", employmentType: "Internship", locationCountry: "United States",
+    }));
+  });
+
+  it("reads FBI's official PeopleSoft results through the browser reader when the session is blocked", async () => {
+    const requests: Array<{ url: string; headers: Headers }> = [];
+    const markdown = `Title: Careers
+
+URL Source: https://apply.fbijobs.gov/
+
+Markdown Content:
+Search Jobs
+
+## Search Results List
+
+2 rows
+
+**2** search result(s)
+
+*   Posting Title
+
+DATA SCIENTIST, GS-1560-13 Posting Type
+
+All U.S. Citizens Posting ID
+
+USCIT-67001-1 Recruiting Location
+
+WASHINGTON, DC Department
+
+CYBER Posted Date
+
+08/15/2026
+
+*   Posting Title
+
+HONORS INTERNSHIP PROGRAM - SUMMER 2027 Posting Type
+
+Students Posting ID
+
+ST-67002-2 Recruiting Location
+
+NATIONWIDE Department
+
+HUMAN RESOURCES Posted Date
+
+08/14/2026`;
+    const result = await crawlSource({
+      id: "audit-row-536", company: "FBI", postingUrl: "https://fbijobs.gov/", adapter: "custom",
+    }, async (input, init) => {
+      const url = String(input);
+      requests.push({ url, headers: new Headers(init?.headers) });
+      return url.startsWith("https://apply.fbijobs.gov/")
+        ? new Response("blocked", { status: 403 })
+        : new Response(markdown);
+    }, new Date());
+
+    expect(requests).toHaveLength(2);
+    expect(requests[1].url).toBe("https://r.jina.ai/https://apply.fbijobs.gov/psc/ps/EMPLOYEE/HRMS/c/HRS_HRAM_FL.HRS_CG_SEARCH_FL.GBL?Page=HRS_APP_SCHJOB_FL%26Action=U%26FOCUS=Applicant%26SiteId=1");
+    expect(requests[1].headers.get("x-engine")).toBe("browser");
+    expect(requests[1].headers.get("x-wait-for-selector")).toBe("li.ps_grid-row");
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: false,
+      resolvedListingUrl: "https://apply.fbijobs.gov/psc/ps/EMPLOYEE/HRMS/c/HRS_HRAM_FL.HRS_CG_SEARCH_FL.GBL?Page=HRS_APP_SCHJOB_FL&Action=U&FOCUS=Applicant&SiteId=1",
+    }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        externalId: "USCIT-67001-1", title: "DATA SCIENTIST, GS-1560-13",
+        location: "WASHINGTON, DC", department: "CYBER",
+        officialUrl: "https://apply.fbijobs.gov/psc/ps/EMPLOYEE/HRMS/c/HRS_HRAM_FL.HRS_CG_SEARCH_FL.GBL?Action=U&FOCUS=Applicant&JobOpeningId=67001&Page=HRS_APP_JBPST_FL&PostingSeq=1&SiteId=1",
+        publishedAt: "2026-08-15T00:00:00.000Z",
+      }),
+      expect.objectContaining({
+        externalId: "ST-67002-2", employmentType: "Internship", location: "NATIONWIDE",
+      }),
+    ]);
+  });
+
+  it("keeps a partial FBI reader catalog addition-only when direct session access is blocked", async () => {
+    const result = await crawlSource({
+      id: "p2-0103-fbi", company: "FBI", postingUrl: "https://fbijobs.gov/", adapter: "custom",
+    }, async (input) => String(input).startsWith("https://apply.fbijobs.gov/")
+      ? new Response("blocked", { status: 403 })
+      : new Response(`2 rows\n\n**2** search result(s)\n\n*   Posting Title\n\nDATA SCIENTIST Posting Type\n\nAll U.S. Citizens Posting ID\n\nUSCIT-67001-1 Recruiting Location\n\nWASHINGTON, DC Department\n\nCYBER Posted Date\n\n08/15/2026`), new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: false,
+      error: "FBI careers session returned HTTP 403. Browser reader captured 1 of 2 jobs without stale closure.",
+    }));
+    expect(result.jobs).toHaveLength(1);
+  });
+
+  it("fails FBI closed when the reader's advertised row metadata disagrees", async () => {
+    const result = await crawlSource({
+      id: "p2-0103-fbi", company: "FBI", postingUrl: "https://fbijobs.gov/", adapter: "custom",
+    }, async (input) => String(input).startsWith("https://apply.fbijobs.gov/")
+      ? new Response("blocked", { status: 403 })
+      : new Response(`3 rows\n\n**2** search result(s)\n\n*   Posting Title\n\nDATA SCIENTIST Posting Type\n\nAll U.S. Citizens Posting ID\n\nUSCIT-67001-1 Recruiting Location\n\nWASHINGTON, DC Department\n\nCYBER Posted Date\n\n08/15/2026`), new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed", completeListing: false, jobs: [],
+      error: "FBI careers session returned HTTP 403. FBI official job search reader was inconsistent (1 jobs, 3 rows, 2 advertised).",
+    }));
+  });
+
   it("keeps only US, mixed, and unknown jobs for configured large catalogs", async () => {
     const locations = [
       "Marlborough, MA, United States",
@@ -9264,6 +9415,97 @@ Wrong description.
     expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true, resolvedListingUrl: "https://careers.ameriprise.com/search-jobs/" }));
     expect(result.jobs).toHaveLength(2);
     expect(result.jobs[1]).toEqual(expect.objectContaining({ title: "AI Intern", employmentType: "Internship", publishedAt: "2026-08-12T10:00:00.000Z" }));
+  });
+
+  it("uses Ameriprise's reader sitemap as an addition-only fallback when Worker egress is blocked", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p2-0076-ameriprise-financial",
+      company: "Ameriprise Financial",
+      postingUrl: "https://careers.ameriprise.com/search-jobs/",
+      adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === "https://careers.ameriprise.com/sitemap.xml") return new Response("blocked", { status: 403 });
+      return new Response(`Title: Sitemap\n\nMarkdown Content:\n
+        [https://careers.ameriprise.com/search-jobs/r26_2058/adobe-analytics-engineer/](https://careers.ameriprise.com/search-jobs/r26_2058/adobe-analytics-engineer/)\n\n2026-08-11T10:00:00Z\n
+        [https://careers.ameriprise.com/search-jobs/r26_2820/ai-intern/](https://careers.ameriprise.com/search-jobs/r26_2820/ai-intern/)\n\n2026-08-12T10:00:00Z`);
+    }, new Date());
+
+    expect(requests).toEqual([
+      "https://careers.ameriprise.com/sitemap.xml",
+      "https://r.jina.ai/https://careers.ameriprise.com/sitemap.xml",
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: false,
+      resolvedListingUrl: "https://careers.ameriprise.com/search-jobs/",
+    }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({ externalId: "r26_2058", title: "Adobe Analytics Engineer" }),
+      expect.objectContaining({ externalId: "r26_2820", title: "AI Intern", employmentType: "Internship" }),
+    ]);
+  });
+
+  it("loads Revolut's reader-rendered careers HTML and keeps only United States roles", async () => {
+    const requests: string[] = [];
+    const positions = [{
+      id: "de51dcd8-b408-4cf0-b737-1568d0b2c472",
+      text: "Growth Marketing Manager (B2B)",
+      locations: [{ name: "US - Remote", type: "remote", country: "United States" }],
+      description: "Build measurable growth programs.",
+      team: "Marketing & Comms",
+    }, {
+      id: "5bfed8c7-9f9d-48e2-8e28-7ecf00ac17a8",
+      text: "Data Scientist (Credit)",
+      locations: [{ name: "Poland - Remote", type: "remote", country: "Poland" }],
+      description: "Build credit models.",
+      team: "Data",
+    }];
+    const result = await crawlSource({
+      id: "p5-1039-revolut", company: "Revolut",
+      postingUrl: "https://www.revolut.com/careers/", adapter: "custom",
+    }, async (input, init) => {
+      const url = String(input);
+      requests.push(url);
+      if (!url.startsWith("https://r.jina.ai/")) return new Response("blocked", { status: 403 });
+      expect(new Headers(init?.headers).get("x-respond-with")).toBe("html");
+      return new Response(`<html><script id="__NEXT_DATA__" type="application/json">${JSON.stringify({
+        props: { pageProps: { positions } },
+      })}</script></html>`);
+    }, new Date());
+
+    expect(requests).toEqual([
+      "https://www.revolut.com/en-US/careers/",
+      "https://r.jina.ai/https://www.revolut.com/en-US/careers/",
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: false,
+      resolvedListingUrl: "https://www.revolut.com/en-US/careers/",
+    }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "de51dcd8-b408-4cf0-b737-1568d0b2c472",
+      location: "US - Remote",
+      locationCountry: "United States",
+      arrangement: "remote",
+      team: "Marketing & Comms",
+      officialUrl: "https://www.revolut.com/en-US/careers/position/de51dcd8-b408-4cf0-b737-1568d0b2c472/",
+    })]);
+  });
+
+  it("fails Revolut closed when any global position lacks a stable identity", async () => {
+    const result = await crawlSource({
+      id: "p5-1039-revolut", company: "Revolut",
+      postingUrl: "https://www.revolut.com/en-US/careers/", adapter: "custom",
+    }, async () => new Response(JSON.stringify({ pageProps: { positions: [{
+      id: "not-a-stable-id", text: "US Intern",
+      locations: [{ name: "New York", type: "office", country: "United States" }],
+    }] } })), new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed", completeListing: false, jobs: [],
+      error: "Revolut's validated careers page payload was unavailable.",
+    }));
   });
 
   it("loads Cardinal Health's complete JSON catalog with structured filter fields", async () => {

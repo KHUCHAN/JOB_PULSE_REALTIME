@@ -102,11 +102,13 @@ const auditedFetch: typeof fetch = async (input, init) => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort("15 second crawl timeout"), 15_000);
   try {
+    const signal = init?.signal
+      ? AbortSignal.any([init.signal, controller.signal])
+      : controller.signal;
     return await fetch(input, {
       ...init,
-      signal: controller.signal,
+      signal,
       headers: { accept: "application/json, text/html;q=0.9", ...init?.headers },
-      redirect: "follow",
     });
   } finally {
     clearTimeout(timeout);

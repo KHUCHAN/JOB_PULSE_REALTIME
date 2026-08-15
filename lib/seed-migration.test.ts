@@ -182,15 +182,21 @@ describe("large catalog US scope migration", () => {
     expect(sqlite.prepare("SELECT value FROM catalog_state WHERE key = 'crawler_scope_policy'").get()).toEqual({ value: "large-us-v2" });
   });
 
-  it("chains the immutable snapshot and journal after migration 0099", () => {
+  it("chains the immutable scope snapshot through the subsequent catalog refresh", () => {
     const previous = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0099_snapshot.json"), "utf8"));
     const current = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0100_snapshot.json"), "utf8"));
+    const refreshed = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0101_snapshot.json"), "utf8"));
     const currentJournal = JSON.parse(readFileSync(resolve(drizzlePath, "meta/_journal.json"), "utf8"));
 
     expect(current.prevId).toBe(previous.id);
-    expect(currentJournal.entries.at(-1)).toMatchObject({
+    expect(refreshed.prevId).toBe(current.id);
+    expect(currentJournal.entries.find((entry: { tag: string }) => entry.tag === "0100_large_catalog_us_scope")).toMatchObject({
       idx: 100,
       tag: "0100_large_catalog_us_scope",
+    });
+    expect(currentJournal.entries.at(-1)).toMatchObject({
+      idx: 101,
+      tag: "0101_refresh_sources_20260815124833",
     });
   });
 });

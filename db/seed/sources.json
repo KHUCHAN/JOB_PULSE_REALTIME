@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:8dc810d83daba3b1a435f78321e80468c98d2d593fad16a43e66b6ea4c3d86af",
+  "version": "v2:sha256:37d877914a39db07b11b8a9d19d90c86c4afd28a95024b6dee0daa6831f6f297",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -366,7 +366,7 @@
       "id": "p4-0268-fbi-los-angeles-field-office",
       "masterRow": 225,
       "company": "FBI Los Angeles Field Office",
-      "postingUrl": "https://fbijobs.gov/",
+      "postingUrl": "https://apply.fbijobs.gov/psc/ps/EMPLOYEE/HRMS/c/HRS_HRAM_FL.HRS_CG_SEARCH_FL.GBL?Page=HRS_APP_SCHJOB_FL&Action=U&FOCUS=Applicant&SiteId=1",
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
       "adapter": "custom",
@@ -374,7 +374,7 @@
       "confidence": "medium",
       "resumeUpload": "job_only",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-08",
+      "checkedAt": "2026-08-15",
       "enabled": true
     },
     {
@@ -801,10 +801,10 @@
       "id": "p5-0728-siemens-healthineers",
       "masterRow": 255,
       "company": "Siemens Healthineers",
-      "postingUrl": "https://onehealthineers.wd3.myworkdayjobs.com/SHSJB",
+      "postingUrl": "https://careers.siemens-healthineers.com/global/en/search-results",
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
-      "adapter": "workday",
+      "adapter": "phenom",
       "verification": "career_only",
       "confidence": "high",
       "resumeUpload": "job_only",
@@ -4116,7 +4116,7 @@
       "id": "audit-row-536",
       "masterRow": 536,
       "company": "FBI",
-      "postingUrl": "https://fbijobs.gov/",
+      "postingUrl": "https://apply.fbijobs.gov/psc/ps/EMPLOYEE/HRMS/c/HRS_HRAM_FL.HRS_CG_SEARCH_FL.GBL?Page=HRS_APP_SCHJOB_FL&Action=U&FOCUS=Applicant&SiteId=1",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
       "adapter": "custom",
@@ -4124,7 +4124,7 @@
       "confidence": "medium",
       "resumeUpload": "job_only",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-08",
+      "checkedAt": "2026-08-15",
       "enabled": true
     },
     {
@@ -12381,7 +12381,7 @@
       "id": "p2-0103-fbi",
       "masterRow": 2628,
       "company": "FBI (White-Collar / Financial Crimes)",
-      "postingUrl": "https://fbijobs.gov/",
+      "postingUrl": "https://apply.fbijobs.gov/psc/ps/EMPLOYEE/HRMS/c/HRS_HRAM_FL.HRS_CG_SEARCH_FL.GBL?Page=HRS_APP_SCHJOB_FL&Action=U&FOCUS=Applicant&SiteId=1",
       "talentUrl": "https://fbijobs.gov/",
       "channel": "FBI Talent Network / Stay Informed",
       "adapter": "custom",
@@ -12389,7 +12389,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-15",
       "enabled": true
     },
     {
@@ -13086,7 +13086,7 @@
       "id": "p5-0722-saic",
       "masterRow": 2705,
       "company": "SAIC",
-      "postingUrl": "https://jobs.saic.com/search/jobs",
+      "postingUrl": "https://jobs.saic.com/search/jobs/in/country/united-states",
       "talentUrl": "https://jobs.saic.com/",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -13094,7 +13094,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-08",
+      "checkedAt": "2026-08-15",
       "enabled": true
     },
     {
@@ -13686,7 +13686,7 @@
       "id": "p5-1039-revolut",
       "masterRow": 2745,
       "company": "Revolut",
-      "postingUrl": "https://www.revolut.com/careers/",
+      "postingUrl": "https://www.revolut.com/en-US/careers/",
       "talentUrl": "https://www.revolut.com/careers/",
       "channel": "Official career portal — role-by-role applications",
       "adapter": "custom",
@@ -13694,7 +13694,7 @@
       "confidence": "medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-15",
       "enabled": true
     },
     {
@@ -18771,7 +18771,7 @@
       "id": "p2-0076-ameriprise-financial",
       "masterRow": 3119,
       "company": "Ameriprise Financial",
-      "postingUrl": "https://www.ameriprise.com/careers",
+      "postingUrl": "https://careers.ameriprise.com/search-jobs/",
       "talentUrl": "https://www.ameriprise.com/careers",
       "channel": "Embedded Talent Network",
       "adapter": "custom",
@@ -18779,7 +18779,7 @@
       "confidence": "medium-high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-15",
       "enabled": true
     },
     {
@@ -25691,7 +25691,7 @@
       "officialUrl": "https://fbijobs.gov/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-15"
     },
     {
       "id": "talent-p2-0107-first-horizon",
@@ -26067,7 +26067,7 @@
       "officialUrl": "https://jobs.saic.com/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-08"
+      "checkedAt": "2026-08-15"
     },
     {
       "id": "talent-p5-0727-shield-ai",
@@ -26387,7 +26387,7 @@
       "officialUrl": "https://www.revolut.com/careers/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-15"
     },
     {
       "id": "talent-p5-1040-ribbon-health",
@@ -29099,7 +29099,7 @@
       "officialUrl": "https://www.ameriprise.com/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-15"
     },
     {
       "id": "talent-p2-0087-caliber-home-loans",

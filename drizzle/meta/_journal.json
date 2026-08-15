@@ -708,6 +708,13 @@
       "when": 1786785169512,
       "tag": "0100_large_catalog_us_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "6",
+      "when": 1786798113228,
+      "tag": "0101_refresh_sources_20260815124833",
+      "breakpoints": true
     }
   ]
 }
