@@ -4074,7 +4074,8 @@ Wrong description.
         company: "Acme",
         location: "Remote, US",
         arrangement: "remote",
-        employmentType: "FullTime",
+        employmentType: "Full-time",
+        locationCountry: "United States",
         summary: "Build reliable models.",
         description: "Build reliable models.",
         officialUrl: "https://jobs.ashbyhq.com/acme/ashby-42",
@@ -7645,7 +7646,101 @@ Wrong description.
     }));
   });
 
+  it("uses Skydio's official Ashby feed instead of treating its rendered careers page as empty", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      requests.push(String(input));
+      return Response.json({ jobs: [{
+        id: "skydio-intern-1",
+        title: "Software Engineer Intern, Autonomy",
+        department: "Autonomy",
+        employmentType: "Intern",
+        location: "San Mateo, California, United States",
+        isListed: true,
+        workplaceType: "OnSite",
+        address: { postalAddress: {
+          addressLocality: "San Mateo", addressRegion: "California", addressCountry: "United States",
+        } },
+        jobUrl: "https://jobs.ashbyhq.com/skydio/skydio-intern-1",
+        applyUrl: "https://jobs.ashbyhq.com/skydio/skydio-intern-1/application",
+        publishedAt: "2026-08-14T18:00:00Z",
+        descriptionPlain: "Build production autonomy software and data systems.",
+      }] });
+    };
+
+    const result = await crawlSource({
+      id: "p5-1057-skydio", company: "Skydio", postingUrl: "https://www.skydio.com/careers", adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests).toEqual(["https://api.ashbyhq.com/posting-api/job-board/skydio"]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: true, resolvedListingUrl: "https://jobs.ashbyhq.com/skydio",
+    }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "skydio-intern-1",
+      title: "Software Engineer Intern, Autonomy",
+      employmentType: "Internship",
+      department: "Autonomy",
+      locationCountry: "United States",
+    })]);
+  });
+
+  it("treats Replicate's explicit parent-company careers handoff as an authoritative empty standalone board", async () => {
+    const result = await crawlSource({
+      id: "p5-0715-replicate", company: "Replicate", postingUrl: "https://replicate.com/about", adapter: "custom",
+    }, async () => new Response(`
+      <title>About &amp; Careers – Replicate</title>
+      <section id="join-us"><h2>Join us</h2><p>Find our available positions on the
+      <a href="https://www.cloudflare.com/careers/">Cloudflare careers page</a>.</p></section>
+    `), new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      jobs: [],
+      resolvedListingUrl: "https://replicate.com/about",
+      error: null,
+    }));
+  });
+
+  it("keeps checking Groq's former careers route while its verified redirect has no job catalog", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      requests.push(String(input));
+      const response = new Response("<title>Company | Groq is the premier neocloud for fast inference</title><h1>Our company</h1>");
+      Object.defineProperty(response, "url", { value: "https://groq.com/company" });
+      return response;
+    };
+    const result = await crawlSource({
+      id: "p4-0440-groq", company: "Groq", postingUrl: "https://groq.com/company", adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(requests).toEqual(["https://groq.com/careers-at-groq"]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      jobs: [],
+      resolvedListingUrl: "https://groq.com/careers-at-groq",
+      error: null,
+    }));
+  });
+
+  it("does not suppress a restored Groq careers page that advertises open positions without a supported feed", async () => {
+    const response = new Response("<title>Company | Groq is the premier neocloud for fast inference</title><h1>Open Positions</h1>");
+    Object.defineProperty(response, "url", { value: "https://groq.com/company" });
+    const result = await crawlSource({
+      id: "p4-0440-groq", company: "Groq", postingUrl: "https://groq.com/company", adapter: "custom",
+    }, async () => response, new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed",
+      completeListing: false,
+      error: "No supported public job feed or job listings were discovered.",
+    }));
+  });
+
   it.each([
+    ["p4-0367-the-trade-desk", "The Trade Desk", "https://careers.thetradedesk.com/", "https://boards-api.greenhouse.io/v1/boards/thetradedesk/jobs?content=true", "https://job-boards.greenhouse.io/thetradedesk"],
     ["p4-0337-riot-games", "Riot Games", "https://www.riotgames.com/en/work-with-us", "https://boards-api.greenhouse.io/v1/boards/riotgames/jobs?content=true", "https://job-boards.greenhouse.io/riotgames"],
     ["p2-0146-oportun", "Oportun", "https://www.oportun.com/careers", "https://boards-api.greenhouse.io/v1/boards/oportun/jobs?content=true", "https://job-boards.greenhouse.io/oportun"],
     ["p4-0430-fastly", "Fastly", "https://www.fastly.com/careers", "https://boards-api.greenhouse.io/v1/boards/fastly/jobs?content=true", "https://job-boards.greenhouse.io/fastly"],

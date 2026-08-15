@@ -438,10 +438,22 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
     listingUrl: "https://jobs.ashbyhq.com/sardine",
     adapter: "ashby",
   },
+  "p4-0367-the-trade-desk": {
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/thetradedesk/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/thetradedesk",
+    adapter: "greenhouse",
+  },
   "p4-0430-fastly": {
     discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/fastly/jobs?content=true" },
     listingUrl: "https://job-boards.greenhouse.io/fastly",
     adapter: "greenhouse",
+  },
+  "p4-0440-groq": {
+    // Groq's former careers route currently redirects to its company page.
+    // Keep probing the former first-party route so a restored board is
+    // rediscovered instead of permanently treating the source as inactive.
+    listingUrl: "https://groq.com/careers-at-groq",
+    adapter: "custom",
   },
   "p4-0492-scale-ai": {
     discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/scaleai/jobs?content=true" },
@@ -477,6 +489,11 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
     discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/planetlabs/jobs?content=true" },
     listingUrl: "https://job-boards.greenhouse.io/planetlabs",
     adapter: "greenhouse",
+  },
+  "p5-1057-skydio": {
+    discovered: { kind: "ashby", endpoint: "https://api.ashbyhq.com/posting-api/job-board/skydio" },
+    listingUrl: "https://jobs.ashbyhq.com/skydio",
+    adapter: "ashby",
   },
   "p5-1116-zoox": {
     discovered: { kind: "lever", endpoint: "https://api.lever.co/v0/postings/zoox?mode=json" },
@@ -1903,21 +1920,35 @@ async function crawlDiscoveredFeed(source: CrawlSource, discovered: DiscoveredAt
         completeListing: true,
         jobs: (payload.jobs ?? []).flatMap((job) => {
           if (job.isListed === false || !job.id || !job.title || !job.jobUrl) return [];
+          const postalAddress = job.address?.postalAddress;
+          const region = classifyJobRegion({
+            location: job.location,
+            locationCity: postalAddress?.addressLocality,
+            locationState: postalAddress?.addressRegion,
+            locationCountry: postalAddress?.addressCountry,
+          });
+          const programs = classifyJobPrograms(job.title).keys;
+          const employmentType = normalizeEmploymentType(job.employmentType)
+            ?? (programs.includes("coop") ? "Co-op" : programs.includes("internship") ? "Internship" : null);
           return [{
             externalId: job.id,
             title: job.title,
             company: source.company,
             location: job.location ?? null,
-            arrangement: /remote/i.test(`${job.workplaceType ?? ""} ${job.location ?? ""}`) ? "remote" as const : /hybrid/i.test(job.workplaceType ?? "") ? "hybrid" as const : "unknown" as const,
-            employmentType: job.employmentType ?? null,
+            arrangement: /remote/i.test(`${job.workplaceType ?? ""} ${job.location ?? ""}`) ? "remote" as const
+              : /hybrid/i.test(job.workplaceType ?? "") ? "hybrid" as const
+                : /on.?site/i.test(job.workplaceType ?? "") ? "onsite" as const : "unknown" as const,
+            employmentType,
             summary: plainText(job.descriptionPlain ?? job.descriptionHtml),
             description: plainText(job.descriptionPlain ?? job.descriptionHtml),
             ...(job.department ? { department: job.department } : {}),
             ...(job.team ? { team: job.team } : {}),
             ...(job.secondaryLocations?.length ? { secondaryLocations: job.secondaryLocations.map((location) => typeof location === "string" ? location : location.location).filter((location): location is string => Boolean(location)) } : {}),
-            ...(job.address?.postalAddress?.addressRegion ? { locationState: job.address.postalAddress.addressRegion } : {}),
-            ...(job.address?.postalAddress?.addressCountry ? { locationCountry: job.address.postalAddress.addressCountry } : {}),
-            ...(job.address?.postalAddress?.postalCode ? { locationPostalCode: job.address.postalAddress.postalCode } : {}),
+            ...(postalAddress?.addressLocality ? { locationCity: postalAddress.addressLocality } : {}),
+            ...(postalAddress?.addressRegion ? { locationState: postalAddress.addressRegion } : {}),
+            ...(postalAddress?.addressCountry ? { locationCountry: postalAddress.addressCountry }
+              : region === "us" ? { locationCountry: "United States" } : {}),
+            ...(postalAddress?.postalCode ? { locationPostalCode: postalAddress.postalCode } : {}),
             ...(job.applyUrl ? { applyUrl: job.applyUrl } : {}),
             officialUrl: job.jobUrl,
             publishedAt: normalizedDate(job.publishedAt),
@@ -7931,6 +7962,15 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
       }
     }
     const html = await response.text();
+    const inactiveCareerPage = verifiedInactiveCareerPage(source, finalPage, html);
+    if (inactiveCareerPage) return {
+      status: "succeeded",
+      responseStatus: response.status,
+      completeListing: true,
+      jobs: [],
+      resolvedListingUrl: inactiveCareerPage.resolvedListingUrl,
+      error: null,
+    };
     const decodedApplicationState = html
       .replaceAll("&#34;", '"')
       .replaceAll("&quot;", '"')
@@ -13546,6 +13586,32 @@ const officialApplyUrl = (html: string, pageUrl: string): string | null => ancho
     }
   })
   .at(0) ?? null;
+
+const verifiedInactiveCareerPage = (
+  source: CrawlSource,
+  finalPage: URL,
+  html: string,
+): { resolvedListingUrl: string } | null => {
+  if (source.id === "p5-0715-replicate"
+    && finalPage.origin === "https://replicate.com"
+    && /^\/about\/?$/i.test(finalPage.pathname)
+    && /<title[^>]*>\s*About\s*(?:&amp;|&)\s*Careers\s*[–-]\s*Replicate\s*<\/title>/i.test(html)
+    && /<section\b[^>]*\bid=["']join-us["'][^>]*>[\s\S]*?href=["']https:\/\/www\.cloudflare\.com\/careers\/?["']/i.test(html)
+    && /Find our available positions on the/i.test(plainText(html) ?? "")) {
+    return { resolvedListingUrl: "https://replicate.com/about" };
+  }
+
+  if (source.id === "p4-0440-groq"
+    && finalPage.origin === "https://groq.com"
+    && /^\/company\/?$/i.test(finalPage.pathname)
+    && /<title[^>]*>\s*Company\s*\|\s*Groq\b/i.test(html)
+    && !/\bOpen Positions\b|\bGroq Internships\b|job-boards\.greenhouse\.io\/groq|boards-api\.greenhouse\.io\/v1\/boards\/groq|jobs\.ashbyhq\.com|jobs\.lever\.co/i.test(html)
+    && !anchorsFromHtml(html).some(({ href, text }) => /(?:^|\/)careers?(?:[/?#]|$)|(?:^|\/)jobs?(?:[/?#]|$)|\b(?:open positions|view jobs|join our team)\b/i.test(`${href} ${text}`))) {
+    return { resolvedListingUrl: "https://groq.com/careers-at-groq" };
+  }
+
+  return null;
+};
 
 // Only hosts verified to publish trustworthy JobPosting JSON-LD belong here.
 // Keeping this explicit avoids spending one detail request on every internship
