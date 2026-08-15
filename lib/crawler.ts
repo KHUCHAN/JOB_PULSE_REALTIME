@@ -14516,6 +14516,324 @@ const ENTERPRISE_PRODUCTS_CORPORATE_JOB_OPENINGS_URL = "https://www.enterprisepr
 const ENTERPRISE_PRODUCTS_TALEO_LISTING_URL = "https://epco.taleo.net/careersection/alljobs/jobsearch.ftl?lang=en&location=101372523&radius=1&radiusType=K&searchExpanded=false&dropListSize=1000";
 const PCA_CAREER_SEARCH_URL = "https://careers.packagingcorp.com/career-search/";
 const PCA_CAREER_SEARCH_API_URL = "https://careers.packagingcorp.com/wp-content/themes/pcoa/get-jobs.php";
+const FASTENAL_CORPORATE_CAREERS_URL = "https://careers.fastenal.com/";
+const FASTENAL_JOB_SEARCH_URL = "https://jobs.fastenal.com/jobs";
+const FASTENAL_JOB_SEARCH_API_URL = "https://jobs.fastenal.com/load-jobs";
+const FASTENAL_US_COUNTRY_LOCALITY_ID = "156";
+
+type FastenalListingJob = {
+  approvedDate?: unknown;
+  city?: unknown;
+  department?: unknown;
+  endDate?: unknown;
+  jobId?: unknown;
+  state?: unknown;
+  title?: unknown;
+  type?: unknown;
+};
+
+type FastenalListingPayload = {
+  draw?: unknown;
+  recordsTotal?: unknown;
+  recordsFiltered?: unknown;
+  data?: unknown;
+};
+
+const fastenalMetaContent = (html: string, name: string): string | null => {
+  if (!/^[a-z_]+$/i.test(name)) return null;
+  for (const match of html.matchAll(/<meta\b[^>]*>/gi)) {
+    const tag = match[0];
+    const tagName = tag.match(/\bname\s*=\s*(?:"([^"]*)"|'([^']*)')/i)?.slice(1).find(Boolean);
+    if (tagName !== name) continue;
+    return tag.match(/\bcontent\s*=\s*(?:"([^"]*)"|'([^']*)')/i)?.slice(1).find(Boolean)?.trim() ?? null;
+  }
+  return null;
+};
+
+const fastenalSessionCookie = (headers: Headers): string | null => {
+  const values = (headers as Headers & { getSetCookie?: () => string[] }).getSetCookie?.()
+    ?? [headers.get("set-cookie") ?? ""];
+  const session = values.join(",").match(
+    /(?:^|,\s*)JSESSIONID=(?:"([A-Za-z0-9._~:-]{8,256})"|([A-Za-z0-9._~:-]{8,256}))(?:;|,|$)/i,
+  );
+  const value = session?.[1] ?? session?.[2];
+  return value ? `JSESSIONID=${session?.[1] ? `"${value}"` : value}` : null;
+};
+
+const fastenalDate = (value: string | null): string | null => {
+  const match = value?.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+  if (!match) return null;
+  const month = Number(match[1]);
+  const day = Number(match[2]);
+  const year = Number(match[3]);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day
+    ? parsed.toISOString()
+    : null;
+};
+
+const fastenalNamedDate = (value: string | null): string | null => {
+  const match = value?.match(/^(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),\s*(\d{4})$/i);
+  if (!match) return null;
+  const month = [
+    "january", "february", "march", "april", "may", "june",
+    "july", "august", "september", "october", "november", "december",
+  ].indexOf(match[1].toLocaleLowerCase());
+  const day = Number(match[2]);
+  const year = Number(match[3]);
+  const parsed = new Date(Date.UTC(year, month, day));
+  return month >= 0 && parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month && parsed.getUTCDate() === day
+    ? parsed.toISOString()
+    : null;
+};
+
+const fastenalPublishedDate = (value: unknown): string | null => {
+  if (typeof value !== "number" || !Number.isSafeInteger(value)) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) || date.getUTCFullYear() < 2000 || date.getUTCFullYear() > 2100
+    ? null
+    : date.toISOString();
+};
+
+const fastenalSearchBody = (): URLSearchParams => new URLSearchParams({
+  draw: "1",
+  start: "0",
+  length: "1000",
+  query: "",
+  sortColumn: "5",
+  sortDir: "desc",
+  type: "",
+  countryLocalityId: FASTENAL_US_COUNTRY_LOCALITY_ID,
+  stateLocalityId: "",
+  stateAbbreviation: "",
+  distanceInMiles: "",
+  zip: "",
+  departmentIdList: "",
+  states: "",
+});
+
+const fastenalListingJob = (value: FastenalListingJob, source: CrawlSource): CrawledJob | null => {
+  const externalId = typeof value.jobId === "number" && Number.isSafeInteger(value.jobId)
+    ? String(value.jobId)
+    : null;
+  const title = asText(value.title);
+  const city = asText(value.city);
+  const state = asText(value.state);
+  const department = asText(value.department);
+  const listedType = asText(value.type);
+  const sourcePostedText = fastenalPublishedDate(value.approvedDate);
+  const endDateText = asText(value.endDate);
+  const validThrough = fastenalDate(endDateText);
+  if (!externalId || !/^\d{3,12}$/.test(externalId) || !title || !city || !state || !/^[A-Z]{2}$/.test(state)
+    || !department || !listedType || !sourcePostedText || !validThrough) return null;
+  const programs = classifyJobPrograms(title).keys;
+  return {
+    externalId,
+    requisitionId: externalId,
+    title,
+    company: source.company,
+    location: `${city}, ${state}`,
+    locationCity: city,
+    locationState: state,
+    locationCountry: "United States",
+    arrangement: /\bremote\b/i.test(`${title} ${city}`) ? "remote" : "unknown",
+    employmentType: programs.includes("coop") ? "Co-op"
+      : programs.includes("internship") ? "Internship"
+        : normalizeEmploymentType(listedType) ?? listedType,
+    department,
+    summary: null,
+    sourcePostedText: sourcePostedText.slice(0, 10),
+    publishedAt: sourcePostedText,
+    validThrough,
+    officialUrl: `https://jobs.fastenal.com/details/${externalId}`,
+  };
+};
+
+const fastenalDetailJob = async (
+  job: CrawledJob,
+  source: CrawlSource,
+  fetcher: typeof fetch,
+  cookie: string,
+): Promise<CrawledJob | null> => {
+  try {
+    const response = await fetchWithTimeout(fetcher, job.officialUrl, {
+      headers: { accept: "text/html,application/xhtml+xml", cookie, referer: FASTENAL_JOB_SEARCH_URL },
+    }, true, { attempts: 1, timeoutMs: 6_000 });
+    if (!response.ok) return null;
+    const finalUrl = new URL(response.url || job.officialUrl);
+    if (finalUrl.origin !== "https://jobs.fastenal.com" || finalUrl.pathname !== `/details/${job.externalId}`
+      || finalUrl.search || finalUrl.hash || finalUrl.username || finalUrl.password || finalUrl.port) return null;
+    const html = await response.text();
+    const fields = new Map([...html.matchAll(/<tr\b[^>]*>\s*<td\b[^>]*>([\s\S]*?)<\/td>\s*<td\b[^>]*>([\s\S]*?)<\/td>\s*<\/tr>/gi)]
+      .flatMap((match): Array<[string, string]> => {
+        const key = icimsText(match[1]);
+        const value = icimsText(match[2]);
+        return key && value ? [[key, value]] : [];
+      }));
+    const title = fields.get("Title") ?? null;
+    const externalId = fields.get("Job ID") ?? null;
+    const listedType = fields.get("Type") ?? null;
+    const location = fields.get("Location")?.replace(/\s+\d{5}(?:-\d{4})?$/, "") ?? null;
+    const department = fields.get("Departments") ?? null;
+    const sourcePostedText = fields.get("Date Published") ?? null;
+    const endDateText = fields.get("End Date") ?? null;
+    const publishedAt = fastenalNamedDate(sourcePostedText);
+    const validThrough = fastenalDate(endDateText);
+    const description = icimsText(html.match(
+      /<div\b[^>]*class=["'][^"']*\bcms-job-description\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/i,
+    )?.[1]);
+    const applyUrl = anchorsFromHtml(html).flatMap(({ href, text }) => {
+      if (!/^apply now$/i.test(text)) return [];
+      try {
+        const url = new URL(href, job.officialUrl);
+        return url.origin === "https://jobs.fastenal.com" && url.pathname === `/careers/application/${job.externalId}`
+          && !url.search && !url.hash && !url.username && !url.password && !url.port ? [url.href] : [];
+      } catch {
+        return [];
+      }
+    }).at(0) ?? null;
+    if (!externalId || externalId !== job.externalId || !title || jobIdentityText(title) !== jobIdentityText(job.title)
+      || !listedType || !location || location !== job.location || !department || department !== job.department
+      || !sourcePostedText || !publishedAt || publishedAt.slice(0, 10) !== job.publishedAt?.slice(0, 10)
+      || !validThrough || validThrough !== job.validThrough || !description || description.length < 100 || !applyUrl) return null;
+    const programs = classifyJobPrograms(`${title} ${description}`).keys;
+    return {
+      ...job,
+      company: source.company,
+      employmentType: programs.includes("coop") ? "Co-op"
+        : programs.includes("internship") ? "Internship"
+          : normalizeEmploymentType(listedType) ?? listedType,
+      summary: description.slice(0, 1_200),
+      description,
+      applyUrl,
+      sourcePostedText,
+      publishedAt,
+      validThrough,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const crawlFastenalCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  let failureStatus: number | null = null;
+  try {
+    const corporateResponse = await fetchWithTimeout(fetcher, FASTENAL_CORPORATE_CAREERS_URL, {
+      headers: { accept: "text/html,application/xhtml+xml" },
+    }, true, { attempts: 1, timeoutMs: 8_000 });
+    responseStatus = corporateResponse.status;
+    if (!corporateResponse.ok) {
+      failureStatus = corporateResponse.status;
+      throw new Error(`Fastenal corporate careers returned HTTP ${corporateResponse.status}.`);
+    }
+    const corporateFinal = new URL(corporateResponse.url || FASTENAL_CORPORATE_CAREERS_URL);
+    if (corporateFinal.origin !== "https://careers.fastenal.com" || corporateFinal.pathname !== "/"
+      || corporateFinal.search || corporateFinal.hash || corporateFinal.username || corporateFinal.password || corporateFinal.port) {
+      throw new Error("Fastenal corporate careers redirected outside its verified page.");
+    }
+    const corporateHtml = await corporateResponse.text();
+    const verifiedSearchLink = anchorsFromHtml(corporateHtml).some(({ href, text }) => {
+      try {
+        const url = new URL(href, FASTENAL_CORPORATE_CAREERS_URL);
+        return /^search careers$/i.test(text) && url.href === FASTENAL_JOB_SEARCH_URL;
+      } catch {
+        return false;
+      }
+    });
+    if (!verifiedSearchLink) throw new Error("Fastenal corporate careers did not expose its verified job search.");
+
+    const listingResponse = await fetchWithTimeout(fetcher, FASTENAL_JOB_SEARCH_URL, {
+      headers: { accept: "text/html,application/xhtml+xml", referer: FASTENAL_CORPORATE_CAREERS_URL },
+    }, true, { attempts: 1, timeoutMs: 8_000 });
+    responseStatus = listingResponse.status;
+    if (!listingResponse.ok) {
+      failureStatus = listingResponse.status;
+      throw new Error(`Fastenal job search returned HTTP ${listingResponse.status}.`);
+    }
+    const listingFinal = new URL(listingResponse.url || FASTENAL_JOB_SEARCH_URL);
+    if (listingFinal.origin !== "https://jobs.fastenal.com" || listingFinal.pathname !== "/jobs"
+      || listingFinal.search || listingFinal.hash || listingFinal.username || listingFinal.password || listingFinal.port) {
+      throw new Error("Fastenal job search redirected outside its verified page.");
+    }
+    const sessionCookie = fastenalSessionCookie(listingResponse.headers);
+    const listingHtml = await listingResponse.text();
+    const csrfHeader = fastenalMetaContent(listingHtml, "_csrf_header");
+    const csrfToken = fastenalMetaContent(listingHtml, "_csrf");
+    const hasUsFilter = new RegExp(
+      `<option\\b(?=[^>]*\\bvalue=["']${FASTENAL_US_COUNTRY_LOCALITY_ID}["'])[^>]*>\\s*United States\\s*</option>`,
+      "i",
+    ).test(listingHtml);
+    if (csrfHeader !== "X-CSRF-TOKEN" || !csrfToken || !/^[a-z0-9-]{20,128}$/i.test(csrfToken)
+      || !sessionCookie || !hasUsFilter || !/<form\b[^>]*\bid=["']findJobsForm["']/i.test(listingHtml)) {
+      throw new Error("Fastenal job search returned invalid session or U.S. filter configuration.");
+    }
+
+    const searchResponse = await fetchWithTimeout(fetcher, FASTENAL_JOB_SEARCH_API_URL, {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        [csrfHeader]: csrfToken,
+        cookie: sessionCookie,
+        referer: FASTENAL_JOB_SEARCH_URL,
+        "x-requested-with": "XMLHttpRequest",
+      },
+      body: fastenalSearchBody(),
+    }, true, { attempts: 1, timeoutMs: 10_000 });
+    responseStatus = searchResponse.status;
+    if (!searchResponse.ok) {
+      failureStatus = searchResponse.status;
+      throw new Error(`Fastenal U.S. job API returned HTTP ${searchResponse.status}.`);
+    }
+    if (searchResponse.url) {
+      const apiFinal = new URL(searchResponse.url);
+      if (apiFinal.origin !== "https://jobs.fastenal.com" || apiFinal.pathname !== "/load-jobs"
+        || apiFinal.search || apiFinal.hash || apiFinal.username || apiFinal.password || apiFinal.port) {
+        throw new Error("Fastenal U.S. job API redirected outside its verified endpoint.");
+      }
+    }
+    const payload = await searchResponse.json() as FastenalListingPayload;
+    const total = Number(payload.recordsTotal);
+    const filtered = Number(payload.recordsFiltered);
+    const rawJobs = Array.isArray(payload.data) ? payload.data as FastenalListingJob[] : null;
+    if (Number(payload.draw) !== 1 || !Number.isSafeInteger(total) || !Number.isSafeInteger(filtered)
+      || total < 1 || total > 1_000 || filtered < 1 || filtered > total || !rawJobs || rawJobs.length !== filtered) {
+      throw new Error("Fastenal U.S. job API returned invalid catalog metadata.");
+    }
+    const jobs = rawJobs.flatMap((raw): CrawledJob[] => {
+      const normalized = raw && typeof raw === "object" ? fastenalListingJob(raw, source) : null;
+      return normalized ? [normalized] : [];
+    });
+    if (jobs.length !== rawJobs.length || new Set(jobs.map(({ externalId }) => externalId)).size !== jobs.length
+      || new Set(jobs.map(({ officialUrl }) => officialUrl)).size !== jobs.length) {
+      throw new Error("Fastenal U.S. job API returned duplicate or invalid jobs.");
+    }
+    const detailIndexes = jobs.flatMap((job, index) => classifyJobPrograms(job.title).keys.length > 0 ? [index] : [])
+      .slice(0, 47);
+    const detailResults = await Promise.all(detailIndexes.map((index) => fastenalDetailJob(
+      jobs[index], source, fetcher, sessionCookie,
+    )));
+    for (const [offset, detail] of detailResults.entries()) if (detail) jobs[detailIndexes[offset]] = detail;
+    return {
+      status: "succeeded",
+      responseStatus: searchResponse.status,
+      completeListing: true,
+      jobs,
+      resolvedListingUrl: FASTENAL_JOB_SEARCH_URL,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: isBlockedHttpStatus(failureStatus ?? responseStatus) ? "blocked" : "failed",
+      responseStatus: failureStatus ?? responseStatus,
+      completeListing: false,
+      jobs: [],
+      resolvedListingUrl: FASTENAL_JOB_SEARCH_URL,
+      error: error instanceof Error ? error.message : "Unknown Fastenal careers crawler error.",
+    };
+  }
+};
 
 const pcaCareerSearchApiUrl = (page: number): string => {
   const url = new URL(PCA_CAREER_SEARCH_API_URL);
@@ -19207,6 +19525,9 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-807") {
     return crawlEnterpriseProductsTaleo(source, fetcher);
+  }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-811") {
+    return crawlFastenalCareers(source, fetcher);
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-846") {
     return crawlPcaCareerSearch(source, fetcher);

@@ -12301,6 +12301,140 @@ We are an equal opportunity employer.`;
     }));
   });
 
+  it("collects Fastenal's complete official U.S. AJAX catalog and enriches internship details", async () => {
+    const corporateUrl = "https://careers.fastenal.com/";
+    const listingUrl = "https://jobs.fastenal.com/jobs";
+    const apiUrl = "https://jobs.fastenal.com/load-jobs";
+    const detailUrl = "https://jobs.fastenal.com/details/633001";
+    const approvedDate = Date.parse("2026-08-14T00:00:00.000Z");
+    const rows = [
+      {
+        jobId: 633001,
+        title: "Summer 2027 Data Analytics Intern",
+        type: "Part-time",
+        city: "Winona",
+        state: "MN",
+        department: "Supply Chain",
+        endDate: "08-31-2026",
+        approvedDate,
+      },
+      {
+        jobId: 633002,
+        title: "Software Developer",
+        type: "Full-time",
+        city: "Green Bay",
+        state: "WI",
+        department: "Administrative",
+        endDate: "09-01-2026",
+        approvedDate,
+      },
+    ];
+    const listingHtml = `<meta content="X-CSRF-TOKEN" name="_csrf_header">
+      <meta name="_csrf" content="11111111-2222-3333-4444-555555555555">
+      <form class="career-search" id="findJobsForm"><select id="countryLocalityId">
+      <option value="156"> United States </option></select></form>`;
+    const detailHtml = `<h2>Position Details - Summer 2027 Data Analytics Intern</h2>
+      <table><tbody><tr><td>Job ID</td><td>633001</td></tr>
+      <tr><td>Title</td><td>Summer 2027 Data Analytics Intern</td></tr>
+      <tr><td>Type</td><td>Part-time</td></tr><tr><td>Location</td><td>Winona, MN 55987</td></tr>
+      <tr><td>Departments</td><td>Supply Chain</td></tr>
+      <tr><td>Date Published</td><td>August 14, 2026</td></tr>
+      <tr><td>End Date</td><td>08-31-2026</td></tr></tbody></table>
+      <div class="cms-job-description"><p class="job-heading"><label>Job Description</label></p>
+      Build data products and analytical software with engineering teams during this Summer 2027 internship.
+      Apply Python, SQL, statistics, and clear communication to production supply-chain decisions and reliable reporting.</div>
+      <a href="/careers/application/633001">Apply Now</a>`;
+    const requests: Array<{ url: string; method: string; body: string; headers: Headers }> = [];
+    const result = await crawlSource({
+      id: "legacy-row-811", company: "Fastenal", postingUrl: corporateUrl, adapter: "custom",
+    }, async (input, init) => {
+      const url = String(input);
+      requests.push({
+        url,
+        method: init?.method ?? "GET",
+        body: init?.body ? String(init.body) : "",
+        headers: new Headers(init?.headers),
+      });
+      if (url === corporateUrl) return new Response(`<a href="${listingUrl}">Search Careers</a>`);
+      if (url === listingUrl) return new Response(listingHtml, {
+        headers: { "set-cookie": "JSESSIONID=\"session123.jvm:02\"; Path=/; Secure; HttpOnly" },
+      });
+      if (url === apiUrl) return Response.json({ draw: 1, recordsTotal: 2, recordsFiltered: 2, data: rows });
+      if (url === detailUrl) return new Response(detailHtml);
+      return new Response("unexpected", { status: 404 });
+    }, new Date("2026-08-15T22:00:00.000Z"));
+
+    expect(requests.map(({ url }) => url)).toEqual([corporateUrl, listingUrl, apiUrl, detailUrl]);
+    const apiRequest = requests[2];
+    expect(apiRequest.method).toBe("POST");
+    expect(new URLSearchParams(apiRequest.body).get("countryLocalityId")).toBe("156");
+    expect(new URLSearchParams(apiRequest.body).get("length")).toBe("1000");
+    expect(apiRequest.headers.get("x-csrf-token")).toBe("11111111-2222-3333-4444-555555555555");
+    expect(apiRequest.headers.get("cookie")).toBe("JSESSIONID=\"session123.jvm:02\"");
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", responseStatus: 200, completeListing: true,
+      resolvedListingUrl: listingUrl, error: null,
+    }));
+    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "633001",
+      requisitionId: "633001",
+      title: "Summer 2027 Data Analytics Intern",
+      location: "Winona, MN",
+      locationCity: "Winona",
+      locationState: "MN",
+      locationCountry: "United States",
+      employmentType: "Internship",
+      department: "Supply Chain",
+      sourcePostedText: "August 14, 2026",
+      publishedAt: "2026-08-14T00:00:00.000Z",
+      validThrough: "2026-08-31T00:00:00.000Z",
+      description: expect.stringContaining("analytical software"),
+      officialUrl: detailUrl,
+      applyUrl: "https://jobs.fastenal.com/careers/application/633001",
+    }));
+    expect(result.jobs[1]).toEqual(expect.objectContaining({
+      externalId: "633002",
+      employmentType: "Full-time",
+      officialUrl: "https://jobs.fastenal.com/details/633002",
+    }));
+  });
+
+  it("fails Fastenal closed when its U.S. API repeats a job identity", async () => {
+    const corporateUrl = "https://careers.fastenal.com/";
+    const listingUrl = "https://jobs.fastenal.com/jobs";
+    const listingHtml = `<meta name="_csrf_header" content="X-CSRF-TOKEN">
+      <meta name="_csrf" content="11111111-2222-3333-4444-555555555555">
+      <form id="findJobsForm"><option value="156">United States</option></form>`;
+    const duplicate = {
+      jobId: 633001,
+      title: "Sales Associate",
+      type: "Part-time",
+      city: "Winona",
+      state: "MN",
+      department: "Sales",
+      endDate: "08-31-2026",
+      approvedDate: Date.parse("2026-08-14T00:00:00.000Z"),
+    };
+    const result = await crawlSource({
+      id: "legacy-row-811", company: "Fastenal", postingUrl: corporateUrl, adapter: "custom",
+    }, async (input) => String(input) === corporateUrl
+      ? new Response(`<a href="${listingUrl}">Search Careers</a>`)
+      : String(input) === listingUrl
+        ? new Response(listingHtml, { headers: { "set-cookie": "JSESSIONID=session123; Path=/" } })
+        : String(input) === "https://jobs.fastenal.com/load-jobs"
+          ? Response.json({ draw: 1, recordsTotal: 2, recordsFiltered: 2, data: [duplicate, duplicate] })
+          : new Response("unexpected", { status: 404 }), new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed",
+      completeListing: false,
+      jobs: [],
+      resolvedListingUrl: listingUrl,
+      error: "Fastenal U.S. job API returned duplicate or invalid jobs.",
+    }));
+  });
+
   it("collects Enterprise Products' complete official U.S. Taleo catalog", async () => {
     const corporateUrl = "https://www.enterpriseproducts.com/careers/job-openings/";
     const officialBoardUrl = "https://epco.taleo.net/careersection/alljobs/jobsearch.ftl?lang=en&radiusType=K&location=101372523&searchExpanded=false&radius=1";
