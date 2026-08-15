@@ -4388,15 +4388,30 @@ const crawlTalemetryJson = async (
         directUnavailable = true;
       }
     }
-    const attempts = allowReaderRetry ? 2 : 1;
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const readerEndpoints = [endpoint.href];
+    // A&M publishes the same country-scoped Talemetry catalog at both its
+    // localized and locale-neutral first-party routes. r.jina throttles cache
+    // keys independently, so the neutral route is a safe recovery surface
+    // when one checkpoint page is temporarily rate limited. The payload's
+    // page number, total, count, and every stable identity are still checked
+    // below before the cursor may advance.
+    if (source.id === "p4-0214-alvarez-marsal" && /^\/en\//i.test(endpoint.pathname)) {
+      const neutral = new URL(endpoint);
+      neutral.pathname = neutral.pathname.replace(/^\/en\//i, "/");
+      readerEndpoints.push(neutral.href);
+    }
+    const readerAttempts = [
+      ...readerEndpoints.map((href) => ({ href, bypassCache: false })),
+      ...(allowReaderRetry ? [{ href: endpoint.href, bypassCache: true }] : []),
+    ];
+    for (const candidate of readerAttempts) {
       try {
-        const reader = await fetchWithTimeout(fetcher, `https://r.jina.ai/${endpoint.href}`, {
+        const reader = await fetchWithTimeout(fetcher, `https://r.jina.ai/${candidate.href}`, {
           headers: {
             accept: "text/plain",
-            ...(attempt > 0 ? { "x-no-cache": "true", "x-engine": "browser" } : {}),
+            ...(candidate.bypassCache ? { "x-no-cache": "true", "x-engine": "browser" } : {}),
           },
-        }, false, { attempts: 1, timeoutMs: attempt > 0 ? 18_000 : 12_000 });
+        }, false, { attempts: 1, timeoutMs: candidate.bypassCache ? 18_000 : 12_000 });
         const readerText = await reader.text();
         const parsed = reader.ok ? parseTalemetryPayload(readerText) : null;
         if (parsed) {

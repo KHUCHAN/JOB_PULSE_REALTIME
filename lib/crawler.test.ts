@@ -3489,6 +3489,45 @@ Wrong description.
     expect(result.jobs).toHaveLength(100);
   });
 
+  it("uses A&M's equivalent locale-neutral reader key when the localized checkpoint is throttled", async () => {
+    const requests: string[] = [];
+    const entries = Array.from({ length: 100 }, (_, index) => ({
+      id: String(index + 201),
+      talemetry_job_id: String(index + 201),
+      permalink: `role-${index + 201}`,
+      title: `Role ${index + 201}`,
+      location: { country: "United States" },
+    }));
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (!url.startsWith("https://r.jina.ai/")) return new Response("blocked", { status: 403 });
+      if (url.includes("/en/search/jobs/")) return new Response("rate limited", { status: 429 });
+      return Response.json({ current_page: 3, per_page: 100, total_entries: 400, entries });
+    };
+
+    const result = await crawlSource({
+      id: "p4-0214-alvarez-marsal",
+      company: "Alvarez & Marsal",
+      postingUrl: "https://careers.alvarezandmarsal.com/en/search/jobs/in/country/united-states",
+      adapter: "custom",
+      crawlPageCursor: 3,
+    }, fetcher, new Date());
+
+    expect(requests).toEqual([
+      "https://careers.alvarezandmarsal.com/en/search/jobs/in/country/united-states",
+      "https://careers.alvarezandmarsal.com/en/search/jobs/in/country/united-states.json?per_page=100&page=3",
+      "https://r.jina.ai/https://careers.alvarezandmarsal.com/en/search/jobs/in/country/united-states.json?per_page=100&page=3",
+      "https://r.jina.ai/https://careers.alvarezandmarsal.com/search/jobs/in/country/united-states.json?per_page=100&page=3",
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: { nextPage: 4, cycleComplete: false, totalPages: 4 },
+    }));
+    expect(result.jobs).toHaveLength(100);
+  });
+
   it("bypasses a stale reader challenge snapshot when the cached response has no jobs", async () => {
     let readerRequests = 0;
     const fetcher: typeof fetch = async (input, init) => {

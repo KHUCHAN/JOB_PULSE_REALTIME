@@ -113,6 +113,7 @@
     "p5-1082-trinetx": { "url": "https://jobs.dayforcehcm.com/en-US/trinetx1/CANDIDATEPORTAL", "adapter": "dayforce" },
     "legacy-row-826": { "url": "https://jobs.dayforcehcm.com/en-US/ibgllc/CANDIDATEPORTAL/", "adapter": "dayforce" },
     "p5-0612-graymatter-robotics": { "url": "https://factory.graymatter-robotics.com/careers/", "adapter": "custom" },
+    "p5-0656-lockheed-martin": { "url": "https://lockheedmartin.eightfold.ai/careers", "adapter": "custom" },
     "audit-row-1564": { "url": null, "adapter": "custom", "verification": "NO_ACTIVE_CAREERS" },
     "audit-row-371": { "url": null, "adapter": "custom", "verification": "NO_ACTIVE_CAREERS" },
     "p2-0118-huntington-bancshares": { "url": "https://huntington-careers.com/search/searchjobs", "adapter": "custom" },

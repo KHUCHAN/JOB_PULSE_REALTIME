@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:7bf5309da11cc8a868b0702bddf5d3ecb8f184cd223335e67d33eacfc39221eb",
+  "version": "v2:sha256:696143200925dc3d620f4352fd6793df6f69f2babcea4bd78624473f472435c5",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -12921,15 +12921,15 @@
       "id": "p5-0656-lockheed-martin",
       "masterRow": 2690,
       "company": "Lockheed Martin",
-      "postingUrl": "https://www.lockheedmartinjobs.com/search-jobs",
-      "talentUrl": "https://www.lockheedmartinjobs.com/",
+      "postingUrl": "https://lockheedmartin.eightfold.ai/careers",
+      "talentUrl": "https://lockheedmartin.eightfold.ai/careers/join",
       "channel": "공식 Careers 내 Talent Community",
       "adapter": "custom",
       "verification": "valid_embedded_talent_network",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-14",
       "enabled": true
     },
     {
@@ -25976,10 +25976,10 @@
     {
       "id": "talent-p5-0656-lockheed-martin",
       "sourceId": "p5-0656-lockheed-martin",
-      "officialUrl": "https://www.lockheedmartinjobs.com/",
+      "officialUrl": "https://lockheedmartin.eightfold.ai/careers/join",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-14"
     },
     {
       "id": "talent-p5-0661-maxlinear",
