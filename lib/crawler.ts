@@ -13142,10 +13142,10 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
     const explicitRequestedCountry = sourceUrl.searchParams.get("country")?.trim() ?? "";
     const requestedCountry = explicitRequestedCountry || (source.regionScope === "us" ? "United States" : "");
     const advisoryCountryScope = !explicitRequestedCountry && source.regionScope === "us";
+    const normalizedRequestedCountry = requestedCountry.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "");
+    const requestedIsUs = ["us", "usa", "unitedstates", "unitedstatesofamerica"]
+      .includes(normalizedRequestedCountry);
     if (requestedCountry) {
-      const normalizedRequestedCountry = requestedCountry.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "");
-      const requestedIsUs = ["us", "usa", "unitedstates", "unitedstatesofamerica"]
-        .includes(normalizedRequestedCountry);
       const countryFacet = flattenedWorkdayFacets(first.payload.facets)
         .find((facet) => facet.facetParameter?.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "") === "locationcountry");
       const countryValue = (countryFacet?.values ?? []).find((value) => {
@@ -13234,8 +13234,18 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
       // Workday tenants occasionally include non-job cards alongside postings.
       // Skip those records and keep the listing incomplete so stale jobs cannot close.
       if (!job.title || !job.externalPath) return [];
-      const externalId = job.externalPath.split("_").at(-1) ?? null;
+      const pathExternalId = job.externalPath.split("_").at(-1) ?? null;
+      // Siemens Healthineers' Phenom catalog identifies a requisition as
+      // `R-30036`, while its Workday detail path may append a presentation
+      // suffix such as `R-30036-1`. Prefer the requisition printed in the
+      // official Workday card so a source migration repairs the existing row
+      // instead of creating an ATS mirror for the same posting.
+      const workdayRequisitionId = source.id === "p5-0728-siemens-healthineers"
+        ? job.bulletFields?.map((value) => value.trim()).find((value) => /^R-\d+$/i.test(value)) ?? null
+        : null;
+      const externalId = workdayRequisitionId ?? pathExternalId;
       const bulletFields = workdayBulletFields(job.bulletFields);
+      const officialUrl = new URL(`${workdaySitePrefix}${job.externalPath}`, endpointUrl.origin).href;
       return [{
         externalId,
         title: job.title,
@@ -13245,8 +13255,10 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
         employmentType: bulletFields.employmentType,
         summary: job.bulletFields?.join(" · ") ?? null,
         department: bulletFields.department,
+        ...(requestedIsUs && Object.keys(activeFacets).length > 0 ? { locationCountry: "US" } : {}),
+        ...(workdayRequisitionId ? { requisitionId: workdayRequisitionId, applyUrl: `${officialUrl.replace(/\/$/, "")}/apply` } : {}),
         sourcePostedText: job.postedOn ?? null,
-        officialUrl: new URL(`${workdaySitePrefix}${job.externalPath}`, endpointUrl.origin).href,
+        officialUrl,
         publishedAt: workdayPublishedAt(job.postedOn, now),
       }];
     }));

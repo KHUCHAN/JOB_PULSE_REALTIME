@@ -5887,6 +5887,64 @@ Wrong description.
     }));
     expect(result.jobs).toHaveLength(21);
     expect(result.jobs.every((job) => job.location?.includes("United States"))).toBe(true);
+    expect(result.jobs.every((job) => job.locationCountry === "US")).toBe(true);
+  });
+
+  it("uses the stable Siemens Healthineers Workday requisition across ATS migrations", async () => {
+    const requestBodies: Array<{ appliedFacets: Record<string, string[]>; offset: number }> = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      expect(String(input)).toBe("https://onehealthineers.wd3.myworkdayjobs.com/wday/cxs/onehealthineers/SHSJB/jobs");
+      const body = JSON.parse(String(init?.body)) as { appliedFacets: Record<string, string[]>; offset: number };
+      requestBodies.push(body);
+      if (Object.keys(body.appliedFacets).length === 0) return Response.json({
+        total: 900,
+        facets: [{
+          facetParameter: "locationCountry",
+          descriptor: "Country",
+          values: [
+            { descriptor: "United States of America", id: "us-country-id", count: 1 },
+            { descriptor: "Germany", id: "de-country-id", count: 400 },
+          ],
+        }],
+        jobPostings: [{
+          title: "Global Role",
+          externalPath: "/job/Erlangen/Global-Role_R-1-1",
+          locationsText: "Erlangen",
+          bulletFields: ["R-1"],
+        }],
+      });
+      return Response.json({
+        total: 1,
+        facets: [],
+        jobPostings: [{
+          title: "AI Software Engineer",
+          externalPath: "/job/Malvern/AI-Software-Engineer_R-30036-1",
+          locationsText: "MLV LB",
+          bulletFields: ["R-30036"],
+          postedOn: "Posted Today",
+        }],
+      });
+    };
+
+    const result = await crawlSource({
+      id: "p5-0728-siemens-healthineers",
+      company: "Siemens Healthineers",
+      postingUrl: "https://onehealthineers.wd3.myworkdayjobs.com/SHSJB",
+      adapter: "workday",
+    }, fetcher, new Date("2026-08-15T00:00:00Z"));
+
+    expect(requestBodies).toEqual([
+      { appliedFacets: {}, limit: 20, offset: 0, searchText: "" },
+      { appliedFacets: { locationCountry: ["us-country-id"] }, limit: 20, offset: 0, searchText: "" },
+    ]);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "R-30036",
+      requisitionId: "R-30036",
+      locationCountry: "US",
+      officialUrl: "https://onehealthineers.wd3.myworkdayjobs.com/SHSJB/job/Malvern/AI-Software-Engineer_R-30036-1",
+      applyUrl: "https://onehealthineers.wd3.myworkdayjobs.com/SHSJB/job/Malvern/AI-Software-Engineer_R-30036-1/apply",
+    })]);
   });
 
   it("falls back to the global Workday request when an advisory US facet is unavailable", async () => {
