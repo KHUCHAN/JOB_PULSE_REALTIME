@@ -1243,6 +1243,54 @@ Wrong description.
     })]);
   });
 
+  it("supports modern Avature folder pagination and nested location fields", async () => {
+    const card = (id: string, title: string, city: string, state: string, country: string) => [
+      '<article class="article article--result">',
+      '<div class="article__header__text"><h3 class="article__header__text__title title">',
+      `<a class="link" href="/en_US/searchjobs/JobDetail/${id}">${title}</a></h3>`,
+      '<div class="article__header__text__subtitle"><span class="list-item-location">',
+      `<span class="list-item-jobCity">${city}</span>, <span class="list-item-jobState">${state}</span>, `,
+      `<span class="list-item-jobCountry">${country}</span></span>`,
+      `<span class="list-item-jobId">Job ID: ${id}</span></div></div>`,
+      `<a href="/en_US/searchjobs/JobDetail/${id}">Learn more</a>`,
+      '</article>',
+    ].join("");
+    const page = (offset: number) => [
+      '<meta name="avature.wizard.registrars" content="[]">',
+      `<div aria-label="${offset + 1}-${offset + 1} of 2 results">${offset + 1}-${offset + 1} of 2 results</div>`,
+      '<a href="?folderRecordsPerPage=1&amp;folderOffset=1">Next</a>',
+      offset === 0
+        ? card("514434", "Imaging Data Intern", "Istanbul", "Istanbul", "Tuerkiye")
+        : card("514435", "AI Software Intern", "Malvern", "Pennsylvania", "United States"),
+    ].join("");
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p5-0728-siemens-healthineers",
+      company: "Siemens Healthineers",
+      postingUrl: "https://jobs.acme.example/en_US/searchjobs/SearchJobs",
+      adapter: "custom",
+    }, async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.href);
+      return new Response(page(Number(url.searchParams.get("folderOffset") ?? 0)));
+    }, new Date());
+
+    expect(requests.some((request) => {
+      const url = new URL(request);
+      return url.pathname === "/en_US/searchjobs/SearchJobs"
+        && url.searchParams.get("folderOffset") === "1"
+        && url.searchParams.get("folderRecordsPerPage") === "1";
+    })).toBe(true);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        externalId: "514435",
+        requisitionId: "514435",
+        location: "Malvern, Pennsylvania, United States",
+      }),
+    ]);
+  });
+
   it("checkpoints large Avature catalogs below the source request budget", async () => {
     const requests: string[] = [];
     const total = 246;

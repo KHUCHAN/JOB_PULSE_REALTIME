@@ -175,6 +175,7 @@ const US_SCOPED_LARGE_CATALOGS = new Set([
   "p5-0709-qualcomm",
   "p5-0712-raytheon",
   "p5-0724-schneider-electric-us",
+  "p5-0728-siemens-healthineers",
   "p5-0736-spacex",
   "p5-0740-stmicroelectronics",
   "p5-0741-stryker",
@@ -6355,8 +6356,13 @@ const avatureJobsFromHtml = (html: string, source: CrawlSource): CrawledJob[] =>
     const inlineMetadata = subtitle?.match(
       /^\s*Job\s+ID\s*:\s*([^|]+?)\s*\|\s*Posted\s*:\s*([^|]+?)\s*\|\s*(.+?)\s*$/i,
     );
-    const location = field("list-item-location") ?? inlineMetadata?.[3]?.trim() ?? null;
-    const requisitionId = field("list-item-(?:ref|id)")?.replace(/^(?:job|role)\s+id\s*:?\s*/i, "")
+    const structuredCity = field("list-item-jobCity");
+    const structuredState = field("list-item-jobState");
+    const structuredCountry = field("list-item-jobCountry");
+    const structuredLocation = [structuredCity, structuredState, structuredCountry]
+      .filter((value): value is string => Boolean(value)).join(", ");
+    const location = structuredLocation || (field("list-item-location") ?? inlineMetadata?.[3]?.trim() ?? null);
+    const requisitionId = field("list-item-(?:ref|id|jobId)")?.replace(/^(?:job|role)\s+id\s*:?\s*/i, "")
       ?? inlineMetadata?.[1]?.trim()
       ?? externalId;
     const posted = field("list-item-posted") ?? inlineMetadata?.[2]?.trim() ?? null;
@@ -6376,9 +6382,11 @@ const avatureJobsFromHtml = (html: string, source: CrawlSource): CrawledJob[] =>
         : normalizeEmploymentType(workerType),
       summary: null,
       ...(department ? { department } : {}),
-      ...(locationParts.length >= 3 ? { locationCity: locationParts[0] } : {}),
-      ...(usLocation && locationParts.length >= 3 ? { locationState: locationParts.at(-2) } : {}),
-      ...(usLocation ? { locationCountry: "United States" } : {}),
+      ...(structuredCity || locationParts.length >= 3 ? { locationCity: structuredCity ?? locationParts[0] } : {}),
+      ...(structuredState || (usLocation && locationParts.length >= 3)
+        ? { locationState: structuredState ?? locationParts.at(-2) }
+        : {}),
+      ...(structuredCountry || usLocation ? { locationCountry: structuredCountry ?? "United States" } : {}),
       requisitionId,
       ...(posted ? { sourcePostedText: posted } : {}),
       officialUrl: officialUrl.href,
@@ -6407,7 +6415,10 @@ const crawlAvaturePages = async (
   html: string,
   fetcher: typeof fetch,
 ): Promise<SourceCrawlResult | null> => {
-  if (!/avature\.portal\.page["']?\s+content=["']Search(?:Career|Jobs)/i.test(html)) return null;
+  const legacyListing = /avature\.portal\.page["']?\s+content=["']Search(?:Career|Jobs)/i.test(html);
+  const modernListing = /<meta\b[^>]*name=["']avature\.wizard\.registrars["']/i.test(html)
+    && /\/JobDetail\//i.test(html);
+  if (!legacyListing && !modernListing) return null;
   const text = plainText(html) ?? "";
   const range = text.match(/\b[\d,]+\s*-\s*([\d,]+)\s+of\s+([\d,]+)(\+)?\s+results\b/i);
   if (!range) return null;
@@ -6418,7 +6429,7 @@ const crawlAvaturePages = async (
 
   const jobsOnPage = (pageHtml: string) => avatureJobsFromHtml(pageHtml, source);
   const jobs = jobsOnPage(html);
-  const paginationHref = anchorsFromHtml(html).find(({ href }) => /[?&]jobOffset=\d+/i.test(href))?.href;
+  const paginationHref = anchorsFromHtml(html).find(({ href }) => /[?&](?:job|folder)Offset=\d+/i.test(href))?.href;
   if (total <= pageSize) return {
     status: "succeeded",
     responseStatus: 200,
@@ -6427,6 +6438,9 @@ const crawlAvaturePages = async (
     error: null,
   };
   if (!paginationHref) return null;
+  const usesFolderPagination = /[?&]folderOffset=\d+/i.test(paginationHref);
+  const offsetParameter = usesFolderPagination ? "folderOffset" : "jobOffset";
+  const pageSizeParameter = usesFolderPagination ? "folderRecordsPerPage" : "jobRecordsPerPage";
 
   const totalPages = Math.ceil(total / pageSize);
   const maximumPages = 40;
@@ -6442,8 +6456,8 @@ const crawlAvaturePages = async (
       const fetched = await Promise.all(batch.map(async (pageNumber) => {
         try {
           const url = new URL(paginationHref, source.postingUrl);
-          url.searchParams.set("jobRecordsPerPage", String(pageSize));
-          url.searchParams.set("jobOffset", String((pageNumber - 1) * pageSize));
+          url.searchParams.set(pageSizeParameter, String(pageSize));
+          url.searchParams.set(offsetParameter, String((pageNumber - 1) * pageSize));
           const response = await fetchWithTimeout(fetcher, url, undefined, true, { attempts: 1, timeoutMs: 10_000 });
           if (!response.ok) return null;
           const pageHtml = await response.text();
@@ -6501,8 +6515,8 @@ const crawlAvaturePages = async (
     const pages = await Promise.all(offsets.slice(index, index + 10).map(async (offset) => {
       try {
         const url = new URL(paginationHref, source.postingUrl);
-        url.searchParams.set("jobRecordsPerPage", String(pageSize));
-        url.searchParams.set("jobOffset", String(offset));
+        url.searchParams.set(pageSizeParameter, String(pageSize));
+        url.searchParams.set(offsetParameter, String(offset));
         const response = await fetchWithTimeout(fetcher, url);
         if (!response.ok) return null;
         return jobsOnPage(await response.text());
