@@ -14979,7 +14979,14 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
     const segments = sourcePage.pathname.split("/").filter(Boolean);
     const tenant = segments[0]?.toLocaleLowerCase() === "careers" ? segments[1] : segments[0];
     if (tenant && /^[a-z0-9_-]+$/i.test(tenant)) {
-      return crawlJobviteBoard(source, `https://jobs.jobvite.com/${tenant}/`, tenant, fetcher);
+      // Jobvite's job-alert form is a separate page and its tenant landing
+      // page may contain only employer branding. The canonical positions
+      // route is the authoritative server-rendered catalog, so go there
+      // directly when the source URL was captured from a job-alert channel.
+      const listingUrl = segments.at(-1)?.toLocaleLowerCase() === "jobalerts"
+        ? `https://jobs.jobvite.com/${tenant}/jobs/positions`
+        : `https://jobs.jobvite.com/${tenant}/`;
+      return crawlJobviteBoard(source, listingUrl, tenant, fetcher);
     }
   }
   if (source.id === "audit-row-342") return crawlDeltaAvature(source, fetcher);

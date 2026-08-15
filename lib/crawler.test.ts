@@ -1472,6 +1472,38 @@ Wrong description.
     }));
   });
 
+  it("crawls a Jobvite job-alert source through its canonical positions catalog", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p2-0044-loandepot",
+      company: "LoanDepot",
+      postingUrl: "https://jobs.jobvite.com/loandepot/jobAlerts",
+      adapter: "custom",
+    }, async (input) => {
+      requests.push(String(input));
+      return new Response(`<section><h2>Open Roles</h2><div class="jv-job-list"><ul>
+        <li class="row"><a href="/loandepot/job/owwCAfwY"><div class="jv-job-list-name">Social Media Specialist</div><div class="jv-job-list-location"><div class="jv-meta">2 Locations</div></div></a></li>
+        <li class="row"><a href="/loandepot/job/oXGwAfwt"><div class="jv-job-list-name">Data Analyst</div><div class="jv-job-list-location"><div class="jv-meta">Plano, Texas</div></div></a></li>
+      </ul></div></section>`);
+    }, new Date());
+
+    expect(requests).toEqual(["https://jobs.jobvite.com/loandepot/jobs/positions"]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://jobs.jobvite.com/loandepot/jobs/positions",
+    }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        externalId: "owwCAfwY",
+        title: "Social Media Specialist",
+        location: "2 Locations",
+        officialUrl: "https://jobs.jobvite.com/loandepot/job/owwCAfwY",
+      }),
+      expect.objectContaining({ externalId: "oXGwAfwt", title: "Data Analyst", location: "Plano, Texas" }),
+    ]);
+  });
+
   it("derives a locale-scoped Radancy search catalog only from a strong landing-page marker", async () => {
     const requests: string[] = [];
     const landing = [
