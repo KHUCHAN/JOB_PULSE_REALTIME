@@ -8437,6 +8437,126 @@ Wrong description.
     expect(result.jobs).toHaveLength(25);
   });
 
+  it("crawls Energy Transfer's complete SelectMinds session catalog and enriches internship details", async () => {
+    const origin = "https://energytransfer.referrals.selectminds.com";
+    const listingUrl = `${origin}/ETP/jobs/search`;
+    const sessionUrl = `${listingUrl}/9000001`;
+    const token = "selectminds-test-token-123456789";
+    const row = (id: number, title = `Role ${id}`) => `
+      <div id="job_list_${id}" class="job_list_row jlr_Odd">
+        <a href="${origin}/ETP/jobs/${title.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "-")}-${id}" class="job_link font_bold">${title}</a>
+        <span class="location">DALLAS, Texas, United States</span>
+        <span class="category">Information Technology</span>
+        <p class="jlr_description">Summary for ${title}</p>
+      </div>`;
+    const page = (currentPage: number, rows: string[]) => `
+      <div class="results_content jResultsContent" data-jsid="9000001">
+        <span class="total_results">12</span>
+        ${rows.join("")}
+        <div id="jPaginationHldr"></div>
+        <div id="jPaginateNumPages">2.0</div>
+        <div id="jPaginateCurrPage">${currentPage}</div>
+      </div>`;
+    const pageOne = page(1, Array.from({ length: 10 }, (_, index) => row(
+      1001 + index,
+      index === 0 ? "Summer 2027 Data Engineering Intern" : `Role ${1001 + index}`,
+    )));
+    const pageTwo = page(2, [row(1011), row(1012)]);
+    const calls: string[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      calls.push(url);
+      if (url === listingUrl) {
+        expect(init?.redirect).toBe("manual");
+        const headers = new Headers({ location: sessionUrl });
+        headers.append("set-cookie", "JSESSIONID=session; Path=/; Secure; HttpOnly");
+        headers.append("set-cookie", "ORA_OTSS_SESSION_ID=oracle; Path=/; Secure; HttpOnly");
+        return new Response(null, { status: 307, headers });
+      }
+      if (url === sessionUrl) {
+        expect(new Headers(init?.headers).get("cookie")).toContain("JSESSIONID=session");
+        return new Response(`<input id="tsstoken" value="${token}">${pageOne}`);
+      }
+      if (url.startsWith(`${origin}/ajax/content/job_results?`)) {
+        const headers = new Headers(init?.headers);
+        expect(init?.method).toBe("POST");
+        expect(headers.get("cookie")).toContain("ORA_OTSS_SESSION_ID=oracle");
+        expect(headers.get("tss-token")).toBe(token);
+        expect(headers.get("x-requested-with")).toBe("XMLHttpRequest");
+        expect(new URL(url).searchParams.get("page_index")).toBe("2");
+        return Response.json({ Status: "OK", UserMessage: "", Result: pageTwo });
+      }
+      if (url.endsWith("/summer-2027-data-engineering-intern-1001")) {
+        return new Response(`
+          <h1 class="title">Summer 2027 Data Engineering Intern</h1>
+          <input class="jUserRefreshJobId" value="1001">
+          <dd class="job_post_date"><span class="field_value">2 days ago</span></dd>
+          <dd class="job_external_id"><span class="field_value">REQ-2027-1001</span></dd>
+          <div class="job_description"><p>Build production data pipelines and machine learning services.</p>
+          <div class="job_qualifications"><p>Python, SQL, and a relevant degree.</p></div>
+          <!-- TEC-19749 -->
+        `);
+      }
+      throw new Error(`Unexpected SelectMinds request: ${url}`);
+    };
+
+    const result = await crawlSource({
+      id: "legacy-row-806",
+      company: "Energy Transfer",
+      postingUrl: "https://www.energytransfer.com/careers/",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-14T12:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: listingUrl,
+      error: null,
+    }));
+    expect(result.jobs).toHaveLength(12);
+    expect(result.jobs.find((job) => job.externalId === "1001")).toEqual(expect.objectContaining({
+      title: "Summer 2027 Data Engineering Intern",
+      locationCity: "DALLAS",
+      locationState: "Texas",
+      locationCountry: "United States",
+      employmentType: "Internship",
+      department: "Information Technology",
+      requisitionId: "REQ-2027-1001",
+      sourcePostedText: "2 days ago",
+      publishedAt: "2026-08-12T12:00:00.000Z",
+      description: expect.stringContaining("machine learning services"),
+      qualifications: expect.stringContaining("Python, SQL"),
+    }));
+    expect(calls).toHaveLength(4);
+  });
+
+  it("fails closed when Energy Transfer's SelectMinds session omits its anti-forgery token", async () => {
+    const listingUrl = "https://energytransfer.referrals.selectminds.com/ETP/jobs/search";
+    const sessionUrl = `${listingUrl}/9000002`;
+    let calls = 0;
+    const result = await crawlSource({
+      id: "legacy-row-806", company: "Energy Transfer",
+      postingUrl: "https://www.energytransfer.com/careers/", adapter: "custom",
+    }, async (input) => {
+      calls += 1;
+      if (String(input) === listingUrl) {
+        const headers = new Headers({ location: sessionUrl });
+        headers.append("set-cookie", "JSESSIONID=session; Path=/; Secure");
+        headers.append("set-cookie", "ORA_OTSS_SESSION_ID=oracle; Path=/; Secure");
+        return new Response(null, { status: 307, headers });
+      }
+      return new Response('<div class="results_content jResultsContent" data-jsid="9000002"></div>');
+    }, new Date("2026-08-14T12:00:00Z"));
+
+    expect(calls).toBe(2);
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed",
+      completeListing: false,
+      jobs: [],
+      error: "Energy Transfer SelectMinds listing omitted a valid token, identity, or first page.",
+    }));
+  });
+
   it("recovers once from a transient repeated Dayforce offset page", async () => {
     const requestedOffsets: number[] = [];
     let secondPageAttempts = 0;

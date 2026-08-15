@@ -65,7 +65,11 @@ const firstMatch = (title: string, rules: ProgramRule[]): ProgramRule | undefine
 
 export function classifyJobPrograms(title: string): JobProgramClassification {
   const normalized = normalizedTitle(title);
-  const internship = firstMatch(normalized, internshipRules);
+  // Roles that recruit or administer interns are not themselves internships.
+  // Keep the exclusion narrow so titles such as "Talent Acquisition Intern"
+  // still classify correctly while "Intern Recruiting Specialist" does not.
+  const internshipProgramSupportRole = /(?:\b(?:talent acquisition|campus recruit(?:er|ing)|human resources)\b.*\bintern(?:ship)? (?:program )?(?:recruiting|hiring|coordination)\b|\bintern(?:ship)? (?:program )?(?:recruiting|hiring|coordinat(?:or|ion))\b)/u.test(normalized);
+  const internship = internshipProgramSupportRole ? undefined : firstMatch(normalized, internshipRules);
   const coop = firstMatch(normalized, coopRules);
   const keys: JobProgramKey[] = [];
   const evidence: Partial<Record<JobProgramKey, string>> = {};

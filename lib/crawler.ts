@@ -2899,6 +2899,259 @@ const mergeCookies = (jar: Map<string, string>, response: Response): void => {
   }
 };
 
+type SelectMindsPage = {
+  currentPage: number;
+  jobs: CrawledJob[];
+  jobSearchId: string;
+  total: number;
+  totalPages: number;
+};
+
+const ENERGY_TRANSFER_SELECTMINDS_ORIGIN = "https://energytransfer.referrals.selectminds.com";
+const ENERGY_TRANSFER_SELECTMINDS_LISTING = `${ENERGY_TRANSFER_SELECTMINDS_ORIGIN}/ETP/jobs/search`;
+
+const selectMindsJobIdentity = (value: string): { id: string; url: string } | null => {
+  try {
+    const url = new URL(value);
+    const match = url.pathname.match(/^\/ETP\/jobs\/([^/]+)-(\d+)\/?$/i);
+    if (url.origin !== ENERGY_TRANSFER_SELECTMINDS_ORIGIN || url.username || url.password || url.port
+      || url.search || url.hash || !match || !/^(?:[a-z0-9.-]|%[0-9a-f]{2})+$/i.test(match[1])) return null;
+    url.pathname = url.pathname.replace(/\/$/, "");
+    return { id: match[2], url: url.href };
+  } catch {
+    return null;
+  }
+};
+
+const selectMindsElementNumber = (html: string, id: string): number | null => {
+  const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const value = html.match(new RegExp(`<[^>]*\\bid\\s*=\\s*["']${escaped}["'][^>]*>\\s*([\\d,.]+)`, "i"))?.[1];
+  if (!value) return null;
+  const number = Number(value.replaceAll(",", ""));
+  return Number.isInteger(number) && number >= 0 ? number : null;
+};
+
+const selectMindsJobsFromHtml = (html: string, source: CrawlSource): CrawledJob[] | null => {
+  const starts = [...html.matchAll(
+    /<div\b[^>]*\bid\s*=\s*["']job_list_(\d+)["'][^>]*\bclass\s*=\s*["'][^"']*\bjob_list_row\b[^"']*["'][^>]*>/gi,
+  )];
+  const jobs = starts.flatMap((match, index): CrawledJob[] => {
+    const externalId = match[1];
+    const start = match.index ?? 0;
+    const end = starts[index + 1]?.index ?? html.length;
+    const block = html.slice(start, end);
+    const anchor = anchorsFromHtml(block).flatMap(({ href, text }) => {
+      try {
+        const candidate = new URL(href, ENERGY_TRANSFER_SELECTMINDS_ORIGIN);
+        const identity = selectMindsJobIdentity(candidate.href);
+        const title = icimsText(text);
+        return identity?.id === externalId && title ? [{ identity, title }] : [];
+      } catch {
+        return [];
+      }
+    })[0];
+    if (!anchor) return [];
+    const location = icimsText(block.match(
+      /<span\b[^>]*class=["'][^"']*\blocation\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i,
+    )?.[1]);
+    const department = icimsText(block.match(
+      /<span\b[^>]*class=["'][^"']*\bcategory\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i,
+    )?.[1]);
+    const summary = icimsText(block.match(
+      /<p\b[^>]*class=["'][^"']*\bjlr_description\b[^"']*["'][^>]*>([\s\S]*?)<\/p>/i,
+    )?.[1]);
+    const locationParts = location?.split(",").map((part) => part.trim()).filter(Boolean) ?? [];
+    const locationCountry = locationParts.length >= 2 ? locationParts.at(-1) ?? null : null;
+    const locationState = locationParts.length >= 3 ? locationParts.at(-2) ?? null : null;
+    const locationCity = locationParts.length >= 3 ? locationParts.slice(0, -2).join(", ") || null : null;
+    const programs = classifyJobPrograms(anchor.title).keys;
+    const arrangementText = [anchor.title, location, summary].filter(Boolean).join(" ");
+    return [{
+      externalId,
+      title: anchor.title,
+      company: source.company,
+      location,
+      arrangement: /\bremote\b/i.test(arrangementText)
+        ? "remote"
+        : /\bhybrid\b/i.test(arrangementText) ? "hybrid" : "unknown",
+      employmentType: programs.includes("coop")
+        ? "Co-op"
+        : programs.includes("internship") ? "Internship" : null,
+      summary,
+      ...(department ? { department } : {}),
+      ...(locationCity ? { locationCity } : {}),
+      ...(locationState ? { locationState } : {}),
+      ...(locationCountry ? { locationCountry } : {}),
+      officialUrl: anchor.identity.url,
+      publishedAt: null,
+    }];
+  });
+  return jobs.length === starts.length ? jobs : null;
+};
+
+const selectMindsPageFromHtml = (html: string, source: CrawlSource): SelectMindsPage | null => {
+  const jobSearchId = html.match(
+    /<div\b(?=[^>]*class=["'][^"']*\bjResultsContent\b[^"']*["'])(?=[^>]*data-jsid=["'](\d+)["'])[^>]*>/i,
+  )?.[1];
+  const totalText = html.match(
+    /<span\b[^>]*class=["'][^"']*\btotal_results\b[^"']*["'][^>]*>\s*([\d,]+)\s*<\/span>/i,
+  )?.[1];
+  const total = totalText ? Number(totalText.replaceAll(",", "")) : Number.NaN;
+  const totalPages = selectMindsElementNumber(html, "jPaginateNumPages");
+  const currentPage = selectMindsElementNumber(html, "jPaginateCurrPage");
+  const jobs = selectMindsJobsFromHtml(html, source);
+  if (!jobSearchId || !Number.isInteger(total) || total <= 0 || totalPages == null || totalPages < 1
+    || currentPage == null || currentPage < 1 || !jobs) return null;
+  const identities = jobs.map((job) => job.externalId);
+  if (identities.some((identity) => !identity) || new Set(identities).size !== identities.length) return null;
+  return { currentPage, jobs, jobSearchId, total, totalPages };
+};
+
+const selectMindsCookieHeader = (jar: Map<string, string>): string => [...jar.values()].join("; ");
+
+const crawlEnergyTransferSelectMinds = async (
+  source: CrawlSource,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  try {
+    const jar = new Map<string, string>();
+    const redirect = await fetchWithTimeout(fetcher, ENERGY_TRANSFER_SELECTMINDS_LISTING, {
+      redirect: "manual",
+    }, true, { attempts: 1, timeoutMs: 10_000 });
+    responseStatus = redirect.status;
+    if (![302, 303, 307, 308].includes(redirect.status)) {
+      throw Object.assign(new Error(`Energy Transfer SelectMinds bootstrap returned HTTP ${redirect.status}.`), { responseStatus: redirect.status });
+    }
+    mergeCookies(jar, redirect);
+    if (!jar.has("JSESSIONID") || !jar.has("ORA_OTSS_SESSION_ID")) {
+      throw new Error("Energy Transfer SelectMinds bootstrap omitted its required session cookies.");
+    }
+    const location = redirect.headers.get("location");
+    const sessionUrl = location ? new URL(location, ENERGY_TRANSFER_SELECTMINDS_LISTING) : null;
+    const sessionId = sessionUrl?.pathname.match(/^\/ETP\/jobs\/search\/(\d+)$/)?.[1];
+    if (!sessionUrl || sessionUrl.origin !== ENERGY_TRANSFER_SELECTMINDS_ORIGIN || sessionUrl.search || sessionUrl.hash || !sessionId) {
+      throw new Error("Energy Transfer SelectMinds returned an invalid session listing URL.");
+    }
+
+    const listing = await fetchWithTimeout(fetcher, sessionUrl, {
+      redirect: "manual",
+      headers: { cookie: selectMindsCookieHeader(jar) },
+    }, true, { attempts: 1, timeoutMs: 10_000 });
+    responseStatus = listing.status;
+    mergeCookies(jar, listing);
+    if (!listing.ok) {
+      throw Object.assign(new Error(`Energy Transfer SelectMinds listing returned HTTP ${listing.status}.`), { responseStatus: listing.status });
+    }
+    const html = await listing.text();
+    const token = html.match(
+      /<input\b(?=[^>]*\bid\s*=\s*["']tsstoken["'])(?=[^>]*\bvalue\s*=\s*["']([^"']{20,256})["'])[^>]*>/i,
+    )?.[1];
+    const first = selectMindsPageFromHtml(html, source);
+    if (!token || !first || first.jobSearchId !== sessionId || first.currentPage !== 1) {
+      throw new Error("Energy Transfer SelectMinds listing omitted a valid token, identity, or first page.");
+    }
+    const pageSize = first.jobs.length;
+    if (pageSize < 1 || first.totalPages !== Math.ceil(first.total / pageSize)
+      || pageSize !== Math.min(pageSize, first.total)) {
+      throw new Error("Energy Transfer SelectMinds advertised inconsistent catalog totals.");
+    }
+
+    const maximumPages = 40;
+    const requestedStart = Math.max(1, Math.trunc(source.crawlPageCursor ?? 1));
+    const startPage = requestedStart > first.totalPages ? 1 : requestedStart;
+    const endPage = Math.min(first.totalPages, startPage + maximumPages - 1);
+    const pages = new Map<number, SelectMindsPage>([[1, first]]);
+    const pageNumbers = Array.from(
+      { length: Math.max(0, endPage - startPage + 1) },
+      (_, index) => startPage + index,
+    ).filter((page) => page !== 1);
+
+    const fetchPage = async (pageNumber: number): Promise<SelectMindsPage | null> => {
+      try {
+        const endpoint = new URL("/ajax/content/job_results", ENERGY_TRANSFER_SELECTMINDS_ORIGIN);
+        endpoint.searchParams.set("JobSearch.id", first.jobSearchId);
+        endpoint.searchParams.set("page_index", String(pageNumber));
+        endpoint.searchParams.set("site-name", "ETP");
+        endpoint.searchParams.set("include_site", "true");
+        endpoint.searchParams.set("uid", String(Date.now() + pageNumber));
+        const response = await fetchWithTimeout(fetcher, endpoint, {
+          method: "POST",
+          headers: {
+            accept: "application/json",
+            cookie: selectMindsCookieHeader(jar),
+            referer: sessionUrl.href,
+            "tss-token": token,
+            "x-requested-with": "XMLHttpRequest",
+          },
+        }, true, { attempts: 1, timeoutMs: 10_000 });
+        responseStatus = response.status;
+        if (!response.ok) return null;
+        const payload = await response.json() as { Status?: unknown; Result?: unknown };
+        if (payload.Status !== "OK" || typeof payload.Result !== "string") return null;
+        const page = selectMindsPageFromHtml(payload.Result, source);
+        const expected = Math.min(pageSize, Math.max(0, first.total - (pageNumber - 1) * pageSize));
+        return page?.jobSearchId === first.jobSearchId && page.currentPage === pageNumber
+          && page.total === first.total && page.totalPages === first.totalPages
+          && page.jobs.length === expected ? page : null;
+      } catch {
+        return null;
+      }
+    };
+
+    for (let index = 0; index < pageNumbers.length; index += 4) {
+      const numbers = pageNumbers.slice(index, index + 4);
+      const fetched = await Promise.all(numbers.map(fetchPage));
+      fetched.forEach((page, pageIndex) => {
+        if (page) pages.set(numbers[pageIndex], page);
+      });
+    }
+
+    const jobs: CrawledJob[] = startPage > 1 ? [...first.jobs] : [];
+    const seen = new Set(jobs.map((job) => job.externalId!));
+    let firstFailedPage: number | null = null;
+    for (let pageNumber = startPage; pageNumber <= endPage; pageNumber += 1) {
+      const page = pages.get(pageNumber);
+      const expected = Math.min(pageSize, Math.max(0, first.total - (pageNumber - 1) * pageSize));
+      const identities = page?.jobs.map((job) => job.externalId ?? "") ?? [];
+      if (!page || page.jobs.length !== expected || identities.some((identity) => !identity || seen.has(identity))) {
+        firstFailedPage ??= pageNumber;
+        continue;
+      }
+      identities.forEach((identity) => seen.add(identity));
+      jobs.push(...page.jobs);
+    }
+    const normalized = uniqueJobs(jobs);
+    const cycleComplete = firstFailedPage === null && endPage === first.totalPages;
+    return {
+      status: "succeeded",
+      responseStatus: responseStatus ?? 200,
+      completeListing: startPage === 1 && cycleComplete && normalized.length === first.total,
+      jobs: normalized,
+      ...(first.totalPages > maximumPages || source.crawlPageCursor != null || firstFailedPage != null ? {
+        pagination: {
+          nextPage: cycleComplete ? 1 : firstFailedPage ?? endPage + 1,
+          cycleComplete,
+          totalPages: first.totalPages,
+        },
+      } : {}),
+      resolvedListingUrl: ENERGY_TRANSFER_SELECTMINDS_LISTING,
+      error: firstFailedPage == null ? null : `Energy Transfer SelectMinds page ${firstFailedPage} was unavailable or inconsistent.`,
+    };
+  } catch (error) {
+    const status = typeof error === "object" && error && "responseStatus" in error
+      ? Number((error as { responseStatus: unknown }).responseStatus)
+      : responseStatus;
+    return {
+      status: isBlockedHttpStatus(status) ? "blocked" : "failed",
+      responseStatus: status,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Energy Transfer SelectMinds crawler error.",
+    };
+  }
+};
+
 type LegacySuccessFactorsIdentity = {
   companyCode: string;
   listingUrl: string;
@@ -12210,6 +12463,9 @@ const crawlDayforce = async (
 };
 
 async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-806") {
+    return crawlEnergyTransferSelectMinds(source, fetcher);
+  }
   // Apply an ID-pinned feed only at the root. Redirect/candidate recursion
   // keeps the same source ID, so reapplying it at discovery depth 1 would
   // loop back to the root feed until the request/deadline budget is spent.
@@ -12565,6 +12821,7 @@ const mergeProgramJobDetail = (
   languages: detail.languages?.length ? detail.languages : job.languages,
   requisitionId: detail.requisitionId ?? detail.externalId ?? job.requisitionId ?? job.externalId,
   applyUrl: applyUrl ?? detail.applyUrl ?? job.applyUrl,
+  sourcePostedText: detail.sourcePostedText ?? job.sourcePostedText,
   sourceUpdatedAt: detail.sourceUpdatedAt ?? job.sourceUpdatedAt,
   validThrough: detail.validThrough ?? job.validThrough,
   publishedAt: detail.publishedAt ?? job.publishedAt,
@@ -12647,6 +12904,58 @@ const enrichProgramJobDetails = async (
 
   const enrichOne = async ({ index, candidates }: { index: number; candidates: string[] }): Promise<void> => {
     const job = enriched[index];
+    const selectMindsIdentity = selectMindsJobIdentity(job.officialUrl);
+    if (selectMindsIdentity) {
+      try {
+        const response = await fetchWithTimeout(fetcher, selectMindsIdentity.url, undefined, true, { attempts: 1, timeoutMs: 4_000 });
+        if (response.ok && (!response.url || response.url === selectMindsIdentity.url)) {
+          const html = await response.text();
+          const detailId = html.match(/class=["'][^"']*\bjUserRefreshJobId\b[^"']*["'][^>]*\bvalue=["'](\d+)["']/i)?.[1]
+            ?? html.match(/\bvalue=["'](\d+)["'][^>]*class=["'][^"']*\bjUserRefreshJobId\b/i)?.[1];
+          const title = icimsText(html.match(/<h1\b[^>]*class=["'][^"']*\btitle\b[^"']*["'][^>]*>([\s\S]*?)<\/h1>/i)?.[1]);
+          if (detailId === selectMindsIdentity.id && title && jobIdentityText(title) === jobIdentityText(job.title)) {
+            const descriptionStart = html.search(/<div\b[^>]*class=["'][^"']*\bjob_description\b[^"']*["'][^>]*>/i);
+            const qualificationsStart = descriptionStart >= 0
+              ? html.slice(descriptionStart).search(/<div\b[^>]*class=["'][^"']*\bjob_qualifications\b[^"']*["'][^>]*>/i)
+              : -1;
+            const absoluteQualificationsStart = qualificationsStart >= 0 ? descriptionStart + qualificationsStart : -1;
+            const technicalEnd = html.indexOf("<!-- TEC-", Math.max(descriptionStart, absoluteQualificationsStart));
+            const description = descriptionStart >= 0
+              ? icimsText(html.slice(descriptionStart, absoluteQualificationsStart >= 0 ? absoluteQualificationsStart : technicalEnd >= 0 ? technicalEnd : html.length))
+              : null;
+            const qualifications = absoluteQualificationsStart >= 0
+              ? icimsText(html.slice(absoluteQualificationsStart, technicalEnd >= 0 ? technicalEnd : html.length))
+              : null;
+            const requisitionId = icimsText(html.match(
+              /<dd\b[^>]*class=["'][^"']*\bjob_external_id\b[^"']*["'][^>]*>[\s\S]*?<span\b[^>]*class=["'][^"']*\bfield_value\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i,
+            )?.[1]);
+            const postedText = icimsText(html.match(
+              /<dd\b[^>]*class=["'][^"']*\bjob_post_date\b[^"']*["'][^>]*>[\s\S]*?<span\b[^>]*class=["'][^"']*\bfield_value\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i,
+            )?.[1]);
+            const relative = postedText?.match(/^(\d+)\s+(minute|hour|day|week)s?\s+ago$/i);
+            const unitMs = relative ? ({ minute: 60_000, hour: 3_600_000, day: 86_400_000, week: 604_800_000 } as const)[relative[2].toLocaleLowerCase() as "minute" | "hour" | "day" | "week"] : null;
+            const publishedAt = relative && unitMs
+              ? new Date(now.getTime() - Number(relative[1]) * unitMs).toISOString()
+              : postedText && /^yesterday$/i.test(postedText)
+                ? new Date(now.getTime() - 86_400_000).toISOString()
+                : postedText && /^today$/i.test(postedText) ? now.toISOString() : normalizedDate(postedText);
+            enriched[index] = mergeProgramJobDetail(job, {
+              title,
+              summary: description ?? job.summary,
+              description,
+              responsibilities: description,
+              qualifications,
+              requisitionId,
+              sourcePostedText: postedText,
+              publishedAt,
+            });
+            return;
+          }
+        }
+      } catch {
+        // Detail enrichment is optional; the verified listing remains usable.
+      }
+    }
     const smartRecruitersDetail = smartRecruitersDetailEndpoint(job);
     if (smartRecruitersDetail) {
       try {

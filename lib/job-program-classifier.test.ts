@@ -99,8 +99,15 @@ describe("job program classifier", () => {
     "Management Trainee - Data",
     "Early - Stage AI Engineer",
     "HYCO Operator",
+    "Specialist - Talent Acquisition – Early Talent & Intern Recruiting",
+    "Campus Recruiter - Internship Program Hiring",
+    "Intern Program Coordinator",
   ])("does not classify false positive: %s", (title) => {
     expect(classifyJobPrograms(title).keys).toEqual([]);
+  });
+
+  it("keeps an actual talent acquisition intern classified", () => {
+    expect(classifyJobPrograms("2027 Talent Acquisition Intern").keys).toEqual(["internship"]);
   });
 
   it("can attach both internship and co-op memberships to one title", () => {
