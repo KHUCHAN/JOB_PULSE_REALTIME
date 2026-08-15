@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:37d877914a39db07b11b8a9d19d90c86c4afd28a95024b6dee0daa6831f6f297",
+  "version": "v2:sha256:02c4a38ad8d8b429ed0cdd07fe6f099830b0877442512cf79e3a7c71016aef6d",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -14031,15 +14031,15 @@
       "id": "p5-1104-wayfair",
       "masterRow": 2768,
       "company": "Wayfair",
-      "postingUrl": "https://www.aboutwayfair.com/careers",
-      "talentUrl": "https://www.aboutwayfair.com/careers",
+      "postingUrl": "https://www.wayfair.com/careers/jobs",
+      "talentUrl": "https://www.wayfair.com/careers",
       "channel": "공식 Career Portal",
       "adapter": "custom",
       "verification": "career_page_only",
       "confidence": "high-medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-15",
       "enabled": true
     },
     {
@@ -26568,10 +26568,10 @@
     {
       "id": "talent-p5-1104-wayfair",
       "sourceId": "p5-1104-wayfair",
-      "officialUrl": "https://www.aboutwayfair.com/careers",
+      "officialUrl": "https://www.wayfair.com/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-15"
     },
     {
       "id": "talent-p5-1106-wcg",

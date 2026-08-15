@@ -182,23 +182,25 @@ describe("large catalog US scope migration", () => {
     expect(sqlite.prepare("SELECT value FROM catalog_state WHERE key = 'crawler_scope_policy'").get()).toEqual({ value: "large-us-v2" });
   });
 
-  it("chains the immutable scope snapshot through the catalog refresh and requeue", () => {
+  it("chains the immutable scope snapshot through the catalog refreshes and requeue", () => {
     const previous = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0099_snapshot.json"), "utf8"));
     const current = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0100_snapshot.json"), "utf8"));
     const refreshed = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0101_snapshot.json"), "utf8"));
     const requeued = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0102_snapshot.json"), "utf8"));
+    const wayfairRefresh = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0103_snapshot.json"), "utf8"));
     const currentJournal = JSON.parse(readFileSync(resolve(drizzlePath, "meta/_journal.json"), "utf8"));
 
     expect(current.prevId).toBe(previous.id);
     expect(refreshed.prevId).toBe(current.id);
     expect(requeued.prevId).toBe(refreshed.id);
+    expect(wayfairRefresh.prevId).toBe(requeued.id);
     expect(currentJournal.entries.find((entry: { tag: string }) => entry.tag === "0100_large_catalog_us_scope")).toMatchObject({
       idx: 100,
       tag: "0100_large_catalog_us_scope",
     });
     expect(currentJournal.entries.at(-1)).toMatchObject({
-      idx: 102,
-      tag: "0102_requeue_recovered_sources",
+      idx: 103,
+      tag: "0103_refresh_sources_20260815143518",
     });
   });
 
@@ -216,5 +218,14 @@ describe("large catalog US scope migration", () => {
       "p5-1039-revolut",
     ]);
     expect(sql).toContain("SET `next_crawl_at` = CURRENT_TIMESTAMP");
+  });
+
+  it("persists the verified Wayfair job catalog URL", () => {
+    const sql = readFileSync(resolve(drizzlePath, "0103_refresh_sources_20260815143518.sql"), "utf8");
+
+    expect(sql).toContain("'p5-1104-wayfair'");
+    expect(sql).toContain("'https://www.wayfair.com/careers/jobs'");
+    expect(sql).toContain("'https://www.wayfair.com/careers'");
+    expect(sql).not.toContain("'https://www.aboutwayfair.com/careers'");
   });
 });
