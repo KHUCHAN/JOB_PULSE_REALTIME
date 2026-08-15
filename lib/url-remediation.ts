@@ -144,17 +144,32 @@ export const isSafeCareerRecommendation = (company: string, originalUrl: string,
  */
 export const isSafeCareerListingUrl = (company: string, originalUrl: string, candidateUrl: string): boolean => {
   let candidate: URL;
+  let original: URL;
   try {
     candidate = new URL(candidateUrl);
+    original = new URL(originalUrl);
   } catch {
     return false;
   }
   if (ATS_VENDOR_LANDING.test(candidate.hostname) && /^\/?$/i.test(candidate.pathname)) return false;
   if (NON_LISTING_PATH.test(`${candidate.pathname}${candidate.search}`)) return false;
+  // CGI's official careers CTA uses an opaque Njoyn tenant ID, so neither the
+  // company name nor its domain appears in the vendor URL. Admit only CGI's
+  // exact US JobListing tenant and only when the stored source is CGI-owned.
+  const candidateParameters = new Map(
+    [...candidate.searchParams].map(([key, value]) => [key.toLocaleLowerCase(), value]),
+  );
+  if (company.trim().toLocaleLowerCase() === "cgi"
+    && /(?:^|\.)cgi\.com$/i.test(original.hostname)
+    && candidate.hostname.toLocaleLowerCase() === "cgi.njoyn.com"
+    && candidate.pathname.toLocaleLowerCase() === "/corp/xweb/xweb.asp"
+    && candidateParameters.get("clid") === "21001"
+    && candidateParameters.get("page")?.toLocaleLowerCase() === "joblisting"
+    && candidateParameters.get("countryid") === "US") return true;
   if (isSafeCareerRecommendation(company, originalUrl, candidate.href)) return true;
   if (isPublicAtsCatalogUrl(candidate.href)) return true;
   try {
-    return new URL(originalUrl).href === candidate.href && isPublicAtsCatalogUrl(candidate.href);
+    return original.href === candidate.href && isPublicAtsCatalogUrl(candidate.href);
   } catch {
     return false;
   }

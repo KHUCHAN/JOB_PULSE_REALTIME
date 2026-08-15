@@ -1,4 +1,5 @@
 import { crawlSource, type CrawlSource } from "../lib/crawler.ts";
+import { recoverCheckpointedCatalog } from "../lib/request-fallback-recovery.ts";
 import { isSafeCareerListingUrl } from "../lib/url-remediation.ts";
 
 type LiveSource = {
@@ -70,7 +71,9 @@ const liveSources = async (): Promise<CrawlSource[]> => {
 
 const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
   try {
-    const result = await crawlSource(source, fetch, new Date());
+    const result = source.id === "p4-0241-cgi"
+      ? await recoverCheckpointedCatalog(source, fetch, crawlSource)
+      : await crawlSource(source, fetch, new Date());
     if (result.status !== "succeeded" || result.jobs.length === 0) {
       throw new Error(result.error ?? `${result.status} crawler result with ${result.jobs.length} jobs.`);
     }

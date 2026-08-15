@@ -59,7 +59,7 @@ jobs:
         env:
           REQUEST_FALLBACK_LIVE_URL: https://job-pulse-realtime.autodev61.chatgpt.site
           REQUEST_FALLBACK_INGEST_URL: https://job-pulse-realtime.autodev61.chatgpt.site/api/pulse
-          REQUEST_FALLBACK_SOURCE_IDS: p5-0722-saic,p5-1039-revolut
+          REQUEST_FALLBACK_SOURCE_IDS: p5-0722-saic,p5-1039-revolut,p4-0241-cgi
         run: node scripts/request-fallback-crawl.ts
 
   browser-recovery:

@@ -1,0 +1,62 @@
+import { describe, expect, it, vi } from "vitest";
+import type { CrawlSource, SourceCrawlResult } from "./crawler";
+import { recoverCheckpointedCatalog } from "./request-fallback-recovery";
+
+const source: CrawlSource = {
+  id: "checkpointed",
+  company: "Checkpointed",
+  postingUrl: "https://example.com/jobs",
+  adapter: "custom",
+};
+
+const job = (id: string): SourceCrawlResult["jobs"][number] => ({
+  externalId: id,
+  title: `Role ${id}`,
+  company: source.company,
+  location: "New York",
+  arrangement: "unknown",
+  employmentType: null,
+  summary: null,
+  officialUrl: `https://example.com/jobs/${id}`,
+  publishedAt: null,
+});
+
+describe("request fallback checkpoint recovery", () => {
+  it("joins bounded windows and removes the repeated page-one jobs", async () => {
+    const crawl = vi.fn(async (requested: CrawlSource): Promise<SourceCrawlResult> => {
+      if (requested.crawlPageCursor === 1) return {
+        status: "succeeded", responseStatus: 200, completeListing: false,
+        jobs: [job("a"), job("b")], pagination: { nextPage: 3, cycleComplete: false, totalPages: 5 }, error: null,
+      };
+      if (requested.crawlPageCursor === 3) return {
+        status: "succeeded", responseStatus: 200, completeListing: false,
+        jobs: [job("a"), job("c"), job("d")], pagination: { nextPage: 5, cycleComplete: false, totalPages: 5 }, error: null,
+      };
+      return {
+        status: "succeeded", responseStatus: 200, completeListing: false,
+        jobs: [job("a"), job("e")], pagination: { nextPage: 1, cycleComplete: true, totalPages: 5 }, error: null,
+      };
+    });
+
+    const result = await recoverCheckpointedCatalog(source, fetch, crawl);
+    expect(crawl.mock.calls.map(([requested]) => requested.crawlPageCursor)).toEqual([1, 3, 5]);
+    expect(result.jobs.map((value) => value.externalId)).toEqual(["a", "b", "c", "d", "e"]);
+    expect(result.completeListing).toBe(false);
+    expect(result.pagination).toBeUndefined();
+  });
+
+  it("retries one stalled window and then fails without claiming completeness", async () => {
+    const crawl = vi.fn(async (): Promise<SourceCrawlResult> => ({
+      status: "succeeded", responseStatus: 200, completeListing: false,
+      jobs: [job("a")], pagination: { nextPage: 5, cycleComplete: false, totalPages: 8 }, error: null,
+    }));
+    const wait = vi.fn(async () => undefined);
+    await expect(recoverCheckpointedCatalog(
+      { ...source, crawlPageCursor: 5 },
+      fetch,
+      crawl,
+      { maxStalls: 1, stallDelayMs: 1, wait },
+    )).rejects.toThrow("did not advance");
+    expect(wait).toHaveBeenCalledOnce();
+  });
+});
