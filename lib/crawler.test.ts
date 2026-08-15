@@ -1139,6 +1139,7 @@ Wrong description.
 
   it("uses an identity-checked Barclays reader when Worker detail requests are blocked", async () => {
     const jobUrl = "https://search.jobs.barclays/job/new-york/quantitative-finance-associate-summer-internship-program-2027-new-york/13015/99217260160";
+    const httpJobUrl = jobUrl.replace(/^https:/, "http:");
     const applyUrl = "https://barclays.wd3.myworkdayjobs.com/External_Career_Site_Barclays/job/New-York-745-7th-Avenue/Quantitative-Finance-Associate-Summer-Internship-Program-2027-New-York_JR-0000128099/apply";
     const title = "Quantitative Finance Associate Summer Internship Program 2027 New York";
     const listing = [
@@ -1165,10 +1166,11 @@ Wrong description.
         ` });
       }
       if (url === jobUrl) return new Response("blocked", { status: 403 });
-      if (url === `https://r.jina.ai/${jobUrl}`) return new Response(`
+      if (url === `https://r.jina.ai/${jobUrl}`) return new Response("upstream returned an unusable cached page");
+      if (url === `https://r.jina.ai/${httpJobUrl}`) return new Response(`
         Title: ${title} at Barclays
 
-        URL Source: ${jobUrl}
+        URL Source: ${httpJobUrl}
 
         Markdown Content:
         New York, NY
@@ -1206,7 +1208,7 @@ Wrong description.
       description: expect.stringContaining("software engineering"),
     })]));
     expect([...pageAttempts.keys()]).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10]);
-    expect(totalRequests).toBeLessThanOrEqual(21);
+    expect(totalRequests).toBeLessThanOrEqual(22);
   });
 
   it("does not merge a Barclays reader response for a different posting identity", async () => {

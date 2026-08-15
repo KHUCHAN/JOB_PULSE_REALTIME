@@ -14978,6 +14978,34 @@ const barclaysReaderDetail = (
   };
 };
 
+const fetchBarclaysReaderDetail = async (
+  job: CrawledJob,
+  source: CrawlSource,
+  fetcher: typeof fetch,
+): Promise<{ detail: CrawledJob; applyUrl: string | null } | null> => {
+  const target = new URL(job.officialUrl);
+  const httpTarget = new URL(target);
+  httpTarget.protocol = "http:";
+  for (const endpoint of [`https://r.jina.ai/${target.href}`, `https://r.jina.ai/${httpTarget.href}`]) {
+    try {
+      const response = await fetchWithTimeout(fetcher, endpoint, {
+        headers: {
+          accept: "text/plain",
+          "user-agent": "Mozilla/5.0 (compatible; JobPulseCrawler/1.0)",
+          "x-retain-links": "all",
+          "x-with-links-summary": "all",
+        },
+      }, false, { attempts: 1, timeoutMs: 8_000 });
+      if (!response.ok) continue;
+      const reader = barclaysReaderDetail(await response.text(), source, job);
+      if (reader) return reader;
+    } catch {
+      // Continue to the independent protocol-keyed reader cache.
+    }
+  }
+  return null;
+};
+
 const enrichProgramJobDetails = async (
   result: SourceCrawlResult,
   source: CrawlSource,
@@ -15152,8 +15180,7 @@ const enrichProgramJobDetails = async (
     // same request. The text reader is used only as an identity-checked detail
     // fallback; the canonical and apply links remain first-party Barclays URLs.
     if (new URL(job.officialUrl).hostname.toLocaleLowerCase() === "search.jobs.barclays") {
-      const markdown = await readerMarkdown(job.officialUrl, fetcher, { maxConcurrent: 1, timeoutMs: 8_000 });
-      const reader = markdown ? barclaysReaderDetail(markdown, source, job) : null;
+      const reader = await fetchBarclaysReaderDetail(job, source, fetcher);
       if (reader) enriched[index] = mergeProgramJobDetail(job, reader.detail, reader.applyUrl);
     }
   };
