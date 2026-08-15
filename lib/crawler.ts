@@ -147,6 +147,7 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
   "p4-0222-avanade",
   "p4-0225-barclays-us",
   "p4-0245-cisco",
+  "p4-0258-deutsche-bank-americas",
   "p4-0285-google",
   "p4-0289-hcltech",
   "p4-0292-hsbc-usa",
@@ -19526,6 +19527,351 @@ const crawlAseUsCareers = async (source: CrawlSource, fetcher: typeof fetch): Pr
   }
 };
 
+const DEUTSCHE_BANK_LISTING_URL = "https://careers.db.com/professionals/search-roles/";
+const DEUTSCHE_BANK_API_ORIGIN = "https://api-deutschebank.beesite.de";
+const DEUTSCHE_BANK_US_COUNTRY_ID = 231;
+const DEUTSCHE_BANK_CATALOG_PAGE_SIZE = 500;
+const DEUTSCHE_BANK_DETAIL_LIMIT = 40;
+
+type DeutscheBankCatalogKind = "professional" | "graduate";
+
+type DeutscheBankCatalogRecord = {
+  kind: DeutscheBankCatalogKind;
+  descriptor: Record<string, unknown>;
+  id: string;
+  title: string;
+  job: CrawledJob;
+};
+
+const deutscheBankNamedValues = (value: unknown): string[] => Array.isArray(value)
+  ? value.flatMap((entry) => {
+      if (!entry || typeof entry !== "object") return [];
+      const name = icimsText(asText((entry as Record<string, unknown>).Name));
+      return name ? [name] : [];
+    })
+  : [];
+
+const deutscheBankLocations = (value: unknown): Array<{
+  city: string | null;
+  state: string | null;
+  country: string;
+  label: string;
+}> | null => {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const locations = value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const location = entry as Record<string, unknown>;
+    const city = icimsText(asText(location.CityName));
+    const state = icimsText(asText(location.CountrySubDivisionName));
+    const country = icimsText(asText(location.CountryName));
+    if (!country || country !== "United States of America") return [];
+    return [{
+      city,
+      state,
+      country,
+      label: [city, state, country].filter(Boolean).join(", "),
+    }];
+  });
+  return locations.length === value.length ? locations : null;
+};
+
+const deutscheBankTrustedApplicationUrl = (value: unknown): string | null => {
+  const text = asText(value);
+  if (!text) return null;
+  try {
+    const url = new URL(text);
+    if (url.protocol !== "https:" || url.username || url.password) return null;
+    const host = url.hostname.toLocaleLowerCase();
+    if (host === "db.recsolu.com" && /^\/external\/requisitions\/[A-Za-z0-9_-]+\/?$/i.test(url.pathname)) {
+      return url.href;
+    }
+    if (host === "db.wd3.myworkdayjobs.com"
+      && /^\/DBWebsite\/job\/(?:[^/?#]+\/)+[^/?#]+(?:\/apply)?\/?$/i.test(url.pathname)) {
+      return url.href;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+};
+
+const deutscheBankOfficialUrl = (
+  kind: DeutscheBankCatalogKind,
+  id: string,
+  positionUri: unknown,
+): { officialUrl: string; applyUrl: string | null } | null => {
+  const uri = asText(positionUri);
+  if (!uri) return null;
+  if (kind === "graduate") {
+    const applyUrl = deutscheBankTrustedApplicationUrl(uri);
+    return applyUrl ? { officialUrl: applyUrl, applyUrl } : null;
+  }
+  try {
+    const parsed = new URL(uri, DEUTSCHE_BANK_API_ORIGIN);
+    if (parsed.origin !== DEUTSCHE_BANK_API_ORIGIN
+      || parsed.pathname !== "/index.php"
+      || parsed.searchParams.get("ac") !== "jobad"
+      || parsed.searchParams.get("id") !== id
+      || parsed.hash || parsed.username || parsed.password) return null;
+    const official = new URL(DEUTSCHE_BANK_LISTING_URL);
+    official.hash = `/professional/job/${id}`;
+    return { officialUrl: official.href, applyUrl: null };
+  } catch {
+    return null;
+  }
+};
+
+const deutscheBankCatalogJob = (
+  source: CrawlSource,
+  kind: DeutscheBankCatalogKind,
+  item: unknown,
+): DeutscheBankCatalogRecord | null => {
+  if (!item || typeof item !== "object") return null;
+  const record = item as Record<string, unknown>;
+  const descriptorValue = record.MatchedObjectDescriptor;
+  if (!descriptorValue || typeof descriptorValue !== "object") return null;
+  const descriptor = descriptorValue as Record<string, unknown>;
+  const id = asText(descriptor.PositionID);
+  const matchedId = asText(record.MatchedObjectId);
+  const title = icimsText(asText(descriptor.PositionTitle));
+  const locations = deutscheBankLocations(descriptor.PositionLocation);
+  if (!id || !/^\d+$/.test(id) || matchedId !== id || !title || !locations) return null;
+  const links = deutscheBankOfficialUrl(kind, id, descriptor.PositionURI);
+  if (!links) return null;
+  const location = locations[0];
+  const secondaryLocations = locations.slice(1).map((entry) => entry.label);
+  const offeringType = deutscheBankNamedValues(descriptor.PositionOfferingType)[0] ?? null;
+  const schedule = deutscheBankNamedValues(descriptor.PositionSchedule)[0] ?? null;
+  const careerLevel = deutscheBankNamedValues(descriptor.CareerLevel)[0] ?? null;
+  const category = deutscheBankNamedValues(descriptor.JobCategory)[0] ?? null;
+  const publishedText = asText(descriptor.PublicationStartDate)
+    ?? (Array.isArray(descriptor.PublicationChannel)
+      ? descriptor.PublicationChannel.flatMap((entry) => entry && typeof entry === "object"
+        ? asText((entry as Record<string, unknown>).StartDate) ?? []
+        : [])[0] ?? null
+      : null);
+  const classifiedPrograms = classifyJobPrograms(title).keys;
+  const programEmploymentType = classifiedPrograms.includes("internship")
+    ? "Internship"
+    : classifiedPrograms.includes("coop") ? "Co-op" : null;
+  return {
+    kind,
+    descriptor,
+    id,
+    title,
+    job: {
+      externalId: id,
+      title,
+      company: source.company,
+      location: locations.map((entry) => entry.label).join(" / "),
+      locationCity: location.city,
+      locationState: location.state,
+      locationCountry: "United States",
+      ...(secondaryLocations.length > 0 ? { secondaryLocations } : {}),
+      arrangement: /\bremote\b/i.test(`${title} ${locations.map((entry) => entry.label).join(" ")}`) ? "remote" : "unknown",
+      employmentType: programEmploymentType ?? normalizeEmploymentType(offeringType),
+      summary: null,
+      jobFamily: category,
+      experienceLevel: careerLevel,
+      shiftSchedule: schedule,
+      ...(links.applyUrl ? { applyUrl: links.applyUrl } : {}),
+      sourcePostedText: publishedText,
+      rawPayload: {
+        provider: "deutsche-bank-beesite",
+        catalogKind: kind,
+        positionId: id,
+        hiringYear: asText(descriptor.PositionHiringYear),
+      },
+      officialUrl: links.officialUrl,
+      publishedAt: normalizedDate(publishedText),
+    },
+  };
+};
+
+const deutscheBankSearchPayload = (firstItem: number, countItem: number): Record<string, unknown> => ({
+  LanguageCode: "EN",
+  SearchParameters: {
+    FirstItem: firstItem,
+    CountItem: countItem,
+    MatchedObjectDescriptor: [
+      "PositionID",
+      "PositionTitle",
+      "PositionURI",
+      "OrganizationName",
+      "PositionLocation.CountryName",
+      "PositionLocation.CountrySubDivisionName",
+      "PositionLocation.CityName",
+      "JobCategory.Name",
+      "CareerLevel.Name",
+      "PositionSchedule.Name",
+      "PositionOfferingType.Name",
+      "PublicationStartDate",
+      "PositionHiringYear",
+    ],
+    Sort: [{ Criterion: "PublicationStartDate", Direction: "DESC" }],
+  },
+  SearchCriteria: [{
+    CriterionName: "PositionLocation.Country",
+    CriterionValue: DEUTSCHE_BANK_US_COUNTRY_ID,
+  }],
+});
+
+const crawlDeutscheBankCareers = async (
+  source: CrawlSource,
+  fetcher: typeof fetch,
+  now: Date,
+): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  let catalogRequests = 0;
+  const fetchCatalog = async (kind: DeutscheBankCatalogKind): Promise<DeutscheBankCatalogRecord[]> => {
+    const endpoint = new URL(kind === "professional" ? "/search/" : "/graduatesearch/", DEUTSCHE_BANK_API_ORIGIN);
+    endpoint.searchParams.set("data", JSON.stringify(deutscheBankSearchPayload(1, DEUTSCHE_BANK_CATALOG_PAGE_SIZE)));
+    catalogRequests += 1;
+    const response = await fetchWithTimeout(fetcher, endpoint, {
+      headers: { accept: "application/json", referer: DEUTSCHE_BANK_LISTING_URL },
+    }, false, { attempts: 1, timeoutMs: 10_000 });
+    responseStatus = response.status;
+    if (!response.ok) throw new Error(`Deutsche Bank ${kind} search returned HTTP ${response.status}.`);
+    const payload = await response.json() as Record<string, unknown>;
+    const searchValue = payload.SearchResult;
+    if (!searchValue || typeof searchValue !== "object") throw new Error(`Deutsche Bank ${kind} search returned no catalog.`);
+    const search = searchValue as Record<string, unknown>;
+    const items = search.SearchResultItems;
+    const count = Number(search.SearchResultCount);
+    const total = Number(search.SearchResultCountAll);
+    if (!Array.isArray(items) || !Number.isInteger(count) || !Number.isInteger(total)
+      || count !== items.length || total !== items.length || total > DEUTSCHE_BANK_CATALOG_PAGE_SIZE) {
+      throw new Error(`Deutsche Bank ${kind} search returned a truncated or inconsistent U.S. catalog.`);
+    }
+    const normalized = items.map((item) => deutscheBankCatalogJob(source, kind, item));
+    if (normalized.some((job) => !job)) {
+      throw new Error(`Deutsche Bank ${kind} search returned an unusable U.S. job identity.`);
+    }
+    const jobs = normalized as DeutscheBankCatalogRecord[];
+    if (new Set(jobs.map((job) => job.id)).size !== jobs.length) {
+      throw new Error(`Deutsche Bank ${kind} search repeated a job identity.`);
+    }
+
+    // Recheck the newest identity and total so a listing mutation during the
+    // crawl cannot make a seemingly complete snapshot authoritative.
+    const stabilityEndpoint = new URL(endpoint);
+    stabilityEndpoint.searchParams.set("data", JSON.stringify(deutscheBankSearchPayload(1, Math.min(1, DEUTSCHE_BANK_CATALOG_PAGE_SIZE))));
+    catalogRequests += 1;
+    const stabilityResponse = await fetchWithTimeout(fetcher, stabilityEndpoint, {
+      headers: { accept: "application/json", referer: DEUTSCHE_BANK_LISTING_URL },
+    }, false, { attempts: 1, timeoutMs: 10_000 });
+    if (!stabilityResponse.ok) throw new Error(`Deutsche Bank ${kind} stability check returned HTTP ${stabilityResponse.status}.`);
+    const stabilityPayload = await stabilityResponse.json() as Record<string, unknown>;
+    const stabilitySearch = stabilityPayload.SearchResult as Record<string, unknown> | undefined;
+    const stabilityItems = stabilitySearch?.SearchResultItems;
+    const expectedStabilityCount = total > 0 ? 1 : 0;
+    const stabilityRecord = Array.isArray(stabilityItems) && stabilityItems[0]
+      ? deutscheBankCatalogJob(source, kind, stabilityItems[0])
+      : null;
+    if (!Array.isArray(stabilityItems)
+      || Number(stabilitySearch?.SearchResultCount) !== expectedStabilityCount
+      || Number(stabilitySearch?.SearchResultCountAll) !== total
+      || stabilityItems.length !== expectedStabilityCount
+      || (jobs.length > 0 && (!stabilityRecord
+        || stabilityRecord.id !== jobs[0].id
+        || jobIdentityText(stabilityRecord.title) !== jobIdentityText(jobs[0].title)))) {
+      throw new Error(`Deutsche Bank ${kind} search changed during collection.`);
+    }
+    return jobs;
+  };
+
+  try {
+    const [professional, graduate] = await Promise.all([
+      fetchCatalog("professional"),
+      fetchCatalog("graduate"),
+    ]);
+    if (professional.length === 0) {
+      throw new Error("Deutsche Bank professional U.S. catalog was unexpectedly empty.");
+    }
+    const catalog = [...graduate, ...professional];
+    const compositeIds = catalog.map((record) => `${record.kind}:${record.id}`);
+    if (catalog.length === 0 || new Set(compositeIds).size !== catalog.length) {
+      throw new Error("Deutsche Bank official U.S. catalogs were empty or repeated identities.");
+    }
+
+    const detailBudget = Math.max(0, Math.min(DEUTSCHE_BANK_DETAIL_LIMIT, 46 - catalogRequests));
+    const priority = catalog.filter((record) => record.kind === "graduate" || classifyJobPrograms(record.title).keys.length > 0);
+    const priorityKeys = new Set(priority.map((record) => `${record.kind}:${record.id}`));
+    const rotating = catalog.filter((record) => !priorityKeys.has(`${record.kind}:${record.id}`));
+    const remainingBudget = Math.max(0, detailBudget - Math.min(detailBudget, priority.length));
+    const rotatingStart = rotating.length === 0 || remainingBudget === 0
+      ? 0
+      : (Math.floor(now.getTime() / (2 * 60 * 60 * 1_000)) * remainingBudget) % rotating.length;
+    const rotatingSelection = Array.from({ length: Math.min(remainingBudget, rotating.length) }, (_, offset) =>
+      rotating[(rotatingStart + offset) % rotating.length]);
+    const selected = [...priority.slice(0, detailBudget), ...rotatingSelection];
+    const detailByIdentity = new Map<string, CrawledJob>();
+    const enrich = async (record: DeutscheBankCatalogRecord): Promise<void> => {
+      try {
+        const endpoint = new URL(`/jobhtml/${record.id}.json`, DEUTSCHE_BANK_API_ORIGIN);
+        const response = await fetchWithTimeout(fetcher, endpoint, {
+          headers: { accept: "application/json", referer: DEUTSCHE_BANK_LISTING_URL },
+        }, false, { attempts: 1, timeoutMs: 7_000 });
+        if (!response.ok) return;
+        const payload = await response.json() as Record<string, unknown>;
+        const html = asText(payload.html);
+        const detailTitle = html ? icimsText(html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i)?.[1]) : null;
+        const applyUrl = deutscheBankTrustedApplicationUrl(payload.apply_uri);
+        if (!html || !detailTitle || !applyUrl) return;
+        if (record.kind === "graduate"
+          && (record.job.officialUrl !== applyUrl || jobIdentityText(detailTitle) !== jobIdentityText(record.title))) return;
+        const description = icimsText(html);
+        const requisitionId = icimsText(html.match(/\bJob ID:\s*<\/strong>\s*([^<]+)/i)?.[1])
+          ?? applyUrl.match(/_(R\d+)(?:-\d+)?\/apply\/?$/i)?.[1]
+          ?? null;
+        if (record.kind === "professional" && !requisitionId) return;
+        const detailPostedText = icimsText(html.match(/\bListed:\s*<\/strong>\s*([^<]+)/i)?.[1]);
+        const fullPartTime = icimsText(html.match(/\bFull\/Part-Time:\s*<\/strong>\s*([^<]+)/i)?.[1]);
+        detailByIdentity.set(`${record.kind}:${record.id}`, {
+          ...record.job,
+          title: detailTitle,
+          requisitionId,
+          applyUrl,
+          employmentType: record.job.employmentType ?? normalizeEmploymentType(fullPartTime),
+          summary: description,
+          description,
+          businessUnit: asText(payload.pro_div_name),
+          sourcePostedText: detailPostedText ?? record.job.sourcePostedText,
+          publishedAt: normalizedDate(detailPostedText) ?? record.job.publishedAt,
+        });
+      } catch {
+        // The complete official search catalog remains usable; another pass
+        // will rotate this optional detail enrichment window.
+      }
+    };
+    for (let offset = 0; offset < selected.length; offset += 10) {
+      await Promise.all(selected.slice(offset, offset + 10).map(enrich));
+    }
+    const jobs = catalog.map((record) => detailByIdentity.get(`${record.kind}:${record.id}`) ?? record.job);
+    return {
+      status: "succeeded",
+      responseStatus: responseStatus ?? 200,
+      // Both provider catalogs are complete, but use the existing two-cycle
+      // checkpoint closure guard so a pair of transient empty/omitted results
+      // is required before a formerly visible job can be closed.
+      completeListing: false,
+      jobs,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 1 },
+      resolvedListingUrl: DEUTSCHE_BANK_LISTING_URL,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      resolvedListingUrl: DEUTSCHE_BANK_LISTING_URL,
+      error: error instanceof Error ? error.message : "Unknown Deutsche Bank careers crawler error.",
+    };
+  }
+};
+
 async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
   if ((source.discoveryDepth ?? 0) === 0) {
     try {
@@ -19569,6 +19915,9 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p4-0240-cfpb") {
     return crawlCfpbCareers(source, fetcher);
+  }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p4-0258-deutsche-bank-americas") {
+    return crawlDeutscheBankCareers(source, fetcher, now);
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p4-0412-claroty") {
     return crawlClarotyCareers(source, fetcher);

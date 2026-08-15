@@ -39,6 +39,161 @@ describe("large catalog content", () => {
 });
 
 describe("crawlSource", () => {
+  it("loads Deutsche Bank's complete official U.S. professional and graduate catalogs", async () => {
+    const professional = [
+      {
+        MatchedObjectId: "66001",
+        MatchedObjectDescriptor: {
+          PositionID: "66001",
+          PositionTitle: "Leveraged Finance Risk - Vice President",
+          PositionURI: "/index.php?ac=jobad&id=66001",
+          PositionLocation: [{ CityName: "New York", CountryName: "United States of America" }],
+          PositionOfferingType: [{ Name: "Permanent" }],
+          PositionSchedule: [{ Name: "Full time" }],
+          CareerLevel: [{ Name: "Vice President" }],
+          PublicationStartDate: "2026-08-14",
+          PositionHiringYear: "2026",
+        },
+      },
+      {
+        MatchedObjectId: "66002",
+        MatchedObjectDescriptor: {
+          PositionID: "66002",
+          PositionTitle: "Legacy Software Engineer Title",
+          PositionURI: "/index.php?ac=jobad&id=66002",
+          PositionLocation: [{ CityName: "Jacksonville", CountrySubDivisionName: "Florida", CountryName: "United States of America" }],
+          PositionOfferingType: [{ Name: "Permanent" }],
+          PublicationStartDate: "2026-08-13",
+        },
+      },
+    ];
+    const graduate = [{
+      MatchedObjectId: "74798",
+      MatchedObjectDescriptor: {
+        PositionID: "74798",
+        PositionTitle: "Deutsche Bank Internship Program - Investment Bank: Fixed Income & Currencies - New York - 2027",
+        PositionURI: "https://db.recsolu.com/external/requisitions/8fUfkDX4BKLj9bCPMnXK1w",
+        PositionLocation: [{ CityName: "New York", CountryName: "United States of America" }],
+        PositionSchedule: [{ Name: "Full time" }],
+        CareerLevel: [{ Name: "Internship" }],
+        JobCategory: [{ Name: "Investment Bank: Fixed Income & Currencies" }],
+        PublicationStartDate: "2026-08-06",
+        PositionHiringYear: "2026",
+      },
+    }];
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.href);
+      if (url.hostname === "api-deutschebank.beesite.de" && ["/search/", "/graduatesearch/"].includes(url.pathname)) {
+        const request = JSON.parse(url.searchParams.get("data")!) as {
+          SearchParameters: { CountItem: number };
+          SearchCriteria: Array<{ CriterionName: string; CriterionValue: number }>;
+        };
+        expect(request.SearchCriteria).toContainEqual({
+          CriterionName: "PositionLocation.Country",
+          CriterionValue: 231,
+        });
+        const all = url.pathname === "/search/" ? professional : graduate;
+        const items = request.SearchParameters.CountItem === 1 ? all.slice(0, 1) : all;
+        return Response.json({ SearchResult: {
+          SearchResultCount: items.length,
+          SearchResultCountAll: all.length,
+          SearchResultItems: items,
+        } });
+      }
+      const detailId = url.pathname.match(/^\/jobhtml\/(\d+)\.json$/)?.[1];
+      if (detailId === "66001") return Response.json({
+        apply_uri: "https://db.wd3.myworkdayjobs.com/DBWebsite/job/New-York/Leveraged-Finance-Risk---Vice-President_R0400593-1/apply",
+        pro_div_name: "Chief Risk Office",
+        html: '<div id="db-jobad"><h1>Leveraged Finance Risk - Vice President</h1><strong>Job ID:</strong>R0400593<strong>Full/Part-Time: </strong>Full-time<strong>Listed: </strong>2026-08-14<h2>Position Overview</h2><p>Lead leveraged finance risk decisions.</p></div>',
+      });
+      if (detailId === "66002") return Response.json({
+        apply_uri: "https://db.wd3.myworkdayjobs.com/DBWebsite/job/Jacksonville/Software-Engineer_R0400594/apply",
+        pro_div_name: "Technology",
+        html: '<div id="db-jobad"><h1>Software Engineer</h1><strong>Job ID:</strong>R0400594<strong>Listed: </strong>2026-08-13<p>Build reliable software platforms.</p></div>',
+      });
+      if (detailId === "74798") return Response.json({
+        apply_uri: "https://db.recsolu.com/external/requisitions/8fUfkDX4BKLj9bCPMnXK1w",
+        html: '<div id="db-jobad"><h1>Deutsche Bank Internship Program - Investment Bank: Fixed Income &amp; Currencies - New York - 2027</h1><p>Ten-week Summer 2027 internship program in New York.</p></div>',
+      });
+      return new Response("missing", { status: 404 });
+    };
+
+    const result = await crawlSource({
+      id: "p4-0258-deutsche-bank-americas",
+      company: "Deutsche Bank Americas",
+      postingUrl: "https://careers.db.com/",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-15T22:00:00Z"));
+
+    expect(requests).toHaveLength(7);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 1 },
+      resolvedListingUrl: "https://careers.db.com/professionals/search-roles/",
+    }));
+    expect(result.jobs).toHaveLength(3);
+    expect(result.jobs).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        externalId: "66001",
+        requisitionId: "R0400593",
+        title: "Leveraged Finance Risk - Vice President",
+        location: "New York, United States of America",
+        locationCountry: "United States",
+        businessUnit: "Chief Risk Office",
+        officialUrl: "https://careers.db.com/professionals/search-roles/#/professional/job/66001",
+        applyUrl: "https://db.wd3.myworkdayjobs.com/DBWebsite/job/New-York/Leveraged-Finance-Risk---Vice-President_R0400593-1/apply",
+        publishedAt: "2026-08-14T00:00:00.000Z",
+      }),
+      expect.objectContaining({
+        externalId: "74798",
+        title: expect.stringContaining("Internship Program"),
+        employmentType: "Internship",
+        jobFamily: "Investment Bank: Fixed Income & Currencies",
+        officialUrl: "https://db.recsolu.com/external/requisitions/8fUfkDX4BKLj9bCPMnXK1w",
+        applyUrl: "https://db.recsolu.com/external/requisitions/8fUfkDX4BKLj9bCPMnXK1w",
+        description: expect.stringContaining("Summer 2027 internship"),
+        publishedAt: "2026-08-06T00:00:00.000Z",
+      }),
+      expect.objectContaining({
+        externalId: "66002",
+        title: "Software Engineer",
+        requisitionId: "R0400594",
+        businessUnit: "Technology",
+      }),
+    ]));
+  });
+
+  it("fails Deutsche Bank closed when the official U.S. result count is truncated", async () => {
+    const result = await crawlSource({
+      id: "p4-0258-deutsche-bank-americas",
+      company: "Deutsche Bank Americas",
+      postingUrl: "https://careers.db.com/professionals/search-roles/",
+      adapter: "custom",
+    }, async () => Response.json({ SearchResult: {
+      SearchResultCount: 1,
+      SearchResultCountAll: 2,
+      SearchResultItems: [{
+        MatchedObjectId: "66001",
+        MatchedObjectDescriptor: {
+          PositionID: "66001",
+          PositionTitle: "Risk Analyst",
+          PositionURI: "/index.php?ac=jobad&id=66001",
+          PositionLocation: [{ CityName: "New York", CountryName: "United States of America" }],
+        },
+      }],
+    } }), new Date("2026-08-15T22:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed",
+      completeListing: false,
+      jobs: [],
+      error: expect.stringContaining("truncated or inconsistent U.S. catalog"),
+    }));
+  });
+
   it("reads every server-rendered Okta job with its location and stable requisition id", async () => {
     const html = `
       <div class="views-row even"><div class="views-field views-field-title"><span class="field-content">

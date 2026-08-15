@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:96c1cd114ba8196d33b1ff2a915e753f454ff02f392b760740429ae79b29ec39",
+  "version": "v2:sha256:bc29a32fd20d9eb1ee4231347839f2a18f25da0debfe620c28928e1ac93202eb",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -16791,15 +16791,15 @@
       "id": "p4-0258-deutsche-bank-americas",
       "masterRow": 2958,
       "company": "Deutsche Bank Americas",
-      "postingUrl": "https://careers.db.com/",
+      "postingUrl": "https://careers.db.com/professionals/search-roles/",
       "talentUrl": "https://careers.db.com/",
-      "channel": "공식 Career Portal",
+      "channel": "공식 U.S. Professional/Graduate Search API",
       "adapter": "custom",
-      "verification": "career_page_only",
+      "verification": "career_only",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-15",
       "enabled": true
     },
     {
@@ -28043,7 +28043,7 @@
       "officialUrl": "https://careers.db.com/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-15"
     },
     {
       "id": "talent-p4-0259-dow-jones-risk-compliance",
