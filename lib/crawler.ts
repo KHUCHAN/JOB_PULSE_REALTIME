@@ -5859,7 +5859,13 @@ const crawlRadancyPages = async (
     ? Math.max(advertisedPageSize, 100)
     : advertisedPageSize;
   const totalPages = Math.max(1, Math.ceil(totalResults / pageSize));
-  const maximumPages = 18;
+  // Barclays may retry TalentBrew page posts and then need a direct + reader
+  // detail pair for each internship. Reserve enough of the 50-request source
+  // budget for those newest-page details; every later checkpoint still carries
+  // the exact first page so newly posted roles are never delayed by the cycle.
+  const isBarclays = source.id === "p4-0225-barclays-us";
+  const maximumPages = isBarclays ? 10 : 18;
+  const pageAttempts = isBarclays ? 2 : 3;
   const requestedStart = Math.max(1, Math.trunc(source.crawlPageCursor ?? 1));
   const startPage = Math.min(requestedStart, totalPages);
   const endPage = Math.min(startPage + maximumPages - 1, totalPages);
@@ -5882,7 +5888,7 @@ const crawlRadancyPages = async (
   // with nine-way fan-out in production.
   for (let index = 0; index < pageNumbers.length; index += 3) {
     const pages = await Promise.all(pageNumbers.slice(index, index + 3).map(async (currentPage) => {
-      for (let attempt = 0; attempt < 3; attempt += 1) {
+      for (let attempt = 0; attempt < pageAttempts; attempt += 1) {
         try {
           const response = await fetchWithTimeout(fetcher, new URL(postPath, source.postingUrl), {
             method: "POST",
@@ -5915,7 +5921,7 @@ const crawlRadancyPages = async (
         } catch {
           // Retry transient page failures before keeping the listing incomplete.
         }
-        if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+        if (attempt < pageAttempts - 1) await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
       }
       return null;
     }));

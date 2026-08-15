@@ -1143,14 +1143,27 @@ Wrong description.
     const title = "Quantitative Finance Associate Summer Internship Program 2027 New York";
     const listing = [
       '<script src="https://tbcdn.talentbrew.com/js/client/search.js"></script>',
-      '<section data-total-job-results="1" data-total-results="1" data-total-pages="1" data-records-per-page="16" data-ajax-post-url="/search-jobs/resultspost">',
+      '<section data-total-job-results="20" data-total-results="20" data-total-pages="20" data-records-per-page="1" data-ajax-post-url="/search-jobs/resultspost">',
       `<div class="list-item list-item--card"><a href="${jobUrl}" data-job-id="99217260160"><strong>${title}</strong></a>`,
       '<div class="job-location">New York, United States</div><div class="job-date"><span>14 Aug</span></div></div>',
       '</section>',
     ].join("");
-    const fetcher: typeof fetch = async (input) => {
+    const pageAttempts = new Map<number, number>();
+    let totalRequests = 0;
+    const fetcher: typeof fetch = async (input, init) => {
+      totalRequests += 1;
       const url = String(input);
       if (url === "https://search.jobs.barclays/search-jobs") return new Response(listing);
+      if (url === "https://search.jobs.barclays/search-jobs/resultspost") {
+        const page = Number((JSON.parse(String(init?.body)) as { CurrentPage: number }).CurrentPage);
+        const attempt = (pageAttempts.get(page) ?? 0) + 1;
+        pageAttempts.set(page, attempt);
+        if (attempt === 1) return new Response("throttled", { status: 429 });
+        return Response.json({ results: `
+          <div class="list-item list-item--card"><a href="/job/new-york/role-${page}/13015/${page}" data-job-id="${page}"><strong>Role ${page}</strong></a>
+          <div class="job-location">New York, United States</div></div>
+        ` });
+      }
       if (url === jobUrl) return new Response("blocked", { status: 403 });
       if (url === `https://r.jina.ai/${jobUrl}`) return new Response(`
         Title: ${title} at Barclays
@@ -1179,7 +1192,11 @@ Wrong description.
       postingUrl: "https://search.jobs.barclays/search-jobs", adapter: "custom",
     }, fetcher, new Date("2026-08-15T09:00:00Z"));
 
-    expect(result.jobs).toEqual([expect.objectContaining({
+    expect(result).toEqual(expect.objectContaining({
+      completeListing: false,
+      pagination: { nextPage: 11, cycleComplete: false, totalPages: 20 },
+    }));
+    expect(result.jobs).toEqual(expect.arrayContaining([expect.objectContaining({
       officialUrl: jobUrl,
       applyUrl,
       requisitionId: "JR-0000128099",
@@ -1187,7 +1204,9 @@ Wrong description.
       employmentType: "Internship",
       publishedAt: "2026-08-14T00:00:00.000Z",
       description: expect.stringContaining("software engineering"),
-    })]);
+    })]));
+    expect([...pageAttempts.keys()]).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(totalRequests).toBeLessThanOrEqual(21);
   });
 
   it("does not merge a Barclays reader response for a different posting identity", async () => {
