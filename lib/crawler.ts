@@ -6859,6 +6859,233 @@ const crawlBorgWarner = async (source: CrawlSource, fetcher: typeof fetch): Prom
   }
 };
 
+const publixListingUrl = "https://jobs.publix.com/jobs/";
+const publixApiOrigin = "https://wpvip.publix.com";
+const publixPageSize = 100;
+
+type PublixOpening = {
+  id?: unknown;
+  slug?: unknown;
+  link?: unknown;
+  title?: { rendered?: unknown } | null;
+  content?: { rendered?: unknown } | null;
+  job_id?: unknown;
+  apply_url?: unknown;
+  modified_gmt?: unknown;
+};
+
+type PublixHeader = {
+  job_id?: unknown;
+  title?: unknown;
+  location?: unknown;
+  department?: unknown;
+  date_posted?: unknown;
+  pills?: unknown;
+  apply_url?: unknown;
+  working_hours?: unknown;
+  pay_frequency?: unknown;
+  pay_range?: unknown;
+};
+
+const publixEndpoint = (page: number): string => {
+  const endpoint = new URL("/jobs/wp-json/wp/v2/job_opening", publixApiOrigin);
+  endpoint.searchParams.set("per_page", String(publixPageSize));
+  endpoint.searchParams.set("page", String(page));
+  endpoint.searchParams.set("orderby", "id");
+  endpoint.searchParams.set("order", "asc");
+  endpoint.searchParams.set("_fields", "id,slug,link,title,content,job_id,apply_url,modified_gmt");
+  return endpoint.href;
+};
+
+const publixCountHeader = (response: Response, name: string): number | null => {
+  const raw = response.headers.get(name)?.trim();
+  if (!raw || !/^\d+$/.test(raw)) return null;
+  const count = Number(raw);
+  return Number.isSafeInteger(count) && count >= 0 ? count : null;
+};
+
+const publixApplyUrl = (value: unknown): string | null => {
+  const raw = asText(value);
+  if (!raw) return null;
+  try {
+    const url = new URL(decodeHtmlAttribute(raw));
+    if (url.protocol !== "https:") return null;
+    if (url.hostname === "storejobapplication.publix.com") return url.href;
+    if (url.hostname !== "sjobs.brassring.com"
+      || !/^\/TGnewUI\/Search\/home\/HomeWithPreLoad$/i.test(url.pathname)
+      || url.searchParams.get("PageType") !== "JobDetails"
+      || url.searchParams.get("partnerid") !== "26173"
+      || url.searchParams.get("siteid") !== "5197"
+      || !/^\d+$/.test(url.searchParams.get("jobid") ?? "")) return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+};
+
+const publixSalary = (value: string | null, frequency: string | null): Partial<CrawledJob> => {
+  if (!value) return {};
+  const amounts = [...value.matchAll(/\$\s*([\d,.]+)/g)]
+    .map((match) => Number(match[1].replaceAll(",", "")))
+    .filter(Number.isFinite);
+  if (amounts.length === 0) return {};
+  return {
+    salaryMin: amounts[0],
+    ...(amounts[1] != null ? { salaryMax: amounts[1] } : {}),
+    salaryCurrency: "USD",
+    ...(frequency ? { salaryInterval: frequency } : {}),
+  };
+};
+
+const publixOpening = (value: PublixOpening, source: CrawlSource): CrawledJob | null => {
+  const numericId = Number(value.id);
+  const slug = asText(value.slug);
+  const apiLink = asText(value.link);
+  const title = icimsText(asText(value.title?.rendered));
+  const content = asText(value.content?.rendered);
+  if (!Number.isSafeInteger(numericId) || numericId < 1 || !slug || !/^[a-z0-9-]+$/.test(slug)
+    || !apiLink || !title || !content) return null;
+  try {
+    const link = new URL(apiLink);
+    if (link.origin !== publixApiOrigin || link.pathname !== `/jobs/job-opening/${slug}/`) return null;
+  } catch {
+    return null;
+  }
+  const headerAttribute = content.match(/data-wp-block-name=["']publix\/job-header["'][^>]*data-wp-block='([^']+)'/i)?.[1];
+  if (!headerAttribute) return null;
+  let header: PublixHeader;
+  try {
+    header = JSON.parse(headerAttribute) as PublixHeader;
+  } catch {
+    return null;
+  }
+  const headerTitle = icimsText(asText(header.title));
+  const jobId = icimsText(asText(header.job_id)) ?? icimsText(asText(value.job_id));
+  if (!headerTitle || jobIdentityText(headerTitle) !== jobIdentityText(title) || !jobId) return null;
+  const location = icimsText(asText(header.location));
+  const department = icimsText(asText(header.department));
+  const posted = icimsText(asText(header.date_posted));
+  const pills = Array.isArray(header.pills)
+    ? header.pills.map((item) => icimsText(asText(item))).filter((item): item is string => Boolean(item))
+    : [];
+  const arrangement = pills.some((pill) => /^remote$/i.test(pill)) ? "remote"
+    : pills.some((pill) => /^hybrid$/i.test(pill)) ? "hybrid"
+      : pills.some((pill) => /^onsite$/i.test(pill)) ? "onsite" : "unknown";
+  const programs = classifyJobPrograms(title);
+  const listedEmployment = pills.find((pill) => /(?:full|part)\s*time|temporary|seasonal|contract/i.test(pill)) ?? null;
+  const employmentType = programs.keys.includes("coop") ? "Co-op"
+    : programs.keys.includes("internship") ? "Internship" : normalizeEmploymentType(listedEmployment);
+  const descriptionHtml = content.match(/<h2\b[^>]*>\s*Description\s*<\/h2>([\s\S]*)/i)?.[1] ?? content;
+  const description = icimsText(descriptionHtml);
+  const applyUrl = publixApplyUrl(header.apply_url) ?? publixApplyUrl(value.apply_url);
+  const payFrequency = icimsText(asText(header.pay_frequency));
+  const payRange = icimsText(asText(header.pay_range));
+  const officialUrl = new URL(`/job-opening/${slug}/`, publixListingUrl).href;
+  const cityState = location?.match(/^(.+),\s*([A-Z]{2})$/);
+  return {
+    externalId: String(numericId),
+    requisitionId: jobId,
+    title,
+    company: source.company,
+    location,
+    arrangement,
+    employmentType,
+    summary: description?.slice(0, 1_200) ?? null,
+    description,
+    department,
+    ...(cityState ? { locationCity: cityState[1].trim(), locationState: cityState[2] } : {}),
+    locationCountry: "US",
+    ...(applyUrl ? { applyUrl } : {}),
+    ...(posted ? { sourcePostedText: posted } : {}),
+    ...(asText(header.working_hours) ? { shiftSchedule: asText(header.working_hours) } : {}),
+    ...publixSalary(payRange, payFrequency),
+    officialUrl,
+    publishedAt: normalizedDate(posted ? `${posted} UTC` : null),
+    sourceUpdatedAt: normalizedDate(asText(value.modified_gmt) ? `${asText(value.modified_gmt)}Z` : null),
+  };
+};
+
+const crawlPublix = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  try {
+    const first = await fetchWithTimeout(fetcher, publixEndpoint(1), { headers: { accept: "application/json" } }, false, {
+      attempts: 1, timeoutMs: 15_000,
+    });
+    if (!first.ok) return {
+      status: isBlockedHttpStatus(first.status) ? "blocked" : "failed",
+      responseStatus: first.status,
+      completeListing: false,
+      jobs: [],
+      error: `Publix careers API returned HTTP ${first.status}.`,
+    };
+    const total = publixCountHeader(first, "x-wp-total");
+    const totalPages = publixCountHeader(first, "x-wp-totalpages");
+    if (total === null || totalPages === null || totalPages !== Math.ceil(total / publixPageSize) || totalPages > 20) {
+      return {
+        status: "failed", responseStatus: first.status, completeListing: false, jobs: [],
+        error: "Publix careers API returned invalid pagination metadata.",
+      };
+    }
+    const firstRows = await first.json() as unknown;
+    if (!Array.isArray(firstRows)) return {
+      status: "failed", responseStatus: first.status, completeListing: false, jobs: [],
+      error: "Publix careers API returned a malformed first page.",
+    };
+    const expectedFirst = Math.min(total, publixPageSize);
+    const firstJobs = firstRows.flatMap((row): CrawledJob[] => {
+      const job = row && typeof row === "object" ? publixOpening(row as PublixOpening, source) : null;
+      return job ? [job] : [];
+    });
+    if (firstRows.length !== expectedFirst || firstJobs.length !== expectedFirst) return {
+      status: "failed", responseStatus: first.status, completeListing: false, jobs: [],
+      error: "Publix careers API first page contained missing or unusable records.",
+    };
+    const pages = await Promise.all(Array.from({ length: Math.max(0, totalPages - 1) }, (_, index) => index + 2).map(async (page) => {
+      try {
+        const response = await fetchWithTimeout(fetcher, publixEndpoint(page), { headers: { accept: "application/json" } }, false, {
+          attempts: 1, timeoutMs: 15_000,
+        });
+        if (!response.ok || publixCountHeader(response, "x-wp-total") !== total
+          || publixCountHeader(response, "x-wp-totalpages") !== totalPages) return null;
+        const rows = await response.json() as unknown;
+        if (!Array.isArray(rows)) return null;
+        const expected = page === totalPages ? total - publixPageSize * (totalPages - 1) : publixPageSize;
+        const jobs = rows.flatMap((row): CrawledJob[] => {
+          const job = row && typeof row === "object" ? publixOpening(row as PublixOpening, source) : null;
+          return job ? [job] : [];
+        });
+        return rows.length === expected && jobs.length === expected ? jobs : null;
+      } catch {
+        return null;
+      }
+    }));
+    if (pages.some((page) => page === null)) return {
+      status: "failed", responseStatus: first.status, completeListing: false, jobs: [],
+      error: "Publix careers API pagination was incomplete.",
+    };
+    const jobs = uniqueJobs([...firstJobs, ...pages.flatMap((page) => page ?? [])]);
+    if (jobs.length !== total) return {
+      status: "failed", responseStatus: first.status, completeListing: false, jobs: [],
+      error: "Publix careers API returned duplicate job identities.",
+    };
+    return {
+      status: "succeeded",
+      responseStatus: first.status,
+      completeListing: true,
+      jobs,
+      resolvedListingUrl: publixListingUrl,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: "failed",
+      responseStatus: null,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Publix crawler error.",
+    };
+  }
+};
+
 const crawlMediaTek = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
   type PagePayload = {
     jobs?: MediaTekJob[];
@@ -13848,6 +14075,7 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   }
   if (source.id === "p5-0935-hologic") return crawlHologic(source, fetcher);
   if (source.id === "audit-row-321") return crawlBorgWarner(source, fetcher);
+  if (source.id === "audit-row-415") return crawlPublix(source, fetcher);
   if (source.id === "p4-0457-match-group") {
     const listingUrl = "https://join.matchgroupcareers.com/careers?domain=gotinder.com";
     const result = await crawlEightfold({ ...source, postingUrl: listingUrl, adapter: "custom" }, fetcher);

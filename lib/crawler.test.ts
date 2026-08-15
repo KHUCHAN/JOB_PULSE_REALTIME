@@ -1482,6 +1482,94 @@ Wrong description.
     expect(result.jobs.map((job) => job.externalId)).toEqual(["R2026-3201", "R2026-3202"]);
   });
 
+  it("crawls Publix's complete official WordPress job catalog with rich fields", async () => {
+    const requests: string[] = [];
+    const opening = (id: number, title: string, slug: string, jobId: string, location = "Lakeland, FL") => ({
+      id,
+      slug,
+      link: `https://wpvip.publix.com/jobs/job-opening/${slug}/`,
+      title: { rendered: title },
+      job_id: jobId,
+      apply_url: `https://sjobs.brassring.com/TGnewUI/Search/home/HomeWithPreLoad?PageType=JobDetails&partnerid=26173&siteid=5197&jobid=${1_400_000 + id}`,
+      modified_gmt: "2026-08-14T20:00:00",
+      content: { rendered: `<div data-publix-block="true" data-wp-block-name="publix/job-header" data-wp-block='${JSON.stringify({
+        job_id: jobId,
+        title,
+        location,
+        department: "Publix Technology",
+        date_posted: "Aug 14, 2026",
+        pills: ["$90 - 135k", "Hybrid", /intern/i.test(title) ? "Temporary" : "Full Time - Regular"],
+        apply_url: `https://sjobs.brassring.com/TGnewUI/Search/home/HomeWithPreLoad?PageType=JobDetails&partnerid=26173&siteid=5197&jobid=${1_400_000 + id}`,
+        pay_frequency: "Monthly",
+        pay_range: "$6,930 - $10,400",
+      })}'></div><h2>Description</h2><p>Build software and data products for Publix customers.</p>` },
+    });
+    const firstPage = Array.from({ length: 100 }, (_, index) => opening(
+      index + 1, `Software Engineer ${index + 1}`, `software-engineer-${index + 1}`, `${38_000 + index}BR`,
+    ));
+    const internship = opening(101, "Data Science Intern 2027", "data-science-intern-2027", "38100BR");
+    const result = await crawlSource({
+      id: "audit-row-415", company: "Publix Super Markets", postingUrl: "https://jobs.publix.com/", adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      requests.push(url);
+      const page = new URL(url).searchParams.get("page");
+      return new Response(JSON.stringify(page === "2" ? [internship] : firstPage), {
+        headers: { "content-type": "application/json", "x-wp-total": "101", "x-wp-totalpages": "2" },
+      });
+    }, new Date("2026-08-15T00:00:00.000Z"));
+
+    expect(requests).toHaveLength(2);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: true, resolvedListingUrl: "https://jobs.publix.com/jobs/",
+    }));
+    expect(result.jobs).toHaveLength(101);
+    expect(result.jobs.find((job) => job.externalId === "101")).toEqual(expect.objectContaining({
+      requisitionId: "38100BR",
+      title: "Data Science Intern 2027",
+      location: "Lakeland, FL",
+      locationCity: "Lakeland",
+      locationState: "FL",
+      locationCountry: "US",
+      arrangement: "hybrid",
+      employmentType: "Internship",
+      department: "Publix Technology",
+      salaryMin: 6930,
+      salaryMax: 10400,
+      salaryCurrency: "USD",
+      salaryInterval: "Monthly",
+      description: "Build software and data products for Publix customers.",
+      publishedAt: "2026-08-14T00:00:00.000Z",
+      sourceUpdatedAt: "2026-08-14T20:00:00.000Z",
+      officialUrl: "https://jobs.publix.com/job-opening/data-science-intern-2027/",
+    }));
+  });
+
+  it("fails Publix closed when a paginated identity repeats", async () => {
+    const opening = (id: number) => ({
+      id,
+      slug: `job-${id}`,
+      link: `https://wpvip.publix.com/jobs/job-opening/job-${id}/`,
+      title: { rendered: `Job ${id}` },
+      job_id: `${id}BR`,
+      modified_gmt: "2026-08-14T20:00:00",
+      content: { rendered: `<div data-wp-block-name="publix/job-header" data-wp-block='${JSON.stringify({
+        job_id: `${id}BR`, title: `Job ${id}`, location: "Lakeland, FL", date_posted: "Aug 14, 2026",
+      })}'></div><h2>Description</h2><p>Official job.</p>` },
+    });
+    const firstPage = Array.from({ length: 100 }, (_, index) => opening(index + 1));
+    const result = await crawlSource({
+      id: "audit-row-415", company: "Publix Super Markets", postingUrl: "https://jobs.publix.com/", adapter: "custom",
+    }, async (input) => new Response(JSON.stringify(new URL(String(input)).searchParams.get("page") === "2"
+      ? [opening(100)] : firstPage), {
+      headers: { "content-type": "application/json", "x-wp-total": "101", "x-wp-totalpages": "2" },
+    }), new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed", completeListing: false, jobs: [], error: "Publix careers API returned duplicate job identities.",
+    }));
+  });
+
   it("keeps only US, mixed, and unknown jobs for configured large catalogs", async () => {
     const locations = [
       "Marlborough, MA, United States",
