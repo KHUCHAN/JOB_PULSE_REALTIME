@@ -27,6 +27,16 @@ const asValues = (values: string[] | undefined): string[] => {
 const asNormalizedValues = (values: string[] | undefined): string[] =>
   asValues(values).map((value) => value.toLocaleLowerCase());
 
+const companyFilterAliases = new Map<string, readonly string[]>([
+  ["barclays", ["Barclays", "Barclays US"]],
+  ["barclays us", ["Barclays", "Barclays US"]],
+]);
+
+const companyFilterValues = (values: string[] | undefined): string[] =>
+  asValues((values ?? []).flatMap((value) =>
+    companyFilterAliases.get(value.trim().toLocaleLowerCase()) ?? [value]
+  ));
+
 const validPageSize = (value: number | undefined): number =>
   Number.isSafeInteger(value) && value! >= 1 && value! <= 100 ? value! : 50;
 
@@ -166,7 +176,7 @@ JOIN job_matches resume_match
   addAnyEquals("j.location_region", filters.regions);
 
   if (filters.status && filters.status !== "all") add("j.review_state = ?", [filters.status]);
-  addAnyEquals("j.company", filters.companies);
+  addAnyEquals("j.company", companyFilterValues(filters.companies));
 
   const location = filters.location?.trim().toLocaleLowerCase();
   if (location) add("lower(coalesce(j.location, '')) LIKE ? ESCAPE '\\'", [`%${escapeLike(location)}%`]);

@@ -320,6 +320,23 @@ describe("parameterized job search SQL", () => {
     expect(plan.pageSql).toContain("j.company = ? COLLATE NOCASE");
   });
 
+  it("treats the Barclays brand and the legacy Barclays US source label as equivalent", () => {
+    const brandPlan = buildJobSearchPlan({
+      ...defaultJobFilters,
+      companies: ["Barclays"],
+    });
+    const legacyPlan = buildJobSearchPlan({
+      ...defaultJobFilters,
+      companies: ["Barclays US"],
+    });
+
+    expect(brandPlan.bindings).toEqual(["Barclays", "Barclays US"]);
+    expect(legacyPlan.bindings).toEqual(["Barclays", "Barclays US"]);
+    expect(brandPlan.pageSql).toContain(
+      "(j.company = ? COLLATE NOCASE OR j.company = ? COLLATE NOCASE)",
+    );
+  });
+
   it("ranks known official posting dates ahead of newly discovered unknown dates", () => {
     const plan = buildJobSearchPlan({
       ...defaultJobFilters,
