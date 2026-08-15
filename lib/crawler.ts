@@ -14408,9 +14408,15 @@ type CincinnatiTaleoSummary = {
   applyUrl: string;
 };
 
+type TampaGeneralTaleoSummary = CincinnatiTaleoSummary & {
+  employmentType: string | null;
+};
+
 const CINCINNATI_CORPORATE_LISTING_URL = "https://www.cinfin.com/cincinnati-insurance-careers/openings";
 const CINCINNATI_TALEO_LISTING_URL = "https://cinfin.taleo.net/careersection/ex/jobsearch.ftl?lang=en";
 const CINCINNATI_TALEO_SEARCH_URL = "https://cinfin.taleo.net/careersection/rest/jobboard/searchjobs?lang=en&portal=101430233";
+const TAMPA_GENERAL_TALEO_LISTING_URL = "https://tgh.taleo.net/careersection/ex/jobsearch.ftl?lang=en";
+const TAMPA_GENERAL_TALEO_SEARCH_URL = "https://tgh.taleo.net/careersection/rest/jobboard/searchjobs?lang=en&portal=101430233";
 
 const taleoClassicSearchBody = (pageNo: number): string => JSON.stringify({
   fieldData: { fields: { KEYWORD: "", CATEGORY: "" }, valid: true },
@@ -14419,6 +14425,18 @@ const taleoClassicSearchBody = (pageNo: number): string => JSON.stringify({
       .map((id) => ({ id, selectedValues: [] })),
   },
   sortingSelection: { sortBySelectionParam: "5", ascendingSortingOrder: true },
+  multilineEnabled: true,
+  pageNo,
+});
+
+const tampaGeneralTaleoSearchBody = (pageNo: number): string => JSON.stringify({
+  fieldData: { fields: { KEYWORD: "", CATEGORY: "" }, valid: true },
+  filterSelectionParam: {
+    searchFilterSelections: [
+      "POSTING_DATE", "ORGANIZATION", "JOB_TYPE", "LOCATION", "JOB_FIELD", "JOB_SCHEDULE", "JOB_SHIFT",
+    ].map((id) => ({ id, selectedValues: [] })),
+  },
+  sortingSelection: { sortBySelectionParam: "3", ascendingSortingOrder: true },
   multilineEnabled: true,
   pageNo,
 });
@@ -14847,6 +14865,331 @@ const crawlCincinnatiTaleo = async (source: CrawlSource, fetcher: typeof fetch):
       completeListing: false,
       jobs: [],
       error: error instanceof Error ? error.message : "Unknown Cincinnati Financial Taleo crawler error.",
+    };
+  }
+};
+
+const tampaGeneralTaleoSummary = (value: TaleoClassicRequisition): TampaGeneralTaleoSummary | null => {
+  const jobId = asText(value.jobId);
+  const contestNo = asText(value.contestNo);
+  const columns = Array.isArray(value.column) ? value.column : null;
+  const title = asText(columns?.[0]);
+  const employmentType = normalizeEmploymentType(asText(columns?.[1]));
+  if (!jobId || !/^\d{3,12}$/.test(jobId) || !contestNo || !/^[a-z0-9][a-z0-9-]{3,24}$/i.test(contestNo)
+    || !columns || columns.length !== 4 || !title
+    || Number(value.linkedColumn) !== 0 || !Array.isArray(value.locationsColumns)
+    || value.locationsColumns.length !== 1 || Number(value.locationsColumns[0]) !== 2) return null;
+  let locations: unknown;
+  try {
+    locations = JSON.parse(asText(columns[2]) ?? "");
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(locations) || locations.length < 1 || locations.length > 40
+    || locations.some((location) => typeof location !== "string" || !location.trim())) return null;
+  const normalizedLocations = locations.map((location) => String(location).trim());
+  const official = new URL("https://tgh.taleo.net/careersection/ex/jobdetail.ftl");
+  official.searchParams.set("job", contestNo);
+  const apply = new URL("https://tgh.taleo.net/careersection/application.jss");
+  apply.searchParams.set("type", "1");
+  apply.searchParams.set("lang", "en");
+  apply.searchParams.set("portal", "101430233");
+  apply.searchParams.set("reqNo", jobId);
+  return {
+    jobId,
+    contestNo,
+    title,
+    locations: normalizedLocations,
+    officialUrl: official.href,
+    applyUrl: apply.href,
+    employmentType,
+  };
+};
+
+const tampaGeneralLocation = (locations: string[]): {
+  location: string;
+  city: string | null;
+  state: string | null;
+  country: string | null;
+} => {
+  const primary = locations[0]?.split("-").map((part) => part.trim()).filter(Boolean) ?? [];
+  const country = primary[0]?.toLocaleLowerCase() === "united states" ? "United States" : primary[0] ?? null;
+  return {
+    location: locations.join("; "),
+    country,
+    state: primary.length >= 2 ? primary[1] : null,
+    city: primary.length >= 3 ? primary.slice(2).join("-") : null,
+  };
+};
+
+const tampaGeneralPublishedAt = (value: string | null): string | null => {
+  const match = value?.match(
+    /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2}),\s+(\d{4}),\s+(\d{1,2}):(\d{2}):(\d{2})\s+(AM|PM)$/i,
+  );
+  if (!match) return null;
+  const month = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+    .indexOf(match[1].toLocaleLowerCase());
+  const day = Number(match[2]);
+  const year = Number(match[3]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  let hour = Number(match[4]) % 12;
+  if (match[7].toLocaleUpperCase() === "PM") hour += 12;
+  const localMs = Date.UTC(year, month, day, hour, minute, second);
+  const localDate = new Date(localMs);
+  if (localDate.getUTCFullYear() !== year || localDate.getUTCMonth() !== month || localDate.getUTCDate() !== day
+    || localDate.getUTCHours() !== hour || localDate.getUTCMinutes() !== minute || localDate.getUTCSeconds() !== second) {
+    return null;
+  }
+  const secondSundayInMarch = 8 + (7 - new Date(Date.UTC(year, 2, 8)).getUTCDay()) % 7;
+  const firstSundayInNovember = 1 + (7 - new Date(Date.UTC(year, 10, 1)).getUTCDay()) % 7;
+  const daylightStart = Date.UTC(year, 2, secondSundayInMarch, 2);
+  const daylightEnd = Date.UTC(year, 10, firstSundayInNovember, 2);
+  const easternOffsetHours = localMs >= daylightStart && localMs < daylightEnd ? 4 : 5;
+  const date = new Date(localMs + easternOffsetHours * 60 * 60 * 1_000);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+};
+
+const tampaGeneralSummaryJob = (summary: TampaGeneralTaleoSummary, source: CrawlSource): CrawledJob => {
+  const location = tampaGeneralLocation(summary.locations);
+  const programs = classifyJobPrograms(summary.title).keys;
+  return {
+    externalId: summary.jobId,
+    title: summary.title,
+    company: source.company,
+    location: location.location,
+    arrangement: "unknown",
+    employmentType: programs.includes("coop") ? "Co-op"
+      : programs.includes("internship") ? "Internship" : summary.employmentType,
+    summary: null,
+    ...(summary.locations.length > 1 ? { secondaryLocations: summary.locations.slice(1) } : {}),
+    ...(location.city ? { locationCity: location.city } : {}),
+    ...(location.state ? { locationState: location.state } : {}),
+    ...(location.country ? { locationCountry: location.country } : {}),
+    requisitionId: summary.contestNo,
+    applyUrl: summary.applyUrl,
+    rawPayload: { taleoPortal: "101430233", taleoInternalJobId: summary.jobId },
+    officialUrl: summary.officialUrl,
+    publishedAt: null,
+  };
+};
+
+const tampaGeneralDetailJob = (
+  summary: TampaGeneralTaleoSummary,
+  html: string,
+  source: CrawlSource,
+): CrawledJob | null => {
+  const values = taleoClassicStringArray(html);
+  const metaTitle = taleoClassicPlainText(html.match(/<meta\b[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']/i)?.[1]);
+  const internalId = values?.[0]?.trim();
+  const title = taleoClassicPlainText(values?.[9]);
+  const contestNo = values?.[10]?.trim();
+  if (!values || values.length < 15 || internalId !== summary.jobId || contestNo !== summary.contestNo
+    || !title || jobIdentityText(title) !== jobIdentityText(summary.title)
+    || !metaTitle || jobIdentityText(metaTitle) !== jobIdentityText(summary.title)
+    || !new RegExp(`name=["']requisitionno["'][^>]*value=["']${summary.jobId}["']`, "i").test(html)) return null;
+  const richSections: string[] = [];
+  for (const value of values.slice(11)) {
+    if (!/^!\*!/.test(value)) continue;
+    const text = taleoClassicRichText(value);
+    if (text && text.length >= 10 && !richSections.some((existing) => jobIdentityText(existing) === jobIdentityText(text))) {
+      richSections.push(text);
+    }
+  }
+  const description = richSections[0] ?? null;
+  if (!description) return null;
+  const sourcePostedText = [...values].reverse()
+    .map((value) => taleoClassicPlainText(value))
+    .find((value) => /^(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4},/i.test(value ?? "")) ?? null;
+  const job = tampaGeneralSummaryJob(summary, source);
+  const arrangementText = values.map((value) => taleoClassicPlainText(value) ?? "").join(" ");
+  return {
+    ...job,
+    arrangement: /\bremote\b/i.test(arrangementText)
+      ? "remote" : /\bhybrid\b/i.test(arrangementText) ? "hybrid" : "onsite",
+    summary: description.slice(0, 1_200),
+    description,
+    ...(richSections[1] ? { qualifications: richSections[1] } : {}),
+    ...(sourcePostedText ? { sourcePostedText, publishedAt: tampaGeneralPublishedAt(sourcePostedText) } : {}),
+  };
+};
+
+const tampaGeneralTaleoFacets = (values: unknown, total: number): CrawledFacet[] | null => {
+  if (!Array.isArray(values)) return null;
+  const expected = new Set([
+    "POSTING_DATE", "ORGANIZATION", "JOB_TYPE", "LOCATION", "JOB_FIELD", "JOB_SCHEDULE", "JOB_SHIFT",
+  ]);
+  const facets = (values as TaleoClassicFacet[]).flatMap((facet): CrawledFacet[] => {
+    const id = asText(facet.id);
+    if (!id || !expected.has(id) || !Array.isArray(facet.facetValueResults)) return [];
+    const facetValues = facet.facetValueResults.flatMap((raw): CrawledFacet["values"] => {
+      if (!raw || typeof raw !== "object") return [];
+      const value = raw as { id?: unknown; text?: unknown; quantity?: unknown };
+      const key = asText(value.id);
+      const label = asText(value.text);
+      const quantity = asText(value.quantity);
+      const count = quantity == null ? null : Number(quantity);
+      return key && label && (count == null || (Number.isSafeInteger(count) && count >= 0 && count <= total * 40))
+        ? [{ key, label, count }]
+        : [];
+    });
+    if (facetValues.length !== facet.facetValueResults.length
+      || new Set(facetValues.map(({ key }) => key)).size !== facetValues.length) return [];
+    return [{
+      key: id.toLocaleLowerCase(),
+      label: id.split("_").map((part) => `${part[0]}${part.slice(1).toLocaleLowerCase()}`).join(" "),
+      values: facetValues,
+    }];
+  });
+  return facets.length === expected.size && new Set(facets.map(({ key }) => key)).size === expected.size
+    ? facets
+    : null;
+};
+
+const crawlTampaGeneralTaleo = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  let failureStatus: number | null = null;
+  try {
+    const boardResponse = await fetchWithTimeout(fetcher, TAMPA_GENERAL_TALEO_LISTING_URL, {
+      headers: { accept: "text/html,application/xhtml+xml" },
+    }, true, { attempts: 1, timeoutMs: 10_000 });
+    responseStatus = boardResponse.status;
+    if (!boardResponse.ok) {
+      failureStatus = boardResponse.status;
+      throw new Error(`Tampa General Taleo board returned HTTP ${boardResponse.status}.`);
+    }
+    const boardHtml = await boardResponse.text();
+    const filters = ["POSTING_DATE", "ORGANIZATION", "JOB_TYPE", "LOCATION", "JOB_FIELD", "JOB_SCHEDULE", "JOB_SHIFT"];
+    if (!/portalNo\s*:\s*['"]101430233['"]/i.test(boardHtml)
+      || !/urlCode\s*:\s*['"]ex['"]/i.test(boardHtml)
+      || !/https:\/\/(?:www\.)?tgh\.org(?:[/'"])/i.test(boardHtml)
+      || filters.some((id) => !new RegExp(`<div\\b[^>]*id=["']filter-${id}["']`, "i").test(boardHtml))) {
+      throw new Error("Tampa General Taleo board returned invalid public search configuration.");
+    }
+
+    const fetchSearchPage = async (pageNo: number): Promise<TaleoClassicSearchPayload> => {
+      const response = await fetchWithTimeout(fetcher, TAMPA_GENERAL_TALEO_SEARCH_URL, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+          cookie: "locale=en",
+          referer: TAMPA_GENERAL_TALEO_LISTING_URL,
+          tz: "GMT-07:00",
+          tzname: "America/Los_Angeles",
+        },
+        body: tampaGeneralTaleoSearchBody(pageNo),
+      }, true, { attempts: 1, timeoutMs: 10_000 });
+      responseStatus = response.status;
+      if (!response.ok) {
+        failureStatus = response.status;
+        throw new Error(`Tampa General Taleo search returned HTTP ${response.status}.`);
+      }
+      return await response.json() as TaleoClassicSearchPayload;
+    };
+
+    const firstPage = await fetchSearchPage(1);
+    const total = Number(firstPage.pagingData?.totalCount);
+    const pageSize = Number(firstPage.pagingData?.pageSize);
+    const totalPages = Math.ceil(total / pageSize);
+    if (!Number.isSafeInteger(total) || total < 1 || total > 2_500 || pageSize !== 25
+      || !Number.isSafeInteger(totalPages) || totalPages < 1 || totalPages > 40) {
+      throw new Error("Tampa General Taleo search returned invalid catalog metadata.");
+    }
+    const pages = new Map<number, TaleoClassicSearchPayload>([[1, firstPage]]);
+    for (let page = 2; page <= totalPages; page += 6) {
+      const pageNumbers = Array.from({ length: Math.min(6, totalPages - page + 1) }, (_, index) => page + index);
+      const responses = await Promise.all(pageNumbers.map(async (pageNo) => ({ pageNo, payload: await fetchSearchPage(pageNo) })));
+      responses.forEach(({ pageNo, payload }) => pages.set(pageNo, payload));
+    }
+    const summaries: TampaGeneralTaleoSummary[] = [];
+    for (let pageNo = 1; pageNo <= totalPages; pageNo += 1) {
+      const page = pages.get(pageNo);
+      const rows = Array.isArray(page?.requisitionList) ? page.requisitionList as TaleoClassicRequisition[] : null;
+      const expectedRows = Math.min(pageSize, total - (pageNo - 1) * pageSize);
+      if (page?.careerSectionUnAvailable !== false || Number(page?.pagingData?.currentPageNo) !== pageNo
+        || Number(page?.pagingData?.pageSize) !== pageSize || Number(page?.pagingData?.totalCount) !== total
+        || !rows || rows.length !== expectedRows) {
+        throw new Error("Tampa General Taleo catalog pagination became inconsistent.");
+      }
+      const normalized = rows.flatMap((row) => tampaGeneralTaleoSummary(row) ?? []);
+      if (normalized.length !== rows.length) throw new Error("Tampa General Taleo catalog contained malformed requisitions.");
+      summaries.push(...normalized);
+    }
+    if (summaries.length !== total
+      || new Set(summaries.map(({ jobId }) => jobId)).size !== total
+      || new Set(summaries.map(({ contestNo }) => contestNo)).size !== total
+      || new Set(summaries.map(({ officialUrl }) => officialUrl)).size !== total) {
+      throw new Error("Tampa General Taleo catalog returned duplicate or missing requisitions.");
+    }
+    const verificationPage = await fetchSearchPage(1);
+    const verificationRows = Array.isArray(verificationPage.requisitionList)
+      ? verificationPage.requisitionList as TaleoClassicRequisition[] : null;
+    const verificationSummaries = verificationRows?.flatMap((row) => tampaGeneralTaleoSummary(row) ?? []) ?? [];
+    if (verificationPage.careerSectionUnAvailable !== false
+      || Number(verificationPage.pagingData?.totalCount) !== total
+      || Number(verificationPage.pagingData?.pageSize) !== pageSize
+      || verificationSummaries.length !== Math.min(pageSize, total)
+      || verificationSummaries.map(({ jobId, contestNo }) => `${jobId}:${contestNo}`).join("|")
+        !== summaries.slice(0, pageSize).map(({ jobId, contestNo }) => `${jobId}:${contestNo}`).join("|")) {
+      throw new Error("Tampa General Taleo catalog changed during pagination.");
+    }
+    const facets = tampaGeneralTaleoFacets(firstPage.facetResults, total);
+    if (!facets) throw new Error("Tampa General Taleo search returned malformed native facets.");
+
+    const detailBudget = Math.max(0, 50 - (1 + totalPages + 1));
+    const detailSummaries = summaries.map((summary, index) => ({ summary, index }))
+      .sort((left, right) => {
+        const leftProgram = classifyJobPrograms(left.summary.title).keys.length > 0 ? 0 : 1;
+        const rightProgram = classifyJobPrograms(right.summary.title).keys.length > 0 ? 0 : 1;
+        return leftProgram - rightProgram || left.index - right.index;
+      })
+      .slice(0, detailBudget)
+      .map(({ summary }) => summary);
+    const enriched = new Map<string, CrawledJob>();
+    const fetchDetail = async (summary: TampaGeneralTaleoSummary): Promise<CrawledJob | null> => {
+      try {
+        const response = await fetchWithTimeout(fetcher, summary.officialUrl, {
+          headers: {
+            accept: "text/html,application/xhtml+xml",
+            cookie: "locale=en",
+            referer: TAMPA_GENERAL_TALEO_LISTING_URL,
+          },
+        }, true, { attempts: 1, timeoutMs: 10_000 });
+        if (!response.ok) return null;
+        return tampaGeneralDetailJob(summary, await response.text(), source);
+      } catch {
+        return null;
+      }
+    };
+    for (let index = 0; index < detailSummaries.length; index += 3) {
+      const batch = detailSummaries.slice(index, index + 3);
+      const jobs = await Promise.all(batch.map(fetchDetail));
+      jobs.forEach((job, offset) => {
+        if (job) enriched.set(batch[offset].officialUrl, job);
+      });
+    }
+    const detailFailures = detailSummaries.filter((summary) => !enriched.has(summary.officialUrl)).length;
+    return {
+      status: "succeeded",
+      responseStatus,
+      // The full catalog is observed every run, but two completed cycles are
+      // required before CrawlStore closes an absent job. This avoids a
+      // transient Taleo reordering or maintenance window causing mass closure.
+      completeListing: false,
+      jobs: summaries.map((summary) => enriched.get(summary.officialUrl) ?? tampaGeneralSummaryJob(summary, source)),
+      facets,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages },
+      resolvedListingUrl: TAMPA_GENERAL_TALEO_LISTING_URL,
+      error: detailFailures > 0 ? `${detailFailures} Tampa General Taleo detail pages were unavailable or inconsistent.` : null,
+    };
+  } catch (error) {
+    return {
+      status: isBlockedHttpStatus(failureStatus ?? responseStatus) ? "blocked" : "failed",
+      responseStatus: failureStatus ?? responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Tampa General Taleo crawler error.",
     };
   }
 };
@@ -18201,6 +18544,9 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p2-0089-cincinnati-financial") {
     return crawlCincinnatiTaleo(source, fetcher);
+  }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-1072-tampa-general-hospital") {
+    return crawlTampaGeneralTaleo(source, fetcher);
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-1104-wayfair") {
     return crawlWayfairCareers(source, fetcher);

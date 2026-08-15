@@ -12084,6 +12084,141 @@ HUMAN RESOURCES Posted Date
     }));
   });
 
+  it("collects Tampa General's complete classic Taleo catalog and prioritizes internship details", async () => {
+    const boardUrl = "https://tgh.taleo.net/careersection/ex/jobsearch.ftl?lang=en";
+    const searchUrl = "https://tgh.taleo.net/careersection/rest/jobboard/searchjobs?lang=en&portal=101430233";
+    const summaries = [
+      {
+        jobId: "683463", contestNo: "2600031R", title: "Data Science Summer Intern",
+        employmentType: "Full-time", location: "United States-Florida-Tampa",
+      },
+      {
+        jobId: "683464", contestNo: "2600032R", title: "Clinical Data Analyst",
+        employmentType: "", location: "United States-Florida-Riverview",
+      },
+    ];
+    const requisitionList = summaries.map((summary) => ({
+      jobId: summary.jobId,
+      contestNo: summary.contestNo,
+      column: [summary.title, summary.employmentType, JSON.stringify([summary.location]), ""],
+      linkedColumn: 0,
+      locationsColumns: [2],
+    }));
+    const facetResults = [
+      "POSTING_DATE", "ORGANIZATION", "JOB_TYPE", "LOCATION", "JOB_FIELD", "JOB_SCHEDULE", "JOB_SHIFT",
+    ].map((id) => ({
+      id,
+      facetValueResults: [{ id: "1", text: id, quantity: id === "POSTING_DATE" ? "" : "2" }],
+    }));
+    const searchPayload = {
+      requisitionList,
+      facetResults,
+      pagingData: { currentPageNo: 1, pageSize: 25, totalCount: 2 },
+      careerSectionUnAvailable: false,
+    };
+    const detail = (summary: typeof summaries[number]) => {
+      const description = encodeURIComponent(`<p>${summary.title} builds analytics products for patient care.</p>`);
+      const qualifications = encodeURIComponent("<p>Python, SQL, and statistics.</p>");
+      const values = [
+        summary.jobId, "true", summary.jobId, "false", `Submission for ${summary.title}`, "false",
+        summary.jobId, "false", "true", summary.title, summary.contestNo,
+        `!*!${description}`, `!*!${description}`, `!*!${qualifications}`,
+        "Tampa", "On Site", "Data and Analytics", "Full-time", "Day Job",
+        "Aug 14, 2026, 7:06:51 PM",
+      ];
+      return `<meta property="og:title" content="${summary.title}"><input name="requisitionno" value="${summary.jobId}">
+        <script>api.fillList("requisitionDescriptionInterface", "descRequisition", ${JSON.stringify(values)});</script>`;
+    };
+    const requests = { board: 0, search: 0, detail: 0 };
+    const result = await crawlSource({
+      id: "p5-1072-tampa-general-hospital",
+      company: "Tampa General Hospital",
+      postingUrl: "https://tgh.taleo.net/careersection/ex/jobsearch.ftl",
+      adapter: "custom",
+    }, async (input, init) => {
+      const url = String(input);
+      if (url === boardUrl) {
+        requests.board += 1;
+        return new Response(`<script>portalNo: "101430233", urlCode: "ex"</script><a href="https://www.tgh.org/careers">TGH</a>
+          ${["POSTING_DATE", "ORGANIZATION", "JOB_TYPE", "LOCATION", "JOB_FIELD", "JOB_SCHEDULE", "JOB_SHIFT"]
+            .map((id) => `<div id="filter-${id}"></div>`).join("")}`);
+      }
+      if (url === searchUrl) {
+        requests.search += 1;
+        expect(JSON.parse(String(init?.body))).toEqual(expect.objectContaining({
+          pageNo: 1,
+          fieldData: { fields: { KEYWORD: "", CATEGORY: "" }, valid: true },
+        }));
+        return Response.json(searchPayload);
+      }
+      requests.detail += 1;
+      const contestNo = new URL(url).searchParams.get("job");
+      const summary = summaries.find((candidate) => candidate.contestNo === contestNo);
+      return summary ? new Response(detail(summary)) : new Response("missing", { status: 404 });
+    }, new Date("2026-08-15T16:00:00Z"));
+
+    expect(requests).toEqual({ board: 1, search: 2, detail: 2 });
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      responseStatus: 200,
+      completeListing: false,
+      resolvedListingUrl: boardUrl,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 1 },
+      error: null,
+    }));
+    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "683463",
+      requisitionId: "2600031R",
+      title: "Data Science Summer Intern",
+      location: "United States-Florida-Tampa",
+      locationCity: "Tampa",
+      locationState: "Florida",
+      locationCountry: "United States",
+      arrangement: "onsite",
+      employmentType: "Internship",
+      qualifications: "Python, SQL, and statistics.",
+      sourcePostedText: "Aug 14, 2026, 7:06:51 PM",
+      publishedAt: "2026-08-14T23:06:51.000Z",
+      officialUrl: "https://tgh.taleo.net/careersection/ex/jobdetail.ftl?job=2600031R",
+      applyUrl: "https://tgh.taleo.net/careersection/application.jss?type=1&lang=en&portal=101430233&reqNo=683463",
+    }));
+    expect(result.facets?.map(({ key }) => key)).toEqual([
+      "posting_date", "organization", "job_type", "location", "job_field", "job_schedule", "job_shift",
+    ]);
+  });
+
+  it("fails Tampa General closed when classic Taleo returns duplicate requisitions", async () => {
+    const boardUrl = "https://tgh.taleo.net/careersection/ex/jobsearch.ftl?lang=en";
+    const searchUrl = "https://tgh.taleo.net/careersection/rest/jobboard/searchjobs?lang=en&portal=101430233";
+    const row = {
+      jobId: "683463", contestNo: "2600031R",
+      column: ["Data Analyst", "Full-time", JSON.stringify(["United States-Florida-Tampa"]), ""],
+      linkedColumn: 0, locationsColumns: [2],
+    };
+    const result = await crawlSource({
+      id: "p5-1072-tampa-general-hospital", company: "Tampa General Hospital",
+      postingUrl: "https://tgh.taleo.net/careersection/ex/jobsearch.ftl", adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      if (url === boardUrl) return new Response(`<script>portalNo: "101430233", urlCode: "ex"</script><a href="https://www.tgh.org/">TGH</a>
+        ${["POSTING_DATE", "ORGANIZATION", "JOB_TYPE", "LOCATION", "JOB_FIELD", "JOB_SCHEDULE", "JOB_SHIFT"]
+          .map((id) => `<div id="filter-${id}"></div>`).join("")}`);
+      if (url === searchUrl) return Response.json({
+        requisitionList: [row, row], facetResults: [],
+        pagingData: { currentPageNo: 1, pageSize: 25, totalCount: 2 }, careerSectionUnAvailable: false,
+      });
+      return new Response("unexpected");
+    }, new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed",
+      completeListing: false,
+      jobs: [],
+      error: "Tampa General Taleo catalog returned duplicate or missing requisitions.",
+    }));
+  });
+
   it("collects Wayfair's complete US catalog from its first-party job search API", async () => {
     const requests: Array<{ url: string; body: Record<string, unknown>; headers: Headers }> = [];
     const job = (id: number, requisitionId: string, title: string, city: string, state: string) => ({
