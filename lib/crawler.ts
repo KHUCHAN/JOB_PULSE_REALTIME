@@ -20261,6 +20261,13 @@ const enrichProgramJobDetails = async (
 
   const enrichOne = async ({ index, candidates }: { index: number; candidates: string[] }): Promise<void> => {
     const job = enriched[index];
+    const isBarclaysDetail = (() => {
+      try {
+        return new URL(job.officialUrl).hostname.toLocaleLowerCase() === "search.jobs.barclays";
+      } catch {
+        return false;
+      }
+    })();
     if (source.id === "p2-0039-goldman-sachs") {
       const detail = await goldmanRoleDetail(job, fetcher);
       if (detail) enriched[index] = { ...job, ...detail };
@@ -20398,8 +20405,14 @@ const enrichProgramJobDetails = async (
         }
         const detail = matchingJsonLdDetail(html, source, job);
         if (detail) {
-          enriched[index] = mergeProgramJobDetail(job, detail, officialApplyUrl(html, response.url || job.officialUrl));
-          return;
+          const merged = mergeProgramJobDetail(job, detail, officialApplyUrl(html, response.url || job.officialUrl));
+          enriched[index] = merged;
+          // Barclays can serve a reduced JSON-LD variant to Worker egress:
+          // description/location/date are present, while the JR requisition
+          // and Workday apply anchor are omitted. Keep the useful direct-page
+          // fields, but continue to the identity-checked reader so a partial
+          // detail response cannot silently suppress the application URL.
+          if (!isBarclaysDetail || (merged.requisitionId && merged.applyUrl)) return;
         }
       }
     } catch {
@@ -20409,9 +20422,10 @@ const enrichProgramJobDetails = async (
     // individual TalentBrew detail page can omit structured data or reject the
     // same request. The text reader is used only as an identity-checked detail
     // fallback; the canonical and apply links remain first-party Barclays URLs.
-    if (new URL(job.officialUrl).hostname.toLocaleLowerCase() === "search.jobs.barclays") {
-      const reader = await fetchBarclaysReaderDetail(job, source, fetcher);
-      if (reader) enriched[index] = mergeProgramJobDetail(job, reader.detail, reader.applyUrl);
+    if (isBarclaysDetail) {
+      const current = enriched[index];
+      const reader = await fetchBarclaysReaderDetail(current, source, fetcher);
+      if (reader) enriched[index] = mergeProgramJobDetail(current, reader.detail, reader.applyUrl);
     }
   };
   await Promise.all(selectedTargets.map(enrichOne));

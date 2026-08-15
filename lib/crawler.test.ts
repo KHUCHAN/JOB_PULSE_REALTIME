@@ -1276,6 +1276,66 @@ Wrong description.
     expect(totalRequests).toBeLessThanOrEqual(22);
   });
 
+  it("completes a reduced Barclays JSON-LD detail with the verified reader identity", async () => {
+    const jobUrl = "https://search.jobs.barclays/job/new-york/quantitative-finance-associate-summer-internship-program-2027-new-york/13015/99217260160";
+    const applyUrl = "https://barclays.wd3.myworkdayjobs.com/External_Career_Site_Barclays/job/New-York-745-7th-Avenue/Quantitative-Finance-Associate-Summer-Internship-Program-2027-New-York_JR-0000128099/apply";
+    const title = "Quantitative Finance Associate Summer Internship Program 2027 New York";
+    const listing = [
+      '<script src="https://tbcdn.talentbrew.com/js/client/search.js"></script>',
+      '<section data-total-job-results="1" data-total-results="1" data-total-pages="1" data-records-per-page="16" data-ajax-post-url="/search-jobs/resultspost">',
+      `<div class="list-item list-item--card"><a href="${jobUrl}" data-job-id="99217260160"><strong>${title}</strong></a>`,
+      '<div class="job-location">New York, United States</div></div></section>',
+    ].join("");
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url === "https://search.jobs.barclays/search-jobs") return new Response(listing);
+      if (url === jobUrl) return new Response(`
+        <script type="application/ld+json">${JSON.stringify({
+          "@context": "https://schema.org", "@type": "JobPosting", title,
+          url: jobUrl, datePosted: "2026-08-14",
+          description: "Reduced edge response with the official role description.",
+          jobLocation: [{ address: { addressLocality: "New York", addressCountry: "US" } }],
+        })}</script>
+      `);
+      if (url === `https://r.jina.ai/${jobUrl}`) return new Response(`
+        Title: ${title} at Barclays
+
+        URL Source: ${jobUrl}
+
+        Markdown Content:
+        New York, NY
+
+        ## Key information
+        Date live: 08/14/2026
+        Contract: Intern
+        Reference Code: JR-0000128099
+
+        ## Job description
+        Use AI tools, quantitative models, software engineering, and data science.
+
+        Links/Buttons:
+        - [Apply for job](${applyUrl})
+      `);
+      return new Response("missing", { status: 404 });
+    };
+
+    const result = await crawlSource({
+      id: "p4-0225-barclays-us", company: "Barclays US",
+      postingUrl: "https://search.jobs.barclays/search-jobs", adapter: "custom",
+    }, fetcher, new Date("2026-08-15T09:00:00Z"));
+
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "99217260160",
+      officialUrl: jobUrl,
+      applyUrl,
+      requisitionId: "JR-0000128099",
+      location: "New York, NY",
+      employmentType: "Internship",
+      publishedAt: "2026-08-14T00:00:00.000Z",
+      description: expect.stringContaining("software engineering"),
+    })]);
+  });
+
   it("does not merge a Barclays reader response for a different posting identity", async () => {
     const jobUrl = "https://search.jobs.barclays/job/new-york/data-science-intern/13015/99217260160";
     const title = "Data Science Intern 2027 New York";
