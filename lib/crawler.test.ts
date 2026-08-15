@@ -4444,7 +4444,12 @@ HUMAN RESOURCES Posted Date
       adapter: "custom",
     }, fetcher, new Date());
 
-    expect(requests).toEqual([listingUrl, `${listingUrl}.json?per_page=100&page=1`, readerUrl]);
+    expect(requests).toEqual([
+      listingUrl,
+      "https://r.jina.ai/https://careers.alvarezandmarsal.com/search/jobs/in/country/united-states.json?data_format=map&per_page=100&page=1",
+      `${listingUrl}.json?per_page=100&page=1`,
+      readerUrl,
+    ]);
     expect(result).toEqual(expect.objectContaining({
       status: "succeeded",
       completeListing: true,
@@ -4510,6 +4515,7 @@ HUMAN RESOURCES Posted Date
       const url = String(input);
       requests.push(url);
       if (!url.startsWith("https://r.jina.ai/")) return new Response("blocked", { status: 403 });
+      if (url.includes("data_format=map")) return new Response("rate limited", { status: 429 });
       if (url.includes("/en/search/jobs/")) return new Response("rate limited", { status: 429 });
       return Response.json({ current_page: 3, per_page: 100, total_entries: 400, entries });
     };
@@ -4524,6 +4530,7 @@ HUMAN RESOURCES Posted Date
 
     expect(requests).toEqual([
       "https://careers.alvarezandmarsal.com/en/search/jobs/in/country/united-states",
+      "https://r.jina.ai/https://careers.alvarezandmarsal.com/search/jobs/in/country/united-states.json?data_format=map&per_page=100&page=3",
       "https://careers.alvarezandmarsal.com/en/search/jobs/in/country/united-states.json?per_page=100&page=3",
       "https://r.jina.ai/https://careers.alvarezandmarsal.com/en/search/jobs/in/country/united-states.json?per_page=100&page=3",
       "https://r.jina.ai/https://careers.alvarezandmarsal.com/search/jobs/in/country/united-states.json?per_page=100&page=3",
@@ -4564,7 +4571,7 @@ HUMAN RESOURCES Posted Date
     }));
   });
 
-  it("falls back to A&M's official map JSON and rejects an unverified repeated page", async () => {
+  it("prefers A&M's compact official map JSON and validates its requested page", async () => {
     const requests: string[] = [];
     const mapEntries = (page: number) => Array.from({ length: 100 }, (_, index) => ({
       id: String((page - 1) * 100 + index + 1),
@@ -4576,11 +4583,11 @@ HUMAN RESOURCES Posted Date
     const fetcher: typeof fetch = async (input) => {
       const url = String(input);
       requests.push(url);
-      if (url.includes("all_results=true") && url.includes("data_format=map")) {
+      if (url.includes("data_format=map")) {
         const target = new URL(url.slice("https://r.jina.ai/".length));
         const page = Number(target.searchParams.get("page"));
         return Response.json({
-          current_page: 1,
+          current_page: page,
           per_page: 100,
           total_entries: 400,
           entries: mapEntries(page),
@@ -4597,8 +4604,10 @@ HUMAN RESOURCES Posted Date
       crawlPageCursor: 3,
     }, fetcher, new Date());
 
-    expect(requests).toContain("https://r.jina.ai/https://careers.alvarezandmarsal.com/search/jobs/in/country/united-states.json?all_results=true&data_format=map&per_page=100&page=3");
-    expect(requests).toContain("https://r.jina.ai/https://careers.alvarezandmarsal.com/search/jobs/in/country/united-states.json?all_results=true&data_format=map&per_page=100&page=2");
+    expect(requests).toEqual([
+      "https://careers.alvarezandmarsal.com/en/search/jobs/in/country/united-states",
+      "https://r.jina.ai/https://careers.alvarezandmarsal.com/search/jobs/in/country/united-states.json?data_format=map&per_page=100&page=3",
+    ]);
     expect(result).toEqual(expect.objectContaining({
       status: "succeeded",
       completeListing: false,
@@ -4613,6 +4622,41 @@ HUMAN RESOURCES Posted Date
       locationCountry: "United States",
       latitude: 40.7512815,
       longitude: -73.9786441,
+    }));
+  });
+
+  it("does not advance A&M when the compact map feed ignores the requested page", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.includes("data_format=map")) {
+        return Response.json({
+          current_page: 1,
+          per_page: 100,
+          total_entries: 400,
+          entries: Array.from({ length: 100 }, (_, index) => ({
+            id: String(index + 1),
+            title: `Role ${index + 1}`,
+            permalink: `role-${index + 1}`,
+            location_string: "New York, NY",
+          })),
+        });
+      }
+      return new Response("rate limited", { status: url.startsWith("https://r.jina.ai/") ? 429 : 403 });
+    };
+
+    const result = await crawlSource({
+      id: "p4-0214-alvarez-marsal",
+      company: "Alvarez & Marsal",
+      postingUrl: "https://careers.alvarezandmarsal.com/en/search/jobs/in/country/united-states",
+      adapter: "custom",
+      crawlPageCursor: 3,
+    }, fetcher, new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed",
+      completeListing: false,
+      jobs: [],
+      pagination: { nextPage: 3, cycleComplete: false, totalPages: 3 },
     }));
   });
 

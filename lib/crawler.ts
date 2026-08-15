@@ -6836,7 +6836,6 @@ const crawlTalemetryJson = async (
     // This is the same first-party JSON request made by the public map view.
     // Its compact response avoids the Cloudflare challenge applied to the
     // ordinary list JSON while still carrying every stable job identity.
-    endpoint.searchParams.set("all_results", "true");
     endpoint.searchParams.set("data_format", "map");
     endpoint.searchParams.set("per_page", "100");
     endpoint.searchParams.set("page", String(page));
@@ -6861,7 +6860,8 @@ const crawlTalemetryJson = async (
         title: asText(entry.title),
         permalink: asText(entry.permalink),
       }));
-      if (total <= 0 || expected <= 0 || entries.length !== expected
+      if (payload.current_page !== page || payload.per_page !== pageSize
+        || total <= 0 || expected <= 0 || entries.length !== expected
         || identities.some((identity) => !identity.id || !identity.title || !identity.permalink)
         || new Set(identities.map((identity) => identity.id)).size !== expected) {
         pageFailures.set(page, `map reader page ${page} failed identity/cardinality validation`);
@@ -6874,6 +6874,18 @@ const crawlTalemetryJson = async (
     }
   };
   const fetchPage = async (page: number, allowReaderRetry = false): Promise<TalemetryPayload | null> => {
+    // The public A&M page uses this compact, country-scoped first-party map
+    // endpoint. Read it first: unlike the ordinary list JSON, it is not
+    // challenged by the careers edge when fetched through the reader, and one
+    // validated request is enough to advance a checkpoint. This also avoids
+    // exhausting the reader's Worker-egress quota on known-bad list variants.
+    if (source.id === "p4-0214-alvarez-marsal") {
+      const mapPage = await fetchAlvarezMapPage(page);
+      if (mapPage) {
+        pageFailures.delete(page);
+        return mapPage;
+      }
+    }
     const endpoint = endpointFor(page);
     if (!directUnavailable) {
       try {
@@ -6934,29 +6946,6 @@ const crawlTalemetryJson = async (
       } catch {
         pageFailures.set(page, "reader request or body stream failed");
         // The bounded second attempt also covers network/body-stream failures.
-      }
-    }
-    if (source.id === "p4-0214-alvarez-marsal") {
-      const mapPage = await fetchAlvarezMapPage(page);
-      if (mapPage) {
-        if (page === 1) {
-          pageFailures.delete(page);
-          return mapPage;
-        }
-        // Talemetry's map format always labels itself page one. Verify the
-        // requested window against the immediately preceding official window
-        // before substituting the requested page number. A repeated/ignored
-        // page therefore cannot advance the persisted cursor or close jobs.
-        const previous = await fetchAlvarezMapPage(page - 1);
-        const currentIds = new Set((mapPage.entries ?? []).map((entry) => asText(entry.talemetry_job_id) ?? asText(entry.id)));
-        const previousIds = (previous?.entries ?? []).map((entry) => asText(entry.talemetry_job_id) ?? asText(entry.id));
-        if (previous
-          && previous.total_entries === mapPage.total_entries
-          && previousIds.every((identity) => identity && !currentIds.has(identity))) {
-          pageFailures.delete(page);
-          return mapPage;
-        }
-        pageFailures.set(page, `map reader page ${page} repeated or disagreed with page ${page - 1}`);
       }
     }
     return null;
