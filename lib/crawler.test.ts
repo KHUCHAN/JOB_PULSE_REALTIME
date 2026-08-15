@@ -8453,6 +8453,64 @@ Wrong description.
     expect(requests).toHaveLength(2);
   });
 
+  it("uses the exact organization and keyword filters for the OFAC USAJOBS source", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === "https://www.occ.gov/scripts/careers-openings.js") {
+        return new Response('{"Authorization-Key":"runtime-public-key"}');
+      }
+      if (url.startsWith("https://data.usajobs.gov/api/search?")) {
+        const endpoint = new URL(url);
+        expect(endpoint.searchParams.get("Organization")).toBe("TR91");
+        expect(endpoint.searchParams.get("Keyword")).toBe("OFAC");
+        expect(endpoint.searchParams.get("ResultsPerPage")).toBe("500");
+        expect(new Headers(init?.headers).get("authorization-key")).toBe("runtime-public-key");
+        return Response.json({ SearchResult: {
+          SearchResultCount: 1,
+          SearchResultCountAll: 1,
+          SearchResultItems: [{
+            MatchedObjectId: "879374700",
+            MatchedObjectDescriptor: {
+              PositionID: "25-DO-OFAC-1",
+              PositionTitle: "Sanctions Investigations Manager",
+              PositionURI: "https://www.usajobs.gov:443/job/879374700",
+              PositionLocation: [{
+                LocationName: "Washington, District of Columbia",
+                CityName: "Washington",
+                CountrySubDivisionCode: "DC",
+                CountryCode: "US",
+              }],
+              PositionStartDate: "2026-08-14T00:00:00Z",
+              PositionEndDate: "2026-09-14T00:00:00Z",
+              UserArea: { Details: {
+                JobSummary: "Office of Foreign Assets Control sanctions investigations.",
+              } },
+            },
+          }],
+        } });
+      }
+      return new Response("missing", { status: 404 });
+    };
+
+    const result = await crawlSource({
+      id: "p4-0321-ofac",
+      company: "OFAC (Treasury)",
+      postingUrl: "https://www.usajobs.gov/Search/Results?a=TR91&k=OFAC&p=1",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-14T12:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "879374700",
+      requisitionId: "25-DO-OFAC-1",
+      company: "OFAC (Treasury)",
+      officialUrl: "https://www.usajobs.gov/job/879374700",
+    })]);
+    expect(requests).toHaveLength(2);
+  });
+
   it("fails USAJOBS closed when the API count exceeds the returned page", async () => {
     const fetcher: typeof fetch = async (input) => String(input).endsWith("careers-openings.js")
       ? new Response('{"Authorization-Key":"runtime-public-key"}')

@@ -12229,12 +12229,19 @@ const usaJobsAuthorizationKey = async (fetcher: typeof fetch): Promise<{
 const crawlUsaJobs = async (source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> => {
   const page = new URL(source.postingUrl);
   const organization = page.searchParams.get("a")?.trim().toUpperCase() ?? "";
-  if (!/^[A-Z0-9]{2,12}$/.test(organization)) return {
+  const keyword = page.searchParams.get("k")?.trim() ?? "";
+  const hasOrganization = /^[A-Z0-9]{2,12}$/.test(organization);
+  const hasKeyword = keyword.length > 0 && keyword.length <= 100
+    && Array.from(keyword).every((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return codePoint >= 0x20 && codePoint !== 0x7f;
+    });
+  if (!hasOrganization && !hasKeyword) return {
     status: "failed",
     responseStatus: null,
     completeListing: false,
     jobs: [],
-    error: "USAJOBS source did not identify a supported organization code.",
+    error: "USAJOBS source did not identify a supported organization code or keyword.",
   };
   const authorization = await usaJobsAuthorizationKey(fetcher);
   if (!authorization.key) return {
@@ -12245,7 +12252,8 @@ const crawlUsaJobs = async (source: CrawlSource, fetcher: typeof fetch, now: Dat
     error: "USAJOBS public API authorization key was unavailable.",
   };
   const endpoint = new URL("https://data.usajobs.gov/api/search");
-  endpoint.searchParams.set("Organization", organization);
+  if (hasOrganization) endpoint.searchParams.set("Organization", organization);
+  if (hasKeyword) endpoint.searchParams.set("Keyword", keyword);
   endpoint.searchParams.set("ResultsPerPage", "500");
   try {
     const response = await fetchWithTimeout(fetcher, endpoint, {
@@ -12885,7 +12893,8 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
     || (sourcePage.hostname.endsWith("taboola.com") && sourcePage.pathname.startsWith("/careers"))) {
     return crawlTaboola(source, fetcher);
   }
-  if (sourcePage.hostname.endsWith("usajobs.gov") && sourcePage.searchParams.has("a")) {
+  if (sourcePage.hostname.endsWith("usajobs.gov")
+    && (sourcePage.searchParams.has("a") || sourcePage.searchParams.has("k"))) {
     return crawlUsaJobs(source, fetcher, now);
   }
   if (source.id === "p4-0234-capgemini") return crawlCapgemini(source, fetcher);

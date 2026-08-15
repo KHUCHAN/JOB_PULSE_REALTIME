@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:23d59be71388ff8315a062f7d19a25a403b36e05adcea418a475c02e2bc6dae2",
+  "version": "v2:sha256:519ac58f1ee93e34c4451db15dbd28c06e9fa13817cbceba970d89e37143c611",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -4281,7 +4281,7 @@
       "id": "p4-0321-ofac",
       "masterRow": 1088,
       "company": "OFAC (Treasury)",
-      "postingUrl": "https://www.usajobs.gov/",
+      "postingUrl": "https://www.usajobs.gov/Search/Results?a=TR91&k=OFAC&p=1",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
       "adapter": "custom",
@@ -4289,7 +4289,7 @@
       "confidence": "medium",
       "resumeUpload": "job_only",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-08",
+      "checkedAt": "2026-08-14",
       "enabled": true
     },
     {
