@@ -229,7 +229,11 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
   "p2-0048-metlife": { listingUrl: "https://www.metlifecareers.com/en_US/ml/SearchJobs", adapter: "custom" },
   "legacy-row-823": { listingUrl: "https://fa-exty-saasfaprod1.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1", adapter: "custom" },
   "legacy-row-826": { listingUrl: "https://jobs.dayforcehcm.com/en-US/ibgllc/CANDIDATEPORTAL", adapter: "dayforce" },
-  "p4-0470-oliver-wyman": { listingUrl: "https://mmc.phenompeople.com/global/en/oliver-wyman-early-careers-search", adapter: "phenom" },
+  "p4-0470-oliver-wyman": {
+    discovered: { kind: "workday", endpoint: "https://mmc.wd1.myworkdayjobs.com/wday/cxs/mmc/MMC/jobs" },
+    listingUrl: "https://mmc.wd1.myworkdayjobs.com/MMC?q=Oliver%20Wyman&country=US",
+    adapter: "workday",
+  },
   "p5-0869-costco": {
     discovered: { kind: "jibe", endpoint: "https://careers.costco.com/api/jobs?page=1&limit=100&sortBy=relevance&descending=false&internal=false" },
     listingUrl: "https://careers.costco.com/jobs",
@@ -3874,6 +3878,10 @@ const markdownLocationForHref = (markdown: string, href: string): string | null 
   const linkEnd = markdown.indexOf(")", markerIndex + marker.length);
   if (linkEnd < 0) return null;
   const afterLink = markdown.slice(linkEnd + 1, linkEnd + 1_200);
+  const avatureMetadata = afterLink.match(
+    /^\s*Job ID:\s*[^|\n]+\|\s*Posted:\s*[^|\n]+\|\s*([^\n]+)/i,
+  )?.[1]?.replace(/\s+/g, " ").trim().replace(/[.]$/, "");
+  if (avatureMetadata) return avatureMetadata;
   const inline = afterLink.match(/^\s+([^[]*?)(?:Ref\s*#|\s+\[Apply\b)/i)?.[1]
     ?.replace(/\s+/g, " ").trim().replace(/[.]$/, "");
   if (inline && inline.length >= 2 && !/^save saved$/i.test(inline)) return inline;
@@ -3883,6 +3891,16 @@ const markdownLocationForHref = (markdown: string, href: string): string | null 
     return value;
   }
   return null;
+};
+
+const markdownPostedTextForHref = (markdown: string, href: string): string | null => {
+  const marker = `](${href}`;
+  const markerIndex = markdown.indexOf(marker);
+  if (markerIndex < 0) return null;
+  const linkEnd = markdown.indexOf(")", markerIndex + marker.length);
+  if (linkEnd < 0) return null;
+  return markdown.slice(linkEnd + 1, linkEnd + 600)
+    .match(/^\s*Job ID:\s*[^|\n]+\|\s*Posted:\s*([^|\n]+)/i)?.[1]?.trim() ?? null;
 };
 
 const markdownJobs = (markdown: string, source: CrawlSource): CrawledJob[] => {
@@ -3907,6 +3925,8 @@ const markdownJobs = (markdown: string, source: CrawlSource): CrawledJob[] => {
     .map((job) => {
     const location = markdownLocationForHref(markdown, job.officialUrl)
       ?? markdownLocationForHref(markdown, job.officialUrl.replace(/^https:/i, "http:"));
+    const postedText = markdownPostedTextForHref(markdown, job.officialUrl)
+      ?? markdownPostedTextForHref(markdown, job.officialUrl.replace(/^https:/i, "http:"));
     const official = new URL(job.officialUrl);
     // Reader mirrors sometimes preserve the origin page's HTTP links even
     // when the official board is HTTPS. Keep one canonical URL so a recovery
@@ -3914,7 +3934,14 @@ const markdownJobs = (markdown: string, source: CrawlSource): CrawledJob[] => {
     if (official.hostname.toLowerCase() === sourceUrl.hostname.toLowerCase() && sourceUrl.protocol === "https:") {
       official.protocol = "https:";
     }
-    const normalized = { ...job, officialUrl: official.href };
+    const normalized = {
+      ...job,
+      officialUrl: official.href,
+      ...(postedText ? {
+        sourcePostedText: postedText,
+        publishedAt: normalizedDate(postedText),
+      } : {}),
+    };
     return location ? { ...normalized, location } : normalized;
     });
 };
@@ -3937,8 +3964,7 @@ const markdownStaticJobs = (markdown: string, source: CrawlSource): CrawledJob[]
 const isAvatureListing = (source: CrawlSource): boolean => {
   try {
     const url = new URL(source.postingUrl);
-    return url.hostname.toLocaleLowerCase().endsWith(".avature.net")
-      && /\/careers\/searchjobs\/?$/i.test(url.pathname);
+    return /\/careers\/searchjobs\/?$/i.test(url.pathname);
   } catch {
     return false;
   }
@@ -3948,6 +3974,7 @@ const crawlAvatureReaderPages = async (
   source: CrawlSource,
   initialMarkdown: string,
   fetcher: typeof fetch,
+  options: { nestedProxyFallback?: boolean } = {},
 ): Promise<SourceCrawlResult | null> => {
   if (!isAvatureListing(source)) return null;
   const canonical = new URL(source.postingUrl);
@@ -3966,7 +3993,13 @@ const crawlAvatureReaderPages = async (
       );
       const markdown = useInitial
         ? initialMarkdown
-        : await (async () => {
+        : options.nestedProxyFallback
+          ? await readerMarkdown(target.href, fetcher, {
+            nestedProxyFallback: true,
+            maxConcurrent: 2,
+            timeoutMs: 12_000,
+          })
+          : await (async () => {
           const response = await fetchWithTimeout(
             fetcher,
             `https://r.jina.ai/${target.href}`,
@@ -3976,7 +4009,7 @@ const crawlAvatureReaderPages = async (
           );
           if (!response.ok) return null;
           return response.text();
-        })();
+          })();
       if (!markdown) return null;
       const jobs = markdownJobs(markdown, { ...source, postingUrl: target.href });
       return jobs.length > 0 ? { markdown, jobs } : null;
@@ -4167,7 +4200,11 @@ const crawlWellsFargo = async (
   // recovery feed to internship keeps it additive: it cannot close the rest of
   // the 1,800+ job catalog while still recovering the user's target inventory.
   listing.searchParams.set("search", "internship");
-  const firstMarkdown = await readerMarkdown(listing.href, fetcher);
+  const firstMarkdown = await readerMarkdown(listing.href, fetcher, {
+    nestedProxyFallback: true,
+    maxConcurrent: 2,
+    timeoutMs: 12_000,
+  });
   if (!firstMarkdown) return {
     status: "failed", responseStatus: null, completeListing: false, jobs: [],
     error: "Wells Fargo reader listing was unavailable.",
@@ -4185,6 +4222,41 @@ const crawlWellsFargo = async (
     jobs: uniqueJobs(jobs),
     resolvedListingUrl: listing.href,
     error: null,
+  };
+};
+
+const crawlCbreAvature = async (
+  source: CrawlSource,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult> => {
+  const listing = new URL(source.postingUrl);
+  listing.search = "";
+  // CBRE's Avature field 9577/value 17276 is the official United States of
+  // America country facet. Keep this high-volume catalog in the user's US
+  // scope instead of walking the 999+ global result set.
+  listing.searchParams.set("9577", "[17276]");
+  listing.searchParams.set("9577_format", "10224");
+  listing.searchParams.set("jobRecordsPerPage", "25");
+  listing.searchParams.set("listFilterMode", "1");
+  listing.searchParams.set("jobOffset", "0");
+  const markdown = await readerMarkdown(listing.href, fetcher, {
+    nestedProxyFallback: true,
+    maxConcurrent: 2,
+    timeoutMs: 12_000,
+  });
+  if (!markdown) return {
+    status: "failed", responseStatus: null, completeListing: false, jobs: [],
+    error: "CBRE's US Avature reader listing was unavailable.",
+  };
+  const result = await crawlAvatureReaderPages(
+    { ...source, postingUrl: listing.href },
+    markdown,
+    fetcher,
+    { nestedProxyFallback: true },
+  );
+  return result ?? {
+    status: "failed", responseStatus: 200, completeListing: false, jobs: [],
+    error: "CBRE's US Avature listing contained no usable jobs.",
   };
 };
 
@@ -11662,16 +11734,42 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
       return { status: response.status, payload: await response.json() as WorkdayPayload };
     };
 
-    const first = await fetchPage(0);
+    let activeFacets: Record<string, string[]> = {};
+    let first = await fetchPage(0);
+    const requestedCountry = sourceUrl.searchParams.get("country")?.trim() ?? "";
+    if (requestedCountry) {
+      const normalizedRequestedCountry = requestedCountry.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "");
+      const requestedIsUs = ["us", "usa", "unitedstates", "unitedstatesofamerica"]
+        .includes(normalizedRequestedCountry);
+      const countryFacet = (first.payload.facets ?? [])
+        .find((facet) => facet.facetParameter === "Location_Country");
+      const countryValue = (countryFacet?.values ?? []).find((value) => {
+        const descriptor = value.descriptor?.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "") ?? "";
+        return requestedIsUs
+          ? descriptor === "unitedstates" || descriptor === "unitedstatesofamerica"
+          : descriptor === normalizedRequestedCountry;
+      });
+      if (!countryValue?.id) return {
+        status: "failed",
+        responseStatus: first.status,
+        completeListing: false,
+        jobs: [],
+        error: `Workday did not expose the requested ${requestedCountry} country facet.`,
+      };
+      activeFacets = { Location_Country: [countryValue.id] };
+      first = await fetchPage(0, activeFacets);
+    }
     const total = first.payload.total ?? first.payload.jobPostings?.length ?? 0;
     const usableFirstJobs = (first.payload.jobPostings ?? [])
       .filter((job) => Boolean(job.title && job.externalPath));
-    if (isCisco && (total <= 0 || usableFirstJobs.length === 0)) return {
+    if ((isCisco || requestedCountry) && (total <= 0 || usableFirstJobs.length === 0)) return {
       status: "failed",
       responseStatus: first.status,
       completeListing: false,
       jobs: [],
-      error: "Cisco's official Workday catalog returned no usable jobs.",
+      error: isCisco
+        ? "Cisco's official Workday catalog returned no usable jobs."
+        : `Workday's ${requestedCountry} country catalog returned no usable jobs.`,
     };
     const totalPages = Math.max(1, Math.ceil(Math.min(total, 2_000) / 20));
     const isIntel = source.id === "p5-0947-intel" || source.company === "Intel";
@@ -11685,7 +11783,8 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
     const pagePayloads = [first.payload];
     const offsets = pageNumbers.map((page) => (page - 1) * 20);
     for (let index = 0; index < offsets.length; index += 8) {
-      const pages = await Promise.all(offsets.slice(index, index + 8).map((offset) => fetchPage(offset)));
+      const pages = await Promise.all(offsets.slice(index, index + 8)
+        .map((offset) => fetchPage(offset, activeFacets)));
       pagePayloads.push(...pages.map(({ payload }) => payload));
     }
 
@@ -11751,7 +11850,7 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
         const facetOffsets = Array.from({ length: Math.ceil(count / 20) }, (_, index) => index * 20);
         for (let index = 0; index < facetOffsets.length; index += 8) {
           const pages = await Promise.all(facetOffsets.slice(index, index + 8)
-            .map((offset) => fetchPage(offset, { [parameter]: [valueId] })));
+            .map((offset) => fetchPage(offset, { ...activeFacets, [parameter]: [valueId] })));
           for (const page of pages) {
             for (const job of page.payload.jobPostings ?? []) if (job.externalPath) paths.add(job.externalPath);
           }
@@ -12821,7 +12920,11 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
     const verifiedDayforceIdentity = dayforceBoardIdentity(verifiedFeed.listingUrl);
     const result = verifiedFeed.discovered
       ? verifiedFeed.discovered.kind === "workday"
-        ? await crawlWorkday(source, verifiedFeed.discovered.endpoint, fetcher, now)
+        ? await crawlWorkday({
+            ...source,
+            postingUrl: verifiedFeed.listingUrl,
+            adapter: verifiedFeed.adapter,
+          }, verifiedFeed.discovered.endpoint, fetcher, now)
         : await crawlDiscoveredFeed(source, verifiedFeed.discovered, fetcher)
       : verifiedDayforceIdentity
         ? await crawlDayforce({ ...source, postingUrl: verifiedFeed.listingUrl }, verifiedDayforceIdentity, fetcher)
@@ -12880,6 +12983,7 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
     }
   }
   if (source.id === "audit-row-342") return crawlDeltaAvature(source, fetcher);
+  if (source.id === "audit-row-328") return crawlCbreAvature(source, fetcher);
   if (source.id === "p2-0067-wells-fargo") return crawlWellsFargo(source, fetcher);
   if (source.id === "p5-1041-rippling") return crawlRippling(source, fetcher);
   if (source.id === "p4-0450-jfrog") return crawlJfrog(source, fetcher);

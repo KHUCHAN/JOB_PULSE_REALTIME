@@ -1795,6 +1795,100 @@ Wrong description.
     }));
   });
 
+  it("recovers Wells Fargo through the bounded nested reader when Worker egress is rejected", async () => {
+    const requests: string[] = [];
+    const markdown = [
+      "Showing **1** to **1** of **1** matching jobs",
+      "## [2027 Quantitative Analytics Summer Internship – Early Careers](https://www.wellsfargojobs.com/en/jobs/r-568270/2027-quantitative-analytics-summer-internship-early-careers/)",
+      "* CHARLOTTE, North Carolina",
+    ].join("\n");
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      return url.startsWith("https://r.jina.ai/http://r.jina.ai/")
+        ? new Response(markdown, { status: 200 })
+        : new Response("worker egress rejected", { status: 403 });
+    };
+
+    const result = await crawlSource({
+      id: "p2-0067-wells-fargo",
+      company: "Wells Fargo",
+      postingUrl: "https://www.wellsfargojobs.com/en/jobs/",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-14T16:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: false }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      title: "2027 Quantitative Analytics Summer Internship – Early Careers",
+      officialUrl: "https://www.wellsfargojobs.com/en/jobs/r-568270/2027-quantitative-analytics-summer-internship-early-careers/",
+    })]);
+    expect(requests).toHaveLength(4);
+    expect(requests.filter((url) => url.startsWith("https://r.jina.ai/http://r.jina.ai/"))).toHaveLength(2);
+  });
+
+  it("uses CBRE's official US Avature facet through the bounded nested reader", async () => {
+    const requests: string[] = [];
+    const firstMarkdown = [
+      "1-2 of 4 results",
+      "### [Data Center Project Manager](https://careers.cbre.com/en_US/careers/JobDetail/Data-Center-Project-Manager/291501)",
+      "Job ID: 291501 | Posted: 14-Aug-2026 | Warren - Ohio - United States of America",
+      "### [Automation Engineer](https://careers.cbre.com/en_US/careers/JobDetail/Automation-Engineer/291502)",
+      "Job ID: 291502 | Posted: 14-Aug-2026 | Dallas - Texas - United States of America",
+    ].join("\n");
+    const secondMarkdown = [
+      "3-4 of 4 results",
+      "### [Data Scientist](https://careers.cbre.com/en_US/careers/JobDetail/Data-Scientist/291503)",
+      "Job ID: 291503 | Posted: 13-Aug-2026 | New York - New York - United States of America",
+      "### [Software Engineer](https://careers.cbre.com/en_US/careers/JobDetail/Software-Engineer/291504)",
+      "Job ID: 291504 | Posted: 13-Aug-2026 | Seattle - Washington - United States of America",
+    ].join("\n");
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      return url.startsWith("https://r.jina.ai/http://r.jina.ai/")
+        ? new Response(url.includes("jobOffset=2") ? secondMarkdown : firstMarkdown, { status: 200 })
+        : new Response("worker egress rejected", { status: 403 });
+    };
+
+    const result = await crawlSource({
+      id: "audit-row-328",
+      company: "CBRE Group",
+      postingUrl: "https://careers.cbre.com/en_US/careers/SearchJobs/",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-14T16:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://careers.cbre.com/en_US/careers/SearchJobs/?9577=%5B17276%5D&9577_format=10224&jobRecordsPerPage=25&listFilterMode=1&jobOffset=0",
+    }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        externalId: "291501",
+        title: "Data Center Project Manager",
+        location: "Warren - Ohio - United States of America",
+        sourcePostedText: "14-Aug-2026",
+        publishedAt: "2026-08-14T07:00:00.000Z",
+      }),
+      expect.objectContaining({
+        externalId: "291502",
+        title: "Automation Engineer",
+        location: "Dallas - Texas - United States of America",
+      }),
+      expect.objectContaining({
+        externalId: "291503",
+        title: "Data Scientist",
+        location: "New York - New York - United States of America",
+      }),
+      expect.objectContaining({
+        externalId: "291504",
+        title: "Software Engineer",
+        location: "Seattle - Washington - United States of America",
+      }),
+    ]);
+    expect(requests).toHaveLength(8);
+  });
+
   it("paginates Avature's open-ended 999+ result count until the first empty page", async () => {
     const requestedOffsets: number[] = [];
     const fetcher: typeof fetch = async (input) => {
@@ -5256,6 +5350,79 @@ Wrong description.
       status: "succeeded",
       completeListing: true,
       jobs: [expect.objectContaining({ title: "Verafin - Cloud Security Developer" })],
+    }));
+  });
+
+  it("resolves an official Workday country facet for a US-only subsidiary catalog", async () => {
+    const requestBodies: Array<{
+      appliedFacets: Record<string, string[]>;
+      searchText: string;
+      offset: number;
+    }> = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      expect(String(input)).toBe("https://mmc.wd1.myworkdayjobs.com/wday/cxs/mmc/MMC/jobs");
+      const body = JSON.parse(String(init?.body)) as {
+        appliedFacets: Record<string, string[]>;
+        searchText: string;
+        offset: number;
+      };
+      requestBodies.push(body);
+      if (Object.keys(body.appliedFacets).length === 0) return Response.json({
+        total: 417,
+        facets: [{
+          facetParameter: "Location_Country",
+          descriptor: "Country",
+          values: [
+            { descriptor: "United States of America", id: "us-country-id", count: 2 },
+            { descriptor: "France", id: "fr-country-id", count: 20 },
+          ],
+        }],
+        jobPostings: [{
+          title: "Oliver Wyman - Intern - Paris",
+          externalPath: "/job/Paris/Oliver-Wyman---Intern---Paris_R_1",
+          locationsText: "Paris, France",
+        }],
+      });
+      return Response.json({
+        total: 2,
+        facets: [{
+          facetParameter: "Location_Country",
+          descriptor: "Country",
+          values: [{ descriptor: "United States of America", id: "us-country-id", count: 2 }],
+        }],
+        jobPostings: [
+          {
+            title: "Oliver Wyman - Data Analytics Intern - New York",
+            externalPath: "/job/New-York/Oliver-Wyman---Data-Analytics-Intern_R_2",
+            locationsText: "New York, United States of America",
+          },
+          {
+            title: "Oliver Wyman - Summer Intern - Boston",
+            externalPath: "/job/Boston/Oliver-Wyman---Summer-Intern_R_3",
+            locationsText: "Boston, United States of America",
+          },
+        ],
+      });
+    };
+
+    const result = await crawlSource({
+      id: "p4-0470-oliver-wyman",
+      company: "Oliver Wyman",
+      postingUrl: "https://mmc.wd1.myworkdayjobs.com/MMC?q=Oliver%20Wyman&country=US",
+      adapter: "workday",
+    }, fetcher, new Date("2026-08-14T00:00:00Z"));
+
+    expect(requestBodies).toEqual([
+      { appliedFacets: {}, limit: 20, offset: 0, searchText: "Oliver Wyman" },
+      { appliedFacets: { Location_Country: ["us-country-id"] }, limit: 20, offset: 0, searchText: "Oliver Wyman" },
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      jobs: [
+        expect.objectContaining({ title: "Oliver Wyman - Data Analytics Intern - New York" }),
+        expect.objectContaining({ title: "Oliver Wyman - Summer Intern - Boston" }),
+      ],
     }));
   });
 

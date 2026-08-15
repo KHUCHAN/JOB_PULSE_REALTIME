@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { claimDueNotifications, clearResumeAlertBacklog, planResumeDigests, purgeCoopResumeNotifications } from "./resume-alert-store";
+import {
+  claimDueNotifications,
+  clearResumeAlertBacklog,
+  getResumeAlertStatus,
+  planResumeDigests,
+  purgeCoopResumeNotifications,
+} from "./resume-alert-store";
 import { alertDatabaseWithMatches, createD1ForSqlite } from "./resume-alert-test-helper";
 
 describe("resume digest reservation", () => {
@@ -69,6 +75,16 @@ describe("resume digest reservation", () => {
     expect(claimed[0].recipient).toBe("kimchany@usc.edu, lupeter@usc.edu");
     expect(claimed[0].jobs).toHaveLength(1);
     expect(claimed[0].jobs[0]?.officialUrl).toBe("https://example.com/1");
+  });
+
+  it("reports canonical approved jobs that are still waiting for an email envelope", async () => {
+    const sqlite = alertDatabaseWithMatches(1);
+
+    const status = await getResumeAlertStatus(
+      createD1ForSqlite(sqlite), "chanyoung-resume", true, "kimchany@usc.edu",
+    );
+
+    expect(status.queuedJobs).toBe(1);
   });
 
   it("clears unsent backlog before switching to insert-only notifications", async () => {

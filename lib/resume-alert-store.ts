@@ -406,7 +406,7 @@ export const getResumeAlertStatus = async (
     JOIN jobs j ON j.id = jm.job_id
     WHERE mp.id = ? AND jm.is_active = 1 AND jm.notification_eligible = 1
       AND jm.open_generation = j.open_generation AND j.status = 'open'
-      AND NOT ${canonicalOpenJobNotExists("j")}
+      AND ${canonicalOpenJobNotExists("j")}
       AND NOT ${jobHasCoopSql("j")}
       AND EXISTS (
         SELECT 1 FROM profile_recipients pr WHERE pr.profile_id = mp.id AND pr.enabled = 1

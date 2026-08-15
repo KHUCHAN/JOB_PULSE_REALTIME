@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:519ac58f1ee93e34c4451db15dbd28c06e9fa13817cbceba970d89e37143c611",
+  "version": "v2:sha256:77a1ac675eae359fda16bdd3980524f652de4c7cf1dd9ecfb717ee2e459770e2",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -1671,7 +1671,7 @@
       "id": "audit-row-328",
       "masterRow": 328,
       "company": "CBRE Group",
-      "postingUrl": "https://careers.cbre.com/en_US/careers/SearchJobs/?jobRecordsPerPage=100",
+      "postingUrl": "https://careers.cbre.com/en_US/careers/SearchJobs/?9577=%5B17276%5D&9577_format=10224&jobRecordsPerPage=25&listFilterMode=1&jobOffset=0",
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
       "adapter": "custom",
@@ -1679,7 +1679,7 @@
       "confidence": "medium",
       "resumeUpload": "job_only",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-08",
+      "checkedAt": "2026-08-14",
       "enabled": true
     },
     {
@@ -5691,15 +5691,15 @@
       "id": "p4-0470-oliver-wyman",
       "masterRow": 1417,
       "company": "Oliver Wyman",
-      "postingUrl": "https://www.oliverwyman.com/careers/entry-level.html",
+      "postingUrl": "https://mmc.wd1.myworkdayjobs.com/MMC?q=Oliver%20Wyman&country=US",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-12",
+      "checkedAt": "2026-08-14",
       "enabled": true
     },
     {
