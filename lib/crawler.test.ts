@@ -4564,6 +4564,58 @@ HUMAN RESOURCES Posted Date
     }));
   });
 
+  it("falls back to A&M's official map JSON and rejects an unverified repeated page", async () => {
+    const requests: string[] = [];
+    const mapEntries = (page: number) => Array.from({ length: 100 }, (_, index) => ({
+      id: String((page - 1) * 100 + index + 1),
+      title: `Role ${(page - 1) * 100 + index + 1}`,
+      permalink: `role-${(page - 1) * 100 + index + 1}`,
+      location_string: "100 Park Avenue, New York, NY",
+      geography: { lat: "40.7512815", lng: "-73.9786441" },
+    }));
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url.includes("all_results=true") && url.includes("data_format=map")) {
+        const target = new URL(url.slice("https://r.jina.ai/".length));
+        const page = Number(target.searchParams.get("page"));
+        return Response.json({
+          current_page: 1,
+          per_page: 100,
+          total_entries: 400,
+          entries: mapEntries(page),
+        });
+      }
+      return new Response("rate limited", { status: url.startsWith("https://r.jina.ai/") ? 429 : 403 });
+    };
+
+    const result = await crawlSource({
+      id: "p4-0214-alvarez-marsal",
+      company: "Alvarez & Marsal",
+      postingUrl: "https://careers.alvarezandmarsal.com/en/search/jobs/in/country/united-states",
+      adapter: "custom",
+      crawlPageCursor: 3,
+    }, fetcher, new Date());
+
+    expect(requests).toContain("https://r.jina.ai/https://careers.alvarezandmarsal.com/search/jobs/in/country/united-states.json?all_results=true&data_format=map&per_page=100&page=3");
+    expect(requests).toContain("https://r.jina.ai/https://careers.alvarezandmarsal.com/search/jobs/in/country/united-states.json?all_results=true&data_format=map&per_page=100&page=2");
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: { nextPage: 4, cycleComplete: false, totalPages: 4 },
+    }));
+    expect(result.jobs).toHaveLength(100);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "201",
+      location: "100 Park Avenue, New York, NY",
+      locationCity: "New York",
+      locationState: "NY",
+      locationCountry: "United States",
+      latitude: 40.7512815,
+      longitude: -73.9786441,
+    }));
+  });
+
   it("bypasses a stale reader challenge snapshot when the cached response has no jobs", async () => {
     let readerRequests = 0;
     const fetcher: typeof fetch = async (input, init) => {

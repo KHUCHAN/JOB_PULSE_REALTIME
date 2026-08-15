@@ -1274,6 +1274,8 @@ type TalemetryEntry = {
   permalink?: string;
   title?: string;
   location?: TalemetryLocation | null;
+  location_string?: string | null;
+  geography?: { lat?: string | number | null; lng?: string | number | null } | null;
   employment_type?: string | null;
   date_posted?: string | null;
   posted_at?: string | null;
@@ -6827,6 +6829,50 @@ const crawlTalemetryJson = async (
   };
   let directUnavailable = false;
   const pageFailures = new Map<number, string>();
+  const fetchAlvarezMapPage = async (page: number): Promise<TalemetryPayload | null> => {
+    if (source.id !== "p4-0214-alvarez-marsal") return null;
+    const endpoint = new URL(`${catalogPath}.json`, posting.origin);
+    endpoint.pathname = endpoint.pathname.replace(/^\/en\//i, "/");
+    // This is the same first-party JSON request made by the public map view.
+    // Its compact response avoids the Cloudflare challenge applied to the
+    // ordinary list JSON while still carrying every stable job identity.
+    endpoint.searchParams.set("all_results", "true");
+    endpoint.searchParams.set("data_format", "map");
+    endpoint.searchParams.set("per_page", "100");
+    endpoint.searchParams.set("page", String(page));
+    try {
+      const response = await fetchWithTimeout(fetcher, `https://r.jina.ai/${endpoint.href}`, {
+        headers: { accept: "text/plain" },
+      }, false, { attempts: 1, timeoutMs: 12_000 });
+      const body = await response.text();
+      const payload = response.ok ? parseTalemetryPayload(body) : null;
+      if (!payload) {
+        pageFailures.set(page, response.ok
+          ? `map reader returned an unusable ${body.length}-character body`
+          : `map reader returned HTTP ${response.status}`);
+        return null;
+      }
+      const pageSize = 100;
+      const total = Math.max(0, payload.total_entries ?? 0);
+      const expected = Math.min(pageSize, Math.max(0, total - (page - 1) * pageSize));
+      const entries = payload.entries ?? [];
+      const identities = entries.map((entry) => ({
+        id: asText(entry.talemetry_job_id) ?? asText(entry.id),
+        title: asText(entry.title),
+        permalink: asText(entry.permalink),
+      }));
+      if (total <= 0 || expected <= 0 || entries.length !== expected
+        || identities.some((identity) => !identity.id || !identity.title || !identity.permalink)
+        || new Set(identities.map((identity) => identity.id)).size !== expected) {
+        pageFailures.set(page, `map reader page ${page} failed identity/cardinality validation`);
+        return null;
+      }
+      return { ...payload, current_page: page, per_page: pageSize };
+    } catch {
+      pageFailures.set(page, "map reader request or body stream failed");
+      return null;
+    }
+  };
   const fetchPage = async (page: number, allowReaderRetry = false): Promise<TalemetryPayload | null> => {
     const endpoint = endpointFor(page);
     if (!directUnavailable) {
@@ -6888,6 +6934,29 @@ const crawlTalemetryJson = async (
       } catch {
         pageFailures.set(page, "reader request or body stream failed");
         // The bounded second attempt also covers network/body-stream failures.
+      }
+    }
+    if (source.id === "p4-0214-alvarez-marsal") {
+      const mapPage = await fetchAlvarezMapPage(page);
+      if (mapPage) {
+        if (page === 1) {
+          pageFailures.delete(page);
+          return mapPage;
+        }
+        // Talemetry's map format always labels itself page one. Verify the
+        // requested window against the immediately preceding official window
+        // before substituting the requested page number. A repeated/ignored
+        // page therefore cannot advance the persisted cursor or close jobs.
+        const previous = await fetchAlvarezMapPage(page - 1);
+        const currentIds = new Set((mapPage.entries ?? []).map((entry) => asText(entry.talemetry_job_id) ?? asText(entry.id)));
+        const previousIds = (previous?.entries ?? []).map((entry) => asText(entry.talemetry_job_id) ?? asText(entry.id));
+        if (previous
+          && previous.total_entries === mapPage.total_entries
+          && previousIds.every((identity) => identity && !currentIds.has(identity))) {
+          pageFailures.delete(page);
+          return mapPage;
+        }
+        pageFailures.set(page, `map reader page ${page} repeated or disagreed with page ${page - 1}`);
       }
     }
     return null;
@@ -6953,9 +7022,20 @@ const crawlTalemetryJson = async (
     const permalink = asText(job.permalink);
     if (!externalId || !title || !permalink) return [];
     const location = job.location;
+    const mapLocation = asText(job.location_string);
     const locationText = asText(location?.name)
+      ?? mapLocation
       ?? [asText(location?.locality), asText(location?.region_abbr), asText(location?.country)].filter(Boolean).join(", ")
       ?? null;
+    const mapLocationParts = mapLocation?.split(",").map((value) => value.trim()).filter(Boolean) ?? [];
+    const mapState = mapLocationParts.at(-1) ?? null;
+    const mapCity = mapLocationParts.length >= 2 ? mapLocationParts.at(-2) ?? null : null;
+    const locationCity = asText(location?.locality) ?? mapCity;
+    const locationState = asText(location?.region_abbr) ?? asText(location?.region_full) ?? mapState;
+    const locationCountry = asText(location?.country)
+      ?? (mapLocation && source.id === "p4-0214-alvarez-marsal" ? "United States" : null);
+    const latitude = Number(job.geography?.lat);
+    const longitude = Number(job.geography?.lng);
     const officialUrl = new URL(`/jobs/${externalId}-${permalink}`, posting.origin).href;
     return [{
       externalId,
@@ -6965,10 +7045,12 @@ const crawlTalemetryJson = async (
       arrangement: /\bremote\b/i.test(locationText ?? "") ? "remote" : "unknown",
       employmentType: normalizeEmploymentType(job.employment_type),
       summary: null,
-      ...(asText(location?.locality) ? { locationCity: asText(location?.locality) } : {}),
-      ...(asText(location?.region_abbr) ?? asText(location?.region_full) ? { locationState: asText(location?.region_abbr) ?? asText(location?.region_full) } : {}),
-      ...(asText(location?.country) ? { locationCountry: asText(location?.country) } : {}),
+      ...(locationCity ? { locationCity } : {}),
+      ...(locationState ? { locationState } : {}),
+      ...(locationCountry ? { locationCountry } : {}),
       ...(asText(location?.postal_code) ? { locationPostalCode: asText(location?.postal_code) } : {}),
+      ...(Number.isFinite(latitude) ? { latitude } : {}),
+      ...(Number.isFinite(longitude) ? { longitude } : {}),
       officialUrl,
       publishedAt: normalizedDate(job.date_posted ?? job.posted_at ?? job.updated_at),
     }];
