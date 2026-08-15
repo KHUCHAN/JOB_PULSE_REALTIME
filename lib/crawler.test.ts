@@ -1767,18 +1767,19 @@ Wrong description.
     expect(requests.some((url) => url.includes("2884=75201&2884_format=3665&listFilterMode=1&jobOffset=0"))).toBe(true);
   });
 
-  it("recovers Wells Fargo's 2027 internship slice from the reader without closing the full catalog", async () => {
-    const wellsUrl = "https://www.wellsfargojobs.com/en/jobs/?search=internship";
-    const markdown = [
-      "Showing **1** to **2** of **2** matching jobs",
-      "## [2027 Data Science Summer Internship – Early Careers](https://www.wellsfargojobs.com/en/jobs/r-1/2027-data-science-summer-internship/)",
-      "* CHARLOTTE, North Carolina",
-      "## [2027 Software Engineering Internship – Early Careers](https://www.wellsfargojobs.com/en/jobs/r-2/2027-software-engineering-internship/)",
-      "* SAN FRANCISCO, California",
-    ].join("\n");
-    const fetcher: typeof fetch = async (input) => String(input) === `https://r.jina.ai/${wellsUrl}`
-      ? new Response(markdown, { status: 200 })
-      : new Response("blocked", { status: 403 });
+  it("loads Wells Fargo's complete official sitemap without a reader proxy", async () => {
+    const requests: string[] = [];
+    const xml = [
+      '<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+      "<url><loc>https://www.wellsfargojobs.com/en/jobs/r-568270/2027-quantitative-analytics-summer-internship-early-careers/</loc><lastmod>2026-08-14T16:00:00Z</lastmod></url>",
+      "<url><loc>https://www.wellsfargojobs.com/en/jobs/r-568271/senior-software-engineer/</loc><lastmod>2026-08-13T16:00:00Z</lastmod></url>",
+      "<url><loc>https://www.wellsfargojobs.com/fr/jobs/r-568272/emploi/</loc></url>",
+      "</urlset>",
+    ].join("");
+    const fetcher: typeof fetch = async (input) => {
+      requests.push(String(input));
+      return new Response(xml, { status: 200, headers: { "content-type": "application/xml" } });
+    };
 
     const result = await crawlSource({
       id: "p2-0067-wells-fargo",
@@ -1787,28 +1788,29 @@ Wrong description.
       adapter: "custom",
     }, fetcher, new Date("2026-08-13T16:00:00Z"));
 
-    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: false, resolvedListingUrl: wellsUrl }));
+    expect(requests).toEqual(["https://www.wellsfargojobs.com/sitemap.xml"]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://www.wellsfargojobs.com/en/jobs/",
+    }));
     expect(result.jobs).toHaveLength(2);
     expect(result.jobs[0]).toEqual(expect.objectContaining({
-      title: "2027 Data Science Summer Internship – Early Careers",
-      location: "CHARLOTTE, North Carolina",
+      externalId: "R-568270",
+      requisitionId: "R-568270",
+      title: "2027 Quantitative Analytics Summer Internship Early Careers",
+      employmentType: "Internship",
+      sourceUpdatedAt: "2026-08-14T16:00:00.000Z",
+      publishedAt: null,
     }));
   });
 
-  it("recovers Wells Fargo through the bounded nested reader when Worker egress is rejected", async () => {
-    const requests: string[] = [];
-    const markdown = [
-      "Showing **1** to **1** of **1** matching jobs",
-      "## [2027 Quantitative Analytics Summer Internship – Early Careers](https://www.wellsfargojobs.com/en/jobs/r-568270/2027-quantitative-analytics-summer-internship-early-careers/)",
-      "* CHARLOTTE, North Carolina",
-    ].join("\n");
-    const fetcher: typeof fetch = async (input) => {
-      const url = String(input);
-      requests.push(url);
-      return url.startsWith("https://r.jina.ai/http://r.jina.ai/")
-        ? new Response(markdown, { status: 200 })
-        : new Response("worker egress rejected", { status: 403 });
-    };
+  it("does not authorize Wells Fargo closures from a truncated official sitemap", async () => {
+    const xml = [
+      '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+      "<url><loc>https://www.wellsfargojobs.com/en/jobs/r-568270/2027-quantitative-analytics-summer-internship-early-careers/</loc></url>",
+    ].join("");
+    const fetcher: typeof fetch = async () => new Response(xml, { status: 200 });
 
     const result = await crawlSource({
       id: "p2-0067-wells-fargo",
@@ -1819,35 +1821,36 @@ Wrong description.
 
     expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: false }));
     expect(result.jobs).toEqual([expect.objectContaining({
-      title: "2027 Quantitative Analytics Summer Internship – Early Careers",
+      externalId: "R-568270",
       officialUrl: "https://www.wellsfargojobs.com/en/jobs/r-568270/2027-quantitative-analytics-summer-internship-early-careers/",
     })]);
-    expect(requests).toHaveLength(4);
-    expect(requests.filter((url) => url.startsWith("https://r.jina.ai/http://r.jina.ai/"))).toHaveLength(2);
   });
 
-  it("uses CBRE's official US Avature facet through the bounded nested reader", async () => {
-    const requests: string[] = [];
-    const firstMarkdown = [
-      "1-2 of 4 results",
-      "### [Data Center Project Manager](https://careers.cbre.com/en_US/careers/JobDetail/Data-Center-Project-Manager/291501)",
-      "Job ID: 291501 | Posted: 14-Aug-2026 | Warren - Ohio - United States of America",
-      "### [Automation Engineer](https://careers.cbre.com/en_US/careers/JobDetail/Automation-Engineer/291502)",
-      "Job ID: 291502 | Posted: 14-Aug-2026 | Dallas - Texas - United States of America",
-    ].join("\n");
-    const secondMarkdown = [
-      "3-4 of 4 results",
-      "### [Data Scientist](https://careers.cbre.com/en_US/careers/JobDetail/Data-Scientist/291503)",
-      "Job ID: 291503 | Posted: 13-Aug-2026 | New York - New York - United States of America",
-      "### [Software Engineer](https://careers.cbre.com/en_US/careers/JobDetail/Software-Engineer/291504)",
-      "Job ID: 291504 | Posted: 13-Aug-2026 | Seattle - Washington - United States of America",
-    ].join("\n");
-    const fetcher: typeof fetch = async (input) => {
-      const url = String(input);
-      requests.push(url);
-      return url.startsWith("https://r.jina.ai/http://r.jina.ai/")
-        ? new Response(url.includes("jobOffset=2") ? secondMarkdown : firstMarkdown, { status: 200 })
-        : new Response("worker egress rejected", { status: 403 });
+  it("uses CBRE's official US Avature origin with manual redirect pagination", async () => {
+    const requests: Array<{ url: string; redirect: RequestRedirect | undefined }> = [];
+    const card = (index: number) => {
+      const id = String(291500 + index);
+      const title = index === 1 ? "Facilities Maintenance Technician" : `US Role ${index}`;
+      return [
+        '<article class="article article--result">',
+        `<h3 class="article__header__text__title"><a href="https://careers.cbre.com/en_US/careers/JobDetail/${title.replaceAll(" ", "-")}/${id}">${title}</a></h3>`,
+        `<div class="article__header__text__subtitle"><span>Job ID: ${id}</span> | <span>Posted: 14-Aug-2026</span> | <span>Warren - Ohio - United States of America</span></div>`,
+        "</article>",
+      ].join("");
+    };
+    const page = (first: number, last: number) => [
+      '<meta name="avature.portal.page" content="SearchJobs"/>',
+      `<div class="list-controls__text__legend">${first}-${last} of 30 results</div>`,
+      ...Array.from({ length: last - first + 1 }, (_, offset) => card(first + offset)),
+    ].join("");
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = new URL(String(input));
+      requests.push({ url: url.href, redirect: init?.redirect });
+      const offset = Number(url.searchParams.get("jobOffset") ?? 0);
+      return new Response(offset === 0 ? page(1, 25) : page(26, 30), {
+        status: 301,
+        headers: { location: url.href.replace("cbreglobal.avature.net", "careers.cbre.com") },
+      });
     };
 
     const result = await crawlSource({
@@ -1859,34 +1862,89 @@ Wrong description.
 
     expect(result).toEqual(expect.objectContaining({
       status: "succeeded",
-      completeListing: true,
+      completeListing: false,
+      pagination: expect.objectContaining({ nextPage: 1, cycleComplete: true, totalPages: 2 }),
       resolvedListingUrl: "https://careers.cbre.com/en_US/careers/SearchJobs/?9577=%5B17276%5D&9577_format=10224&jobRecordsPerPage=25&listFilterMode=1&jobOffset=0",
     }));
-    expect(result.jobs).toEqual([
-      expect.objectContaining({
-        externalId: "291501",
-        title: "Data Center Project Manager",
-        location: "Warren - Ohio - United States of America",
-        sourcePostedText: "14-Aug-2026",
-        publishedAt: "2026-08-14T07:00:00.000Z",
-      }),
-      expect.objectContaining({
-        externalId: "291502",
-        title: "Automation Engineer",
-        location: "Dallas - Texas - United States of America",
-      }),
-      expect.objectContaining({
-        externalId: "291503",
-        title: "Data Scientist",
-        location: "New York - New York - United States of America",
-      }),
-      expect.objectContaining({
-        externalId: "291504",
-        title: "Software Engineer",
-        location: "Seattle - Washington - United States of America",
-      }),
-    ]);
-    expect(requests).toHaveLength(8);
+    expect(result.jobs).toHaveLength(30);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "291501",
+      title: "Facilities Maintenance Technician",
+      location: "Warren - Ohio - United States of America",
+      locationCity: "Warren",
+      locationState: "Ohio",
+      locationCountry: "United States",
+      sourcePostedText: "14-Aug-2026",
+      publishedAt: "2026-08-14T07:00:00.000Z",
+    }));
+    expect(requests).toHaveLength(2);
+    expect(requests.every(({ url, redirect }) => url.startsWith("https://cbreglobal.avature.net/") && redirect === "manual")).toBe(true);
+    expect(requests.map(({ url }) => new URL(url).searchParams.get("jobOffset"))).toEqual(["0", "25"]);
+  });
+
+  it("does not advance CBRE past a repeated or inconsistent origin page", async () => {
+    const card = (index: number) => [
+      '<article class="article article--result">',
+      `<h3 class="article__header__text__title"><a href="https://careers.cbre.com/en_US/careers/JobDetail/Role-${index}/${291500 + index}">Role ${index}</a></h3>`,
+      `<div class="article__header__text__subtitle"><span>Job ID: ${291500 + index}</span> | <span>Posted: 14-Aug-2026</span> | <span>Austin - Texas - United States of America</span></div>`,
+      "</article>",
+    ].join("");
+    const repeatedFirstPage = [
+      '<meta name="avature.portal.page" content="SearchJobs"/>',
+      '<div class="list-controls__text__legend">1-25 of 50 results</div>',
+      ...Array.from({ length: 25 }, (_, index) => card(index + 1)),
+    ].join("");
+    const result = await crawlSource({
+      id: "audit-row-328",
+      company: "CBRE Group",
+      postingUrl: "https://careers.cbre.com/en_US/careers/SearchJobs/",
+      adapter: "custom",
+    }, async (input) => new Response(repeatedFirstPage, {
+      status: 301,
+      headers: { location: String(input).replace("cbreglobal.avature.net", "careers.cbre.com") },
+    }), new Date("2026-08-14T16:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: expect.objectContaining({ nextPage: 2, cycleComplete: false }),
+      error: "CBRE US catalog page 2 was unavailable or inconsistent.",
+    }));
+    expect(result.jobs).toHaveLength(25);
+  });
+
+  it("never authorizes CBRE stale closure after its baseline checkpoint cycle", async () => {
+    const card = (index: number) => [
+      '<article class="article article--result">',
+      `<h3 class="article__header__text__title"><a href="https://careers.cbre.com/en_US/careers/JobDetail/Role-${index}/${291500 + index}">Role ${index}</a></h3>`,
+      `<div class="article__header__text__subtitle"><span>Job ID: ${291500 + index}</span> | <span>Posted: 14-Aug-2026</span> | <span>Austin - Texas - United States of America</span></div>`,
+      "</article>",
+    ].join("");
+    const page = (first: number, last: number) => [
+      '<meta name="avature.portal.page" content="SearchJobs"/>',
+      `<div class="list-controls__text__legend">${first}-${last} of 30 results</div>`,
+      ...Array.from({ length: last - first + 1 }, (_, offset) => card(first + offset)),
+    ].join("");
+    const result = await crawlSource({
+      id: "audit-row-328",
+      company: "CBRE Group",
+      postingUrl: "https://careers.cbre.com/en_US/careers/SearchJobs/",
+      adapter: "custom",
+      crawlPageCursor: 1,
+      crawlPreviousCycleStartedAt: "2026-08-13T00:00:00.000Z",
+    }, async (input) => {
+      const url = new URL(String(input));
+      return new Response(Number(url.searchParams.get("jobOffset") ?? 0) === 0 ? page(1, 25) : page(26, 30), {
+        status: 301,
+        headers: { location: url.href.replace("cbreglobal.avature.net", "careers.cbre.com") },
+      });
+    }, new Date("2026-08-14T16:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: expect.objectContaining({ nextPage: 1, cycleComplete: false, totalPages: 2 }),
+    }));
   });
 
   it("paginates Avature's open-ended 999+ result count until the first empty page", async () => {

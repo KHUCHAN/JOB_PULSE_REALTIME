@@ -4194,43 +4194,104 @@ const crawlWellsFargo = async (
   source: CrawlSource,
   fetcher: typeof fetch,
 ): Promise<SourceCrawlResult> => {
-  const listing = new URL(source.postingUrl);
-  // Wells' public search endpoint supports a keyword query even when its
-  // server-rendered landing page is protected by Cloudflare. Restricting this
-  // recovery feed to internship keeps it additive: it cannot close the rest of
-  // the 1,800+ job catalog while still recovering the user's target inventory.
-  listing.searchParams.set("search", "internship");
-  const firstMarkdown = await readerMarkdown(listing.href, fetcher, {
-    nestedProxyFallback: true,
-    maxConcurrent: 2,
-    timeoutMs: 12_000,
-  });
-  if (!firstMarkdown) return {
-    status: "failed", responseStatus: null, completeListing: false, jobs: [],
-    error: "Wells Fargo reader listing was unavailable.",
-  };
-  const jobs = markdownJobs(firstMarkdown, { ...source, postingUrl: listing.href });
-  if (jobs.length === 0) return {
-    status: "failed", responseStatus: 200, completeListing: false, jobs: [],
-    error: "Wells Fargo reader listing contained no internship jobs.",
-  };
-  return {
-    status: "succeeded",
-    responseStatus: 200,
-    // This is a keyword slice, not the complete Wells Fargo catalog.
-    completeListing: false,
-    jobs: uniqueJobs(jobs),
-    resolvedListingUrl: listing.href,
-    error: null,
-  };
+  const sitemapUrl = "https://www.wellsfargojobs.com/sitemap.xml";
+  try {
+    const response = await fetchWithTimeout(
+      fetcher,
+      sitemapUrl,
+      { headers: { accept: "application/xml,text/xml;q=0.9" } },
+      false,
+      { attempts: 1, timeoutMs: 15_000 },
+    );
+    if (!response.ok) throw Object.assign(new Error(`Wells Fargo sitemap returned HTTP ${response.status}.`), {
+      responseStatus: response.status,
+    });
+    const xml = await response.text();
+    const completeDocument = /<urlset\b[^>]*>/i.test(xml) && /<\/urlset>\s*$/i.test(xml);
+    const rawEntries = [...xml.matchAll(/<url\b[^>]*>([\s\S]*?)<\/url>/gi)];
+    let invalidJobEntry = false;
+    const entries = rawEntries.flatMap((entry): Array<{ id: string; slug: string; url: string; lastModified: string | null }> => {
+      const rawLocation = entry[1].match(/<loc>\s*([\s\S]*?)\s*<\/loc>/i)?.[1];
+      if (!rawLocation) return [];
+      let url: URL;
+      try {
+        url = new URL(decodeHtmlAttribute(rawLocation.trim()));
+      } catch {
+        return [];
+      }
+      if (url.hostname !== "www.wellsfargojobs.com" || !url.pathname.startsWith("/en/jobs/")) return [];
+      const identity = url.pathname.match(/^\/en\/jobs\/(r-\d+)\/([^/]+)\/?$/i);
+      if (url.protocol !== "https:" || url.port || url.search || url.hash || !identity) {
+        invalidJobEntry = true;
+        return [];
+      }
+      const lastModified = entry[1].match(/<lastmod>\s*([\s\S]*?)\s*<\/lastmod>/i)?.[1]?.trim() ?? null;
+      return [{
+        id: identity[1].toLocaleUpperCase(),
+        slug: decodeURIComponent(identity[2]),
+        url: url.href,
+        lastModified,
+      }];
+    });
+    const uniqueByUrl = new Map(entries.map((entry) => [entry.url, entry]));
+    const uniqueIds = new Set(entries.map((entry) => entry.id));
+    const authoritative = completeDocument
+      && !invalidJobEntry
+      && entries.length > 0
+      // Wells currently publishes a small number of exact duplicate <url>
+      // records. They represent one canonical posting, while one requisition
+      // resolving to two different URLs would be an actual identity conflict.
+      && uniqueIds.size === uniqueByUrl.size;
+    const jobs = [...uniqueByUrl.values()].map((entry): CrawledJob => {
+      const title = careerSlugTitle(entry.slug);
+      const programs = classifyJobPrograms(title);
+      return {
+        externalId: entry.id,
+        title,
+        company: source.company,
+        location: null,
+        arrangement: "unknown",
+        employmentType: programs.keys.some((key) => key === "internship" || key === "coop") ? "Internship" : null,
+        summary: null,
+        requisitionId: entry.id,
+        ...(entry.lastModified ? { sourceUpdatedAt: normalizedDate(entry.lastModified) } : {}),
+        officialUrl: entry.url,
+        // Sitemap lastmod is a modification timestamp, not the employer's
+        // original posting date. Preserve that distinction in the UI.
+        publishedAt: null,
+      };
+    });
+    if (jobs.length === 0) return {
+      status: "failed", responseStatus: response.status, completeListing: false, jobs: [],
+      error: "Wells Fargo's official sitemap contained no usable English job URLs.",
+    };
+    return {
+      status: "succeeded",
+      responseStatus: response.status,
+      completeListing: authoritative,
+      jobs,
+      resolvedListingUrl: "https://www.wellsfargojobs.com/en/jobs/",
+      error: authoritative ? null : "Wells Fargo's official sitemap was incomplete or contained conflicting job identities.",
+    };
+  } catch (error) {
+    const status = typeof error === "object" && error && "responseStatus" in error
+      ? Number((error as { responseStatus: unknown }).responseStatus)
+      : null;
+    return {
+      status: isBlockedHttpStatus(status) ? "blocked" : "failed",
+      responseStatus: status,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Wells Fargo's official sitemap was unavailable.",
+    };
+  }
 };
 
 const crawlCbreAvature = async (
   source: CrawlSource,
   fetcher: typeof fetch,
 ): Promise<SourceCrawlResult> => {
-  const listing = new URL(source.postingUrl);
-  listing.search = "";
+  const listing = new URL("https://careers.cbre.com/en_US/careers/SearchJobs/");
   // CBRE's Avature field 9577/value 17276 is the official United States of
   // America country facet. Keep this high-volume catalog in the user's US
   // scope instead of walking the 999+ global result set.
@@ -4239,24 +4300,147 @@ const crawlCbreAvature = async (
   listing.searchParams.set("jobRecordsPerPage", "25");
   listing.searchParams.set("listFilterMode", "1");
   listing.searchParams.set("jobOffset", "0");
-  const markdown = await readerMarkdown(listing.href, fetcher, {
-    nestedProxyFallback: true,
-    maxConcurrent: 2,
-    timeoutMs: 12_000,
-  });
-  if (!markdown) return {
-    status: "failed", responseStatus: null, completeListing: false, jobs: [],
-    error: "CBRE's US Avature reader listing was unavailable.",
+  const origin = new URL(listing);
+  origin.hostname = "cbreglobal.avature.net";
+  const parserSource = { ...source, postingUrl: listing.href };
+  type PageRange = { first: number; last: number; total: number; openEnded: boolean };
+  type PageResult = { kind: "page"; jobs: CrawledJob[]; range: PageRange; status: number }
+    | { kind: "end"; status: number }
+    | { kind: "failed"; status: number | null };
+  const fetchPage = async (page: number): Promise<PageResult> => {
+    try {
+      const target = new URL(origin);
+      target.searchParams.set("jobOffset", String((page - 1) * 25));
+      const response = await fetchWithTimeout(
+        fetcher,
+        target,
+        { redirect: "manual" },
+        true,
+        { attempts: 1, timeoutMs: 12_000 },
+      );
+      const html = await response.text();
+      const isSearchPage = /avature\.portal\.page["']?\s+content=["']SearchJobs/i.test(html);
+      if (!isSearchPage) {
+        let redirectHost: string | null = null;
+        try {
+          const location = response.headers.get("location");
+          redirectHost = location ? new URL(location, target).hostname : null;
+        } catch {
+          redirectHost = null;
+        }
+        return page > 1 && response.status === 302 && redirectHost === "careers.cbre.com"
+          ? { kind: "end", status: response.status }
+          : { kind: "failed", status: response.status };
+      }
+      const rangeMatch = (plainText(html) ?? "").match(/\b([\d,]+)\s*-\s*([\d,]+)\s+of\s+([\d,]+)(\+)?\s+results\b/i);
+      if (!rangeMatch) return { kind: "failed", status: response.status };
+      const range: PageRange = {
+        first: Number(rangeMatch[1].replaceAll(",", "")),
+        last: Number(rangeMatch[2].replaceAll(",", "")),
+        total: Number(rangeMatch[3].replaceAll(",", "")),
+        openEnded: rangeMatch[4] === "+",
+      };
+      const jobs = avatureJobsFromHtml(html, parserSource);
+      const identities = jobs.map((job) => job.externalId ?? job.officialUrl);
+      const expectedFirst = (page - 1) * 25 + 1;
+      const expectedJobs = range.last - range.first + 1;
+      if (!Number.isSafeInteger(range.first)
+        || !Number.isSafeInteger(range.last)
+        || !Number.isSafeInteger(range.total)
+        || range.first !== expectedFirst
+        || range.last < range.first
+        || expectedJobs < 1
+        || expectedJobs > 25
+        || jobs.length !== expectedJobs
+        || identities.length !== new Set(identities).size) {
+        return { kind: "failed", status: response.status };
+      }
+      return { kind: "page", jobs, range, status: response.status };
+    } catch {
+      return { kind: "failed", status: null };
+    }
   };
-  const result = await crawlAvatureReaderPages(
-    { ...source, postingUrl: listing.href },
-    markdown,
-    fetcher,
-    { nestedProxyFallback: true },
-  );
-  return result ?? {
-    status: "failed", responseStatus: 200, completeListing: false, jobs: [],
-    error: "CBRE's US Avature listing contained no usable jobs.",
+
+  const first = await fetchPage(1);
+  if (first.kind !== "page" || first.jobs.length !== 25) return {
+    status: first.kind === "failed" && isBlockedHttpStatus(first.status) ? "blocked" : "failed",
+    responseStatus: first.status,
+    completeListing: false,
+    jobs: [],
+    error: "CBRE's official US Avature origin returned no complete first page.",
+  };
+  const requestedStart = Math.max(1, Math.trunc(source.crawlPageCursor ?? 1));
+  const knownTotalPages = first.range.openEnded ? null : Math.ceil(first.range.total / 25);
+  const maximumPage = knownTotalPages ?? 400;
+  const startPage = Math.min(requestedStart, maximumPage);
+  const endPage = Math.min(startPage + 4, maximumPage);
+  const pages = new Map<number, PageResult>([[1, first]]);
+  const pageNumbers = Array.from({ length: endPage - startPage + 1 }, (_, index) => startPage + index)
+    .filter((page) => !pages.has(page));
+  for (let index = 0; index < pageNumbers.length; index += 4) {
+    const batch = pageNumbers.slice(index, index + 4);
+    const fetched = await Promise.all(batch.map((page) => fetchPage(page)));
+    batch.forEach((page, offset) => pages.set(page, fetched[offset]));
+  }
+
+  const jobs: CrawledJob[] = [];
+  let firstFailedPage: number | null = null;
+  let cycleComplete = false;
+  let completedPage = endPage;
+  for (let page = startPage; page <= endPage; page += 1) {
+    const value = pages.get(page)!;
+    if (value.kind === "end") {
+      const minimumOpenEndedPages = Math.ceil(first.range.total / 25);
+      const previousPage = page - 1;
+      if (first.range.openEnded && previousPage >= minimumOpenEndedPages) {
+        if (!pages.has(previousPage)) pages.set(previousPage, await fetchPage(previousPage));
+        const previous = pages.get(previousPage)!;
+        if (previous.kind === "page" && previous.jobs.length === 25 && previous.range.last === previousPage * 25) {
+          cycleComplete = true;
+          completedPage = previousPage;
+          break;
+        }
+      }
+      firstFailedPage = page;
+      break;
+    }
+    if (value.kind !== "page"
+      || value.range.openEnded !== first.range.openEnded
+      || value.range.total !== first.range.total
+      || value.jobs.length !== value.range.last - value.range.first + 1) {
+      firstFailedPage = page;
+      break;
+    }
+    jobs.push(...value.jobs);
+    completedPage = page;
+    if (!first.range.openEnded && page === knownTotalPages) {
+      cycleComplete = true;
+      break;
+    }
+    if (value.jobs.length < 25) {
+      cycleComplete = true;
+      break;
+    }
+  }
+  const unique = uniqueJobs(jobs);
+  const totalPages = cycleComplete ? completedPage : maximumPage;
+  // Avature's blank-query relevancy ordering can legitimately overlap pages.
+  // The first terminal pass only finishes notification suppression; later
+  // passes restart from page one but never authorize stale closure from this
+  // non-authoritative order.
+  const checkpointCycleComplete = cycleComplete && source.crawlPreviousCycleStartedAt == null;
+  return {
+    status: "succeeded",
+    responseStatus: first.status,
+    completeListing: false,
+    jobs: unique,
+    pagination: {
+      nextPage: cycleComplete ? 1 : firstFailedPage ?? endPage + 1,
+      cycleComplete: checkpointCycleComplete,
+      totalPages,
+    },
+    resolvedListingUrl: listing.href,
+    error: firstFailedPage == null ? null : `CBRE US catalog page ${firstFailedPage} was unavailable or inconsistent.`,
   };
 };
 
@@ -6076,12 +6260,22 @@ const avatureJobsFromHtml = (html: string, source: CrawlSource): CrawledJob[] =>
     const field = (className: string): string | null => icimsText(block.match(new RegExp(
       `<span\\b[^>]*class=["'][^"']*\\b${className}\\b[^"']*["'][^>]*>([\\s\\S]*?)<\\/span>`, "i",
     ))?.[1]);
-    const location = field("list-item-location");
-    const requisitionId = field("list-item-(?:ref|id)")?.replace(/^(?:job|role)\s+id\s*:?\s*/i, "") ?? externalId;
-    const posted = field("list-item-posted");
+    const subtitle = icimsText(block.match(
+      /<div\b[^>]*class=["'][^"']*\barticle__header__text__subtitle\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/i,
+    )?.[1]);
+    const inlineMetadata = subtitle?.match(
+      /^\s*Job\s+ID\s*:\s*([^|]+?)\s*\|\s*Posted\s*:\s*([^|]+?)\s*\|\s*(.+?)\s*$/i,
+    );
+    const location = field("list-item-location") ?? inlineMetadata?.[3]?.trim() ?? null;
+    const requisitionId = field("list-item-(?:ref|id)")?.replace(/^(?:job|role)\s+id\s*:?\s*/i, "")
+      ?? inlineMetadata?.[1]?.trim()
+      ?? externalId;
+    const posted = field("list-item-posted") ?? inlineMetadata?.[2]?.trim() ?? null;
     const workerType = field("list-item-workerType");
     const department = field("list-item-department");
     const programs = classifyJobPrograms(title).keys;
+    const locationParts = location?.split(/\s+-\s+/).map((value) => value.trim()).filter(Boolean) ?? [];
+    const usLocation = /^(?:US|USA|United States(?: of America)?)$/i.test(locationParts.at(-1) ?? "");
     return [{
       externalId,
       title,
@@ -6093,6 +6287,9 @@ const avatureJobsFromHtml = (html: string, source: CrawlSource): CrawledJob[] =>
         : normalizeEmploymentType(workerType),
       summary: null,
       ...(department ? { department } : {}),
+      ...(locationParts.length >= 3 ? { locationCity: locationParts[0] } : {}),
+      ...(usLocation && locationParts.length >= 3 ? { locationState: locationParts.at(-2) } : {}),
+      ...(usLocation ? { locationCountry: "United States" } : {}),
       requisitionId,
       ...(posted ? { sourcePostedText: posted } : {}),
       officialUrl: officialUrl.href,
