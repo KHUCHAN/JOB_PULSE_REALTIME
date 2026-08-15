@@ -13,6 +13,8 @@ export type CrawlSource = {
   crawlCycleStartedAt?: string | null;
   crawlPreviousCycleStartedAt?: string | null;
   discoveryDepth?: number;
+  /** Ephemeral request scope; never persisted as part of the official URL. */
+  regionScope?: "us";
 };
 
 export type CrawledJob = {
@@ -106,6 +108,7 @@ type VerifiedSourceFeed = {
 // closure nondeterministic. Unknown and mixed/global roles remain visible so
 // an incomplete location never causes a potentially relevant US role to drop.
 const US_SCOPED_LARGE_CATALOGS = new Set([
+  "audit-row-319", // Baker Hughes
   "audit-row-369", // Hertz
   "audit-row-378", // JLL
   "legacy-row-128", // Wabtec
@@ -119,7 +122,10 @@ const US_SCOPED_LARGE_CATALOGS = new Set([
   "p2-0048-metlife",
   "p2-0050-morgan-stanley",
   "p2-0064-unitedhealth-group",
+  "p2-0066-visa",
+  "p4-0203-lseg",
   "p4-0208-accenture",
+  "p4-0211-aig",
   "p4-0214-alvarez-marsal",
   "p4-0225-barclays-us",
   "p4-0245-cisco",
@@ -136,6 +142,7 @@ const US_SCOPED_LARGE_CATALOGS = new Set([
   "p4-0423-dynatrace",
   "p4-0428-exl-service",
   "p4-0436-genpact",
+  "p4-0471-palo-alto-networks",
   "p4-0521-zscaler",
   "p5-0523-abb-us",
   "p5-0524-abbott-laboratories",
@@ -145,9 +152,13 @@ const US_SCOPED_LARGE_CATALOGS = new Set([
   "p5-0545-anduril-industries",
   "p5-0550-asml",
   "p5-0559-boeing",
+  "p5-0562-boston-scientific",
   "p5-0565-canva",
+  "p5-0583-danaher-corporation",
   "p5-0586-eaton",
   "p5-0589-electronic-arts",
+  "p5-0591-eli-lilly",
+  "p5-0592-emerson-electric",
   "p5-0619-honeywell",
   "p5-0624-ibm",
   "p5-0634-iqvia",
@@ -155,28 +166,40 @@ const US_SCOPED_LARGE_CATALOGS = new Set([
   "p5-0643-kla-corporation",
   "p5-0648-labcorp-drug-development",
   "p5-0662-mckesson",
+  "p5-0663-mediatek",
   "p5-0665-medtronic",
   "p5-0693-optumrx",
   "p5-0694-oracle-health",
   "p5-0699-pepsico",
+  "p5-0709-qualcomm",
   "p5-0712-raytheon",
   "p5-0724-schneider-electric-us",
   "p5-0736-spacex",
+  "p5-0740-stmicroelectronics",
   "p5-0741-stryker",
   "p5-0750-thales-us",
   "p5-0752-tiktok",
+  "p5-0758-uber",
+  "p5-0776-3m",
   "p5-0793-amd",
   "p5-0796-analog-devices",
   "p5-0798-applied-materials",
   "p5-0803-arista-networks",
+  "p5-0807-astrazeneca",
+  "p5-0834-bristol-myers-squibb",
   "p5-0860-coherent",
   "p5-0932-hilton",
   "p5-0935-hologic",
   "p5-0940-infineon",
+  "p5-0947-intel",
   "p5-0960-lam-research",
+  "p5-0966-lonza",
   "p5-0972-marriott-international",
+  "p5-0981-merck",
   "p5-0984-micron-technology",
+  "p5-0999-nxp-semiconductors",
   "p5-1041-rippling",
+  "p5-1050-samsung-semiconductor",
   "p5-1109-western-digital",
 ]);
 
@@ -543,7 +566,9 @@ type WorkdayJob = {
 type WorkdayFacet = {
   descriptor?: string;
   facetParameter?: string;
-  values?: Array<{ descriptor?: string; id?: string; count?: number }>;
+  id?: string;
+  count?: number;
+  values?: WorkdayFacet[];
 };
 
 type WorkdayPayload = {
@@ -551,6 +576,11 @@ type WorkdayPayload = {
   jobPostings?: WorkdayJob[];
   facets?: WorkdayFacet[];
 };
+
+const flattenedWorkdayFacets = (facets: WorkdayFacet[] = []): WorkdayFacet[] => facets.flatMap((facet) => [
+  facet,
+  ...flattenedWorkdayFacets((facet.values ?? []).filter((value) => value.facetParameter || value.values?.length)),
+]);
 
 type MCloudLocation = {
   addtnl_city?: string | null;
@@ -11933,33 +11963,38 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
 
     let activeFacets: Record<string, string[]> = {};
     let first = await fetchPage(0);
-    const requestedCountry = sourceUrl.searchParams.get("country")?.trim() ?? "";
+    const explicitRequestedCountry = sourceUrl.searchParams.get("country")?.trim() ?? "";
+    const requestedCountry = explicitRequestedCountry || (source.regionScope === "us" ? "United States" : "");
+    const advisoryCountryScope = !explicitRequestedCountry && source.regionScope === "us";
     if (requestedCountry) {
       const normalizedRequestedCountry = requestedCountry.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "");
       const requestedIsUs = ["us", "usa", "unitedstates", "unitedstatesofamerica"]
         .includes(normalizedRequestedCountry);
-      const countryFacet = (first.payload.facets ?? [])
-        .find((facet) => facet.facetParameter === "Location_Country");
+      const countryFacet = flattenedWorkdayFacets(first.payload.facets)
+        .find((facet) => facet.facetParameter?.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "") === "locationcountry");
       const countryValue = (countryFacet?.values ?? []).find((value) => {
         const descriptor = value.descriptor?.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "") ?? "";
         return requestedIsUs
           ? descriptor === "unitedstates" || descriptor === "unitedstatesofamerica"
           : descriptor === normalizedRequestedCountry;
       });
-      if (!countryValue?.id) return {
-        status: "failed",
-        responseStatus: first.status,
-        completeListing: false,
-        jobs: [],
-        error: `Workday did not expose the requested ${requestedCountry} country facet.`,
-      };
-      activeFacets = { Location_Country: [countryValue.id] };
-      first = await fetchPage(0, activeFacets);
+      if (!countryValue?.id) {
+        if (!advisoryCountryScope) return {
+          status: "failed",
+          responseStatus: first.status,
+          completeListing: false,
+          jobs: [],
+          error: `Workday did not expose the requested ${requestedCountry} country facet.`,
+        };
+      } else {
+        activeFacets = { [countryFacet!.facetParameter!]: [countryValue.id] };
+        first = await fetchPage(0, activeFacets);
+      }
     }
     const total = first.payload.total ?? first.payload.jobPostings?.length ?? 0;
     const usableFirstJobs = (first.payload.jobPostings ?? [])
       .filter((job) => Boolean(job.title && job.externalPath));
-    if ((isCisco || requestedCountry) && (total <= 0 || usableFirstJobs.length === 0)) return {
+    if ((isCisco || (requestedCountry && !advisoryCountryScope)) && (total <= 0 || usableFirstJobs.length === 0)) return {
       status: "failed",
       responseStatus: first.status,
       completeListing: false,
@@ -11970,9 +12005,16 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
     };
     const totalPages = Math.max(1, Math.ceil(Math.min(total, 2_000) / 20));
     const isIntel = source.id === "p5-0947-intel" || source.company === "Intel";
-    const isCheckpointed = isCisco || (totalPages > 20 && !isIntel);
+    // Resolving a country facet costs one global discovery request. Reduce the
+    // checkpoint window by the same amount so even a scoped catalog remains
+    // within the existing twenty-request source budget.
+    const scopedDiscoveryRequests = Object.keys(activeFacets).length > 0 ? 1 : 0;
+    const maximumCatalogPages = 20 - scopedDiscoveryRequests;
+    const isCheckpointed = isCisco || (totalPages > maximumCatalogPages && !isIntel);
     const startPage = isCheckpointed ? Math.min(Math.max(source.crawlPageCursor ?? 1, 1), totalPages) : 1;
-    const endPage = isCheckpointed ? Math.min(startPage + (startPage === 1 ? 19 : 18), totalPages) : totalPages;
+    const endPage = isCheckpointed
+      ? Math.min(startPage + (startPage === 1 ? maximumCatalogPages - 1 : maximumCatalogPages - 2), totalPages)
+      : totalPages;
     const pageNumbers = Array.from(
       { length: Math.max(0, endPage - Math.max(startPage, 2) + 1) },
       (_, index) => Math.max(startPage, 2) + index,
@@ -12003,7 +12045,7 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
         seenPageIdentities,
       )) firstFailedPage = pageNumber;
     }
-    const facets: CrawledFacet[] = (first.payload.facets ?? []).flatMap((facet) => facet.facetParameter && facet.descriptor ? [{
+    const facets: CrawledFacet[] = flattenedWorkdayFacets(first.payload.facets).flatMap((facet) => facet.facetParameter && facet.descriptor ? [{
       key: facet.facetParameter,
       label: facet.descriptor,
       values: (facet.values ?? []).flatMap((value) => value.id && value.descriptor ? [{ key: value.id, label: value.descriptor, count: value.count ?? null }] : []),
@@ -12034,7 +12076,7 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
     }));
 
     if (isIntel) {
-      const facetByParameter = new Map((first.payload.facets ?? [])
+      const facetByParameter = new Map(flattenedWorkdayFacets(first.payload.facets)
         .flatMap((facet) => facet.facetParameter ? [[facet.facetParameter, facet] as const] : []));
       const membership = new Map<string, string[]>();
       const addMembership = (path: string, value: string): void => {
@@ -13709,9 +13751,16 @@ const applyLargeCatalogRegionScope = (result: SourceCrawlResult, source: CrawlSo
   return { ...result, jobs, facets: undefined };
 };
 
+const withLargeCatalogRequestScope = (source: CrawlSource): CrawlSource => (
+  US_SCOPED_LARGE_CATALOGS.has(source.id)
+    ? { ...source, regionScope: "us" }
+    : source
+);
+
 export async function crawlSource(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
   const budgetedFetcher = crawlBudgetedFetcher(fetcher);
-  const scoped = applyLargeCatalogRegionScope(await crawlSourceBase(source, budgetedFetcher, now), source);
+  const requestScopedSource = withLargeCatalogRequestScope(source);
+  const scoped = applyLargeCatalogRegionScope(await crawlSourceBase(requestScopedSource, budgetedFetcher, now), source);
   const enriched = await enrichProgramJobDetails(scoped, source, budgetedFetcher, now);
   return applyLargeCatalogRegionScope(enriched, source);
 }

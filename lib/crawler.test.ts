@@ -5484,11 +5484,114 @@ Wrong description.
     }));
   });
 
+  it("requests only the United States facet for configured large Workday catalogs", async () => {
+    const requestBodies: Array<{
+      appliedFacets: Record<string, string[]>;
+      offset: number;
+    }> = [];
+    const fetcher: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as {
+        appliedFacets: Record<string, string[]>;
+        offset: number;
+      };
+      requestBodies.push(body);
+      if (Object.keys(body.appliedFacets).length === 0) return Response.json({
+        total: 1_000,
+        facets: [{
+          facetParameter: "locationMainGroup",
+          values: [{
+            facetParameter: "locationCountry",
+            descriptor: "Country",
+            values: [
+              { descriptor: "United States of America", id: "us-country-id", count: 21 },
+              { descriptor: "Germany", id: "de-country-id", count: 300 },
+            ],
+          }],
+        }],
+        jobPostings: [{
+          title: "Global Role",
+          externalPath: "/job/Zurich/Global-Role_R-0",
+          locationsText: "Zurich, Switzerland",
+        }],
+      });
+      const count = body.offset === 0 ? 20 : 1;
+      return Response.json({
+        total: 21,
+        facets: [],
+        jobPostings: Array.from({ length: count }, (_, index) => ({
+          title: `US Role ${body.offset + index}`,
+          externalPath: `/job/New-York/US-Role-${body.offset + index}_R-${body.offset + index}`,
+          locationsText: "New York, NY, United States",
+        })),
+      });
+    };
+
+    const result = await crawlSource({
+      id: "p5-0523-abb-us",
+      company: "ABB US",
+      postingUrl: "https://abb.wd3.myworkdayjobs.com/External_Career_Page",
+      adapter: "workday",
+    }, fetcher, new Date("2026-08-14T00:00:00Z"));
+
+    expect(requestBodies.map(({ appliedFacets, offset }) => ({ appliedFacets, offset }))).toEqual([
+      { appliedFacets: {}, offset: 0 },
+      { appliedFacets: { locationCountry: ["us-country-id"] }, offset: 0 },
+      { appliedFacets: { locationCountry: ["us-country-id"] }, offset: 20 },
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+    }));
+    expect(result.jobs).toHaveLength(21);
+    expect(result.jobs.every((job) => job.location?.includes("United States"))).toBe(true);
+  });
+
+  it("falls back to the global Workday request when an advisory US facet is unavailable", async () => {
+    const requestBodies: Array<{ appliedFacets: Record<string, string[]> }> = [];
+    const result = await crawlSource({
+      id: "p5-0523-abb-us",
+      company: "ABB US",
+      postingUrl: "https://abb.wd3.myworkdayjobs.com/External_Career_Page",
+      adapter: "workday",
+    }, async (_input, init) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as { appliedFacets: Record<string, string[]> });
+      return Response.json({
+        total: 1,
+        facets: [],
+        jobPostings: [{
+          title: "US Service Engineer",
+          externalPath: "/job/Houston/US-Service-Engineer_R-1",
+          locationsText: "Houston, TX, United States",
+        }],
+      });
+    }, new Date("2026-08-14T00:00:00Z"));
+
+    expect(requestBodies).toEqual([{ appliedFacets: {}, limit: 20, offset: 0, searchText: "" }]);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toHaveLength(1);
+  });
+
   it("checkpoints any large Workday catalog within twenty public API requests", async () => {
     const offsets: number[] = [];
     const fetcher: typeof fetch = async (_input, init) => {
-      const { offset } = JSON.parse(String(init?.body)) as { offset: number };
+      const { offset, appliedFacets } = JSON.parse(String(init?.body)) as {
+        offset: number;
+        appliedFacets: Record<string, string[]>;
+      };
       offsets.push(offset);
+      if (Object.keys(appliedFacets).length === 0) return Response.json({
+        total: 1_109,
+        facets: [{
+          facetParameter: "Location_Country",
+          descriptor: "Country",
+          values: [{ descriptor: "United States", id: "us-country-id", count: 1_109 }],
+        }],
+        jobPostings: [{
+          title: "Global discovery row",
+          externalPath: "/job/Paris/Global-Discovery-Row_R-global",
+          locationsText: "Paris, France",
+        }],
+      });
       const count = Math.min(20, 1_109 - offset);
       return Response.json({
         total: 1_109,
@@ -5507,13 +5610,13 @@ Wrong description.
       adapter: "workday",
     }, fetcher, new Date("2026-08-12T00:00:00Z"));
 
-    expect(offsets).toEqual(Array.from({ length: 20 }, (_, index) => index * 20));
+    expect(offsets).toEqual([0, 0, ...Array.from({ length: 18 }, (_, index) => (index + 1) * 20)]);
     expect(result).toEqual(expect.objectContaining({
       status: "succeeded",
       completeListing: false,
-      pagination: { nextPage: 20, cycleComplete: false, totalPages: 56 },
+      pagination: { nextPage: 19, cycleComplete: false, totalPages: 56 },
     }));
-    expect(result.jobs).toHaveLength(400);
+    expect(result.jobs).toHaveLength(380);
   });
 
   it("uses Cisco's official Workday catalog and checkpoints it within the request budget", async () => {
