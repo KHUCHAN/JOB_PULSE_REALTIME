@@ -4388,7 +4388,7 @@ const crawlTalemetryJson = async (
         directUnavailable = true;
       }
     }
-    const readerEndpoints = [endpoint.href];
+    const readerRequests = [`https://r.jina.ai/${endpoint.href}`];
     // A&M publishes the same country-scoped Talemetry catalog at both its
     // localized and locale-neutral first-party routes. r.jina throttles cache
     // keys independently, so the neutral route is a safe recovery surface
@@ -4398,15 +4398,21 @@ const crawlTalemetryJson = async (
     if (source.id === "p4-0214-alvarez-marsal" && /^\/en\//i.test(endpoint.pathname)) {
       const neutral = new URL(endpoint);
       neutral.pathname = neutral.pathname.replace(/^\/en\//i, "/");
-      readerEndpoints.push(neutral.href);
+      readerRequests.push(`https://r.jina.ai/${neutral.href}`);
+      // Worker egress can be throttled even while the provider still has a
+      // usable cached copy. Its documented reader accepts URLs as targets, so
+      // a bounded read-through of the cached reader response gives this one
+      // critical catalog a final independent cache key without weakening any
+      // page/cardinality/identity validation.
+      readerRequests.push(`https://r.jina.ai/http://r.jina.ai/${endpoint.href}`);
     }
     const readerAttempts = [
-      ...readerEndpoints.map((href) => ({ href, bypassCache: false })),
-      ...(allowReaderRetry ? [{ href: endpoint.href, bypassCache: true }] : []),
+      ...readerRequests.map((requestUrl) => ({ requestUrl, bypassCache: false })),
+      ...(allowReaderRetry ? [{ requestUrl: `https://r.jina.ai/${endpoint.href}`, bypassCache: true }] : []),
     ];
     for (const candidate of readerAttempts) {
       try {
-        const reader = await fetchWithTimeout(fetcher, `https://r.jina.ai/${candidate.href}`, {
+        const reader = await fetchWithTimeout(fetcher, candidate.requestUrl, {
           headers: {
             accept: "text/plain",
             ...(candidate.bypassCache ? { "x-no-cache": "true", "x-engine": "browser" } : {}),

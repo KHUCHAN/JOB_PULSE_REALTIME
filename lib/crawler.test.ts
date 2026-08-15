@@ -3528,6 +3528,34 @@ Wrong description.
     expect(result.jobs).toHaveLength(100);
   });
 
+  it("reads A&M's validated cached payload through a bounded relay when both direct reader keys are throttled", async () => {
+    const requests: string[] = [];
+    const entries = Array.from({ length: 100 }, (_, index) => ({
+      id: String(index + 201), talemetry_job_id: String(index + 201),
+      permalink: `role-${index + 201}`, title: `Role ${index + 201}`,
+      location: { country: "United States" },
+    }));
+    const relay = "https://r.jina.ai/http://r.jina.ai/https://careers.alvarezandmarsal.com/en/search/jobs/in/country/united-states.json?per_page=100&page=3";
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === relay) return new Response(`Markdown Content:\n${JSON.stringify({ current_page: 3, per_page: 100, total_entries: 400, entries })}`);
+      return new Response("rate limited", { status: url.startsWith("https://r.jina.ai/") ? 429 : 403 });
+    };
+
+    const result = await crawlSource({
+      id: "p4-0214-alvarez-marsal", company: "Alvarez & Marsal",
+      postingUrl: "https://careers.alvarezandmarsal.com/en/search/jobs/in/country/united-states",
+      adapter: "custom", crawlPageCursor: 3,
+    }, fetcher, new Date());
+
+    expect(requests).toContain(relay);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", jobs: expect.arrayContaining([expect.objectContaining({ externalId: "201" })]),
+      pagination: { nextPage: 4, cycleComplete: false, totalPages: 4 },
+    }));
+  });
+
   it("bypasses a stale reader challenge snapshot when the cached response has no jobs", async () => {
     let readerRequests = 0;
     const fetcher: typeof fetch = async (input, init) => {
