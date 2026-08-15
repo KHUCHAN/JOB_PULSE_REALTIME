@@ -11,7 +11,7 @@ import { classifyJobRegion } from "../lib/job-region-classifier.ts";
 import { jobsFromBrowserAnchors, type BrowserAnchor } from "../lib/browser-job-extractor.ts";
 import { browserRecoveryDue, needsBrowserFallback, type LatestCrawlSummary } from "../lib/browser-fallback-selection.ts";
 import { numericPaginationTargets } from "../lib/browser-pagination.ts";
-import { anchorsFromHtml, deltaInternshipListingUrl, extractJobsFromHtml, jobsFromTeslaState, type CrawledFacet, type CrawledJob, type CrawlSource, type TeslaState } from "../lib/crawler.ts";
+import { anchorsFromHtml, crawlSource, deltaInternshipListingUrl, extractJobsFromHtml, jobsFromTeslaState, type CrawledFacet, type CrawledJob, type CrawlSource, type TeslaState } from "../lib/crawler.ts";
 import { careerCandidates, isSafeCareerListingUrl } from "../lib/url-remediation.ts";
 
 export type BrowserFallbackResult = {
@@ -20,8 +20,13 @@ export type BrowserFallbackResult = {
   finalUrl: string | null;
   jobs: CrawledJob[];
   facets?: CrawledFacet[];
+  authoritativeEmpty?: boolean;
   browserState?: { kind: "tesla"; state: TeslaState };
   error: string | null;
+};
+
+type BrowserRecoverySource = CrawlSource & {
+  attemptNativeRecovery?: boolean;
 };
 
 const execFileAsync = promisify(execFile);
@@ -43,7 +48,7 @@ const dryRun = process.env.BROWSER_FALLBACK_DRY_RUN === "1";
 
 let cachedOidc = { value: "", expiresAt: 0 };
 
-export const browserListingSource = (source: CrawlSource): CrawlSource => {
+export const browserListingSource = <T extends CrawlSource>(source: T): T => {
   if (source.id !== "audit-row-342") return source;
   // Delta's persisted catalog URL can carry a native pagination cursor from
   // the request crawler. A browser recovery must instead start at the first
@@ -51,6 +56,16 @@ export const browserListingSource = (source: CrawlSource): CrawlSource => {
   // ingest an arbitrary page from the unfiltered company catalog.
   return { ...source, postingUrl: deltaInternshipListingUrl(source.postingUrl) };
 };
+
+export const nativeRunnerRecoveryEligible = (source: {
+  adapter: CrawlSource["adapter"];
+  health?: string | null;
+  currentJobs?: number | null;
+  lastError?: string | null;
+}): boolean => source.adapter === "workday"
+  || source.health === "blocked"
+  || source.lastError === "empty_board"
+  || (source.currentJobs != null && source.currentJobs > 0);
 
 const githubOidcToken = async (): Promise<string | null> => {
   if (productionIngestSecret) return productionIngestSecret;
@@ -79,7 +94,7 @@ const d1 = async (args: string[]): Promise<string> => {
   return stdout;
 };
 
-const problemSources = async (): Promise<CrawlSource[]> => {
+const problemSources = async (): Promise<BrowserRecoverySource[]> => {
   if (targetSourceIds.size > 0 && liveUrl) {
     // Targeted recovery must use the live D1 URL, not the checked-in catalog
     // snapshot. Source repairs can update posting_url (Delta's keyword route
@@ -89,13 +104,26 @@ const problemSources = async (): Promise<CrawlSource[]> => {
     if (!response.ok) throw new Error(`Live source inventory returned HTTP ${response.status}.`);
     const sources = await response.json() as Array<{
       id: string; company: string; postingUrl: string | null; adapter: CrawlSource["adapter"];
+      health: string; currentJobs: number; lastError: string | null;
     }>;
-    return sources.flatMap((source): CrawlSource[] => targetSourceIds.has(source.id) && source.postingUrl
-      ? [browserListingSource({ id: source.id, company: source.company, postingUrl: source.postingUrl, adapter: source.adapter })]
+    return sources.flatMap((source): BrowserRecoverySource[] => targetSourceIds.has(source.id) && source.postingUrl
+      ? [browserListingSource({
+          id: source.id,
+          company: source.company,
+          postingUrl: source.postingUrl,
+          adapter: source.adapter,
+          attemptNativeRecovery: nativeRunnerRecoveryEligible(source),
+        })]
       : []);
   }
-  if (targetSourceIds.size > 0) return catalogSeed.sources.flatMap((source): CrawlSource[] => targetSourceIds.has(source.id) && source.postingUrl
-    ? [browserListingSource({ id: source.id, company: source.company, postingUrl: source.postingUrl, adapter: source.adapter as CrawlSource["adapter"] })]
+  if (targetSourceIds.size > 0) return catalogSeed.sources.flatMap((source): BrowserRecoverySource[] => targetSourceIds.has(source.id) && source.postingUrl
+    ? [browserListingSource({
+        id: source.id,
+        company: source.company,
+        postingUrl: source.postingUrl,
+        adapter: source.adapter as CrawlSource["adapter"],
+        attemptNativeRecovery: source.adapter === "workday",
+      })]
     : []);
   if (liveUrl) {
     const response = await fetch(`${liveUrl}/api/pulse?resource=sources`, { headers: { accept: "application/json" } });
@@ -103,7 +131,8 @@ const problemSources = async (): Promise<CrawlSource[]> => {
     const sources = await response.json() as Array<{
       id: string; company: string; postingUrl: string | null; talentUrl: string | null;
       adapter: CrawlSource["adapter"];
-      health: string; currentJobs: number; lastCheckedAt: string | null; nextRunAt: string | null;
+      health: string; currentJobs: number; lastError: string | null;
+      lastCheckedAt: string | null; nextRunAt: string | null;
     }>;
     const candidateUrl = (source: { postingUrl: string | null; talentUrl: string | null }): string | null => {
       if (source.postingUrl) return source.postingUrl;
@@ -124,14 +153,25 @@ const problemSources = async (): Promise<CrawlSource[]> => {
       return emptyRank * 10 + stateRank;
     };
     return sources
-      .map((source) => ({ ...source, candidateUrl: candidateUrl(source) }))
+      .map((source) => ({
+        ...source,
+        candidateUrl: candidateUrl(source),
+        attemptNativeRecovery: nativeRunnerRecoveryEligible(source),
+      }))
       .filter((source) => source.candidateUrl && browserRecoveryDue(source))
       .sort((left, right) => Number(prioritySourceIds.has(right.id)) - Number(prioritySourceIds.has(left.id))
+        || Number(right.attemptNativeRecovery) - Number(left.attemptNativeRecovery)
         || healthRank(left) - healthRank(right)
         || Date.parse(left.lastCheckedAt ?? "1970-01-01") - Date.parse(right.lastCheckedAt ?? "1970-01-01")
         || left.company.localeCompare(right.company))
       .slice(0, Number.isFinite(limit) ? Math.max(1, limit) : 500)
-      .map((source) => browserListingSource({ id: source.id, company: source.company, postingUrl: source.candidateUrl!, adapter: source.adapter }));
+      .map((source) => browserListingSource({
+        id: source.id,
+        company: source.company,
+        postingUrl: source.candidateUrl!,
+        adapter: source.adapter,
+        attemptNativeRecovery: source.attemptNativeRecovery,
+      }));
   }
   const sql = `WITH latest AS (
     SELECT source_id, status, jobs_seen, ROW_NUMBER() OVER (PARTITION BY source_id ORDER BY started_at DESC) row_number
@@ -245,14 +285,42 @@ const jobsViaHttp1 = async (source: CrawlSource): Promise<CrawledJob[]> => {
   }
 };
 
+/**
+ * Some first-party feeds are challenged or transformed only on the Sites
+ * Worker egress range. The scheduled recovery job runs from an independent
+ * GitHub runner, where the same official API remains usable. Reuse the native
+ * adapter there for the bounded high-value failure classes before paying for
+ * rendered Chrome; this preserves identifiers, dates, facets, and catalog
+ * validation that generic anchor extraction cannot recover.
+ */
+export const recoverNativeOutsideWorker = async (
+  source: BrowserRecoverySource,
+  fetcher: typeof fetch = fetch,
+  now = new Date(),
+): Promise<BrowserFallbackResult | null> => {
+  if (!source.attemptNativeRecovery && source.adapter !== "workday") return null;
+  const result = await crawlSource(source, fetcher, now);
+  if (result.status !== "succeeded"
+    || (result.jobs.length === 0 && !result.completeListing)) return null;
+  return {
+    source,
+    status: result.responseStatus,
+    finalUrl: result.resolvedListingUrl ?? source.postingUrl,
+    jobs: result.jobs,
+    ...(result.facets ? { facets: result.facets } : {}),
+    ...(result.jobs.length === 0 ? { authoritativeEmpty: true } : {}),
+    error: null,
+  };
+};
+
 const inspect = async (page: Page, source: CrawlSource): Promise<BrowserFallbackResult> => {
   try {
-    // These sources have already failed the native pass and were selected for
-    // browser recovery for precisely that reason. Re-running crawlSource here
-    // can consume its full 32-second source budget before Chrome gets a chance
-    // to render the board; with the 60-second per-source guard that made many
-    // recoverable pages end as navigation_timeout. Try a short HTTP/1.1 pass
-    // first, then give the browser the remaining budget for client rendering.
+    // Re-run the full native adapter only for failures shown to differ by
+    // egress (Workday, blocked pages, previously populated feeds, and browser
+    // false-empty results). Other sources keep the short HTTP probe so a slow
+    // upstream cannot consume the browser's 60-second recovery window.
+    const native = await recoverNativeOutsideWorker(source);
+    if (native) return native;
     const http1Jobs = await jobsViaHttp1(source);
     if (http1Jobs.length > 0) {
       return { source, status: 200, finalUrl: source.postingUrl, jobs: http1Jobs, error: null };
@@ -322,6 +390,7 @@ export const browserResultClassification = (result: BrowserFallbackResult): {
   status: "succeeded" | "failed" | "blocked";
   code: BrowserResultCode;
 } => {
+  if (result.authoritativeEmpty) return { status: "succeeded", code: "empty_board" };
   if (result.error?.startsWith("Rejected unsafe browser listing candidate:")) return { status: "failed", code: "unsafe_listing" };
   if (result.jobs.length > 0 && result.finalUrl) return { status: "succeeded", code: "jobs_recovered" };
   if ([401, 403, 429, 520, 521, 522, 523, 524].includes(result.status ?? -1)
