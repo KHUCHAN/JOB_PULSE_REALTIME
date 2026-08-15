@@ -14506,6 +14506,8 @@ const CINCINNATI_TALEO_LISTING_URL = "https://cinfin.taleo.net/careersection/ex/
 const CINCINNATI_TALEO_SEARCH_URL = "https://cinfin.taleo.net/careersection/rest/jobboard/searchjobs?lang=en&portal=101430233";
 const TAMPA_GENERAL_TALEO_LISTING_URL = "https://tgh.taleo.net/careersection/ex/jobsearch.ftl?lang=en";
 const TAMPA_GENERAL_TALEO_SEARCH_URL = "https://tgh.taleo.net/careersection/rest/jobboard/searchjobs?lang=en&portal=101430233";
+const ENTERPRISE_PRODUCTS_CORPORATE_JOB_OPENINGS_URL = "https://www.enterpriseproducts.com/careers/job-openings/";
+const ENTERPRISE_PRODUCTS_TALEO_LISTING_URL = "https://epco.taleo.net/careersection/alljobs/jobsearch.ftl?lang=en&location=101372523&radius=1&radiusType=K&searchExpanded=false&dropListSize=1000";
 
 const taleoClassicSearchBody = (pageNo: number): string => JSON.stringify({
   fieldData: { fields: { KEYWORD: "", CATEGORY: "" }, valid: true },
@@ -14558,8 +14560,18 @@ const taleoClassicSummary = (value: TaleoClassicRequisition): CincinnatiTaleoSum
   return { jobId, contestNo, title, locations: normalizedLocations, officialUrl: official.href, applyUrl: apply.href };
 };
 
-const taleoClassicStringArray = (html: string): string[] | null => {
-  const marker = /api\.fillList\(\s*['"]requisitionDescriptionInterface['"]\s*,\s*['"]descRequisition['"]\s*,\s*\[/g;
+const taleoClassicFillListStringArray = (
+  html: string,
+  interfaceName: string,
+  listName: string,
+  maximumValues: number,
+): string[] | null => {
+  if (!/^[a-z][a-z0-9]*$/i.test(interfaceName) || !/^[a-z][a-z0-9]*$/i.test(listName)
+    || !Number.isSafeInteger(maximumValues) || maximumValues < 1 || maximumValues > 50_000) return null;
+  const marker = new RegExp(
+    `api\\.fillList\\(\\s*['"]${interfaceName}['"]\\s*,\\s*['"]${listName}['"]\\s*,\\s*\\[`,
+    "g",
+  );
   const match = marker.exec(html);
   if (!match) return null;
   let cursor = marker.lastIndex;
@@ -14609,11 +14621,18 @@ const taleoClassicStringArray = (html: string): string[] | null => {
         value += character;
       }
     }
-    if (!closed || values.length >= 80) return null;
+    if (!closed || values.length >= maximumValues) return null;
     values.push(value);
   }
   return null;
 };
+
+const taleoClassicStringArray = (html: string): string[] | null => taleoClassicFillListStringArray(
+  html,
+  "requisitionDescriptionInterface",
+  "descRequisition",
+  80,
+);
 
 const taleoClassicRichText = (value: string | undefined): string | null => {
   if (!value) return null;
@@ -14631,6 +14650,185 @@ const taleoClassicPlainText = (value: string | undefined): string | null => {
     return icimsText(decodeURIComponent(value.replace(/%(?![0-9a-f]{2})/gi, "%25")));
   } catch {
     return icimsText(value);
+  }
+};
+
+const taleoClassicHiddenValue = (html: string, name: string): string | null => {
+  if (!/^[a-z][a-z0-9.]*$/i.test(name)) return null;
+  const input = html.match(new RegExp(`<input\\b(?=[^>]*\\bname=["']${name.replaceAll(".", "\\.")}["'])[^>]*>`, "i"))?.[0];
+  const value = input?.match(/\bvalue\s*=\s*(?:"([^"]*)"|'([^']*)')/i);
+  return input ? decodeHtmlAttribute(value?.[1] ?? value?.[2] ?? "") : null;
+};
+
+type EnterpriseProductsLocation = {
+  location: string;
+  city: string;
+  state: string;
+};
+
+const enterpriseProductsLocations = (value: string): EnterpriseProductsLocation[] | null => {
+  const parts = value.split(/\s*,\s*(?=USA(?:-|$))/).map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 1 || parts.length > 40 || parts.some((part) => part !== "USA" && !/^USA-[^-]+-.+$/.test(part))) {
+    return null;
+  }
+  const structured = parts.flatMap((part): EnterpriseProductsLocation[] => {
+    const match = part.match(/^USA-([^-]+)-(.+)$/);
+    if (!match?.[1].trim() || !match[2].trim()) return [];
+    const state = match[1].trim();
+    const city = match[2].trim();
+    return [{ location: `${city}, ${state}, United States`, city, state }];
+  });
+  return structured.length >= 1 && structured.length === new Set(structured.map(({ location }) => location)).size
+    ? structured
+    : null;
+};
+
+const enterpriseProductsTaleoUrl = (value: string, includeDropListSize: boolean): boolean => {
+  try {
+    const url = new URL(value);
+    const expected = new Map([
+      ["lang", "en"],
+      ["location", "101372523"],
+      ["radius", "1"],
+      ["radiusType", "K"],
+      ["searchExpanded", "false"],
+      ...(includeDropListSize ? [["dropListSize", "1000"]] : []),
+    ] as Array<[string, string]>);
+    return url.origin === "https://epco.taleo.net"
+      && url.pathname === "/careersection/alljobs/jobsearch.ftl"
+      && !url.username && !url.password && !url.port && !url.hash
+      && url.searchParams.size === expected.size
+      && [...expected].every(([key, expectedValue]) => url.searchParams.get(key) === expectedValue);
+  } catch {
+    return false;
+  }
+};
+
+const crawlEnterpriseProductsTaleo = async (
+  source: CrawlSource,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  let failureStatus: number | null = null;
+  try {
+    const corporateResponse = await fetchWithTimeout(fetcher, ENTERPRISE_PRODUCTS_CORPORATE_JOB_OPENINGS_URL, {
+      headers: { accept: "text/html,application/xhtml+xml" },
+    }, true, { attempts: 1, timeoutMs: 10_000 });
+    responseStatus = corporateResponse.status;
+    if (!corporateResponse.ok) {
+      failureStatus = corporateResponse.status;
+      throw new Error(`Enterprise Products careers returned HTTP ${corporateResponse.status}.`);
+    }
+    const corporateHtml = await corporateResponse.text();
+    const officialBoard = anchorsFromHtml(corporateHtml).some(({ href }) => {
+      try {
+        return enterpriseProductsTaleoUrl(new URL(href, ENTERPRISE_PRODUCTS_CORPORATE_JOB_OPENINGS_URL).href, false);
+      } catch {
+        return false;
+      }
+    });
+    if (!officialBoard) throw new Error("Enterprise Products no longer links its verified U.S. Taleo board.");
+
+    const listingResponse = await fetchWithTimeout(fetcher, ENTERPRISE_PRODUCTS_TALEO_LISTING_URL, {
+      headers: {
+        accept: "text/html,application/xhtml+xml",
+        cookie: "locale=en",
+        referer: ENTERPRISE_PRODUCTS_CORPORATE_JOB_OPENINGS_URL,
+      },
+    }, true, { attempts: 1, timeoutMs: 15_000 });
+    responseStatus = listingResponse.status;
+    if (!listingResponse.ok) {
+      failureStatus = listingResponse.status;
+      throw new Error(`Enterprise Products Taleo board returned HTTP ${listingResponse.status}.`);
+    }
+    if (listingResponse.url && !enterpriseProductsTaleoUrl(listingResponse.url, true)) {
+      throw new Error("Enterprise Products Taleo board redirected outside its verified U.S. catalog.");
+    }
+    const html = await listingResponse.text();
+    const total = Number(taleoClassicHiddenValue(html, "listRequisition.nbElements"));
+    const listSize = Number(taleoClassicHiddenValue(html, "listRequisition.size"));
+    if (!Number.isSafeInteger(total) || total < 1 || total > 1_000 || listSize !== 1_000
+      || taleoClassicHiddenValue(html, "listRequisition.hasElements") !== "true"
+      || taleoClassicHiddenValue(html, "listRequisition.isEmpty") !== "false") {
+      throw new Error("Enterprise Products Taleo board returned invalid catalog metadata.");
+    }
+    const values = taleoClassicFillListStringArray(
+      html,
+      "requisitionListInterface",
+      "listRequisition",
+      37_000,
+    );
+    if (!values || values.length !== total * 37) {
+      throw new Error("Enterprise Products Taleo board returned an incomplete requisition array.");
+    }
+
+    const jobs: CrawledJob[] = [];
+    for (let index = 0; index < total; index += 1) {
+      const row = values.slice(index * 37, (index + 1) * 37);
+      const externalId = row[3]?.trim();
+      const requisitionId = row[4]?.trim();
+      const rawTitle = row[5];
+      const title = taleoClassicPlainText(rawTitle);
+      const locations = enterpriseProductsLocations(row[9] ?? "");
+      const sourcePostedText = taleoClassicPlainText(row[15]);
+      const repeatedIds = [row[6], row[8], row[18], row[22], row[25], row[33]];
+      if (!externalId || !/^\d{3,12}$/.test(externalId) || !requisitionId || !/^[A-Z0-9]{6}$/.test(requisitionId)
+        || !title || !rawTitle || taleoClassicPlainText(row[7]) !== title || !locations || !sourcePostedText
+        || row[16] !== "Apply" || row[17] !== `Apply for this position (${rawTitle})`
+        || row[20] !== "Re-apply" || row[21] !== "Re-apply for this job"
+        || row[31] !== "Add to My Job Cart" || row[32] !== `Add this position to the job cart: ${rawTitle}`
+        || repeatedIds.some((value) => value !== externalId)
+        || !row[28]?.startsWith("Submission for the position:")
+        || !row[28]?.endsWith(`(Job Number: ${requisitionId})`)) {
+        throw new Error("Enterprise Products Taleo board returned a malformed requisition identity.");
+      }
+      const officialUrl = new URL("https://epco.taleo.net/careersection/alljobs/jobdetail.ftl");
+      officialUrl.searchParams.set("job", requisitionId);
+      officialUrl.searchParams.set("lang", "en");
+      const programs = classifyJobPrograms(title).keys;
+      jobs.push({
+        externalId,
+        requisitionId,
+        title,
+        company: source.company,
+        location: locations.map(({ location }) => location).join("; "),
+        locationCity: locations[0].city,
+        locationState: locations[0].state,
+        locationCountry: "United States",
+        ...(locations.length > 1 ? { secondaryLocations: locations.slice(1).map(({ location }) => location) } : {}),
+        arrangement: /\bremote\b/i.test(`${title} ${row[9]}`) ? "remote" : "unknown",
+        employmentType: programs.includes("coop") ? "Co-op"
+          : programs.includes("internship") ? "Internship" : null,
+        summary: null,
+        sourcePostedText,
+        publishedAt: normalizedUsDate(sourcePostedText),
+        rawPayload: { taleoInternalJobId: externalId, taleoContestNo: requisitionId },
+        officialUrl: officialUrl.href,
+      });
+    }
+    if (jobs.length !== total
+      || new Set(jobs.map(({ externalId }) => externalId)).size !== total
+      || new Set(jobs.map(({ requisitionId }) => requisitionId)).size !== total
+      || new Set(jobs.map(({ officialUrl }) => officialUrl)).size !== total) {
+      throw new Error("Enterprise Products Taleo board returned duplicate or missing requisitions.");
+    }
+    return {
+      status: "succeeded",
+      responseStatus: listingResponse.status,
+      completeListing: true,
+      jobs,
+      resolvedListingUrl: ENTERPRISE_PRODUCTS_TALEO_LISTING_URL,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: isBlockedHttpStatus(failureStatus ?? responseStatus) ? "blocked" : "failed",
+      responseStatus: failureStatus ?? responseStatus,
+      completeListing: false,
+      jobs: [],
+      resolvedListingUrl: ENTERPRISE_PRODUCTS_TALEO_LISTING_URL,
+      error: error instanceof Error ? error.message : "Unknown Enterprise Products Taleo crawler error.",
+    };
   }
 };
 
@@ -18763,6 +18961,9 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-806") {
     return crawlEnergyTransferSelectMinds(source, fetcher);
+  }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-807") {
+    return crawlEnterpriseProductsTaleo(source, fetcher);
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p4-0423-dynatrace") {
     return crawlDynatraceCoveo(source, fetcher);

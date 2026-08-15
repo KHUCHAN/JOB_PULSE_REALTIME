@@ -12199,6 +12199,99 @@ We are an equal opportunity employer.`;
     }));
   });
 
+  it("collects Enterprise Products' complete official U.S. Taleo catalog", async () => {
+    const corporateUrl = "https://www.enterpriseproducts.com/careers/job-openings/";
+    const officialBoardUrl = "https://epco.taleo.net/careersection/alljobs/jobsearch.ftl?lang=en&radiusType=K&location=101372523&searchExpanded=false&radius=1";
+    const listingUrl = "https://epco.taleo.net/careersection/alljobs/jobsearch.ftl?lang=en&location=101372523&radius=1&radiusType=K&searchExpanded=false&dropListSize=1000";
+    const row = (externalId: string, requisitionId: string, rawTitle: string, location: string, posted: string) => [
+      "false", "false", "false", externalId, requisitionId, rawTitle, externalId, rawTitle, externalId,
+      location, "false", "", "", "", "", posted, "Apply", `Apply for this position (${rawTitle})`,
+      externalId, "true", "Re-apply", "Re-apply for this job", externalId, "false", "false", externalId,
+      "false", "false", `Submission for the position: ${rawTitle} - (Job Number: ${requisitionId})`,
+      "false", "true", "Add to My Job Cart", `Add this position to the job cart: ${rawTitle}`,
+      externalId, "false", "true", "false",
+    ];
+    const values = [
+      ...row("386032", "000H15", "Engineer, Project (I%26E)", "USA-Texas-Houston", "Aug 12, 2026"),
+      ...row("379288", "000GEK", "Summer Data Intern", "USA-New Mexico-Carlsbad, USA-New Mexico-Jal", "Mar 16, 2026"),
+    ];
+    const listingHtml = `<input name="listRequisition.nbElements" value="2">
+      <input name="listRequisition.hasElements" value="true"><input name="listRequisition.size" value="1000">
+      <input name="listRequisition.isEmpty" value="false">
+      <script>api.fillList('requisitionListInterface', 'listRequisition', ${JSON.stringify(values)});</script>`;
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "legacy-row-807",
+      company: "Enterprise Products Partners",
+      postingUrl: "https://www.enterpriseproducts.com/careers",
+      adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === corporateUrl) return new Response(`<a href="${officialBoardUrl}">View Job Openings</a>`);
+      if (url === listingUrl) return new Response(listingHtml);
+      return new Response("unexpected", { status: 404 });
+    }, new Date("2026-08-15T18:00:00Z"));
+
+    expect(requests).toEqual([corporateUrl, listingUrl]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      responseStatus: 200,
+      completeListing: true,
+      resolvedListingUrl: listingUrl,
+      error: null,
+    }));
+    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "386032",
+      requisitionId: "000H15",
+      title: "Engineer, Project (I&E)",
+      location: "Houston, Texas, United States",
+      locationCity: "Houston",
+      locationState: "Texas",
+      locationCountry: "United States",
+      sourcePostedText: "Aug 12, 2026",
+      officialUrl: "https://epco.taleo.net/careersection/alljobs/jobdetail.ftl?job=000H15&lang=en",
+    }));
+    expect(result.jobs[1]).toEqual(expect.objectContaining({
+      title: "Summer Data Intern",
+      employmentType: "Internship",
+      location: "Carlsbad, New Mexico, United States; Jal, New Mexico, United States",
+      secondaryLocations: ["Jal, New Mexico, United States"],
+    }));
+  });
+
+  it("fails Enterprise Products closed when Taleo returns duplicate requisitions", async () => {
+    const corporateUrl = "https://www.enterpriseproducts.com/careers/job-openings/";
+    const officialBoardUrl = "https://epco.taleo.net/careersection/alljobs/jobsearch.ftl?lang=en&radiusType=K&location=101372523&searchExpanded=false&radius=1";
+    const listingUrl = "https://epco.taleo.net/careersection/alljobs/jobsearch.ftl?lang=en&location=101372523&radius=1&radiusType=K&searchExpanded=false&dropListSize=1000";
+    const row = [
+      "false", "false", "false", "386032", "000H15", "Data Analyst", "386032", "Data Analyst", "386032",
+      "USA-Texas-Houston", "false", "", "", "", "", "Aug 12, 2026", "Apply",
+      "Apply for this position (Data Analyst)", "386032", "true", "Re-apply", "Re-apply for this job", "386032",
+      "false", "false", "386032", "false", "false",
+      "Submission for the position: Data Analyst - (Job Number: 000H15)", "false", "true", "Add to My Job Cart",
+      "Add this position to the job cart: Data Analyst", "386032", "false", "true", "false",
+    ];
+    const html = `<input name="listRequisition.nbElements" value="2">
+      <input name="listRequisition.hasElements" value="true"><input name="listRequisition.size" value="1000">
+      <input name="listRequisition.isEmpty" value="false">
+      <script>api.fillList('requisitionListInterface', 'listRequisition', ${JSON.stringify([...row, ...row])});</script>`;
+    const result = await crawlSource({
+      id: "legacy-row-807", company: "Enterprise Products Partners",
+      postingUrl: "https://www.enterpriseproducts.com/careers", adapter: "custom",
+    }, async (input) => String(input) === corporateUrl
+      ? new Response(`<a href="${officialBoardUrl}">View Job Openings</a>`)
+      : String(input) === listingUrl ? new Response(html) : new Response("unexpected", { status: 404 }), new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed",
+      completeListing: false,
+      jobs: [],
+      error: "Enterprise Products Taleo board returned duplicate or missing requisitions.",
+    }));
+  });
+
   it("collects Cincinnati Financial's stable Taleo catalog and rotates rich-detail hydration", async () => {
     const corporateUrl = "https://www.cinfin.com/cincinnati-insurance-careers/openings";
     const boardUrl = "https://cinfin.taleo.net/careersection/ex/jobsearch.ftl?lang=en";
