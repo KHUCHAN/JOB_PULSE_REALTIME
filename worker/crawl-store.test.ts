@@ -61,7 +61,8 @@ describe("D1CrawlStore enriched job persistence", () => {
   const fakeDb = (options: {
     duplicateFacetConstraint?: boolean;
     failFacetInsert?: boolean;
-    existingJobs?: Array<{ id: string; external_id: string | null; title: string; official_url: string; status: string; resume_match_hash: string | null }>;
+    source?: { company: string; posting_url: string };
+    existingJobs?: Array<{ id: string; external_id: string | null; requisition_id?: string | null; title: string; official_url: string; status: string; resume_match_hash: string | null }>;
   } = {}) => {
     const calls: Array<{ sql: string; values: unknown[] }> = [];
     const db = {
@@ -71,7 +72,9 @@ describe("D1CrawlStore enriched job persistence", () => {
             calls.push({ sql, values });
             return {
               all: async () => ({
-                results: sql.includes("SELECT id, external_id, title, official_url, status, resume_match_hash")
+                results: sql.includes("SELECT company, posting_url FROM sources")
+                  ? options.source ? [options.source] : []
+                  : sql.includes("SELECT id, external_id, requisition_id, title, official_url, status, resume_match_hash")
                   ? options.existingJobs ?? []
                   : [],
               }),
@@ -160,6 +163,64 @@ describe("D1CrawlStore enriched job persistence", () => {
       id: "job-42",
       officialUrl: "https://acme.wd5.myworkdayjobs.com/Careers/job/Role_REQ-42",
     }]);
+  });
+
+  it("closes an ATS mirror when the first-party listing resolves the same requisition", async () => {
+    const title = "Quantitative Finance Associate Summer Internship Program 2027 New York";
+    const listingUrl = "https://search.jobs.barclays/job/new-york/quantitative-finance-associate-summer-internship-program-2027-new-york/13015/99217260160";
+    const { db, calls } = fakeDb({
+      source: { company: "Barclays US", posting_url: "https://search.jobs.barclays/search-jobs" },
+      existingJobs: [{
+        id: "listing-job",
+        external_id: "99217260160",
+        requisition_id: "JR-0000128099",
+        title,
+        official_url: listingUrl,
+        status: "open",
+        resume_match_hash: null,
+      }, {
+        id: "workday-mirror",
+        external_id: "JR-0000128099",
+        requisition_id: null,
+        title,
+        official_url: "https://barclays.wd3.myworkdayjobs.com/External_Career_Site_Barclays/job/New-York/Role_JR-0000128099",
+        status: "open",
+        resume_match_hash: null,
+      }],
+    });
+    const store = new D1CrawlStore(db);
+
+    const result = await store.syncJobs("p4-0225-barclays-us", [{
+      externalId: "99217260160",
+      requisitionId: "JR-0000128099",
+      title,
+      company: "Barclays US",
+      location: "New York, NY",
+      arrangement: "onsite",
+      employmentType: "Internship",
+      summary: "Quantitative analytics and software engineering.",
+      officialUrl: listingUrl,
+      publishedAt: "2026-08-14T00:00:00.000Z",
+    }, {
+      externalId: "JR-0000128099",
+      title,
+      company: "Barclays US",
+      location: "New York, NY",
+      arrangement: "onsite",
+      employmentType: "Internship",
+      summary: "JR-0000128099",
+      officialUrl: "https://barclays.wd3.myworkdayjobs.com/External_Career_Site_Barclays/job/New-York/Role_JR-0000128099",
+      publishedAt: "2026-08-14T00:00:00.000Z",
+    }], true);
+
+    const mirrorClose = calls.find((call) => call.sql.includes("id IN (SELECT value FROM json_each(?))"));
+    expect(mirrorClose).toBeDefined();
+    expect(JSON.parse(String(mirrorClose?.values[2]))).toEqual(["workday-mirror"]);
+    const inserted = calls.find((call) => call.sql.includes("INSERT INTO jobs"));
+    expect(JSON.parse(String(inserted?.values[0]))).toEqual([
+      expect.objectContaining({ officialUrl: listingUrl }),
+    ]);
+    expect(result.closed).toBe(1);
   });
 
   it("changes the resume evaluation hash when company or posting date changes", async () => {

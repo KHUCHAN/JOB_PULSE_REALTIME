@@ -13201,15 +13201,27 @@ const enrichProgramJobDetails = async (
     const candidates = workdayDetailCandidates(job.officialUrl);
     return [{ index, candidates }];
   });
-  const enrichmentStart = targets.length === 0
+  // Catalogs are normally newest-first. Always enrich the first half of the
+  // bounded detail budget so a newly published internship gets its ATS
+  // requisition/apply identity during the same crawl (and can be deduplicated
+  // against an ATS mirror). Rotate the remainder so older sparse records still
+  // converge over subsequent two-hour passes.
+  const prioritizedCount = Math.min(Math.ceil(WORKDAY_DETAIL_BATCH_SIZE / 2), targets.length);
+  const prioritizedTargets = targets.slice(0, prioritizedCount);
+  const rotatingTargets = targets.slice(prioritizedCount);
+  const rotatingBudget = WORKDAY_DETAIL_BATCH_SIZE - prioritizedTargets.length;
+  const enrichmentStart = rotatingTargets.length === 0
     ? 0
-    : (Math.floor(now.getTime() / (2 * 60 * 60 * 1_000)) * WORKDAY_DETAIL_BATCH_SIZE) % targets.length;
+    : (Math.floor(now.getTime() / (2 * 60 * 60 * 1_000)) * Math.max(1, rotatingBudget)) % rotatingTargets.length;
   const selectedTargets = targets.length <= WORKDAY_DETAIL_BATCH_SIZE
     ? targets
-    : Array.from(
-        { length: WORKDAY_DETAIL_BATCH_SIZE },
-        (_, offset) => targets[(enrichmentStart + offset) % targets.length],
-      );
+    : [
+        ...prioritizedTargets,
+        ...Array.from(
+          { length: rotatingBudget },
+          (_, offset) => rotatingTargets[(enrichmentStart + offset) % rotatingTargets.length],
+        ),
+      ];
 
   const enrichOne = async ({ index, candidates }: { index: number; candidates: string[] }): Promise<void> => {
     const job = enriched[index];

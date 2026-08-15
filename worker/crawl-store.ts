@@ -19,6 +19,7 @@ type SourceRow = {
 type ExistingJobRow = {
   id: string;
   external_id: string | null;
+  requisition_id: string | null;
   title: string;
   official_url: string;
   status: "open" | "closed";
@@ -34,6 +35,57 @@ type PagedCrawlState = {
 };
 
 const pagedCrawlStateKey = (sourceId: string): string => `crawl_page_checkpoint:${sourceId}`;
+
+const mirrorIdentity = (value: unknown): string | null => {
+  if (typeof value !== "string") return null;
+  const normalized = value.normalize("NFKC").trim().toLocaleLowerCase();
+  return normalized || null;
+};
+
+const mirrorTitle = (value: string): string => value.normalize("NFKC")
+  .toLocaleLowerCase()
+  .replace(/[^\p{L}\p{N}]+/gu, " ")
+  .replace(/\s+/g, " ")
+  .trim();
+
+const firstPartyMirrorUrls = (jobs: CrawledJob[], postingUrl: string | null): Map<string, string> => {
+  let sourceOrigin: string | null = null;
+  try {
+    sourceOrigin = postingUrl ? new URL(postingUrl).origin : null;
+  } catch {
+    sourceOrigin = null;
+  }
+  if (!sourceOrigin) return new Map();
+  const urls = new Map<string, string>();
+  for (const job of jobs) {
+    try {
+      if (new URL(job.officialUrl).origin !== sourceOrigin) continue;
+    } catch {
+      continue;
+    }
+    const title = mirrorTitle(job.title);
+    for (const identity of new Set([
+      mirrorIdentity(job.externalId),
+      mirrorIdentity(job.requisitionId),
+    ].filter((value): value is string => Boolean(value)))) {
+      const key = `${title}\u0000${identity}`;
+      if (!urls.has(key)) urls.set(key, job.officialUrl);
+    }
+  }
+  return urls;
+};
+
+const withoutIncomingAtsMirrors = (jobs: CrawledJob[], postingUrl: string | null): CrawledJob[] => {
+  const preferredUrls = firstPartyMirrorUrls(jobs, postingUrl);
+  if (preferredUrls.size === 0) return jobs;
+  return jobs.filter((job) => {
+    const title = mirrorTitle(job.title);
+    const identities = [mirrorIdentity(job.externalId), mirrorIdentity(job.requisitionId)]
+      .filter((value): value is string => Boolean(value));
+    const canonicalUrls = identities.flatMap((identity) => preferredUrls.get(`${title}\u0000${identity}`) ?? []);
+    return canonicalUrls.length === 0 || canonicalUrls.includes(job.officialUrl);
+  });
+};
 
 const isNavigationArtifact = (job: ExistingJobRow): boolean => {
   const title = job.title.replace(/\s+/g, " ").trim();
@@ -354,8 +406,10 @@ export class D1CrawlStore implements CrawlStore {
       SELECT company, posting_url FROM sources WHERE id = ? LIMIT 1
     `).bind(sourceId).all<{ company: string; posting_url: string }>();
     const source = sourceResult.results[0] ?? { company: null, posting_url: null };
+    jobs = withoutIncomingAtsMirrors(jobs, source.posting_url);
     const existingResult = await this.db.prepare(`
-      SELECT id, external_id, title, official_url, status, resume_match_hash FROM jobs WHERE source_id = ?
+      SELECT id, external_id, requisition_id, title, official_url, status, resume_match_hash
+      FROM jobs WHERE source_id = ?
     `).bind(sourceId).all<ExistingJobRow>();
     const canonicalProtocolUrl = (value: string): string => {
       try {
@@ -373,12 +427,23 @@ export class D1CrawlStore implements CrawlStore {
     const existingByExternalId = new Map(existingResult.results.flatMap((row) =>
       row.external_id ? [[row.external_id, row] as const] : [],
     ));
+    const existingByMirrorIdentity = new Map<string, ExistingJobRow[]>();
+    for (const row of existingResult.results) {
+      for (const identity of new Set([
+        mirrorIdentity(row.external_id),
+        mirrorIdentity(row.requisition_id),
+      ].filter((value): value is string => Boolean(value)))) {
+        const matches = existingByMirrorIdentity.get(identity) ?? [];
+        matches.push(row);
+        existingByMirrorIdentity.set(identity, matches);
+      }
+    }
     const existingUrls = new Set(existingResult.results
       .filter((row) => row.status === "open")
       .map((row) => row.official_url));
     const visibleUrls = new Set(jobs.map((job) => job.officialUrl));
     const canonicalVisibleUrls = new Set([...visibleUrls].map(canonicalProtocolUrl));
-    const protocolDuplicateIds = new Set(existingResult.results
+    const duplicateJobIds = new Set(existingResult.results
       .filter((row) => row.status === "open")
       .filter((row) => row.official_url !== canonicalProtocolUrl(row.official_url))
       .filter((row) => canonicalVisibleUrls.has(canonicalProtocolUrl(row.official_url)))
@@ -488,11 +553,39 @@ export class D1CrawlStore implements CrawlStore {
       const records = await Promise.all(jobsChunk.map(recordFor));
       const urlRepairs = records.flatMap((record) => {
         const externalId = typeof record.externalId === "string" ? record.externalId : null;
+        const requisitionId = typeof record.requisitionId === "string" ? record.requisitionId : null;
         const officialUrl = String(record.officialUrl);
-        const existing = externalId ? existingByExternalId.get(externalId) : null;
-        return existing && existing.official_url !== officialUrl && !existingByUrl.has(officialUrl)
-          ? [{ id: existing.id, officialUrl }]
+        const recordTitle = mirrorTitle(String(record.title));
+        const isFirstPartyListing = (() => {
+          try {
+            return Boolean(source.posting_url
+              && new URL(officialUrl).origin === new URL(source.posting_url).origin);
+          } catch {
+            return false;
+          }
+        })();
+        const identityMatches = isFirstPartyListing
+          ? [...new Set([mirrorIdentity(externalId), mirrorIdentity(requisitionId)]
+            .filter((value): value is string => Boolean(value))
+            .flatMap((identity) => existingByMirrorIdentity.get(identity) ?? []))]
+            .filter((row) => mirrorTitle(row.title) === recordTitle)
           : [];
+        const existingTarget = existingByUrl.get(officialUrl);
+        if (existingTarget) {
+          for (const mirror of identityMatches) {
+            if (mirror.id !== existingTarget.id && mirror.official_url !== officialUrl && mirror.status === "open") {
+              duplicateJobIds.add(mirror.id);
+            }
+          }
+          return [];
+        }
+        const exactExternal = externalId ? existingByExternalId.get(externalId) : null;
+        const existing = exactExternal ?? identityMatches[0] ?? null;
+        if (!existing || existing.official_url === officialUrl) return [];
+        for (const mirror of identityMatches) {
+          if (mirror.id !== existing.id && mirror.status === "open") duplicateJobIds.add(mirror.id);
+        }
+        return [{ id: existing.id, officialUrl }];
       });
       for (const repairChunk of chunksByJsonBytes(urlRepairs, 1_500_000)) {
         await this.db.prepare(`
@@ -871,20 +964,23 @@ export class D1CrawlStore implements CrawlStore {
       `).bind(sourceId, now, sourceId, facetGeneration).run();
     }
 
-    if (protocolDuplicateIds.size > 0) {
+    if (duplicateJobIds.size > 0) {
       await this.db.prepare(`
         UPDATE jobs
         SET status = 'closed', closed_at = ?, updated_at = CURRENT_TIMESTAMP
         WHERE source_id = ? AND id IN (SELECT value FROM json_each(?)) AND status = 'open'
-      `).bind(now, sourceId, JSON.stringify([...protocolDuplicateIds])).run();
+      `).bind(now, sourceId, JSON.stringify([...duplicateJobIds])).run();
     }
 
     const artifactUrls = existingResult.results
       .filter((row) => row.status === "open" && isNavigationArtifact(row) && !visibleUrls.has(row.official_url))
       .map((row) => row.official_url);
+    const identityDuplicateUrls = new Set(existingResult.results
+      .filter((row) => duplicateJobIds.has(row.id))
+      .map((row) => row.official_url));
     const closedUrls = [...new Set(completeListing
       ? [...existingUrls].filter((url) => !visibleUrls.has(url))
-      : artifactUrls)];
+      : artifactUrls)].filter((url) => !identityDuplicateUrls.has(url));
     for (const urlsChunk of chunksByJsonBytes(closedUrls, 1_500_000)) {
       await this.db.prepare(`
         UPDATE jobs
@@ -894,7 +990,7 @@ export class D1CrawlStore implements CrawlStore {
     }
 
     const created = jobs.filter((job) => !existingByUrl.has(job.officialUrl)).length;
-    return { created, updated: jobs.length - created, closed: closedUrls.length + protocolDuplicateIds.size };
+    return { created, updated: jobs.length - created, closed: closedUrls.length + duplicateJobIds.size };
   }
 
   async finishRun(runId: string, values: Record<string, unknown>): Promise<void> {
