@@ -2658,6 +2658,49 @@ Wrong description.
     }));
   });
 
+  it("routes Freeport-McMoRan's corporate page to its official US Eightfold catalog", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "legacy-row-815",
+      company: "Freeport-McMoRan",
+      postingUrl: "https://www.fcx.com/careers",
+      adapter: "custom",
+    }, async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.href);
+      expect(url.pathname).toBe("/api/pcsx/search");
+      expect(url.searchParams.get("domain")).toBe("fcx.com");
+      expect(url.searchParams.get("location")).toBe("United States");
+      return Response.json({ data: {
+        count: 1,
+        positions: [{
+          id: 29880263,
+          name: "Data Science Intern",
+          location: "Phoenix, AZ USA 85040",
+          atsJobId: "145500",
+          positionUrl: "/careers/job/29880263",
+          type: "Internship",
+          department: "Information Systems",
+        }],
+      } });
+    }, new Date());
+
+    expect(requests).toEqual([
+      "https://talent.fmjobs.com/api/pcsx/search?domain=fcx.com&query=&location=United+States&start=0",
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://talent.fmjobs.com/careers?domain=fcx.com&query=*",
+      jobs: [expect.objectContaining({
+        externalId: "145500",
+        title: "Data Science Intern",
+        location: "Phoenix, AZ USA 85040",
+        officialUrl: "https://talent.fmjobs.com/careers/job/29880263",
+      })],
+    }));
+  });
+
   it("routes PayPal's corporate careers home to its official Eightfold job feed", async () => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input) => {
@@ -8512,6 +8555,13 @@ Wrong description.
       postingUrl: "https://vantor.com/careers/",
       endpoint: "https://maxar.wd1.myworkdayjobs.com/wday/cxs/maxar/Vantor/jobs",
       listingUrl: "https://maxar.wd1.myworkdayjobs.com/Vantor",
+    },
+    {
+      id: "p2-0135-nationwide",
+      company: "Nationwide",
+      postingUrl: "https://www.nationwide.com/personal/about-us/careers/explore/",
+      endpoint: "https://nationwide.wd1.myworkdayjobs.com/wday/cxs/nationwide/Nationwide_Career/jobs",
+      listingUrl: "https://nationwide.wd1.myworkdayjobs.com/Nationwide_Career",
     },
   ])("uses the verified Workday feed for $company without probing its landing page", async ({
     id, company, postingUrl, endpoint, listingUrl,

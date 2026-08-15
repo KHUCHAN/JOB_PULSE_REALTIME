@@ -255,6 +255,7 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
   "legacy-row-124", // Ulta Beauty
   "legacy-row-129", // Williams-Sonoma
   "legacy-row-813", // Fluor
+  "legacy-row-815", // Freeport-McMoRan
   "legacy-row-777", // Ace Hardware
   "legacy-row-780", // Albertsons
   "legacy-row-792", // Builders FirstSource
@@ -268,6 +269,7 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
   "legacy-row-879", // VF
   "p2-0067-wells-fargo",
   "p2-0098-discover",
+  "p2-0135-nationwide",
   "p4-0223-bae-systems",
   "p4-0231-bny-mellon",
   "p4-0263-edward-jones",
@@ -348,6 +350,10 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
     listingUrl: "https://careers.fluor.com/careers?domain=fluor.com",
     adapter: "custom",
   },
+  "legacy-row-815": {
+    listingUrl: "https://talent.fmjobs.com/careers?domain=fcx.com&query=*",
+    adapter: "custom",
+  },
   "p2-0050-morgan-stanley": {
     listingUrl: "https://morganstanley.eightfold.ai/careers?domain=morganstanley.com",
     adapter: "custom",
@@ -386,6 +392,11 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
   "p5-0860-coherent": { listingUrl: "https://hcwp.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/jobs", adapter: "custom" },
   "p5-0589-electronic-arts": { listingUrl: "https://jobs.ea.com/en_US/careers/SearchJobs", adapter: "custom" },
   "p2-0048-metlife": { listingUrl: "https://www.metlifecareers.com/en_US/ml/SearchJobs", adapter: "custom" },
+  "p2-0135-nationwide": {
+    discovered: { kind: "workday", endpoint: "https://nationwide.wd1.myworkdayjobs.com/wday/cxs/nationwide/Nationwide_Career/jobs" },
+    listingUrl: "https://nationwide.wd1.myworkdayjobs.com/Nationwide_Career",
+    adapter: "workday",
+  },
   "legacy-row-823": { listingUrl: "https://fa-exty-saasfaprod1.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1", adapter: "custom" },
   "legacy-row-826": { listingUrl: "https://jobs.dayforcehcm.com/en-US/ibgllc/CANDIDATEPORTAL", adapter: "dayforce" },
   "p4-0470-oliver-wyman": {
