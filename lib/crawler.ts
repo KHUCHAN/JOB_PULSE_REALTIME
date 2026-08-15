@@ -118,7 +118,7 @@ const isEightfoldListingUrl = (value: string): boolean => {
 // checkpoint segments, and changing scope between segments would make stale
 // closure nondeterministic. Unknown and mixed/global roles remain visible so
 // an incomplete location never causes a potentially relevant US role to drop.
-export const LARGE_CATALOG_US_SCOPE_POLICY_VERSION = "large-us-v2";
+export const LARGE_CATALOG_US_SCOPE_POLICY_VERSION = "large-us-v3";
 export const US_SCOPED_LARGE_CATALOGS = new Set([
   "audit-row-319", // Baker Hughes
   "audit-row-359", // FedEx
@@ -220,6 +220,7 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
   "p5-0981-merck",
   "p5-0984-micron-technology",
   "p5-0999-nxp-semiconductors",
+  "p5-1018-penn-medicine",
   "p5-1039-revolut",
   "p5-1041-rippling",
   "p5-1050-samsung-semiconductor",
@@ -413,6 +414,10 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
   },
   "p4-0214-alvarez-marsal": {
     listingUrl: "https://careers.alvarezandmarsal.com/en/search/jobs/in/country/united-states",
+    adapter: "custom",
+  },
+  "p5-1018-penn-medicine": {
+    listingUrl: "https://careers.pennmedicine.org/search/jobs/in/country/united-states",
     adapter: "custom",
   },
   "p4-0289-hcltech": {
@@ -6831,6 +6836,11 @@ const parseTalemetryPayload = (text: string): TalemetryPayload | null => {
   }
 };
 
+const TALEMETRY_MAP_READER_SOURCES = new Set([
+  "p4-0214-alvarez-marsal",
+  "p5-1018-penn-medicine",
+]);
+
 const crawlTalemetryJson = async (
   source: CrawlSource,
   fetcher: typeof fetch,
@@ -6852,8 +6862,8 @@ const crawlTalemetryJson = async (
   };
   let directUnavailable = false;
   const pageFailures = new Map<number, string>();
-  const fetchAlvarezMapPage = async (page: number): Promise<TalemetryPayload | null> => {
-    if (source.id !== "p4-0214-alvarez-marsal") return null;
+  const fetchMapPage = async (page: number): Promise<TalemetryPayload | null> => {
+    if (!TALEMETRY_MAP_READER_SOURCES.has(source.id)) return null;
     const endpoint = new URL(`${catalogPath}.json`, posting.origin);
     endpoint.pathname = endpoint.pathname.replace(/^\/en\//i, "/");
     // This is the same first-party JSON request made by the public map view.
@@ -6897,13 +6907,13 @@ const crawlTalemetryJson = async (
     }
   };
   const fetchPage = async (page: number, allowReaderRetry = false): Promise<TalemetryPayload | null> => {
-    // The public A&M page uses this compact, country-scoped first-party map
-    // endpoint. Read it first: unlike the ordinary list JSON, it is not
-    // challenged by the careers edge when fetched through the reader, and one
-    // validated request is enough to advance a checkpoint. This also avoids
-    // exhausting the reader's Worker-egress quota on known-bad list variants.
-    if (source.id === "p4-0214-alvarez-marsal") {
-      const mapPage = await fetchAlvarezMapPage(page);
+    // These verified Talemetry tenants expose a compact, country-scoped
+    // first-party map endpoint. Read it first: unlike the ordinary list JSON,
+    // it is not challenged by their careers edges when fetched through the
+    // reader. Every page still has to pass exact count and stable-identity
+    // validation before it can advance a checkpoint.
+    if (TALEMETRY_MAP_READER_SOURCES.has(source.id)) {
+      const mapPage = await fetchMapPage(page);
       if (mapPage) {
         pageFailures.delete(page);
         return mapPage;
@@ -7045,7 +7055,7 @@ const crawlTalemetryJson = async (
     const locationCity = asText(location?.locality) ?? mapCity;
     const locationState = asText(location?.region_abbr) ?? asText(location?.region_full) ?? mapState;
     const locationCountry = asText(location?.country)
-      ?? (mapLocation && source.id === "p4-0214-alvarez-marsal" ? "United States" : null);
+      ?? (mapLocation && source.regionScope === "us" ? "United States" : null);
     const latitude = Number(job.geography?.lat);
     const longitude = Number(job.geography?.lng);
     const officialUrl = new URL(`/jobs/${externalId}-${permalink}`, posting.origin).href;
@@ -20908,6 +20918,100 @@ const fetchBarclaysReaderDetail = async (
   return null;
 };
 
+const pennMedicineReaderDetail = (
+  markdown: string,
+  source: CrawlSource,
+  job: CrawledJob,
+): CrawledJob | null => {
+  let sourceUrl: URL;
+  let jobUrl: URL;
+  try {
+    const sourceText = markdown.match(/^[ \t]*URL Source:\s*(\S+)\s*$/im)?.[1];
+    if (!sourceText) return null;
+    sourceUrl = new URL(sourceText);
+    jobUrl = new URL(job.officialUrl);
+  } catch {
+    return null;
+  }
+  if (source.id !== "p5-1018-penn-medicine"
+    || sourceUrl.protocol !== "https:"
+    || sourceUrl.hostname.toLocaleLowerCase() !== "careers.pennmedicine.org"
+    || jobUrl.hostname.toLocaleLowerCase() !== "careers.pennmedicine.org"
+    || sourceUrl.pathname.replace(/\/$/, "") !== jobUrl.pathname.replace(/\/$/, "")) return null;
+
+  const externalId = jobUrl.pathname.match(/^\/jobs\/(\d+)-[^/?#]+\/?$/i)?.[1] ?? null;
+  if (!externalId || externalId !== job.externalId) return null;
+  const readerTitle = markdown.match(/^[ \t]*Title:\s*(.+?)\s*$/im)?.[1]?.trim() ?? null;
+  const headingTitle = markdown.match(/^[ \t]*##\s+([^\n]+?)\s*$/im)?.[1]?.trim() ?? null;
+  const expectedTitle = jobIdentityText(job.title);
+  const readerIdentities = [readerTitle, headingTitle].map(jobIdentityText).filter(Boolean);
+  const titleMatches = readerIdentities.some((identity) =>
+    identity === expectedTitle
+    || identity.startsWith(`${expectedTitle} in `)
+    || (identity.length >= 12 && (expectedTitle.startsWith(`${identity} `) || identity.startsWith(`${expectedTitle} `))));
+  if (!expectedTitle || !titleMatches) return null;
+
+  const requisitionId = markdown.match(/\*\*Job ID:\*\*\s*([A-Za-z0-9_-]+)/i)?.[1] ?? null;
+  const category = markdown.match(/\*\*Category:\*\*\s*([^\n]+)/i)?.[1]?.trim() ?? null;
+  const workType = markdown.match(/\*\*Work Type:\*\*\s*([^\n]+)/i)?.[1]?.trim() ?? null;
+  const location = markdown.match(/\*\*Location:\*\*\s*([^\n]+)/i)?.[1]?.trim() ?? job.location;
+  const schedule = markdown.match(/\*\*Work Schedule:\*\*\s*([^\n]+)/i)?.[1]?.trim() ?? null;
+  const publishedText = markdown.match(/^[ \t]*Published Time:\s*(\S+)\s*$/im)?.[1] ?? null;
+  const rawDescription = markdown.split(/^[ \t]*\*\*Description\*\*[ \t]*$/im)[1]
+    ?.split(/^[ \t]*(?:\*\*Current UPHS-paid Employees|Live Your Life's Work)/im)[0]
+    ?.trim() ?? null;
+  const description = rawDescription
+    ? rawDescription
+        .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+        .replace(/[*_`#]+/g, " ")
+        .replace(/[ \t]+/g, " ")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim()
+    : null;
+  const employmentType = normalizeEmploymentType(workType)
+    ?? (/^FT\b/i.test(workType ?? "") ? "Full-time"
+      : /^PT\b/i.test(workType ?? "") ? "Part-time"
+        : /\bper diem\b/i.test(workType ?? "") ? "Per diem" : null);
+  const arrangementText = `${location ?? ""} ${schedule ?? ""}`;
+  return {
+    externalId,
+    title: job.title,
+    company: source.company,
+    location,
+    arrangement: /\bremote\b/i.test(arrangementText)
+      ? "remote"
+      : /\bhybrid\b/i.test(arrangementText) ? "hybrid" : job.arrangement,
+    employmentType,
+    summary: description,
+    description,
+    ...(category ? { department: category } : {}),
+    ...(requisitionId ? { requisitionId } : {}),
+    officialUrl: job.officialUrl,
+    sourcePostedText: publishedText,
+    publishedAt: normalizedDate(publishedText),
+  };
+};
+
+const fetchPennMedicineReaderDetail = async (
+  job: CrawledJob,
+  source: CrawlSource,
+  fetcher: typeof fetch,
+): Promise<CrawledJob | null> => {
+  try {
+    const target = new URL(job.officialUrl);
+    const response = await fetchWithTimeout(fetcher, `https://r.jina.ai/${target.href}`, {
+      headers: {
+        accept: "text/plain",
+        "user-agent": "Mozilla/5.0 (compatible; JobPulseCrawler/1.0)",
+        "x-retain-links": "all",
+      },
+    }, false, { attempts: 1, timeoutMs: 8_000 });
+    return response.ok ? pennMedicineReaderDetail(await response.text(), source, job) : null;
+  } catch {
+    return null;
+  }
+};
+
 const fetchBarclaysWorkdayDetail = async (
   job: CrawledJob,
   source: CrawlSource,
@@ -21027,6 +21131,13 @@ const enrichProgramJobDetails = async (
     const isBarclaysDetail = (() => {
       try {
         return new URL(job.officialUrl).hostname.toLocaleLowerCase() === "search.jobs.barclays";
+      } catch {
+        return false;
+      }
+    })();
+    const isPennMedicineDetail = source.id === "p5-1018-penn-medicine" && (() => {
+      try {
+        return new URL(job.officialUrl).hostname.toLocaleLowerCase() === "careers.pennmedicine.org";
       } catch {
         return false;
       }
@@ -21157,6 +21268,11 @@ const enrichProgramJobDetails = async (
         enriched[index] = mergeProgramJobDetail(job, workdayDetail.detail, workdayDetail.applyUrl);
         return;
       }
+    }
+    if (isPennMedicineDetail) {
+      const reader = await fetchPennMedicineReaderDetail(job, source, fetcher);
+      if (reader) enriched[index] = mergeProgramJobDetail(job, reader);
+      return;
     }
     const supportsStandardCharteredDetail = (() => {
       try {

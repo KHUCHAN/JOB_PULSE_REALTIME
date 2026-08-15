@@ -4774,6 +4774,156 @@ HUMAN RESOURCES Posted Date
     expect(requests).toContain("https://r.jina.ai/https://careers.acme.example/search/jobs.json?per_page=100&page=2");
   });
 
+  it("recovers Penn Medicine's US catalog from its compact Talemetry map feed and enriches internship details", async () => {
+    const requests: string[] = [];
+    const listingUrl = "https://careers.pennmedicine.org/search/jobs/in/country/united-states";
+    const mapUrl = `https://r.jina.ai/${listingUrl}.json?data_format=map&per_page=100&page=1`;
+    const internUrl = "https://careers.pennmedicine.org/jobs/18130001-data-science-intern";
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === listingUrl) return new Response("blocked", { status: 403 });
+      if (url === mapUrl) {
+        return new Response(`Title:\n\nMarkdown Content:\n${JSON.stringify({
+          current_page: 1,
+          per_page: 100,
+          total_entries: 2,
+          entries: [
+            {
+              id: "18130001",
+              title: "Data Science Intern",
+              permalink: "data-science-intern",
+              location_string: "3535 Market Street, Philadelphia, PA",
+              geography: { lat: "39.9567", lng: "-75.1929" },
+            },
+            {
+              id: "18130002",
+              title: "Software Engineer",
+              permalink: "software-engineer",
+              location_string: "145 King of Prussia Rd, Radnor, PA",
+              geography: { lat: "40.0397", lng: "-75.3546" },
+            },
+          ],
+        })}`);
+      }
+      if (url === `https://r.jina.ai/${internUrl}`) {
+        return new Response(`Title: Data Science Intern
+
+URL Source: ${internUrl}
+
+Published Time: 2026-08-14T21:06:28+00:00
+
+Markdown Content:
+## Data Science Intern
+
+**Job ID:** 337777
+
+**Category:** Information Services/Technology/Service Desk/Telecom
+
+**Work Type:** FT
+
+**Location:** Philadelphia, PA, United States
+
+**Work Schedule:** Hybrid
+
+**Description**
+
+Build production machine-learning systems and analyze clinical data.
+
+Live Your Life's Work`);
+      }
+      return new Response("unexpected", { status: 500 });
+    };
+
+    const result = await crawlSource({
+      id: "p5-1018-penn-medicine",
+      company: "Penn Medicine (UPHS)",
+      postingUrl: "https://careers.pennmedicine.org/search/jobs",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-15T23:00:00.000Z"));
+
+    expect(requests).toEqual([listingUrl, mapUrl, `https://r.jina.ai/${internUrl}`]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: listingUrl,
+    }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        externalId: "18130001",
+        title: "Data Science Intern",
+        location: "Philadelphia, PA, United States",
+        locationCity: "Philadelphia",
+        locationState: "PA",
+        locationCountry: "United States",
+        arrangement: "hybrid",
+        employmentType: "Internship; Full-time",
+        department: "Information Services/Technology/Service Desk/Telecom",
+        requisitionId: "337777",
+        description: "Build production machine-learning systems and analyze clinical data.",
+        publishedAt: "2026-08-14T21:06:28.000Z",
+        officialUrl: internUrl,
+      }),
+      expect.objectContaining({
+        externalId: "18130002",
+        title: "Software Engineer",
+        locationCountry: "United States",
+      }),
+    ]);
+  });
+
+  it("does not merge a Penn Medicine reader detail with the wrong official URL identity", async () => {
+    const listingUrl = "https://careers.pennmedicine.org/search/jobs/in/country/united-states";
+    const jobUrl = "https://careers.pennmedicine.org/jobs/18130001-data-science-intern";
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url === listingUrl) return new Response("blocked", { status: 403 });
+      if (url.includes("data_format=map")) {
+        return Response.json({
+          current_page: 1,
+          per_page: 100,
+          total_entries: 1,
+          entries: [{
+            id: "18130001",
+            title: "Data Science Intern",
+            permalink: "data-science-intern",
+            location_string: "3535 Market Street, Philadelphia, PA",
+          }],
+        });
+      }
+      if (url === `https://r.jina.ai/${jobUrl}`) {
+        return new Response(`Title: Data Science Intern in Philadelphia, PA, United States
+
+URL Source: https://careers.pennmedicine.org/jobs/99999999-different-role
+
+Published Time: 2026-08-14T21:06:28+00:00
+
+Markdown Content:
+**Job ID:** 337777
+
+**Description**
+
+Wrong posting body.`);
+      }
+      return new Response("unexpected", { status: 500 });
+    };
+
+    const result = await crawlSource({
+      id: "p5-1018-penn-medicine",
+      company: "Penn Medicine (UPHS)",
+      postingUrl: "https://careers.pennmedicine.org/search/jobs",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-15T23:00:00.000Z"));
+
+    expect(result.status).toBe("succeeded");
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "18130001",
+      officialUrl: jobUrl,
+    })]);
+    expect(result.jobs[0]).not.toHaveProperty("description");
+    expect(result.jobs[0]).not.toHaveProperty("requisitionId");
+  });
+
   it("retries the first Talemetry reader page of a resumed checkpoint", async () => {
     let resumedPageAttempts = 0;
     const entries = (page: number) => Array.from({ length: 100 }, (_, index) => ({

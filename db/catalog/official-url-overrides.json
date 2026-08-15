@@ -302,7 +302,7 @@
     "legacy-row-862": { "url": "https://myjobs.adp.com/sempra/cx", "adapter": "custom" },
     "p4-0331-progressive": { "url": "https://careers.progressive.com/search/jobs", "adapter": "custom" },
     "p5-1028-progressive-insurance": { "url": "https://careers.progressive.com/search/jobs", "adapter": "custom" },
-    "p5-1018-penn-medicine": { "url": "https://careers.pennmedicine.org/search/jobs", "adapter": "custom" },
+    "p5-1018-penn-medicine": { "url": "https://careers.pennmedicine.org/search/jobs/in/country/united-states", "adapter": "custom" },
     "legacy-row-794": { "url": "https://www.cdwjobs.com/search/jobs", "adapter": "custom" },
     "p5-0575-citadel": { "url": "https://www.citadel.com/careers/open-opportunities/", "adapter": "custom" },
     "p4-0224-bain-company-ai-insights-solutions": { "url": "https://www.bain.com/careers/find-a-role/", "adapter": "custom" },

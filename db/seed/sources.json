@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:84c2ec544093eb8c82550553d177637986ebd1fc0852331b157dde6af030dfeb",
+  "version": "v2:sha256:052c25911cde0d7f0073f90cfca4d998ffc28ad8742cbfa16b0082fc319375e0",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -7011,7 +7011,7 @@
       "id": "p5-1018-penn-medicine",
       "masterRow": 2023,
       "company": "Penn Medicine (UPHS)",
-      "postingUrl": "https://careers.pennmedicine.org/search/jobs",
+      "postingUrl": "https://careers.pennmedicine.org/search/jobs/in/country/united-states",
       "talentUrl": "https://careers.pennmedicine.org/",
       "channel": "Embedded Talent Network + Job Alerts",
       "adapter": "custom",
