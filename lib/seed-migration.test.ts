@@ -182,21 +182,39 @@ describe("large catalog US scope migration", () => {
     expect(sqlite.prepare("SELECT value FROM catalog_state WHERE key = 'crawler_scope_policy'").get()).toEqual({ value: "large-us-v2" });
   });
 
-  it("chains the immutable scope snapshot through the subsequent catalog refresh", () => {
+  it("chains the immutable scope snapshot through the catalog refresh and requeue", () => {
     const previous = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0099_snapshot.json"), "utf8"));
     const current = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0100_snapshot.json"), "utf8"));
     const refreshed = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0101_snapshot.json"), "utf8"));
+    const requeued = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0102_snapshot.json"), "utf8"));
     const currentJournal = JSON.parse(readFileSync(resolve(drizzlePath, "meta/_journal.json"), "utf8"));
 
     expect(current.prevId).toBe(previous.id);
     expect(refreshed.prevId).toBe(current.id);
+    expect(requeued.prevId).toBe(refreshed.id);
     expect(currentJournal.entries.find((entry: { tag: string }) => entry.tag === "0100_large_catalog_us_scope")).toMatchObject({
       idx: 100,
       tag: "0100_large_catalog_us_scope",
     });
     expect(currentJournal.entries.at(-1)).toMatchObject({
-      idx: 101,
-      tag: "0101_refresh_sources_20260815124833",
+      idx: 102,
+      tag: "0102_requeue_recovered_sources",
     });
+  });
+
+  it("requeues every repaired source for the server-owned batch", () => {
+    const sql = readFileSync(resolve(drizzlePath, "0102_requeue_recovered_sources.sql"), "utf8");
+    const sourceIds = [...sql.matchAll(/'(p\d-[^']+|audit-row-\d+)'/g)].map((match) => match[1]);
+
+    expect(sourceIds).toEqual([
+      "p2-0076-ameriprise-financial",
+      "audit-row-536",
+      "p2-0103-fbi",
+      "p4-0268-fbi-los-angeles-field-office",
+      "p5-0722-saic",
+      "p5-0728-siemens-healthineers",
+      "p5-1039-revolut",
+    ]);
+    expect(sql).toContain("SET `next_crawl_at` = CURRENT_TIMESTAMP");
   });
 });
