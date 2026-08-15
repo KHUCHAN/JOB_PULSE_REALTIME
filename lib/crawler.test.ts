@@ -3418,6 +3418,45 @@ Wrong description.
     })]);
   });
 
+  it("advances the rate-limited Alvarez & Marsal catalog one reader page per pass", async () => {
+    const requestedPages: number[] = [];
+    const entries = (page: number) => Array.from({ length: 100 }, (_, index) => ({
+      id: String((page - 1) * 100 + index + 1),
+      talemetry_job_id: String((page - 1) * 100 + index + 1),
+      permalink: `role-${(page - 1) * 100 + index + 1}`,
+      title: `Role ${(page - 1) * 100 + index + 1}`,
+      location: { country: "United States" },
+    }));
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (!url.startsWith("https://r.jina.ai/")) return new Response("blocked", { status: 403 });
+      const page = Number(new URL(url.slice("https://r.jina.ai/".length)).searchParams.get("page") ?? 1);
+      requestedPages.push(page);
+      return Response.json({
+        current_page: page,
+        per_page: 100,
+        total_entries: 300,
+        entries: entries(page),
+      });
+    };
+
+    const result = await crawlSource({
+      id: "p4-0214-alvarez-marsal",
+      company: "Alvarez & Marsal",
+      postingUrl: "https://careers.alvarezandmarsal.com/search/jobs",
+      adapter: "custom",
+      crawlPageCursor: 2,
+    }, fetcher, new Date());
+
+    expect(requestedPages).toEqual([2]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: { nextPage: 3, cycleComplete: false, totalPages: 3 },
+    }));
+    expect(result.jobs).toHaveLength(100);
+  });
+
   it("bypasses a stale reader challenge snapshot when the cached response has no jobs", async () => {
     let readerRequests = 0;
     const fetcher: typeof fetch = async (input, init) => {

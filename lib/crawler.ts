@@ -4392,39 +4392,55 @@ const crawlTalemetryJson = async (
     }
   };
 
-  const first = await fetchPage(1, true);
-  if (!first) return null;
+  const requestedStart = Math.max(1, Math.trunc(source.crawlPageCursor ?? 1));
+  let startPage = requestedStart;
+  let first = await fetchPage(startPage, true);
+  if (!first) {
+    return requestedStart === 1 ? null : {
+      status: "failed",
+      responseStatus: 200,
+      completeListing: false,
+      jobs: [],
+      pagination: { nextPage: requestedStart, cycleComplete: false, totalPages: requestedStart },
+      error: "Talemetry returned no consecutive usable catalog pages.",
+    };
+  }
   const perPage = Math.max(1, first.per_page ?? first.entries?.length ?? 100);
   const totalEntries = Math.max(0, first.total_entries ?? first.entries?.length ?? 0);
   if (totalEntries <= 0) return null;
   const totalPages = Math.ceil(totalEntries / perPage);
-  const requestedStart = Math.max(1, Math.trunc(source.crawlPageCursor ?? 1));
-  const startPage = requestedStart <= totalPages ? requestedStart : 1;
-  // The outer careers request, one direct capability probe and a possible
-  // first-page reader retry leave room for 46 reader pages without crossing
-  // the 50-request source ceiling. A resumed window also retries its first
-  // target page so one cold/slow reader response cannot strand the cursor;
-  // reserve both attempts and carry at most 44 target pages in that case.
-  const maxTargetPages = startPage === 1 ? 46 : 44;
-  const endPage = Math.min(totalPages, startPage + maxTargetPages - 1);
-  const pageNumbers = Array.from({ length: endPage - startPage + 1 }, (_, index) => startPage + index);
-  const pages = new Map<number, TalemetryPayload | null>();
-  if (startPage === 1) pages.set(1, first);
-  else {
-    const resumedFirst = await fetchPage(startPage, true);
-    pages.set(startPage, resumedFirst);
-    if (!resumedFirst) {
+  if (startPage > totalPages) {
+    startPage = 1;
+    first = await fetchPage(1, true);
+    if (!first || first.total_entries !== totalEntries || (first.per_page ?? perPage) !== perPage) {
       return {
         status: "failed",
         responseStatus: 200,
         completeListing: false,
         jobs: [],
-        pagination: { nextPage: startPage, cycleComplete: false, totalPages },
-        error: "Talemetry returned no consecutive usable catalog pages.",
+        pagination: { nextPage: 1, cycleComplete: false, totalPages },
+        error: "Talemetry catalog changed while restarting its page cycle.",
       };
     }
   }
-  const pagesToFetch = pageNumbers.filter((page) => page !== 1 && page !== startPage);
+  // The outer careers request, one direct capability probe and a possible
+  // first-page reader retry leave room for 46 reader pages without crossing
+  // the 50-request source ceiling. A resumed window also retries its first
+  // target page so one cold/slow reader response cannot strand the cursor;
+  // reserve both attempts and carry at most 44 target pages in that case.
+  // A&M's Cloudflare edge requires the reader and that provider throttles
+  // Worker egress after a burst. Consume one 100-role page per scheduled pass;
+  // resumed passes begin directly at their cursor instead of spending another
+  // request on page-one metadata. Other Talemetry tenants retain the wider
+  // bounded window.
+  const maxTargetPages = source.id === "p4-0214-alvarez-marsal"
+    ? 1
+    : startPage === 1 ? 46 : 44;
+  const endPage = Math.min(totalPages, startPage + maxTargetPages - 1);
+  const pageNumbers = Array.from({ length: endPage - startPage + 1 }, (_, index) => startPage + index);
+  const pages = new Map<number, TalemetryPayload | null>();
+  pages.set(startPage, first);
+  const pagesToFetch = pageNumbers.filter((page) => page !== startPage);
   for (let index = 0; index < pagesToFetch.length; index += 4) {
     const batch = pagesToFetch.slice(index, index + 4);
     const fetched = await Promise.all(batch.map((page) => fetchPage(page)));
@@ -4466,6 +4482,7 @@ const crawlTalemetryJson = async (
     const normalized = jobsFromEntries(entries);
     const identities = normalized.map((job) => job.externalId ?? job.officialUrl);
     const valid = page
+      && (page.current_page ?? pageNumber) === pageNumber
       && page.total_entries === totalEntries
       && (page.per_page ?? perPage) === perPage
       && entries.length === expected
