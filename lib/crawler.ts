@@ -471,6 +471,41 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
     listingUrl: "https://careers.smartrecruiters.com/Wabtec",
     adapter: "smartrecruiters",
   },
+  "p4-0337-riot-games": {
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/riotgames/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/riotgames",
+    adapter: "greenhouse",
+  },
+  "p4-0491-samsara": {
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/samsara/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/samsara",
+    adapter: "greenhouse",
+  },
+  "p5-0606-glean": {
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/gleanwork/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/gleanwork",
+    adapter: "greenhouse",
+  },
+  "p5-0681-naughty-dog": {
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/naughtydog/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/naughtydog",
+    adapter: "greenhouse",
+  },
+  "p5-0838-c3-ai": {
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/c3iot/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/c3iot",
+    adapter: "greenhouse",
+  },
+  "p5-0903-figure-ai": {
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/figureai/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/figureai",
+    adapter: "greenhouse",
+  },
+  "p5-0998-nuro": {
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/nuro/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/nuro",
+    adapter: "greenhouse",
+  },
 };
 
 type GreenhouseJob = {

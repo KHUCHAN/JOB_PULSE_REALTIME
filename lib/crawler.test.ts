@@ -6992,10 +6992,17 @@ Wrong description.
   });
 
   it.each([
+    ["p4-0337-riot-games", "Riot Games", "https://www.riotgames.com/en/work-with-us", "https://boards-api.greenhouse.io/v1/boards/riotgames/jobs?content=true", "https://job-boards.greenhouse.io/riotgames"],
     ["p2-0146-oportun", "Oportun", "https://www.oportun.com/careers", "https://boards-api.greenhouse.io/v1/boards/oportun/jobs?content=true", "https://job-boards.greenhouse.io/oportun"],
     ["p4-0430-fastly", "Fastly", "https://www.fastly.com/careers", "https://boards-api.greenhouse.io/v1/boards/fastly/jobs?content=true", "https://job-boards.greenhouse.io/fastly"],
+    ["p4-0491-samsara", "Samsara", "https://www.samsara.com/company/careers/roles", "https://boards-api.greenhouse.io/v1/boards/samsara/jobs?content=true", "https://job-boards.greenhouse.io/samsara"],
     ["p4-0492-scale-ai", "Scale AI", "https://scale.com/careers", "https://boards-api.greenhouse.io/v1/boards/scaleai/jobs?content=true", "https://job-boards.greenhouse.io/scaleai"],
+    ["p5-0606-glean", "Glean", "https://www.glean.com/careers", "https://boards-api.greenhouse.io/v1/boards/gleanwork/jobs?content=true", "https://job-boards.greenhouse.io/gleanwork"],
+    ["p5-0681-naughty-dog", "Naughty Dog", "https://www.naughtydog.com/careers", "https://boards-api.greenhouse.io/v1/boards/naughtydog/jobs?content=true", "https://job-boards.greenhouse.io/naughtydog"],
+    ["p5-0838-c3-ai", "C3.ai", "https://c3.ai/careers", "https://boards-api.greenhouse.io/v1/boards/c3iot/jobs?content=true", "https://job-boards.greenhouse.io/c3iot"],
+    ["p5-0903-figure-ai", "Figure AI", "https://www.figure.ai/careers", "https://boards-api.greenhouse.io/v1/boards/figureai/jobs?content=true", "https://job-boards.greenhouse.io/figureai"],
     ["p5-0944-instacart", "Instacart", "https://www.instacart.careers/current-openings", "https://boards-api.greenhouse.io/v1/boards/instacart/jobs?content=true", "https://job-boards.greenhouse.io/instacart"],
+    ["p5-0998-nuro", "Nuro", "https://www.nuro.ai/careers", "https://boards-api.greenhouse.io/v1/boards/nuro/jobs?content=true", "https://job-boards.greenhouse.io/nuro"],
     ["p5-1011-oscar-health", "Oscar Health", "https://www.hioscar.com/careers/search", "https://boards-api.greenhouse.io/v1/boards/oscar/jobs?content=true", "https://job-boards.greenhouse.io/oscar"],
     ["p5-1022-planet-labs", "Planet Labs", "https://www.planet.com/company/careers/", "https://boards-api.greenhouse.io/v1/boards/planetlabs/jobs?content=true", "https://job-boards.greenhouse.io/planetlabs"],
   ])("uses the browser-verified Greenhouse feed for %s", async (id, company, postingUrl, endpoint, listingUrl) => {
