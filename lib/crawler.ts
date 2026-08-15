@@ -131,6 +131,7 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
   "p1-0007-kroll",
   "p2-0029-capital-one",
   "p2-0032-citi",
+  "p2-0039-goldman-sachs",
   "p2-0040-jefferies",
   "p2-0041-jpmorgan-chase",
   "p2-0048-metlife",
@@ -3935,6 +3936,362 @@ const crawlSalesforceCareers = async (source: CrawlSource, fetcher: typeof fetch
     jobs: [],
     error: lastError,
   };
+};
+
+type GoldmanLocation = {
+  primary?: unknown;
+  state?: unknown;
+  country?: unknown;
+  city?: unknown;
+};
+
+type GoldmanRole = {
+  roleId?: unknown;
+  corporateTitle?: unknown;
+  jobTitle?: unknown;
+  jobFunction?: unknown;
+  locations?: unknown;
+  status?: unknown;
+  division?: unknown;
+  skills?: unknown;
+  jobType?: { code?: unknown; description?: unknown } | null;
+  externalSource?: { sourceId?: unknown } | null;
+  educationLevel?: unknown;
+  startDate?: unknown;
+  gradDegreeStartDate?: unknown;
+  gradDegreeEndDate?: unknown;
+};
+
+type GoldmanSearchPayload = {
+  data?: {
+    roleSearch?: {
+      totalCount?: unknown;
+      items?: unknown;
+    } | null;
+  } | null;
+  errors?: unknown;
+};
+
+type GoldmanRoleDetail = GoldmanRole & {
+  descriptionHtml?: unknown;
+  skillset?: unknown;
+  compensation?: { minSalary?: unknown; maxSalary?: unknown; currency?: unknown } | null;
+  applyActive?: unknown;
+  externalSource?: {
+    externalApplicationUrl?: unknown;
+    applyInExternalSource?: unknown;
+    sourceId?: unknown;
+    secondarySourceId?: unknown;
+  } | null;
+};
+
+type GoldmanDetailPayload = {
+  data?: { role?: GoldmanRoleDetail | null } | null;
+  errors?: unknown;
+};
+
+const GOLDMAN_LISTING_URL = "https://higher.gs.com/results";
+const GOLDMAN_GRAPHQL_URL = "https://api-higher.gs.com/gateway/api/v1/graphql";
+const GOLDMAN_PAGE_SIZE = 100;
+const GOLDMAN_MAX_PAGES_PER_PASS = 40;
+const GOLDMAN_SEARCH_QUERY = `
+  query GetRoles($searchQueryInput: RoleSearchQueryInput!) {
+    roleSearch(searchQueryInput: $searchQueryInput) {
+      totalCount
+      items {
+        roleId
+        corporateTitle
+        jobTitle
+        jobFunction
+        locations { primary state country city }
+        status
+        division
+        skills
+        jobType { code description }
+        externalSource { sourceId }
+        educationLevel
+        startDate
+        gradDegreeStartDate
+        gradDegreeEndDate
+      }
+    }
+  }
+`;
+const GOLDMAN_DETAIL_QUERY = `
+  query GetRoleById($externalSourceId: String!, $externalSourceFetch: Boolean) {
+    role(externalSourceId: $externalSourceId, externalSourceFetch: $externalSourceFetch) {
+      roleId
+      corporateTitle
+      jobTitle
+      jobFunction
+      locations { primary state country city }
+      division
+      descriptionHtml
+      jobType { code description }
+      skillset
+      compensation { minSalary maxSalary currency }
+      applyActive
+      status
+      externalSource {
+        externalApplicationUrl
+        applyInExternalSource
+        sourceId
+        secondarySourceId
+      }
+    }
+  }
+`;
+
+const goldmanRequestHeaders = (referer = GOLDMAN_LISTING_URL): Record<string, string> => ({
+  accept: "application/json",
+  "content-type": "application/json",
+  origin: "https://higher.gs.com",
+  referer,
+  "x-higher-request-id": crypto.randomUUID(),
+});
+
+const goldmanLocationText = (location: GoldmanLocation | undefined): string | null => {
+  if (!location) return null;
+  return [asText(location.city), asText(location.state), asText(location.country)].filter(Boolean).join(", ") || null;
+};
+
+const goldmanUsLocation = (value: unknown): value is GoldmanLocation => Boolean(
+  value && typeof value === "object" && /^United States$/i.test(asText((value as GoldmanLocation).country) ?? ""),
+);
+
+const goldmanJob = (source: CrawlSource, value: GoldmanRole): CrawledJob | null => {
+  const externalId = asText(value.externalSource?.sourceId);
+  const roleId = asText(value.roleId);
+  const title = asText(value.jobTitle);
+  const status = asText(value.status);
+  const locations = Array.isArray(value.locations) ? value.locations.filter(goldmanUsLocation) : [];
+  const primary = locations.find((location) => location.primary === true) ?? locations[0];
+  if (!externalId || !/^\d+$/.test(externalId) || !roleId
+    || !title || status !== "POSTED" || !primary) return null;
+  const officialUrl = new URL(`/roles/${encodeURIComponent(externalId)}`, "https://higher.gs.com");
+  const location = goldmanLocationText(primary);
+  if (!location) return null;
+  const secondaryLocations = locations
+    .filter((candidate) => candidate !== primary)
+    .map((candidate) => goldmanLocationText(candidate))
+    .filter((candidate): candidate is string => Boolean(candidate));
+  const programs = classifyJobPrograms(title).keys;
+  const employmentType = programs.includes("coop")
+    ? "Co-op"
+    : programs.includes("internship")
+      ? "Internship"
+      : normalizeEmploymentType(value.jobType?.description);
+  const skills = Array.isArray(value.skills)
+    ? value.skills.map((skill) => asText(skill)).filter((skill): skill is string => Boolean(skill))
+    : [];
+  const publishedAt = normalizedDate(value.startDate);
+  return {
+    externalId,
+    title,
+    company: source.company,
+    location,
+    arrangement: "unknown",
+    employmentType,
+    summary: null,
+    ...(skills.length ? { skills } : {}),
+    ...(asText(value.division) ? { businessUnit: asText(value.division) } : {}),
+    ...(asText(value.jobFunction) ? { jobFunction: asText(value.jobFunction) } : {}),
+    ...(asText(value.corporateTitle) ? { experienceLevel: asText(value.corporateTitle) } : {}),
+    ...(secondaryLocations.length ? { secondaryLocations } : {}),
+    ...(asText(primary.city) ? { locationCity: asText(primary.city) } : {}),
+    ...(asText(primary.state) ? { locationState: asText(primary.state) } : {}),
+    locationCountry: "United States",
+    requisitionId: externalId,
+    ...(publishedAt ? { sourcePostedText: publishedAt.slice(0, 10) } : {}),
+    rawPayload: {
+      roleId,
+      status,
+      educationLevel: asText(value.educationLevel),
+      graduationDegreeStartDate: asText(value.gradDegreeStartDate),
+      graduationDegreeEndDate: asText(value.gradDegreeEndDate),
+    },
+    officialUrl: officialUrl.href,
+    publishedAt,
+  };
+};
+
+/**
+ * Goldman Sachs' Higher careers page is a Next.js shell. Its own UI queries
+ * this first-party public GraphQL catalog, so use the same stable API and the
+ * exact United States location facet instead of treating the empty shell as a
+ * zero-job career page.
+ */
+const crawlGoldmanSachs = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  let failureStatus: number | null = null;
+  const requestedUsScope = source.regionScope === "us";
+  const fetchPage = async (pageNumber: number): Promise<{ total: number; records: GoldmanRole[] } | null> => {
+    try {
+      const response = await fetchWithTimeout(fetcher, GOLDMAN_GRAPHQL_URL, {
+        method: "POST",
+        headers: goldmanRequestHeaders(),
+        body: JSON.stringify({
+          operationName: "GetRoles",
+          query: GOLDMAN_SEARCH_QUERY,
+          variables: {
+            searchQueryInput: {
+              page: { pageSize: GOLDMAN_PAGE_SIZE, pageNumber: pageNumber - 1 },
+              sort: { sortStrategy: "POSTED_DATE", sortOrder: "DESC" },
+              filters: requestedUsScope
+                ? [{ filterCategoryType: "LOCATION", filters: [{ filter: "United States", subFilters: [] }] }]
+                : [],
+              experiences: ["CAMPUS", "EARLY_CAREER", "PROFESSIONAL"],
+              searchTerm: "",
+            },
+          },
+        }),
+      }, false, { attempts: 1, timeoutMs: 10_000 });
+      if (!response.ok) {
+        failureStatus ??= response.status;
+        return null;
+      }
+      responseStatus ??= response.status;
+      const payload = await response.json() as GoldmanSearchPayload;
+      const total = Number(payload.data?.roleSearch?.totalCount);
+      const records = payload.data?.roleSearch?.items;
+      if (payload.errors || !Number.isSafeInteger(total) || total < 1 || !Array.isArray(records)) return null;
+      return { total, records: records as GoldmanRole[] };
+    } catch {
+      return null;
+    }
+  };
+
+  try {
+    const first = await fetchPage(1);
+    if (!first) throw new Error("Goldman Sachs role search returned an empty or malformed first page.");
+    const totalPages = Math.ceil(first.total / GOLDMAN_PAGE_SIZE);
+    const requestedStart = Math.max(1, Math.trunc(source.crawlPageCursor ?? 1));
+    const startPage = requestedStart > totalPages ? 1 : requestedStart;
+    const pageBudget = startPage === 1 ? GOLDMAN_MAX_PAGES_PER_PASS : GOLDMAN_MAX_PAGES_PER_PASS - 1;
+    const endPage = Math.min(totalPages, startPage + pageBudget - 1);
+    const pageNumbers = Array.from({ length: endPage - startPage + 1 }, (_, index) => startPage + index)
+      .filter((pageNumber) => pageNumber !== 1);
+    const pages = new Map<number, typeof first>([[1, first]]);
+    for (let index = 0; index < pageNumbers.length; index += 6) {
+      const batch = pageNumbers.slice(index, index + 6);
+      const results = await Promise.all(batch.map(async (pageNumber) => ({ pageNumber, page: await fetchPage(pageNumber) })));
+      for (const { pageNumber, page } of results) {
+        if (!page) throw new Error(`Goldman Sachs role search page ${pageNumber} failed.`);
+        pages.set(pageNumber, page);
+      }
+    }
+
+    const includedPages = [1, ...pageNumbers];
+    const records: GoldmanRole[] = [];
+    for (const pageNumber of includedPages) {
+      const page = pages.get(pageNumber);
+      const expected = Math.min(GOLDMAN_PAGE_SIZE, first.total - (pageNumber - 1) * GOLDMAN_PAGE_SIZE);
+      if (!page || page.total !== first.total || page.records.length !== expected) {
+        throw new Error(`Goldman Sachs role search page ${pageNumber} returned unstable catalog metadata.`);
+      }
+      records.push(...page.records);
+    }
+    const jobs = records.flatMap((record) => goldmanJob(source, record) ?? []);
+    if (jobs.length !== records.length
+      || new Set(jobs.map((job) => job.externalId)).size !== jobs.length
+      || new Set(jobs.map((job) => job.officialUrl)).size !== jobs.length) {
+      throw new Error("Goldman Sachs role search returned duplicate or unusable job identities.");
+    }
+    const cycleComplete = endPage === totalPages;
+    const completeListing = startPage === 1 && cycleComplete && jobs.length === first.total;
+    return {
+      status: "succeeded",
+      responseStatus: responseStatus ?? 200,
+      completeListing,
+      jobs,
+      ...(!completeListing ? {
+        pagination: {
+          nextPage: cycleComplete ? 1 : endPage + 1,
+          cycleComplete,
+          totalPages,
+        },
+      } : {}),
+      resolvedListingUrl: GOLDMAN_LISTING_URL,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: isBlockedHttpStatus(failureStatus ?? responseStatus) ? "blocked" : "failed",
+      responseStatus: failureStatus ?? responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Goldman Sachs crawler error.",
+    };
+  }
+};
+
+const goldmanApplyUrl = (value: unknown, externalId: string): string | null => {
+  const raw = asText(value);
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "https:" || url.hostname !== "hdpc.fa.us2.oraclecloud.com"
+      || url.username || url.password || url.port || url.hash
+      || !url.pathname.startsWith(`/hcmUI/CandidateExperience/en/sites/LateralHiring/job/${externalId}/apply/`)) return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+};
+
+const goldmanRoleDetail = async (
+  job: CrawledJob,
+  fetcher: typeof fetch,
+): Promise<Partial<CrawledJob> | null> => {
+  if (!job.externalId || !/^\d+$/.test(job.externalId)) return null;
+  try {
+    const response = await fetchWithTimeout(fetcher, GOLDMAN_GRAPHQL_URL, {
+      method: "POST",
+      headers: goldmanRequestHeaders(job.officialUrl),
+      body: JSON.stringify({
+        operationName: "GetRoleById",
+        query: GOLDMAN_DETAIL_QUERY,
+        variables: { externalSourceId: job.externalId, externalSourceFetch: true },
+      }),
+    }, false, { attempts: 1, timeoutMs: 8_000 });
+    if (!response.ok) return null;
+    const payload = await response.json() as GoldmanDetailPayload;
+    const role = payload.data?.role;
+    const sourceId = asText(role?.externalSource?.sourceId);
+    const title = asText(role?.jobTitle);
+    if (payload.errors || !role || sourceId !== job.externalId || !title
+      || jobIdentityText(title) !== jobIdentityText(job.title) || asText(role.status) !== "POSTED") return null;
+    const description = icimsText(asText(role.descriptionHtml));
+    const salaryMin = typeof role.compensation?.minSalary === "number" && Number.isFinite(role.compensation.minSalary)
+      ? role.compensation.minSalary
+      : null;
+    const salaryMax = typeof role.compensation?.maxSalary === "number" && Number.isFinite(role.compensation.maxSalary)
+      ? role.compensation.maxSalary
+      : null;
+    const salaryCurrency = asText(role.compensation?.currency);
+    const applyUrl = role.applyActive === true ? goldmanApplyUrl(role.externalSource?.externalApplicationUrl, job.externalId) : null;
+    const skillset = Array.isArray(role.skillset)
+      ? role.skillset.map((skill) => asText(skill)).filter((skill): skill is string => Boolean(skill))
+      : asText(role.skillset)?.split(/[,;]/).map((skill) => skill.trim()).filter(Boolean) ?? [];
+    return {
+      ...(description ? { summary: description, description } : {}),
+      ...(skillset.length ? { skills: skillset } : {}),
+      ...(asText(role.division) ? { businessUnit: asText(role.division) } : {}),
+      ...(asText(role.jobFunction) ? { jobFunction: asText(role.jobFunction) } : {}),
+      ...(asText(role.corporateTitle) ? { experienceLevel: asText(role.corporateTitle) } : {}),
+      ...(salaryMin != null ? { salaryMin } : {}),
+      ...(salaryMax != null ? { salaryMax } : {}),
+      ...(salaryCurrency ? { salaryCurrency, salaryInterval: "year" } : {}),
+      ...(applyUrl ? { applyUrl } : {}),
+      rawPayload: {
+        ...(job.rawPayload ?? {}),
+        secondarySourceId: asText(role.externalSource?.secondarySourceId),
+        applyActive: role.applyActive === true,
+      },
+    };
+  } catch {
+    return null;
+  }
 };
 
 type WayfairCareerJob = {
@@ -16435,6 +16792,9 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p4-0340-salesforce") {
     return crawlSalesforceCareers(source, fetcher);
   }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p2-0039-goldman-sachs") {
+    return crawlGoldmanSachs(source, fetcher);
+  }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-1104-wayfair") {
     return crawlWayfairCareers(source, fetcher);
   }
@@ -17111,6 +17471,11 @@ const enrichProgramJobDetails = async (
 
   const enrichOne = async ({ index, candidates }: { index: number; candidates: string[] }): Promise<void> => {
     const job = enriched[index];
+    if (source.id === "p2-0039-goldman-sachs") {
+      const detail = await goldmanRoleDetail(job, fetcher);
+      if (detail) enriched[index] = { ...job, ...detail };
+      return;
+    }
     const selectMindsIdentity = selectMindsJobIdentity(job.officialUrl);
     if (selectMindsIdentity) {
       try {

@@ -11284,6 +11284,176 @@ HUMAN RESOURCES Posted Date
     }));
   });
 
+  it("collects Goldman Sachs' complete US catalog from its official Higher GraphQL API", async () => {
+    const requests: Array<{ operationName: string; variables: Record<string, unknown>; headers: Headers }> = [];
+    const listingItems = [
+      {
+        roleId: "177808_GS_CAMPUS",
+        corporateTitle: "Summer Analyst",
+        jobTitle: "2027 | Americas | Bellevue | Engineering | Summer Analyst",
+        jobFunction: "",
+        locations: [{ primary: true, state: "WA", country: "United States", city: "Seattle" }],
+        status: "POSTED",
+        division: "Engineering Division",
+        skills: ["Machine Learning"],
+        jobType: null,
+        externalSource: { sourceId: "177808" },
+        educationLevel: "Bachelor's",
+        startDate: "2026-08-15T15:26:37.497349361Z",
+        gradDegreeStartDate: null,
+        gradDegreeEndDate: null,
+      },
+      {
+        roleId: "fd1eb714-befe-4d52-aa5b-fb0ab29c11bc",
+        corporateTitle: "Associate",
+        jobTitle: "Structured Finance Associate, New York",
+        jobFunction: "Banker - CSG",
+        locations: [{ primary: true, state: "NY", country: "United States", city: "New York" }],
+        status: "POSTED",
+        division: "Global Banking & Markets",
+        skills: [],
+        jobType: { code: "REGULAR", description: "Regular" },
+        externalSource: { sourceId: "176863" },
+        educationLevel: null,
+        startDate: "2026-08-14T22:45:06Z",
+        gradDegreeStartDate: null,
+        gradDegreeEndDate: null,
+      },
+    ];
+    const result = await crawlSource({
+      id: "p2-0039-goldman-sachs",
+      company: "Goldman Sachs",
+      postingUrl: "https://higher.gs.com/results",
+      adapter: "custom",
+    }, async (input, init) => {
+      expect(String(input)).toBe("https://api-higher.gs.com/gateway/api/v1/graphql");
+      const body = JSON.parse(String(init?.body)) as { operationName: string; variables: Record<string, unknown> };
+      requests.push({ ...body, headers: new Headers(init?.headers) });
+      if (body.operationName === "GetRoleById") {
+        return Response.json({
+          data: {
+            role: {
+              ...listingItems[0],
+              descriptionHtml: "<p>A nine to ten week summer internship building machine learning systems.</p>",
+              skillset: ["Python", "Machine Learning"],
+              compensation: { minSalary: 110_000, maxSalary: 115_000, currency: "USD" },
+              applyActive: true,
+              externalSource: {
+                sourceId: "177808",
+                secondarySourceId: "300017760680333",
+                applyInExternalSource: true,
+                externalApplicationUrl: "https://hdpc.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/LateralHiring/job/177808/apply/email",
+              },
+            },
+          },
+        });
+      }
+      return Response.json({ data: { roleSearch: { totalCount: 2, items: listingItems } } });
+    }, new Date("2026-08-15T16:00:00Z"));
+
+    expect(requests).toHaveLength(2);
+    expect(requests[0].operationName).toBe("GetRoles");
+    expect(requests[0].variables).toEqual({
+      searchQueryInput: {
+        page: { pageSize: 100, pageNumber: 0 },
+        sort: { sortStrategy: "POSTED_DATE", sortOrder: "DESC" },
+        filters: [{ filterCategoryType: "LOCATION", filters: [{ filter: "United States", subFilters: [] }] }],
+        experiences: ["CAMPUS", "EARLY_CAREER", "PROFESSIONAL"],
+        searchTerm: "",
+      },
+    });
+    expect(requests[0].headers.get("origin")).toBe("https://higher.gs.com");
+    expect(requests[0].headers.get("x-higher-request-id")).toMatch(/^[0-9a-f-]{36}$/);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      responseStatus: 200,
+      completeListing: true,
+      resolvedListingUrl: "https://higher.gs.com/results",
+      error: null,
+    }));
+    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "177808",
+      title: "2027 | Americas | Bellevue | Engineering | Summer Analyst",
+      location: "Seattle, WA, United States",
+      locationCity: "Seattle",
+      locationState: "WA",
+      locationCountry: "United States",
+      employmentType: "Internship",
+      businessUnit: "Engineering Division",
+      experienceLevel: "Summer Analyst",
+      requisitionId: "177808",
+      officialUrl: "https://higher.gs.com/roles/177808",
+      applyUrl: "https://hdpc.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/LateralHiring/job/177808/apply/email",
+      publishedAt: "2026-08-15T15:26:37.497Z",
+      description: "A nine to ten week summer internship building machine learning systems.",
+      salaryMin: 110_000,
+      salaryMax: 115_000,
+      salaryCurrency: "USD",
+      salaryInterval: "year",
+    }));
+  });
+
+  it("fails Goldman Sachs closed on empty, blocked, or duplicate catalog pages", async () => {
+    const source = {
+      id: "p2-0039-goldman-sachs",
+      company: "Goldman Sachs",
+      postingUrl: "https://higher.gs.com/results",
+      adapter: "custom" as const,
+    };
+    const empty = await crawlSource(source, async () => Response.json({
+      data: { roleSearch: { totalCount: 0, items: [] } },
+    }), new Date());
+    expect(empty).toEqual(expect.objectContaining({
+      status: "failed",
+      completeListing: false,
+      jobs: [],
+      error: "Goldman Sachs role search returned an empty or malformed first page.",
+    }));
+
+    const blocked = await crawlSource(source, async () => new Response("blocked", { status: 403 }), new Date());
+    expect(blocked).toEqual(expect.objectContaining({
+      status: "blocked",
+      responseStatus: 403,
+      completeListing: false,
+      jobs: [],
+    }));
+
+    const role = (id: number) => ({
+      roleId: `${id}_GS_MID_CAREER`,
+      corporateTitle: "Associate",
+      jobTitle: `Operations Associate ${id}`,
+      jobFunction: "Operations",
+      locations: [{ primary: true, state: "NY", country: "United States", city: "New York" }],
+      status: "POSTED",
+      division: "Operations Division",
+      skills: [],
+      jobType: { code: "REGULAR", description: "Regular" },
+      externalSource: { sourceId: String(id) },
+      startDate: "2026-08-14T00:00:00Z",
+    });
+    const duplicate = await crawlSource(source, async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as {
+        variables: { searchQueryInput: { page: { pageNumber: number } } };
+      };
+      const pageNumber = body.variables.searchQueryInput.page.pageNumber;
+      return Response.json({
+        data: {
+          roleSearch: {
+            totalCount: 101,
+            items: pageNumber === 0 ? Array.from({ length: 100 }, (_, index) => role(index + 1)) : [role(100)],
+          },
+        },
+      });
+    }, new Date());
+    expect(duplicate).toEqual(expect.objectContaining({
+      status: "failed",
+      completeListing: false,
+      jobs: [],
+      error: "Goldman Sachs role search returned duplicate or unusable job identities.",
+    }));
+  });
+
   it("collects Wayfair's complete US catalog from its first-party job search API", async () => {
     const requests: Array<{ url: string; body: Record<string, unknown>; headers: Headers }> = [];
     const job = (id: number, requisitionId: string, title: string, city: string, state: string) => ({
