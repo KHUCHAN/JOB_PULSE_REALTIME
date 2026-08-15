@@ -307,6 +307,7 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
   "p5-0746-tenet-healthcare",
   "p5-0761-verizon",
   "p5-0763-walmart",
+  "p5-0773-rtx", // RTX global Phenom catalog (duplicate master entry)
   "p5-0782-adventhealth",
   "p5-0783-advocate-health",
   "p5-0810-atrium-health",

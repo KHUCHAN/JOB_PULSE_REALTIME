@@ -33,6 +33,7 @@ describe("large catalog content", () => {
       "p5-0996-northwell-health",
       "legacy-row-100",
       "p5-0687-northrop-grumman",
+      "p5-0773-rtx",
     ]));
   });
 });
