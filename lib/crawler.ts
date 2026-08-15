@@ -142,6 +142,7 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
   "p4-0208-accenture",
   "p4-0211-aig",
   "p4-0214-alvarez-marsal",
+  "p4-0222-avanade",
   "p4-0225-barclays-us",
   "p4-0245-cisco",
   "p4-0285-google",
@@ -3535,6 +3536,234 @@ const crawlEnergyTransferSelectMinds = async (
       completeListing: false,
       jobs: [],
       error: error instanceof Error ? error.message : "Unknown Energy Transfer SelectMinds crawler error.",
+    };
+  }
+};
+
+type AvanadeCoveoResult = {
+  title?: unknown;
+  clickUri?: unknown;
+  raw?: {
+    job_id?: unknown;
+    jobid?: unknown;
+    jobname?: unknown;
+    joblocation?: unknown;
+    jobcountry?: unknown;
+    state?: unknown;
+    jobcityname?: unknown;
+    jobdescription?: unknown;
+    qualification?: unknown;
+    apply_url?: unknown;
+    jobposteddate?: unknown;
+    job_area_of_expertise?: unknown;
+    joblanguageid?: unknown;
+  } | null;
+};
+
+type AvanadeCoveoPayload = {
+  totalCountFiltered?: unknown;
+  results?: unknown;
+};
+
+const AVANADE_LISTING_URL = "https://www.avanade.com/en-us/career/search-jobs";
+const AVANADE_COVEO_PAGE_SIZE = 1_000;
+
+const avanadeCoveoConfigValue = (script: string, key: string): string | null => {
+  const match = script.match(new RegExp(`${key}\\s*=[\\s\\S]{0,180}?\\|\\|\\s*["']([^"']+)["']`));
+  return match?.[1]?.trim() || null;
+};
+
+const avanadeTextArray = (value: unknown): string[] => {
+  const values = Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
+  return values
+    .filter((entry): entry is string => typeof entry === "string" && Boolean(entry.trim()))
+    .map((entry) => entry.trim());
+};
+
+const avanadePublishedAt = (value: unknown): string | null => {
+  const timestamp = typeof value === "number"
+    ? value
+    : typeof value === "string" && /^\d{10,16}$/.test(value.trim()) ? Number(value) : Number.NaN;
+  if (!Number.isSafeInteger(timestamp) || timestamp < Date.UTC(2000, 0, 1) || timestamp > Date.UTC(2100, 0, 1)) return null;
+  return new Date(timestamp).toISOString();
+};
+
+const crawlAvanadeCoveo = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  try {
+    const pageResponse = await fetchWithTimeout(fetcher, AVANADE_LISTING_URL, undefined, true, {
+      attempts: 1,
+      timeoutMs: 10_000,
+    });
+    responseStatus = pageResponse.status;
+    if (!pageResponse.ok) {
+      throw Object.assign(new Error(`Avanade career search returned HTTP ${pageResponse.status}.`), {
+        responseStatus: pageResponse.status,
+      });
+    }
+    const html = await pageResponse.text();
+    const appScriptPath = [...html.matchAll(
+      /<script\b[^>]*\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)')[^>]*>/gi,
+    )]
+      .map((match) => match[1] ?? match[2] ?? "")
+      .find((value) => /\/_next\/static\/chunks\/pages\/_app-[a-z0-9]+\.js(?:\?|$)/i.test(value));
+    if (!appScriptPath) throw new Error("Avanade career search omitted its public search configuration.");
+    const appScriptUrl = new URL(appScriptPath, AVANADE_LISTING_URL);
+    if (appScriptUrl.origin !== "https://www.avanade.com" || appScriptUrl.username || appScriptUrl.password
+      || appScriptUrl.port || !/^\/_next\/static\/chunks\/pages\/_app-[a-z0-9]+\.js$/i.test(appScriptUrl.pathname)) {
+      throw new Error("Avanade career search returned an unsafe application script URL.");
+    }
+    const scriptResponse = await fetchWithTimeout(fetcher, appScriptUrl.href, undefined, true, {
+      attempts: 1,
+      timeoutMs: 10_000,
+    });
+    responseStatus = scriptResponse.status;
+    if (!scriptResponse.ok) {
+      throw Object.assign(new Error(`Avanade search configuration returned HTTP ${scriptResponse.status}.`), {
+        responseStatus: scriptResponse.status,
+      });
+    }
+    const script = await scriptResponse.text();
+    const accessToken = avanadeCoveoConfigValue(script, "coveoCareersAccessToken");
+    const organizationId = avanadeCoveoConfigValue(script, "coveoCareersOrganizationId");
+    const searchHub = avanadeCoveoConfigValue(script, "coveoCareersSearchHub");
+    if (!accessToken || !/^xx[a-z0-9-]{20,160}$/i.test(accessToken)
+      || !organizationId || !/^avanade[a-z0-9]{8,70}$/i.test(organizationId)
+      || !searchHub || !/^[a-z0-9_-]{3,80}$/i.test(searchHub)) {
+      throw new Error("Avanade career search returned invalid public search configuration.");
+    }
+    const endpoint = new URL(`https://${organizationId}.org.coveo.com/rest/search/v2`);
+    endpoint.searchParams.set("organizationId", organizationId);
+    const searchResponse = await fetchWithTimeout(fetcher, endpoint.href, {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        searchHub,
+        cq: "@job_item_type==ActiveJobs AND @isignoredjob == 0",
+        q: "@joblanguageid==1",
+        sortCriteria: "@jobposteddate descending, @jobname ascending",
+        numberOfResults: AVANADE_COVEO_PAGE_SIZE,
+        firstResult: 0,
+        fieldsToInclude: [
+          "job_id", "jobid", "jobname", "joblocation", "jobcountry", "state", "jobcityname",
+          "jobdescription", "qualification", "apply_url", "jobposteddate", "job_area_of_expertise",
+          "joblanguageid",
+        ],
+      }),
+    }, true, { attempts: 1, timeoutMs: 15_000 });
+    responseStatus = searchResponse.status;
+    if (!searchResponse.ok) {
+      throw Object.assign(new Error(`Avanade Coveo search returned HTTP ${searchResponse.status}.`), {
+        responseStatus: searchResponse.status,
+      });
+    }
+    const payload = await searchResponse.json() as AvanadeCoveoPayload;
+    const total = Number(payload.totalCountFiltered);
+    const results = Array.isArray(payload.results) ? payload.results as AvanadeCoveoResult[] : null;
+    if (!Number.isSafeInteger(total) || total < 1 || !results || results.length > AVANADE_COVEO_PAGE_SIZE
+      || results.length !== Math.min(total, AVANADE_COVEO_PAGE_SIZE)) {
+      throw new Error("Avanade Coveo search returned invalid catalog metadata.");
+    }
+    const jobs = results.flatMap((result): CrawledJob[] => {
+      const raw = result.raw;
+      const externalId = asText(raw?.job_id);
+      const secondaryId = asText(raw?.jobid);
+      const title = asText(result.title);
+      const rawTitle = asText(raw?.jobname);
+      const rawClickUri = asText(result.clickUri);
+      const rawApplyUrl = asText(raw?.apply_url);
+      const publishedAt = avanadePublishedAt(raw?.jobposteddate);
+      const normalizedTitle = title?.replace(/\s+/gu, " ").trim();
+      const normalizedRawTitle = rawTitle?.replace(/\s+/gu, " ").trim();
+      if (!externalId || secondaryId !== externalId || !title || normalizedRawTitle !== normalizedTitle
+        || !rawClickUri || !rawApplyUrl || !publishedAt) return [];
+      let clickUri: URL;
+      let applyUrl: URL;
+      try {
+        clickUri = new URL(rawClickUri);
+        applyUrl = new URL(rawApplyUrl);
+      } catch {
+        return [];
+      }
+      const clickIdentity = clickUri.pathname.match(/^\/careers\/job-details\/1\/([a-z0-9-]+)-1\/?$/i)?.[1];
+      if (clickUri.protocol !== "https:" || !["avanade.com", "www.avanade.com"].includes(clickUri.hostname)
+        || clickUri.username || clickUri.password || clickUri.port || clickUri.search || clickUri.hash
+        || clickIdentity?.toLocaleLowerCase() !== externalId.toLocaleLowerCase()) return [];
+      if (applyUrl.protocol !== "https:" || !/^accenture\.wd\d+\.myworkdayjobs\.com$/i.test(applyUrl.hostname)
+        || applyUrl.username || applyUrl.password || applyUrl.port || applyUrl.search || applyUrl.hash
+        || !/^\/AvanadeCareers\/job\/.+\/apply$/i.test(applyUrl.pathname)) return [];
+      const applyIdentity = applyUrl.pathname.match(/_([a-z]\d+)(?:-\d+)?\/apply$/i)?.[1];
+      if (applyIdentity?.toLocaleLowerCase() !== externalId.toLocaleLowerCase()) return [];
+      const officialUrl = new URL(applyUrl.href);
+      officialUrl.pathname = officialUrl.pathname.replace(/\/apply$/i, "");
+      const locations = avanadeTextArray(raw?.joblocation);
+      const country = asText(raw?.jobcountry);
+      const city = asText(raw?.jobcityname);
+      const state = asText(raw?.state);
+      const description = plainText(asText(raw?.jobdescription));
+      const qualifications = plainText(asText(raw?.qualification));
+      const area = asText(raw?.job_area_of_expertise);
+      const location = locations.filter((value, index, values) => values.indexOf(value) === index).join(", ")
+        || [city, state, country].filter(Boolean).join(", ") || null;
+      const arrangementText = [title, location, description].filter(Boolean).join(" ");
+      const programs = classifyJobPrograms(title).keys;
+      return [{
+        externalId,
+        title,
+        company: source.company,
+        location,
+        arrangement: /\bremote\b/i.test(arrangementText)
+          ? "remote"
+          : /\bhybrid\b/i.test(arrangementText)
+            ? "hybrid"
+            : /\b(?:onsite|on-site|in office)\b/i.test(arrangementText) ? "onsite" : "unknown",
+        employmentType: programs.includes("coop")
+          ? "Co-op"
+          : programs.includes("internship") ? "Internship" : null,
+        summary: description,
+        description,
+        qualifications,
+        ...(area ? { jobFunction: area } : {}),
+        ...(city ? { locationCity: city } : {}),
+        ...(state ? { locationState: state } : {}),
+        ...(country ? { locationCountry: country } : {}),
+        requisitionId: externalId,
+        applyUrl: applyUrl.href,
+        sourcePostedText: publishedAt.slice(0, 10),
+        rawPayload: { jobLanguageId: raw?.joblanguageid, coveoClickUri: clickUri.href },
+        officialUrl: officialUrl.href,
+        publishedAt,
+      }];
+    });
+    const identities = jobs.map((job) => job.externalId);
+    const urls = jobs.map((job) => job.officialUrl);
+    if (jobs.length !== results.length || new Set(identities).size !== identities.length
+      || new Set(urls).size !== urls.length) {
+      throw new Error("Avanade Coveo search returned duplicate or unusable job identities.");
+    }
+    const completeListing = total <= AVANADE_COVEO_PAGE_SIZE && jobs.length === total;
+    return {
+      status: "succeeded",
+      responseStatus: searchResponse.status,
+      completeListing,
+      jobs,
+      resolvedListingUrl: AVANADE_LISTING_URL,
+      error: completeListing ? null : `Avanade Coveo search returned ${jobs.length} of ${total} jobs.`,
+    };
+  } catch (error) {
+    const status = typeof error === "object" && error && "responseStatus" in error
+      ? Number((error as { responseStatus: unknown }).responseStatus)
+      : responseStatus;
+    return {
+      status: isBlockedHttpStatus(status) ? "blocked" : "failed",
+      responseStatus: status,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Avanade Coveo crawler error.",
     };
   }
 };
@@ -15635,6 +15864,9 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p4-0423-dynatrace") {
     return crawlDynatraceCoveo(source, fetcher);
+  }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p4-0222-avanade") {
+    return crawlAvanadeCoveo(source, fetcher);
   }
   // Apply an ID-pinned feed only at the root. Redirect/candidate recursion
   // keeps the same source ID, so reapplying it at discovery depth 1 would

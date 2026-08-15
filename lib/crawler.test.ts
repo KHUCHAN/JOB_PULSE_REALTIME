@@ -11069,6 +11069,122 @@ HUMAN RESOURCES Posted Date
     }));
   });
 
+  it("collects Avanade's complete catalog from its public Coveo API and keeps the configured US scope", async () => {
+    const requests: Array<{ url: string; body?: Record<string, unknown> }> = [];
+    const resultFor = (id: string, title: string, country: string, city: string, state: string) => ({
+      title,
+      clickUri: `https://avanade.com/careers/job-details/1/${id}-1`,
+      raw: {
+        job_id: id,
+        jobid: id,
+        jobname: title,
+        joblocation: [country, city],
+        jobcountry: country,
+        state,
+        jobcityname: city,
+        jobdescription: `<p>${title} builds data platforms.</p>`,
+        qualification: "<p>Python and SQL</p>",
+        apply_url: `https://accenture.wd103.myworkdayjobs.com/AvanadeCareers/job/${city.replace(/\s+/g, "-")}/${title.replace(/\s+/g, "-")}_${id}${country === "Brazil" ? "-2" : ""}/apply`,
+        jobposteddate: Date.parse("2026-08-14T00:00:00.000Z"),
+        job_area_of_expertise: "Software Engineering AV",
+        joblanguageid: 1,
+      },
+    });
+    const result = await crawlSource({
+      id: "p4-0222-avanade",
+      company: "Avanade",
+      postingUrl: "https://www.avanade.com/en-us/career/search-jobs",
+      adapter: "custom",
+    }, async (input, init) => {
+      const url = String(input);
+      requests.push({
+        url,
+        ...(init?.body ? { body: JSON.parse(String(init.body)) as Record<string, unknown> } : {}),
+      });
+      if (url === "https://www.avanade.com/en-us/career/search-jobs") {
+        return new Response('<script src="/_next/static/chunks/pages/_app-a1b2c3.js"></script>');
+      }
+      if (url === "https://www.avanade.com/_next/static/chunks/pages/_app-a1b2c3.js") {
+        return new Response('n.coveoCareersSearchHub=a.env.HUB||"dotcomcareersearch",n.coveoCareersAccessToken=a.env.TOKEN||"xx65a0f59b-b5a2-4db9-9e94-4542b40078fd",n.coveoCareersOrganizationId=a.env.ORG||"avanadesc9productionlk3bs0x7"');
+      }
+      return Response.json({
+        totalCountFiltered: 3,
+        results: [
+          resultFor("R00351050", "Senior Software Engineer", "United States", "Seattle", "Washington"),
+          resultFor("R00351051", "Data Scientist", "Brazil", "Sao Paulo", "Sao Paulo"),
+          resultFor("R00351052", "Cloud Developer", "United States", "Chicago", "Illinois"),
+        ],
+      });
+    }, new Date("2026-08-15T12:00:00Z"));
+
+    expect(requests).toHaveLength(3);
+    expect(requests[2]).toEqual({
+      url: "https://avanadesc9productionlk3bs0x7.org.coveo.com/rest/search/v2?organizationId=avanadesc9productionlk3bs0x7",
+      body: expect.objectContaining({
+        searchHub: "dotcomcareersearch",
+        numberOfResults: 1_000,
+        firstResult: 0,
+      }),
+    });
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://www.avanade.com/en-us/career/search-jobs",
+      error: null,
+    }));
+    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "R00351050",
+      title: "Senior Software Engineer",
+      location: "United States, Seattle",
+      locationCity: "Seattle",
+      locationState: "Washington",
+      locationCountry: "United States",
+      jobFunction: "Software Engineering AV",
+      requisitionId: "R00351050",
+      applyUrl: expect.stringMatching(/R00351050\/apply$/),
+      officialUrl: expect.stringMatching(/R00351050$/),
+      publishedAt: "2026-08-14T00:00:00.000Z",
+      description: "Senior Software Engineer builds data platforms.",
+      qualifications: "Python and SQL",
+    }));
+    expect(result.jobs.some((job) => job.locationCountry === "Brazil")).toBe(false);
+  });
+
+  it("fails Avanade closed when Coveo returns a repeated or unusable identity", async () => {
+    const duplicate = {
+      title: "Software Engineer",
+      clickUri: "https://avanade.com/careers/job-details/1/R00351050-1",
+      raw: {
+        job_id: "R00351050", jobid: "R00351050", jobname: "Software Engineer",
+        joblocation: ["United States", "Seattle"], jobcountry: "United States", state: "Washington",
+        jobcityname: "Seattle", jobdescription: "Build software.", qualification: "Python",
+        apply_url: "https://accenture.wd103.myworkdayjobs.com/AvanadeCareers/job/Seattle/Software-Engineer_R00351050/apply",
+        jobposteddate: Date.parse("2026-08-14T00:00:00.000Z"), joblanguageid: 1,
+      },
+    };
+    const result = await crawlSource({
+      id: "p4-0222-avanade", company: "Avanade",
+      postingUrl: "https://www.avanade.com/en-us/career/search-jobs", adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      if (url === "https://www.avanade.com/en-us/career/search-jobs") {
+        return new Response('<script src="/_next/static/chunks/pages/_app-a1b2c3.js"></script>');
+      }
+      if (url === "https://www.avanade.com/_next/static/chunks/pages/_app-a1b2c3.js") {
+        return new Response('n.coveoCareersSearchHub=a.env.HUB||"dotcomcareersearch",n.coveoCareersAccessToken=a.env.TOKEN||"xx65a0f59b-b5a2-4db9-9e94-4542b40078fd",n.coveoCareersOrganizationId=a.env.ORG||"avanadesc9productionlk3bs0x7"');
+      }
+      return Response.json({ totalCountFiltered: 2, results: [duplicate, duplicate] });
+    }, new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed",
+      completeListing: false,
+      jobs: [],
+      error: "Avanade Coveo search returned duplicate or unusable job identities.",
+    }));
+  });
+
   it("collects Dynatrace's complete US catalog from its first-party Coveo API", async () => {
     const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
     const result = await crawlSource({
