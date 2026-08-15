@@ -20217,6 +20217,78 @@ const fetchBarclaysReaderDetail = async (
   return null;
 };
 
+const fetchBarclaysWorkdayDetail = async (
+  job: CrawledJob,
+  source: CrawlSource,
+  fetcher: typeof fetch,
+): Promise<{ detail: CrawledJob; applyUrl: string } | null> => {
+  let listing: URL;
+  try {
+    listing = new URL(job.officialUrl);
+  } catch {
+    return null;
+  }
+  if (listing.protocol !== "https:"
+    || listing.hostname.toLocaleLowerCase() !== "search.jobs.barclays"
+    || !/^\/job\/(?:[^/?#]+\/)+13015\/\d+\/?$/i.test(listing.pathname)) return null;
+
+  const origin = "https://barclays.wd3.myworkdayjobs.com";
+  const site = "External_Career_Site_Barclays";
+  const searchEndpoint = `${origin}/wday/cxs/barclays/${site}/jobs`;
+  try {
+    const searchResponse = await fetchWithTimeout(fetcher, searchEndpoint, {
+      method: "POST",
+      headers: { accept: "application/json", "content-type": "application/json" },
+      body: JSON.stringify({ appliedFacets: {}, limit: 20, offset: 0, searchText: job.title }),
+    }, false, { attempts: 1, timeoutMs: 5_000 });
+    if (!searchResponse.ok) return null;
+    const search = await searchResponse.json() as WorkdayPayload;
+    const exact = (search.jobPostings ?? []).filter((posting) =>
+      Boolean(posting.title && posting.externalPath)
+      && jobIdentityText(posting.title) === jobIdentityText(job.title));
+    if (exact.length !== 1) return null;
+    const externalPath = exact[0].externalPath!;
+    const requisitionId = externalPath.match(/_(JR-\d+)(?:-[^/?#]+)?$/i)?.[1] ?? null;
+    if (!requisitionId || !/^\/job\/(?:[^/?#]+\/)*[^/?#]+_JR-\d+(?:-[^/?#]+)?$/i.test(externalPath)) return null;
+
+    const detailEndpoint = `${origin}/wday/cxs/barclays/${site}${externalPath}`;
+    const detailResponse = await fetchWithTimeout(fetcher, detailEndpoint, {
+      headers: { accept: "application/json" },
+    }, false, { attempts: 1, timeoutMs: 5_000 });
+    if (!detailResponse.ok) return null;
+    const payload = await detailResponse.json() as WorkdayDetailPayload;
+    const info = payload.jobPostingInfo;
+    const detailTitle = asText(info?.title);
+    const detailRequisitionId = asText(info?.jobReqId);
+    if (!info || !detailTitle || detailRequisitionId !== requisitionId
+      || jobIdentityText(detailTitle) !== jobIdentityText(job.title)) return null;
+    const description = plainText(asText(info.jobDescription));
+    const additionalLocations = Array.isArray(info.additionalLocations)
+      ? info.additionalLocations.flatMap((value) => asText(value) ?? [])
+      : [];
+    const atsJobUrl = new URL(`/${site}${externalPath}`, origin).href;
+    return {
+      detail: {
+        externalId: job.externalId,
+        title: detailTitle,
+        company: source.company,
+        location: asText(info.location) ?? job.location,
+        arrangement: job.arrangement,
+        employmentType: asText(info.timeType),
+        summary: description,
+        description,
+        requisitionId,
+        ...(additionalLocations.length > 0 ? { secondaryLocations: additionalLocations } : {}),
+        officialUrl: job.officialUrl,
+        publishedAt: normalizedDate(asText(info.startDate)),
+      },
+      applyUrl: `${atsJobUrl.replace(/\/$/, "")}/apply`,
+    };
+  } catch {
+    return null;
+  }
+};
+
 const enrichProgramJobDetails = async (
   result: SourceCrawlResult,
   source: CrawlSource,
@@ -20382,6 +20454,17 @@ const enrichProgramJobDetails = async (
         return;
       } catch {
         // Detail enrichment is optional; the verified listing remains usable.
+      }
+    }
+    if (isBarclaysDetail) {
+      // TalentBrew's detail HTML and public text-reader caches are both
+      // intermittently unavailable from Worker egress. Resolve the same role
+      // through Barclays' first-party Workday search/detail APIs using an
+      // exact title and requisition identity before falling back to HTML.
+      const workdayDetail = await fetchBarclaysWorkdayDetail(job, source, fetcher);
+      if (workdayDetail) {
+        enriched[index] = mergeProgramJobDetail(job, workdayDetail.detail, workdayDetail.applyUrl);
+        return;
       }
     }
     const supportsStandardCharteredDetail = (() => {

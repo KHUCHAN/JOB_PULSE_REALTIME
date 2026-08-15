@@ -1273,7 +1273,56 @@ Wrong description.
       description: expect.stringContaining("software engineering"),
     })]));
     expect([...pageAttempts.keys()]).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10]);
-    expect(totalRequests).toBeLessThanOrEqual(22);
+    expect(totalRequests).toBeLessThanOrEqual(23);
+  });
+
+  it("resolves a Barclays TalentBrew internship through the exact official Workday identity", async () => {
+    const jobUrl = "https://search.jobs.barclays/job/new-york/quantitative-finance-associate-summer-internship-program-2027-new-york/13015/99217260160";
+    const workdayPath = "/job/New-York-745-7th-Avenue/Quantitative-Finance-Associate-Summer-Internship-Program-2027-New-York_JR-0000128099";
+    const applyUrl = `https://barclays.wd3.myworkdayjobs.com/External_Career_Site_Barclays${workdayPath}/apply`;
+    const title = "Quantitative Finance Associate Summer Internship Program 2027 New York";
+    const listing = [
+      '<script src="https://tbcdn.talentbrew.com/js/client/search.js"></script>',
+      '<section data-total-job-results="1" data-total-results="1" data-total-pages="1" data-records-per-page="16" data-ajax-post-url="/search-jobs/resultspost">',
+      `<div class="list-item list-item--card"><a href="${jobUrl}" data-job-id="99217260160"><strong>${title}</strong></a>`,
+      '<div class="job-location">New York, United States</div></div></section>',
+    ].join("");
+    let directDetailRequested = false;
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      if (url === "https://search.jobs.barclays/search-jobs") return new Response(listing);
+      if (url === "https://barclays.wd3.myworkdayjobs.com/wday/cxs/barclays/External_Career_Site_Barclays/jobs") {
+        expect(init?.method).toBe("POST");
+        expect(JSON.parse(String(init?.body))).toEqual(expect.objectContaining({ searchText: title }));
+        return Response.json({ total: 1, jobPostings: [{ title, externalPath: workdayPath }] });
+      }
+      if (url === `https://barclays.wd3.myworkdayjobs.com/wday/cxs/barclays/External_Career_Site_Barclays${workdayPath}`) {
+        return Response.json({ jobPostingInfo: {
+          title, jobReqId: "JR-0000128099", location: "New York, 745 7th Avenue",
+          timeType: "Full time", startDate: "2026-08-14",
+          jobDescription: "Use AI tools, quantitative models, software engineering, and data science.",
+        } });
+      }
+      if (url === jobUrl) directDetailRequested = true;
+      return new Response("missing", { status: 404 });
+    };
+
+    const result = await crawlSource({
+      id: "p4-0225-barclays-us", company: "Barclays US",
+      postingUrl: "https://search.jobs.barclays/search-jobs", adapter: "custom",
+    }, fetcher, new Date("2026-08-15T09:00:00Z"));
+
+    expect(directDetailRequested).toBe(false);
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "99217260160",
+      officialUrl: jobUrl,
+      applyUrl,
+      requisitionId: "JR-0000128099",
+      location: "New York, 745 7th Avenue",
+      employmentType: "Internship; Full time",
+      publishedAt: "2026-08-14T00:00:00.000Z",
+      description: expect.stringContaining("software engineering"),
+    })]);
   });
 
   it("completes a reduced Barclays JSON-LD detail with the verified reader identity", async () => {
