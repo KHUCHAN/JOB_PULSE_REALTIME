@@ -11185,6 +11185,105 @@ HUMAN RESOURCES Posted Date
     }));
   });
 
+  it("collects Salesforce's complete official export and keeps only US roles", async () => {
+    const requests: string[] = [];
+    const job = (id: string, title: string, country: string, region: string, city: string) => ({
+      Employee_Type: title.includes("Intern") ? "New Grads" : "Regular",
+      External_Job_Posting_Site: `https://salesforce.wd12.myworkdayjobs.com/External_Career_Site/job/${region.replaceAll(" ", "-")}---${city.replaceAll(" ", "-")}/${title.replaceAll(" ", "-")}_${id}`,
+      External_Job_Posting_Start_Date: "2026-08-14",
+      Job_Description: `<p>${title} builds trusted AI and data products.</p>`,
+      Job_Family_Group: "Software Engineering",
+      Job_Posting_Title: title,
+      Job_Requisition_Primary_Location: `${region} - ${city}`,
+      Job_Requisition_Ref_ID: id,
+      Time_Type: "Full time",
+      Countries: [country],
+      Regions: [region],
+      Locations: [city],
+      US_Compensation_Verbiage_Statement: country === "United States of America" ? "Medical and 401(k) benefits." : "",
+    });
+    const payload = {
+      Fetch_Timestamp: "2026-08-15T14:33+00:00",
+      Count: 2,
+      Total_Jobs: 2,
+      Report_Entry: [
+        job("JR320001", "Summer 2027 Data Science Intern", "United States of America", "California", "San Francisco"),
+        job("JR320002", "Software Engineer", "Canada", "Ontario", "Toronto"),
+      ],
+    };
+    const result = await crawlSource({
+      id: "p4-0340-salesforce",
+      company: "Salesforce",
+      postingUrl: "https://careers.salesforce.com/",
+      adapter: "custom",
+    }, async (input) => {
+      requests.push(String(input));
+      return String(input) === "https://a.sfdcstatic.com/digital/xsf/careers/prod/jobs_2.json"
+        ? Response.json(payload)
+        : new Response("missing", { status: 404 });
+    }, new Date("2026-08-15T15:00:00Z"));
+
+    expect(requests[0]).toBe("https://a.sfdcstatic.com/digital/xsf/careers/prod/jobs_2.json");
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      responseStatus: 200,
+      completeListing: true,
+      resolvedListingUrl: "https://www.salesforce.com/company/careers/jobs/",
+      error: null,
+    }));
+    expect(result.jobs).toHaveLength(1);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "JR320001",
+      title: "Summer 2027 Data Science Intern",
+      employmentType: "Internship",
+      location: "California - San Francisco",
+      locationCity: "San Francisco",
+      locationState: "California",
+      locationCountry: "United States of America",
+      jobFamily: "Software Engineering",
+      benefits: "Medical and 401(k) benefits.",
+      requisitionId: "JR320001",
+      officialUrl: expect.stringMatching(/_JR320001$/),
+      applyUrl: expect.stringMatching(/_JR320001\/apply$/),
+      publishedAt: "2026-08-14T00:00:00.000Z",
+      description: "Summer 2027 Data Science Intern builds trusted AI and data products.",
+    }));
+  });
+
+  it("uses Salesforce's official backup export and fails closed on unusable identities", async () => {
+    const calls: string[] = [];
+    const result = await crawlSource({
+      id: "p4-0340-salesforce", company: "Salesforce",
+      postingUrl: "https://careers.salesforce.com/", adapter: "custom",
+    }, async (input) => {
+      calls.push(String(input));
+      if (calls.length === 1) return new Response("temporary", { status: 503 });
+      return Response.json({
+        Fetch_Timestamp: "2026-08-15T14:33+00:00", Count: 1, Total_Jobs: 1,
+        Report_Entry: [{
+          Employee_Type: "Regular",
+          External_Job_Posting_Site: "https://example.com/jobs/JR320001",
+          External_Job_Posting_Start_Date: "2026-08-14",
+          Job_Posting_Title: "Software Engineer", Job_Requisition_Primary_Location: "California - San Francisco",
+          Job_Requisition_Ref_ID: "JR320001", Time_Type: "Full time",
+          Countries: ["United States of America"], Regions: ["California"], Locations: ["San Francisco"],
+        }],
+      });
+    }, new Date());
+
+    expect(calls).toEqual([
+      "https://a.sfdcstatic.com/digital/xsf/careers/prod/jobs_2.json",
+      "https://a.sfdcstatic.com/digital/xsf/careers/prod/jobs_2_backup.json",
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed",
+      responseStatus: 200,
+      completeListing: false,
+      jobs: [],
+      error: "Salesforce careers catalog contained duplicate or unusable job identities.",
+    }));
+  });
+
   it("collects Wayfair's complete US catalog from its first-party job search API", async () => {
     const requests: Array<{ url: string; body: Record<string, unknown>; headers: Headers }> = [];
     const job = (id: number, requisitionId: string, title: string, city: string, state: string) => ({

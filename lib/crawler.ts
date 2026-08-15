@@ -152,6 +152,7 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
   "p4-0319-nvidia",
   "p4-0325-oracle",
   "p4-0333-publicis-sapient",
+  "p4-0340-salesforce",
   "p4-0387-wipro",
   "p4-0394-amazon",
   "p4-0411-ciphertrace", // Mastercard catalog
@@ -3767,6 +3768,173 @@ const crawlAvanadeCoveo = async (source: CrawlSource, fetcher: typeof fetch): Pr
       error: error instanceof Error ? error.message : "Unknown Avanade Coveo crawler error.",
     };
   }
+};
+
+type SalesforceCareerJob = {
+  Employee_Type?: unknown;
+  External_Job_Posting_Site?: unknown;
+  External_Job_Posting_Start_Date?: unknown;
+  Job_Description?: unknown;
+  Job_Family_Group?: unknown;
+  Job_Posting_Title?: unknown;
+  Job_Requisition_Primary_Location?: unknown;
+  Job_Requisition_Ref_ID?: unknown;
+  Time_Type?: unknown;
+  Countries?: unknown;
+  Regions?: unknown;
+  Locations?: unknown;
+  US_Compensation_Verbiage_Statement?: unknown;
+};
+
+type SalesforceCareerPayload = {
+  Fetch_Timestamp?: unknown;
+  Count?: unknown;
+  Total_Jobs?: unknown;
+  Report_Entry?: unknown;
+};
+
+const SALESFORCE_LISTING_URL = "https://www.salesforce.com/company/careers/jobs/";
+const SALESFORCE_CATALOG_URLS = [
+  "https://a.sfdcstatic.com/digital/xsf/careers/prod/jobs_2.json",
+  "https://a.sfdcstatic.com/digital/xsf/careers/prod/jobs_2_backup.json",
+] as const;
+
+const salesforceTextList = (value: unknown): string[] => (
+  Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && Boolean(item.trim()))
+      .map((item) => item.trim())
+    : []
+);
+
+const salesforceWorkdayUrl = (value: unknown, externalId: string): URL | null => {
+  const raw = asText(value);
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    const identity = decodeURIComponent(url.pathname).match(/_((?:JR)\d+)(?:-\d+)?\/?$/i)?.[1] ?? null;
+    if (url.protocol !== "https:" || url.hostname !== "salesforce.wd12.myworkdayjobs.com"
+      || url.username || url.password || url.port || url.search || url.hash
+      || !/^\/External_Career_Site\/job\/.+/i.test(url.pathname)
+      || identity?.toLocaleLowerCase() !== externalId.toLocaleLowerCase()) return null;
+    return url;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Salesforce's branded careers root is edge-challenged for Worker requests.
+ * Its own jobs UI loads this complete, first-party Workday export from the
+ * Salesforce static CDN, so crawl that authoritative payload directly.
+ */
+const crawlSalesforceCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  let lastError = "Salesforce careers catalog was unavailable.";
+  for (const endpoint of SALESFORCE_CATALOG_URLS) {
+    try {
+      const response = await fetchWithTimeout(fetcher, endpoint, {
+        headers: { accept: "application/json" },
+      }, true, { attempts: 1, timeoutMs: 20_000 });
+      responseStatus = response.status;
+      if (!response.ok) {
+        lastError = `Salesforce careers catalog returned HTTP ${response.status}.`;
+        continue;
+      }
+      const payload = await response.json() as SalesforceCareerPayload;
+      const records = Array.isArray(payload.Report_Entry) ? payload.Report_Entry as SalesforceCareerJob[] : null;
+      const count = Number(payload.Count);
+      const total = Number(payload.Total_Jobs);
+      const fetchedAt = normalizedDate(payload.Fetch_Timestamp);
+      if (!records || !Number.isSafeInteger(count) || count < 1 || count !== records.length
+        || !Number.isSafeInteger(total) || total !== count || !fetchedAt || records.length > 10_000) {
+        lastError = "Salesforce careers catalog returned invalid metadata.";
+        continue;
+      }
+      const normalizedRecords = records.flatMap((record): Array<{ job: CrawledJob; countries: string[] }> => {
+        const externalId = asText(record.Job_Requisition_Ref_ID);
+        const title = asText(record.Job_Posting_Title);
+        const publishedAt = normalizedDate(record.External_Job_Posting_Start_Date);
+        const countries = salesforceTextList(record.Countries);
+        const regions = salesforceTextList(record.Regions);
+        const locations = salesforceTextList(record.Locations);
+        const primaryLocation = asText(record.Job_Requisition_Primary_Location);
+        if (!externalId || !/^JR\d+$/i.test(externalId) || !title || !publishedAt || !primaryLocation
+          || countries.length === 0 || regions.length === 0 || locations.length === 0) return [];
+        const officialUrl = salesforceWorkdayUrl(record.External_Job_Posting_Site, externalId);
+        if (!officialUrl) return [];
+        const description = plainText(asText(record.Job_Description));
+        const arrangementText = [title, primaryLocation, description].filter(Boolean).join(" ");
+        const programs = classifyJobPrograms(title).keys;
+        const employmentType = programs.includes("coop")
+          ? "Co-op"
+          : programs.includes("internship")
+            ? "Internship"
+            : normalizeEmploymentType([record.Time_Type, record.Employee_Type]);
+        const applyUrl = new URL(officialUrl.href);
+        applyUrl.pathname = `${applyUrl.pathname.replace(/\/$/, "")}/apply`;
+        const country = countries.length === 1 ? countries[0] : null;
+        const region = regions.length === 1 ? regions[0] : null;
+        const city = locations.length === 1 ? locations[0] : null;
+        return [{
+          countries,
+          job: {
+            externalId,
+            title,
+            company: source.company,
+            location: primaryLocation,
+            arrangement: /\bremote\b/i.test(arrangementText)
+              ? "remote"
+              : /\bhybrid\b/i.test(arrangementText)
+                ? "hybrid"
+                : /\b(?:on[- ]?site|in[- ]office)\b/i.test(arrangementText) ? "onsite" : "unknown",
+            employmentType,
+            summary: description,
+            description,
+            ...(asText(record.Job_Family_Group) ? { jobFamily: asText(record.Job_Family_Group) } : {}),
+            ...(locations.length > 1 ? { secondaryLocations: locations } : {}),
+            ...(city ? { locationCity: city } : {}),
+            ...(region ? { locationState: region } : {}),
+            ...(country ? { locationCountry: country } : {}),
+            ...(plainText(asText(record.US_Compensation_Verbiage_Statement))
+              ? { benefits: plainText(asText(record.US_Compensation_Verbiage_Statement)) }
+              : {}),
+            requisitionId: externalId,
+            applyUrl: applyUrl.href,
+            sourcePostedText: publishedAt.slice(0, 10),
+            rawPayload: { catalogFetchedAt: fetchedAt, countries, regions, locations },
+            officialUrl: officialUrl.href,
+            publishedAt,
+          },
+        }];
+      });
+      const allJobs = normalizedRecords.map(({ job }) => job);
+      if (allJobs.length !== records.length || new Set(allJobs.map((job) => job.externalId)).size !== records.length
+        || new Set(allJobs.map((job) => job.officialUrl)).size !== records.length) {
+        lastError = "Salesforce careers catalog contained duplicate or unusable job identities.";
+        continue;
+      }
+      const jobs = normalizedRecords
+        .filter(({ countries }) => countries.includes("United States of America"))
+        .map(({ job }) => job);
+      return {
+        status: "succeeded",
+        responseStatus: response.status,
+        completeListing: true,
+        jobs,
+        resolvedListingUrl: SALESFORCE_LISTING_URL,
+        error: null,
+      };
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : "Unknown Salesforce careers crawler error.";
+    }
+  }
+  return {
+    status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+    responseStatus,
+    completeListing: false,
+    jobs: [],
+    error: lastError,
+  };
 };
 
 type WayfairCareerJob = {
@@ -16263,6 +16431,9 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p4-0222-avanade") {
     return crawlAvanadeCoveo(source, fetcher);
+  }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p4-0340-salesforce") {
+    return crawlSalesforceCareers(source, fetcher);
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-1104-wayfair") {
     return crawlWayfairCareers(source, fetcher);
