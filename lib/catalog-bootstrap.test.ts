@@ -115,6 +115,10 @@ describe("runtime catalog bootstrap", () => {
     expect(sqlite.prepare("SELECT count(*) AS count FROM talent_targets").get()).toEqual({ count: 1 });
 
     sqlite.prepare("UPDATE sources SET next_crawl_at = '2099-01-01 00:00:00' WHERE id = ?").run(seed.sources[0].id);
+    sqlite.prepare("INSERT INTO catalog_state (key, value) VALUES (?, ?), (?, ?)").run(
+      `crawl_page_checkpoint:${seed.sources[0].id}`, JSON.stringify({ nextPage: 9 }),
+      `crawl_page_checkpoint:${seed.sources[1].id}`, JSON.stringify({ nextPage: 7 }),
+    );
     await ensureCatalogSeeded(database, {
       ...seed,
       version: "catalog-v2",
@@ -122,6 +126,12 @@ describe("runtime catalog bootstrap", () => {
     });
     expect(sqlite.prepare("SELECT posting_url AS postingUrl, next_crawl_at AS nextCrawlAt FROM sources").get())
       .toMatchObject({ postingUrl: "https://example.com/updated", nextCrawlAt: expect.not.stringContaining("2099") });
+    expect(sqlite.prepare("SELECT value FROM catalog_state WHERE key = ?").get(
+      `crawl_page_checkpoint:${seed.sources[0].id}`,
+    )).toBeUndefined();
+    expect(sqlite.prepare("SELECT value FROM catalog_state WHERE key = ?").get(
+      `crawl_page_checkpoint:${seed.sources[1].id}`,
+    )).toEqual({ value: JSON.stringify({ nextPage: 7 }) });
     sqlite.close();
   });
 });

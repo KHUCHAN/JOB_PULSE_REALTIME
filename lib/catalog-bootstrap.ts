@@ -59,6 +59,20 @@ export async function ensureCatalogSeeded(
   }
 
   for (const batch of chunks(seed.sources, 500)) {
+    // A persisted page cursor belongs to one exact listing URL and adapter.
+    // Drop it before changing either value so the new catalog always starts at
+    // page one. Deleting first is deliberately fail-safe: if the following
+    // upsert is interrupted, the old feed is merely re-read from its start.
+    await database.prepare(`
+      DELETE FROM catalog_state
+      WHERE key IN (
+        SELECT 'crawl_page_checkpoint:' || json_extract(incoming.value, '$.id')
+        FROM json_each(?) AS incoming
+        JOIN sources ON sources.id = json_extract(incoming.value, '$.id')
+        WHERE sources.posting_url IS NOT json_extract(incoming.value, '$.postingUrl')
+           OR sources.adapter IS NOT json_extract(incoming.value, '$.adapter')
+      )
+    `).bind(JSON.stringify(batch)).run();
     await database.prepare(`
       INSERT INTO sources (
         id, master_row, company, posting_url, talent_url, channel, adapter,

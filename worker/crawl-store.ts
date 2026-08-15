@@ -29,6 +29,8 @@ type PagedCrawlState = {
   nextPage: number;
   cycleStartedAt: string;
   previousCycleStartedAt?: string | null;
+  listingUrl: string;
+  adapter: PersistedSource["adapter"];
 };
 
 const pagedCrawlStateKey = (sourceId: string): string => `crawl_page_checkpoint:${sourceId}`;
@@ -188,7 +190,11 @@ export class D1CrawlStore implements CrawlStore {
       if (!value) continue;
       try {
         const checkpoint = JSON.parse(value) as Partial<PagedCrawlState>;
-        if (Number.isInteger(checkpoint.nextPage) && Number(checkpoint.nextPage) > 0 && typeof checkpoint.cycleStartedAt === "string") {
+        if (checkpoint.listingUrl === source.postingUrl
+          && checkpoint.adapter === source.adapter
+          && Number.isInteger(checkpoint.nextPage)
+          && Number(checkpoint.nextPage) > 0
+          && typeof checkpoint.cycleStartedAt === "string") {
           source.crawlPageCursor = Number(checkpoint.nextPage);
           source.crawlCycleStartedAt = checkpoint.cycleStartedAt;
           source.crawlPreviousCycleStartedAt = typeof checkpoint.previousCycleStartedAt === "string"
@@ -255,6 +261,19 @@ export class D1CrawlStore implements CrawlStore {
     postingUrl: string,
     adapter: PersistedSource["adapter"],
   ): Promise<void> {
+    // Cursor state is scoped to the previous listing identity. Clear it while
+    // that identity is still current, before promoting the new URL/adapter.
+    // The conditional delete prevents an older concurrent crawl from erasing
+    // a checkpoint that already belongs to a newer promoted listing.
+    await this.db.prepare(`
+      DELETE FROM catalog_state
+      WHERE key = ?
+        AND EXISTS (
+          SELECT 1 FROM sources
+          WHERE id = ? AND posting_url = ?
+            AND (posting_url IS NOT ? OR adapter IS NOT ?)
+        )
+    `).bind(pagedCrawlStateKey(sourceId), sourceId, previousUrl, postingUrl, adapter).run();
     await this.db.prepare(`
       UPDATE sources
       SET posting_url = ?, adapter = ?, updated_at = CURRENT_TIMESTAMP
@@ -278,18 +297,24 @@ export class D1CrawlStore implements CrawlStore {
   }
 
   async advancePagedCrawl(
-    sourceId: string,
+    source: Pick<PersistedSource, "id" | "postingUrl" | "adapter">,
     pagination: { nextPage: number; cycleComplete: boolean; totalPages: number },
     cycleStartedAt: string,
     previousCycleStartedAt: string | null,
   ): Promise<{ closed: number }> {
-    const key = pagedCrawlStateKey(sourceId);
+    const key = pagedCrawlStateKey(source.id);
     if (!pagination.cycleComplete) {
       await this.db.prepare(`
         INSERT INTO catalog_state (key, value, updated_at)
         VALUES (?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-      `).bind(key, JSON.stringify({ nextPage: pagination.nextPage, cycleStartedAt, previousCycleStartedAt })).run();
+      `).bind(key, JSON.stringify({
+        nextPage: pagination.nextPage,
+        cycleStartedAt,
+        previousCycleStartedAt,
+        listingUrl: source.postingUrl,
+        adapter: source.adapter,
+      })).run();
       return { closed: 0 };
     }
 
@@ -300,7 +325,7 @@ export class D1CrawlStore implements CrawlStore {
         UPDATE jobs
         SET status = 'closed', closed_at = ?, updated_at = CURRENT_TIMESTAMP
         WHERE source_id = ? AND status = 'open' AND last_seen_at < ?
-      `).bind(now, sourceId, previousCycleStartedAt).run();
+      `).bind(now, source.id, previousCycleStartedAt).run();
       closedCount = Number(closed.meta?.changes ?? 0);
     }
     await this.db.prepare(`
@@ -311,6 +336,8 @@ export class D1CrawlStore implements CrawlStore {
       nextPage: 1,
       cycleStartedAt: now,
       previousCycleStartedAt: cycleStartedAt,
+      listingUrl: source.postingUrl,
+      adapter: source.adapter,
     })).run();
     return { closed: closedCount };
   }

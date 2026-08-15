@@ -16,7 +16,7 @@ export interface CrawlStore {
     options?: { suppressNotifications?: boolean },
   ): Promise<{ created: number; updated: number; closed: number }>;
   advancePagedCrawl(
-    sourceId: string,
+    source: Pick<PersistedSource, "id" | "postingUrl" | "adapter">,
     pagination: { nextPage: number; cycleComplete: boolean; totalPages: number },
     cycleStartedAt: string,
     previousCycleStartedAt: string | null,
@@ -90,7 +90,7 @@ const runSource = async (
       );
       if (crawl.pagination) {
         const paged = await store.advancePagedCrawl(
-          source.id,
+          source,
           crawl.pagination,
           source.crawlCycleStartedAt ?? scheduledFor,
           source.crawlPreviousCycleStartedAt ?? null,

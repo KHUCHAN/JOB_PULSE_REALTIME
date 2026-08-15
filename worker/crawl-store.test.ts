@@ -523,8 +523,16 @@ describe("D1CrawlStore source leasing", () => {
       "custom",
     );
 
-    expect(calls[0].sql).toContain("WHERE id = ? AND posting_url = ?");
+    expect(calls[0].sql).toContain("DELETE FROM catalog_state");
     expect(calls[0].values).toEqual([
+      "crawl_page_checkpoint:source-1",
+      "source-1",
+      "https://acme.example/careers",
+      "https://acme.example/jobs",
+      "custom",
+    ]);
+    expect(calls[1].sql).toContain("WHERE id = ? AND posting_url = ?");
+    expect(calls[1].values).toEqual([
       "https://acme.example/jobs",
       "custom",
       "source-1",
@@ -571,6 +579,8 @@ describe("D1CrawlStore source leasing", () => {
                 nextPage: 41,
                 cycleStartedAt: "2026-08-09T08:00:00.000Z",
                 previousCycleStartedAt: "2026-08-08T08:00:00.000Z",
+                listingUrl: "https://www.google.com/about/careers/applications/jobs/results/",
+                adapter: "custom",
               }),
             }] }) };
           },
@@ -585,6 +595,34 @@ describe("D1CrawlStore source leasing", () => {
         crawlPreviousCycleStartedAt: "2026-08-08T08:00:00.000Z",
       }),
     ]);
+  });
+
+  it("ignores a page checkpoint whose listing provenance is missing or stale", async () => {
+    const db = {
+      prepare(sql: string) {
+        return {
+          bind() {
+            return { all: async () => ({ results: sql.includes("UPDATE sources") ? [{
+              id: "source-1", company: "Acme",
+              posting_url: "https://example.com/us/jobs",
+              adapter: "custom", next_crawl_at: "2026-08-09T12:10:00.000Z",
+            }] : [{
+              key: "crawl_page_checkpoint:source-1",
+              value: JSON.stringify({
+                nextPage: 9,
+                cycleStartedAt: "2026-08-09T08:00:00.000Z",
+                listingUrl: "https://example.com/global/jobs",
+                adapter: "custom",
+              }),
+            }] }) };
+          },
+        };
+      },
+    } as unknown as D1Database;
+
+    await expect(new D1CrawlStore(db).sourcesByIds(
+      ["source-1"], "2026-08-09T12:00:00.000Z",
+    )).resolves.toEqual([expect.not.objectContaining({ crawlPageCursor: 9 })]);
   });
 
   it("leases only explicitly requested sources for targeted recovery", async () => {
@@ -631,17 +669,23 @@ describe("D1CrawlStore source leasing", () => {
     } as unknown as D1Database;
     const store = new D1CrawlStore(db);
 
-    await expect(store.advancePagedCrawl("p4-0285-google", {
+    const source = {
+      id: "p4-0285-google",
+      postingUrl: "https://www.google.com/about/careers/applications/jobs/results/",
+      adapter: "custom" as const,
+    };
+    await expect(store.advancePagedCrawl(source, {
       nextPage: 41, cycleComplete: false, totalPages: 178,
     }, "2026-08-09T08:00:00.000Z", null)).resolves.toEqual({ closed: 0 });
-    await expect(store.advancePagedCrawl("p4-0285-google", {
+    await expect(store.advancePagedCrawl(source, {
       nextPage: 1, cycleComplete: true, totalPages: 178,
     }, "2026-08-09T08:00:00.000Z", null)).resolves.toEqual({ closed: 0 });
-    await expect(store.advancePagedCrawl("p4-0285-google", {
+    await expect(store.advancePagedCrawl(source, {
       nextPage: 1, cycleComplete: true, totalPages: 178,
     }, "2026-08-10T08:00:00.000Z", "2026-08-09T08:00:00.000Z")).resolves.toEqual({ closed: 3 });
 
     expect(calls[0].sql).toContain("INSERT INTO catalog_state");
+    expect(String(calls[0].values[1])).toContain('"listingUrl":"https://www.google.com/about/careers/applications/jobs/results/"');
     expect(calls[1].sql).toContain("INSERT INTO catalog_state");
     expect(calls[2].sql).toContain("last_seen_at < ?");
     expect(calls[2].values[2]).toBe("2026-08-09T08:00:00.000Z");

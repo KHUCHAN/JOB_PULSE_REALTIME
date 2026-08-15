@@ -33,12 +33,12 @@ class MemoryStore implements CrawlStore {
   }
 
   async advancePagedCrawl(
-    sourceId: string,
+    source: Pick<PersistedSource, "id" | "postingUrl" | "adapter">,
     pagination: { nextPage: number; cycleComplete: boolean; totalPages: number },
     cycleStartedAt: string,
     previousCycleStartedAt: string | null,
   ): Promise<{ closed: number }> {
-    this.paged.push({ sourceId, nextPage: pagination.nextPage, cycleComplete: pagination.cycleComplete, cycleStartedAt, previousCycleStartedAt });
+    this.paged.push({ sourceId: source.id, nextPage: pagination.nextPage, cycleComplete: pagination.cycleComplete, cycleStartedAt, previousCycleStartedAt });
     return { closed: pagination.cycleComplete && previousCycleStartedAt ? 2 : 0 };
   }
 
