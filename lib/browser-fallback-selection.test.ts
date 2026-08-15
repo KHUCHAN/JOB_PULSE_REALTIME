@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { browserRecoveryDue, needsBrowserFallback, shouldRecordBrowserResult } from "./browser-fallback-selection";
+import { browserRecoveryDue, browserResultError, needsBrowserFallback, shouldRecordBrowserResult } from "./browser-fallback-selection";
 
 describe("needsBrowserFallback", () => {
   it("selects a reachable source when its latest crawl extracted no jobs", () => {
@@ -38,6 +38,11 @@ describe("browser fallback result precedence", () => {
 
   it("records a browser failure only when the source has no prior result", () => {
     expect(shouldRecordBrowserResult(null, "failed")).toBe(true);
+  });
+
+  it("keeps healthy authoritative-empty observations free of an error", () => {
+    expect(browserResultError("succeeded", "empty_board")).toBeNull();
+    expect(browserResultError("failed", "empty_board")).toBe("empty_board");
   });
 });
 

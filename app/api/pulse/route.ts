@@ -21,7 +21,7 @@ import {
   type TeslaState,
 } from "../../../lib/crawler";
 import { normalizeBrowserJobSnapshot } from "../../../lib/browser-crawl-ingest";
-import { shouldRecordBrowserResult } from "../../../lib/browser-fallback-selection";
+import { browserResultError, shouldRecordBrowserResult } from "../../../lib/browser-fallback-selection";
 import { ensureCatalogSeeded, type CatalogSeed } from "../../../lib/catalog-bootstrap";
 import { crawlBatchOptions, jobAreaRegionBackfillLimit, jobProgramBackfillLimit, jobTopicBackfillLimit, recrawlSourceIds } from "../../../lib/crawl-batch-options";
 import { backfillJobAreasAndRegions } from "../../../lib/job-area-region-backfill";
@@ -251,9 +251,10 @@ async function recordBrowserCrawlResult(
     jobsCreated: 0,
     jobsUpdated: 0,
     jobsClosed: 0,
-    // Only fixed, low-cardinality codes are persisted. Browser pages are
-    // untrusted input and must never write arbitrary HTML/error text to D1.
-    error: code,
+    // Only fixed, low-cardinality codes are persisted for failures. A
+    // positively verified empty catalog is a successful observation and must
+    // not leave a stale-looking error on an otherwise healthy source.
+    error: browserResultError(status, code),
     finishedAt: new Date().toISOString(),
   });
   await store.scheduleNext(source.id, nextCrawlAt);

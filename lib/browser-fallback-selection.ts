@@ -40,3 +40,8 @@ export const shouldRecordBrowserResult = (
   previousStatus: LatestCrawlSummary["status"],
   browserStatus: Exclude<LatestCrawlSummary["status"], "running" | null>,
 ): boolean => browserStatus === "succeeded" || previousStatus === null;
+
+export const browserResultError = (
+  status: Exclude<LatestCrawlSummary["status"], "running" | null>,
+  code: string,
+): string | null => status === "succeeded" ? null : code;
