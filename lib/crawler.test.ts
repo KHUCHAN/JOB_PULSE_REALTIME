@@ -1570,6 +1570,129 @@ Wrong description.
     }));
   });
 
+  it("opens Sandia's official PeopleSoft session and enriches internship details", async () => {
+    const requests: Array<{ url: string; method: string; cookie: string | null; body: string }> = [];
+    const row = (index: number, id: string, title: string, location: string) => `<li class='ps_grid-row psc_rowact'>
+      <span class='ps_box-value' id='SCH_JOB_TITLE$${index}'>${title}</span>
+      <span class='ps_box-value' id='HRS_APP_JBSCH_I_HRS_JOB_OPENING_ID$${index}'>${id}</span>
+      <span class='ps_box-value' id='LOCATION$${index}'>${location}</span>
+      <span class='ps_box-value' id='HRS_APP_JBSCH_I_HRS_DEPT_DESCR$${index}'>09736</span>
+      <span class='ps_box-value' id='JOB_FAMILY_LABEL$${index}'>Student</span>
+      <span class='ps_box-value' id='SCH_OPENED$${index}'>08/14/2026</span></li>`;
+    const form = (state: number, rows: string, more: boolean) => `<form id='HRS_CG_SEARCH_FL' name='win0' method='post'
+      action='https://cg.sandia.gov/psc/applicant/EMPLOYEE/HRMS/c/HRS_HRAM_FL.HRS_CG_SEARCH_FL.GBL'>
+      <input type='hidden' name='ICSID' value='session-state'>
+      <input type='hidden' name='ICStateNum' value='${state}'>
+      <input type='hidden' name='ICAction' value='None'>
+      <b>3</b> jobs found.${rows}
+      ${more ? `<button onclick="submitAction_win0(document.win0,'HRS_AGNT_RSLT_I$hdown$0')">more</button>` : ""}
+      </form>`;
+    const firstRows = `${row(0, "698679", "Intern, R&amp;D Undergraduate Summer 2027, Hybrid", "Albuquerque, NM")}${row(1, "698680", "Senior Systems Engineer, Onsite", "Livermore, CA")}`;
+    const listing = form(1, firstRows, true);
+    const expandedListing = form(2, `${firstRows}${row(2, "698681", "Data Engineer, Remote", "Albuquerque, NM")}`, false);
+    const detail = `<span id='HRS_SCH_WRK2_POSTING_TITLE'>Intern, R&amp;D Undergraduate Summer 2027, Hybrid</span>
+      <span id='HRS_SCH_WRK2_HRS_JOB_OPENING_ID'>698679</span>
+      <span id='HRS_SCH_WRK_HRS_DESCRLONG'>Albuquerque, NM</span>
+      <span id='HRS_SCH_WRK_HRS_REG_TEMP'>Temporary</span>
+      <div id='win0divHRS_SCH_PSTDSC_row$0'><span id='HRS_SCH_WRK_DESCR100$0lbl'>What Your Job Will Be Like</span><span id=HRS_SCH_PSTDSC_DESCRLONG$0><p>Build data systems.</p></span></div>
+      <div id='win0divHRS_SCH_PSTDSC_row$1'><span id='HRS_SCH_WRK_DESCR100$1lbl'>Qualifications We Require</span><span id=HRS_SCH_PSTDSC_DESCRLONG$1><p>Must obtain a U.S. security clearance.</p></span></div>
+      <div id='win0div$ICField41'></div>`;
+    const result = await crawlSource({
+      id: "p5-1051-sandia-national-labs", company: "Sandia National Labs",
+      postingUrl: "https://www.sandia.gov/careers/", adapter: "custom",
+    }, async (input, init) => {
+      const url = String(input);
+      const headers = new Headers(init?.headers);
+      requests.push({ url, method: init?.method ?? "GET", cookie: headers.get("cookie"), body: String(init?.body ?? "") });
+      if (url.includes("JobOpeningId=698679")) return new Response(detail);
+      if (url.endsWith("HRS_APP_SCHJOB_FL")) return new Response(null, {
+        status: 302,
+        headers: {
+          location: `${url}&`,
+          "set-cookie": "PSJSESSIONID=session-one; Path=/; HttpOnly",
+        },
+      });
+      if (init?.method === "POST") return new Response(expandedListing, {
+        headers: { "set-cookie": "PS_STATE=state-two; Path=/; HttpOnly" },
+      });
+      return new Response(listing, { headers: { "set-cookie": "PS_TOKEN=token-one; Path=/; HttpOnly" } });
+    }, new Date());
+
+    expect(requests).toHaveLength(4);
+    expect(requests[1].cookie).toContain("PSJSESSIONID=session-one");
+    expect(requests[2].cookie).toContain("PSJSESSIONID=session-one");
+    expect(requests[2].cookie).toContain("PS_TOKEN=token-one");
+    expect(requests[2].method).toBe("POST");
+    expect(new URLSearchParams(requests[2].body).get("ICAction")).toBe("HRS_AGNT_RSLT_I$hdown$0");
+    expect(new URLSearchParams(requests[2].body).get("ICStateNum")).toBe("1");
+    expect(requests[3].cookie).toContain("PS_STATE=state-two");
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: true,
+      resolvedListingUrl: "https://cg.sandia.gov/psc/applicant/EMPLOYEE/HRMS/c/HRS_HRAM_FL.HRS_CG_SEARCH_FL.GBL?PAGE=HRS_APP_SCHJOB_FL",
+    }));
+    expect(result.jobs).toHaveLength(3);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "698679",
+      requisitionId: "698679",
+      title: "Intern, R&D Undergraduate Summer 2027, Hybrid",
+      location: "Albuquerque, NM",
+      locationCity: "Albuquerque",
+      locationState: "NM",
+      locationCountry: "US",
+      arrangement: "hybrid",
+      employmentType: "Internship",
+      department: "09736",
+      jobFamily: "Student",
+      description: "What Your Job Will Be Like\nBuild data systems.\n\nQualifications We Require\nMust obtain a U.S. security clearance.",
+      responsibilities: "Build data systems.",
+      qualifications: "Must obtain a U.S. security clearance.",
+      securityClearance: "Required",
+      publishedAt: "2026-08-14T00:00:00.000Z",
+      officialUrl: "https://cg.sandia.gov/psc/applicant/EMPLOYEE/HRMS/c/HRS_HRAM_FL.HRS_CG_SEARCH_FL.GBL?Action=U&FOCUS=Applicant&JobOpeningId=698679&Page=HRS_APP_JBPST_FL&PostingSeq=1&SiteId=1",
+    }));
+  });
+
+  it("fails Sandia closed when the advertised total exceeds usable rows", async () => {
+    const result = await crawlSource({
+      id: "p5-1051-sandia-national-labs", company: "Sandia National Labs",
+      postingUrl: "https://www.sandia.gov/careers/", adapter: "custom",
+    }, async (input) => String(input).endsWith("HRS_APP_SCHJOB_FL")
+      ? new Response(null, { status: 302, headers: { location: `${String(input)}&`, "set-cookie": "PSJSESSIONID=session-one; Path=/" } })
+      : new Response("<b>2</b> jobs found.<li class='ps_grid-row'><span id='SCH_JOB_TITLE$0'>Data Engineer</span><span id='HRS_APP_JBSCH_I_HRS_JOB_OPENING_ID$0'>698679</span></li>"), new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed", completeListing: false, jobs: [],
+      error: "Sandia careers returned a missing or incomplete job catalog.",
+    }));
+  });
+
+  it("fails Sandia closed when the PeopleSoft more action makes no progress", async () => {
+    const listing = `<form id='HRS_CG_SEARCH_FL' name='win0' method='post'
+      action='https://cg.sandia.gov/psc/applicant/EMPLOYEE/HRMS/c/HRS_HRAM_FL.HRS_CG_SEARCH_FL.GBL'>
+      <input type='hidden' name='ICSID' value='session-state'>
+      <input type='hidden' name='ICStateNum' value='1'>
+      <input type='hidden' name='ICAction' value='None'>
+      <b>2</b> jobs found.
+      <li class='ps_grid-row'><span id='SCH_JOB_TITLE$0'>Data Engineer</span><span id='HRS_APP_JBSCH_I_HRS_JOB_OPENING_ID$0'>698679</span></li>
+      <button onclick="submitAction_win0(document.win0,'HRS_AGNT_RSLT_I$hdown$0')">more</button></form>`;
+    let requests = 0;
+    const result = await crawlSource({
+      id: "p5-1051-sandia-national-labs", company: "Sandia National Labs",
+      postingUrl: "https://www.sandia.gov/careers/", adapter: "custom",
+    }, async (input) => {
+      requests += 1;
+      return String(input).endsWith("HRS_APP_SCHJOB_FL")
+        ? new Response(null, { status: 302, headers: { location: `${String(input)}&`, "set-cookie": "PSJSESSIONID=session-one; Path=/" } })
+        : new Response(listing);
+    }, new Date());
+
+    expect(requests).toBe(3);
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed", completeListing: false, jobs: [],
+      error: "Sandia careers returned a missing or incomplete job catalog.",
+    }));
+  });
+
   it("keeps only US, mixed, and unknown jobs for configured large catalogs", async () => {
     const locations = [
       "Marlborough, MA, United States",
@@ -8488,6 +8611,7 @@ Wrong description.
   });
 
   it("reads every HRMDirect row even when its source HTML omits closing anchor tags", async () => {
+    const requests: string[] = [];
     const html = `<table>
       <tr class="reqitem" data-req-id="3750384">
         <td class="departments reqitem">Accounting &amp; Finance</td>
@@ -8503,10 +8627,14 @@ Wrong description.
     const result = await crawlSource({
       id: "p5-0799-applied-optoelectronics",
       company: "Applied Optoelectronics (AOI)",
-      postingUrl: "https://ao-inc.hrmdirect.com/employment/job-openings.php?search=true&",
+      postingUrl: "https://ao-inc.hrmdirect.com/employment/job-openings.php",
       adapter: "custom",
-    }, async () => new Response(html), new Date());
+    }, async (input) => {
+      requests.push(String(input));
+      return new Response(html);
+    }, new Date());
 
+    expect(requests).toEqual(["https://ao-inc.hrmdirect.com/employment/job-openings.php?search=true"]);
     expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
     expect(result.jobs).toEqual([
       expect.objectContaining({

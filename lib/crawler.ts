@@ -2810,7 +2810,8 @@ const hrmDirectJobs = (html: string, source: CrawlSource): SourceCrawlResult | n
   const cell = (row: string, className: string): string | null => {
     const match = row.match(new RegExp(`<td\\b[^>]*class=["'][^"']*\\b${className}\\b[^"']*["'][^>]*>([\\s\\S]*?)<\\/td>`, "i"));
     const value = plainText(match?.[1]);
-    return value ? decodeHtmlAttribute(value) : null;
+    const decoded = value ? decodeHtmlAttribute(value).replace(/\uFFFD+/g, " ").replace(/\s+/g, " ").trim() : "";
+    return decoded || null;
   };
   const jobs = uniqueJobs(rows.flatMap((row): CrawledJob[] => {
     const externalId = row[1]?.trim();
@@ -7082,6 +7083,280 @@ const crawlPublix = async (source: CrawlSource, fetcher: typeof fetch): Promise<
       completeListing: false,
       jobs: [],
       error: error instanceof Error ? error.message : "Unknown Publix crawler error.",
+    };
+  }
+};
+
+const sandiaListingUrl = "https://cg.sandia.gov/psc/applicant/EMPLOYEE/HRMS/c/HRS_HRAM_FL.HRS_CG_SEARCH_FL.GBL?PAGE=HRS_APP_SCHJOB_FL";
+
+const sandiaCookieValues = (response: Response): string[] => {
+  const values = typeof response.headers.getSetCookie === "function"
+    ? response.headers.getSetCookie()
+    : [response.headers.get("set-cookie")].filter((value): value is string => Boolean(value));
+  return values.flatMap((value) => value.split(/,(?=\s*[!#$%&'*+.^_`|~0-9A-Za-z-]+=)/))
+    .map((value) => value.split(";", 1)[0]?.trim() ?? "")
+    .filter((value) => /^[!#$%&'*+.^_`|~0-9A-Za-z-]+=[^;]*$/.test(value));
+};
+
+const mergeSandiaCookies = (cookies: Map<string, string>, response: Response): void => {
+  for (const pair of sandiaCookieValues(response)) {
+    const separator = pair.indexOf("=");
+    cookies.set(pair.slice(0, separator), pair.slice(separator + 1));
+  }
+};
+
+const sandiaCookieHeader = (cookies: Map<string, string>): string =>
+  [...cookies.entries()].map(([name, value]) => `${name}=${value}`).join("; ");
+
+const sandiaDetailUrl = (identity: string): string => {
+  const url = new URL(sandiaListingUrl);
+  url.search = "";
+  url.searchParams.set("Action", "U");
+  url.searchParams.set("FOCUS", "Applicant");
+  url.searchParams.set("JobOpeningId", identity);
+  url.searchParams.set("Page", "HRS_APP_JBPST_FL");
+  url.searchParams.set("PostingSeq", "1");
+  url.searchParams.set("SiteId", "1");
+  return url.href;
+};
+
+const sandiaField = (html: string, field: string, indexed = true): string | null => {
+  const suffix = indexed ? "\\$\\d+" : "";
+  const value = html.match(new RegExp(`id=["']${field}${suffix}["'][^>]*>([\\s\\S]*?)<\\/span>`, "i"))?.[1];
+  return icimsText(value);
+};
+
+const sandiaDate = (value: string | null): string | null => {
+  const match = value?.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!match) return null;
+  const date = new Date(Date.UTC(Number(match[3]), Number(match[1]) - 1, Number(match[2])));
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+};
+
+const sandiaJobs = (
+  html: string,
+  source: CrawlSource,
+): { total: number | null; rowCount: number; jobs: CrawledJob[] } => {
+  const totalValue = html.match(/<b>\s*([\d,]+)\s*<\/b>\s+jobs found\./i)?.[1];
+  const total = totalValue ? Number(totalValue.replaceAll(",", "")) : null;
+  const rows = [...html.matchAll(
+    /<li\b[^>]*class=["'][^"']*\bps_grid-row\b[^"']*["'][^>]*>([\s\S]*?)<\/li>/gi,
+  )].filter((row) => /(?:SCH_JOB_TITLE|HRS_APP_JBSCH_I_HRS_JOB_OPENING_ID)\$\d+/i.test(row[1]));
+  const jobs = uniqueJobs(rows.flatMap((row): CrawledJob[] => {
+    const body = row[1];
+    const title = sandiaField(body, "SCH_JOB_TITLE");
+    const identity = sandiaField(body, "HRS_APP_JBSCH_I_HRS_JOB_OPENING_ID");
+    if (!title || !identity || !/^\d{6}$/.test(identity)) return [];
+    const location = sandiaField(body, "LOCATION");
+    const department = sandiaField(body, "HRS_APP_JBSCH_I_HRS_DEPT_DESCR");
+    const jobFamily = sandiaField(body, "JOB_FAMILY_LABEL");
+    const posted = sandiaField(body, "SCH_OPENED");
+    const programs = classifyJobPrograms(title);
+    const cityState = location?.match(/^(.+),\s*([A-Z]{2})$/);
+    return [{
+      externalId: identity,
+      requisitionId: identity,
+      title,
+      company: source.company,
+      location,
+      arrangement: /\bremote\b/i.test(title) ? "remote" : /\bhybrid\b/i.test(title) ? "hybrid"
+        : /\bonsite\b/i.test(title) ? "onsite" : "unknown",
+      employmentType: programs.keys.includes("coop") ? "Co-op"
+        : programs.keys.includes("internship") ? "Internship" : null,
+      summary: null,
+      department,
+      jobFamily,
+      ...(cityState ? { locationCity: cityState[1].trim(), locationState: cityState[2] } : {}),
+      locationCountry: "US",
+      ...(posted ? { sourcePostedText: posted } : {}),
+      officialUrl: sandiaDetailUrl(identity),
+      publishedAt: sandiaDate(posted),
+    }];
+  }));
+  return {
+    total: Number.isSafeInteger(total) && total! >= 0 ? total : null,
+    rowCount: rows.length,
+    jobs,
+  };
+};
+
+const sandiaAttribute = (tag: string, name: string): string | null => {
+  const value = tag.match(new RegExp(`\\b${name}=(?:["']([^"']*)["']|([^\\s>]+))`, "i"));
+  return value ? decodeHtmlAttribute(value[1] ?? value[2] ?? "") : null;
+};
+
+const sandiaMoreRequest = (html: string): { endpoint: string; body: string } | null => {
+  if (!/submitAction_win0\([^,]+,["']HRS_AGNT_RSLT_I\$hdown\$0["']\)/i.test(html)) return null;
+  const form = html.match(/<form\b[^>]*(?:id=["']HRS_CG_SEARCH_FL["']|name=["']win0["'])[^>]*>/i)?.[0];
+  const action = form ? sandiaAttribute(form, "action") : null;
+  if (!action) return null;
+  let endpoint: URL;
+  try {
+    endpoint = new URL(action, sandiaListingUrl);
+  } catch {
+    return null;
+  }
+  const expected = new URL(sandiaListingUrl);
+  if (endpoint.origin !== expected.origin || endpoint.pathname !== expected.pathname) return null;
+  const body = new URLSearchParams();
+  for (const match of html.matchAll(/<input\b[^>]*>/gi)) {
+    const tag = match[0];
+    const name = sandiaAttribute(tag, "name");
+    if (!name || /\bdisabled\b/i.test(tag)) continue;
+    const type = (sandiaAttribute(tag, "type") ?? "text").toLocaleLowerCase();
+    if (["button", "file", "image", "reset", "submit"].includes(type)) continue;
+    if (["checkbox", "radio"].includes(type) && !/\bchecked\b/i.test(tag)) continue;
+    body.append(name, sandiaAttribute(tag, "value") ?? "");
+  }
+  if (!body.has("ICSID") || !body.has("ICStateNum")) return null;
+  body.set("ICAction", "HRS_AGNT_RSLT_I$hdown$0");
+  return { endpoint: endpoint.href, body: body.toString() };
+};
+
+const sandiaDetail = (html: string, expected: CrawledJob): Partial<CrawledJob> | null => {
+  const identity = sandiaField(html, "HRS_SCH_WRK2_HRS_JOB_OPENING_ID", false);
+  const title = sandiaField(html, "HRS_SCH_WRK2_POSTING_TITLE", false);
+  if (!identity || identity !== expected.externalId || !title
+    || jobIdentityText(title) !== jobIdentityText(expected.title)) return null;
+  const sections = [...html.matchAll(
+    /<div\b[^>]*id=["']win0divHRS_SCH_PSTDSC_row\$\d+["'][^>]*>([\s\S]*?)(?=<div\b[^>]*id=["']win0divHRS_SCH_PSTDSC_row\$\d+["']|<div\b[^>]*id=["']win0div\$ICField41["']|$)/gi,
+  )].flatMap((match): Array<{ label: string; body: string }> => {
+    const block = match[1];
+    const label = icimsText(block.match(
+      /id=["']HRS_SCH_WRK_DESCR100\$\d+lbl["'][^>]*>([\s\S]*?)<\/span>/i,
+    )?.[1]);
+    const bodyMarker = block.match(/id=["']?HRS_SCH_PSTDSC_DESCRLONG\$\d+["']?\s*>/i);
+    const body = bodyMarker?.index != null
+      ? icimsText(block.slice(bodyMarker.index + bodyMarker[0].length))
+      : null;
+    return label && body ? [{ label, body }] : [];
+  });
+  const section = (pattern: RegExp): string | null => {
+    const text = sections.filter(({ label }) => pattern.test(label)).map(({ body }) => body).join("\n\n");
+    return text || null;
+  };
+  const responsibilities = section(/What Your Job Will Be Like/i);
+  const qualifications = section(/^Qualifications/i);
+  const description = sections.map(({ label, body }) => `${label}\n${body}`).join("\n\n") || null;
+  const location = sandiaField(html, "HRS_SCH_WRK_HRS_DESCRLONG", false);
+  const regularTemporary = sandiaField(html, "HRS_SCH_WRK_HRS_REG_TEMP", false);
+  return {
+    ...(description ? { summary: description.slice(0, 1_200), description } : {}),
+    ...(responsibilities ? { responsibilities } : {}),
+    ...(qualifications ? { qualifications } : {}),
+    ...(location ? { location } : {}),
+    ...(regularTemporary ? { shiftSchedule: regularTemporary } : {}),
+    ...(qualifications && /security clearance/i.test(qualifications) ? { securityClearance: "Required" } : {}),
+  };
+};
+
+const crawlSandia = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const cookies = new Map<string, string>();
+  let responseStatus: number | null = null;
+  try {
+    let currentUrl = sandiaListingUrl;
+    let response: Response | null = null;
+    for (let hop = 0; hop < 3; hop += 1) {
+      response = await fetchWithTimeout(fetcher, currentUrl, {
+        redirect: "manual",
+        ...(cookies.size ? { headers: { cookie: sandiaCookieHeader(cookies) } } : {}),
+      }, true, { attempts: 1, timeoutMs: 15_000 });
+      responseStatus = response.status;
+      mergeSandiaCookies(cookies, response);
+      if (response.status === 200) break;
+      const location = response.headers.get("location");
+      if (response.status < 300 || response.status >= 400 || !location) break;
+      const next = new URL(location, currentUrl);
+      const expected = new URL(sandiaListingUrl);
+      if (next.origin !== expected.origin || next.pathname !== expected.pathname) break;
+      currentUrl = next.href;
+      await response.body?.cancel().catch(() => undefined);
+      response = null;
+    }
+    if (!response || !response.ok) return {
+      status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: `Sandia careers session returned HTTP ${responseStatus ?? "unknown"}.`,
+    };
+    let html = await response.text();
+    let catalog = sandiaJobs(html, source);
+    const advertisedTotal = catalog.total;
+    if (advertisedTotal === null || advertisedTotal <= 0 || catalog.rowCount === 0
+      || catalog.rowCount !== catalog.jobs.length || catalog.jobs.length > advertisedTotal) return {
+      status: "failed", responseStatus: response.status, completeListing: false, jobs: [],
+      error: "Sandia careers returned a missing or incomplete job catalog.",
+    };
+    // PeopleSoft initially renders 50 results and expands the same result grid
+    // by 50 rows for each stateful "more" action. Re-submit the current form
+    // rather than inventing an offset: ICStateNum and ICSID are session-bound.
+    // Every response must be a strict cumulative superset so a repeated,
+    // malformed, or reordered partial page can never become closure-authoritative.
+    const maximumMoreRequests = 25;
+    for (let page = 0; catalog.jobs.length < advertisedTotal && page < maximumMoreRequests; page += 1) {
+      const request = sandiaMoreRequest(html);
+      if (!request) break;
+      const nextResponse = await fetchWithTimeout(fetcher, request.endpoint, {
+        method: "POST",
+        redirect: "manual",
+        headers: {
+          cookie: sandiaCookieHeader(cookies),
+          "content-type": "application/x-www-form-urlencoded",
+          referer: currentUrl,
+        },
+        body: request.body,
+      }, true, { attempts: 1, timeoutMs: 15_000 });
+      responseStatus = nextResponse.status;
+      mergeSandiaCookies(cookies, nextResponse);
+      if (!nextResponse.ok) break;
+      const nextHtml = await nextResponse.text();
+      const nextCatalog = sandiaJobs(nextHtml, source);
+      const nextIdentities = new Set(nextCatalog.jobs.map((job) => job.externalId));
+      if (nextCatalog.total !== advertisedTotal
+        || nextCatalog.rowCount !== nextCatalog.jobs.length
+        || nextCatalog.jobs.length <= catalog.jobs.length
+        || nextCatalog.jobs.length > advertisedTotal
+        || catalog.jobs.some((job) => !nextIdentities.has(job.externalId))) break;
+      html = nextHtml;
+      catalog = nextCatalog;
+    }
+    if (catalog.jobs.length !== advertisedTotal) return {
+      status: "failed", responseStatus, completeListing: false, jobs: [],
+      error: "Sandia careers returned a missing or incomplete job catalog.",
+    };
+    const detailTargets = catalog.jobs.filter((job) => classifyJobPrograms(job.title).keys.length > 0).slice(0, 20);
+    const details = new Map<string, Partial<CrawledJob>>();
+    for (let start = 0; start < detailTargets.length; start += 4) {
+      const batch = await Promise.all(detailTargets.slice(start, start + 4).map(async (job) => {
+        try {
+          const detailResponse = await fetchWithTimeout(fetcher, job.officialUrl, {
+            redirect: "manual",
+            headers: { cookie: sandiaCookieHeader(cookies) },
+          }, true, { attempts: 1, timeoutMs: 10_000 });
+          if (!detailResponse.ok) return [job.officialUrl, null] as const;
+          return [job.officialUrl, sandiaDetail(await detailResponse.text(), job)] as const;
+        } catch {
+          return [job.officialUrl, null] as const;
+        }
+      }));
+      for (const [url, detail] of batch) if (detail) details.set(url, detail);
+    }
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: true,
+      jobs: catalog.jobs.map((job) => ({ ...job, ...(details.get(job.officialUrl) ?? {}) })),
+      resolvedListingUrl: sandiaListingUrl,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Sandia crawler error.",
     };
   }
 };
@@ -14010,6 +14285,22 @@ const crawlDayforce = async (
 };
 
 async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
+  if ((source.discoveryDepth ?? 0) === 0) {
+    try {
+      const page = new URL(source.postingUrl);
+      if (/hrmdirect\.com$/i.test(page.hostname) && page.searchParams.get("search") !== "true") {
+        page.searchParams.set("search", "true");
+        const result = await crawlSourceBase({
+          ...source,
+          postingUrl: page.href,
+          discoveryDepth: 1,
+        }, fetcher, now);
+        return result.status === "succeeded" ? { ...result, resolvedListingUrl: page.href } : result;
+      }
+    } catch {
+      // The regular source validation path reports malformed URLs consistently.
+    }
+  }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-806") {
     return crawlEnergyTransferSelectMinds(source, fetcher);
   }
@@ -14076,6 +14367,7 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   if (source.id === "p5-0935-hologic") return crawlHologic(source, fetcher);
   if (source.id === "audit-row-321") return crawlBorgWarner(source, fetcher);
   if (source.id === "audit-row-415") return crawlPublix(source, fetcher);
+  if (source.id === "p5-1051-sandia-national-labs") return crawlSandia(source, fetcher);
   if (source.id === "p4-0457-match-group") {
     const listingUrl = "https://join.matchgroupcareers.com/careers?domain=gotinder.com";
     const result = await crawlEightfold({ ...source, postingUrl: listingUrl, adapter: "custom" }, fetcher);
