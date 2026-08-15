@@ -11574,15 +11574,18 @@ HUMAN RESOURCES Posted Date
     const page = (current: number, rows: string) => `<header>Search Results (52)</header><table><tbody>${rows}</tbody></table><div>Page ${current} of 2</div>`;
     const firstRows = Array.from({ length: 50 }, (_, index) => row(index + 1)).join("");
     const requests: string[] = [];
-    const result = await crawlSource(source, async (input) => {
+    const result = await crawlSource(source, async (input, init) => {
       const url = String(input);
       requests.push(url);
-      return new Response(url.includes("pn=2") ? page(2, `${row(51)}${remoteForeignRow}`) : page(1, firstRows));
+      const formPage = init?.body instanceof URLSearchParams ? init.body.get("pn") : null;
+      return new Response(formPage === "2" || url.includes("pn=2")
+        ? page(2, `${row(51)}${remoteForeignRow}`)
+        : page(1, firstRows));
     }, new Date("2026-08-15T12:00:00Z"));
 
     expect(requests).toHaveLength(2);
     expect(requests[0]).toContain("CountryID=US");
-    expect(requests[1]).toContain("pn=2");
+    expect(requests[1]).toBe("https://cgi.njoyn.com/CORP/xweb/xweb.asp?CLID=21001&page=JobListing&lang=1&CountryID=US");
     expect(result).toEqual(expect.objectContaining({
       status: "succeeded",
       responseStatus: 200,
@@ -11599,11 +11602,11 @@ HUMAN RESOURCES Posted Date
       location: "Fairfax",
       locationCountry: "US",
       jobFunction: "Software Development / Engineering",
-      officialUrl: "https://cgi.njoyn.com/CORP/xweb/xweb.asp?NTKN=c&clid=21001&Page=JobDetails&Jobid=J0826-0001&BRID=1325001&lang=1",
+      officialUrl: "https://cgi.njoyn.com/CORP/xweb/xweb.asp?NTKN=c&clid=21001&Page=JobDetails&Jobid=J0826-0001&lang=1",
     }));
   });
 
-  it("uses an HTML reader for CGI and fails closed on unstable page identities", async () => {
+  it("parses CGI's real Markdown reader format and fails closed on unstable page identities", async () => {
     const source = {
       id: "p4-0241-cgi",
       company: "CGI",
@@ -11611,17 +11614,27 @@ HUMAN RESOURCES Posted Date
       adapter: "custom" as const,
     };
     const row = (jobId: string, brid: string) => `<tr hasmultiplelocations="0" remotework="False" countryids="US"><td><a href="xweb.asp?NTKN=c&amp;clid=21001&amp;Page=JobDetails&amp;Jobid=${jobId}&amp;BRID=${brid}&amp;lang=1">${jobId}</a></td><td>Data Science Intern</td><td>Analytics</td><td>New York</td><td name="CountryCell">United States</td></tr>`;
+    const markdownRow = (jobId: string, brid: string) => `| [${jobId}](http://cgi.njoyn.com/CORP/xweb/xweb.asp?NTKN=c&clid=21001&Page=JobDetails&Jobid=${jobId}&BRID=${brid}&lang=1) | Data Science Intern | Data & Analytics | New York | United States |`;
     const requests: string[] = [];
     const recovered = await crawlSource(source, async (input) => {
       const url = String(input);
       requests.push(url);
       if (!url.startsWith("https://r.jina.ai/")) return new Response("<title>Radware Block Page</title>");
-      return new Response(`<header>Search Results (1)</header><table><tbody>${row("J0826-0001", "1325001")}</tbody></table><div>Page 1 of 1</div>`);
+      return new Response(`Title: Careers\n\nMarkdown Content:\nSearch Results (1)\n\n| Position ID | Title | Category | City | Country |\n| --- | --- | --- | --- | --- |\n${markdownRow("J0826-0001", "1325001")}\n\nPage 1 of 1 NEXT`);
     }, new Date());
     expect(requests).toHaveLength(2);
     expect(requests[1]).toContain("CountryID=US");
     expect(requests[1]).toContain("%26");
-    expect(recovered).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(recovered).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 1 },
+    }));
+    expect(recovered.jobs).toEqual([expect.objectContaining({
+      externalId: "J0826-0001",
+      jobFunction: "Data & Analytics",
+      locationCountry: "US",
+    })]);
 
     const duplicateRows = Array.from({ length: 50 }, () => row("J0826-0001", "1325001")).join("");
     const unstable = await crawlSource(source, async (input) => {
@@ -11633,7 +11646,107 @@ HUMAN RESOURCES Posted Date
       status: "failed",
       completeListing: false,
       jobs: [],
-      error: "CGI Njoyn returned an incomplete or unstable US catalog.",
     }));
+  });
+
+  it("checkpoints CGI's large catalog and keeps page one fresh on every pass", async () => {
+    const source = {
+      id: "p4-0241-cgi",
+      company: "CGI",
+      postingUrl: "https://www.cgi.com/en/careers",
+      adapter: "custom" as const,
+      crawlPageCursor: 5,
+      crawlCycleStartedAt: "2026-08-15T12:00:00Z",
+    };
+    const row = (index: number) => {
+      const jobId = `J0826-${String(index).padStart(4, "0")}`;
+      return `<tr remotework="False"><td><a href="xweb.asp?clid=21001&amp;Page=JobDetails&amp;Jobid=${jobId}&amp;BRID=${1325000 + index}">${jobId}</a></td><td>Software Engineer ${index}</td><td>Software Development / Engineering</td><td>Fairfax</td><td>United States</td></tr>`;
+    };
+    const page = (current: number) => {
+      const first = (current - 1) * 50 + 1;
+      const count = current === 13 ? 47 : 50;
+      const rows = Array.from({ length: count }, (_, offset) => row(first + offset)).join("");
+      return `<header>Search Results (647)</header><table>${rows}</table><div>Page ${current} of 13</div>`;
+    };
+    const requests: number[] = [];
+    const result = await crawlSource(source, async (input, init) => {
+      const url = new URL(String(input));
+      const formPage = init?.body instanceof URLSearchParams ? init.body.get("pn") : null;
+      const current = Number(formPage ?? url.searchParams.get("pn") ?? "1");
+      requests.push(current);
+      return new Response(page(current));
+    }, new Date());
+
+    expect(requests).toEqual([1, 5, 6, 7, 8]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: { nextPage: 9, cycleComplete: false, totalPages: 13 },
+    }));
+    expect(result.jobs).toHaveLength(250);
+    expect(result.jobs.some((job) => job.externalId === "J0826-0001")).toBe(true);
+    expect(result.jobs.some((job) => job.externalId === "J0826-0201")).toBe(true);
+  });
+
+  it("uses CGI reader card rows for later POST-only catalog pages", async () => {
+    const source = {
+      id: "p4-0241-cgi",
+      company: "CGI",
+      postingUrl: "https://www.cgi.com/en/careers",
+      adapter: "custom" as const,
+    };
+    const htmlRow = (index: number) => {
+      const jobId = `J0826-${String(index).padStart(4, "0")}`;
+      return `<tr><td><a href="xweb.asp?clid=21001&amp;Page=JobDetails&amp;Jobid=${jobId}&amp;BRID=${1325000 + index}">${jobId}</a></td><td>Role ${index}</td><td>Technology</td><td>Fairfax</td><td>United States</td></tr>`;
+    };
+    const firstPage = `<header>Search Results (51)</header><table>${Array.from({ length: 50 }, (_, index) => htmlRow(index + 1)).join("")}</table><div>Page 1 of 2</div>`;
+    const readerPage = `Title: Careers\n\nURL Source: http://cgi.njoyn.com/CORP/xweb/xweb.asp?CLID=21001&page=JobListing&lang=1&CountryID=US&pn=2\n\nMarkdown Content:\n## J0826-0051 - Summer 2027 Applied AI Intern\n\nCategory Analytics & Emerging Technology\n\nCity New York\n\nCountry United States`;
+    const result = await crawlSource(source, async (input, init) => {
+      const url = String(input);
+      if (url.startsWith("https://r.jina.ai/")) return new Response(readerPage);
+      if (init?.method === "POST") return new Response("<title>Radware Block Page</title>");
+      return new Response(firstPage);
+    }, new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 2 },
+    }));
+    expect(result.jobs).toHaveLength(51);
+    expect(result.jobs.at(-1)).toEqual(expect.objectContaining({
+      externalId: "J0826-0051",
+      title: "Summer 2027 Applied AI Intern",
+      employmentType: "Internship",
+      jobFunction: "Analytics & Emerging Technology",
+      officialUrl: "https://cgi.njoyn.com/CORP/xweb/xweb.asp?NTKN=c&clid=21001&Page=JobDetails&Jobid=J0826-0051&lang=1",
+    }));
+  });
+
+  it("persists CGI page-one progress without advancing past a blocked checkpoint page", async () => {
+    const source = {
+      id: "p4-0241-cgi",
+      company: "CGI",
+      postingUrl: "https://www.cgi.com/en/careers",
+      adapter: "custom" as const,
+      crawlPageCursor: 5,
+    };
+    const row = (index: number) => {
+      const jobId = `J0826-${String(index).padStart(4, "0")}`;
+      return `<tr><td><a href="xweb.asp?clid=21001&amp;Page=JobDetails&amp;Jobid=${jobId}&amp;BRID=${1325000 + index}">${jobId}</a></td><td>Role ${index}</td><td>Technology</td><td>Fairfax</td><td>United States</td></tr>`;
+    };
+    const firstPage = `<header>Search Results (647)</header><table>${Array.from({ length: 50 }, (_, index) => row(index + 1)).join("")}</table><div>Page 1 of 13</div>`;
+    const result = await crawlSource(source, async (input) => {
+      const url = String(input);
+      if (!url.includes("pn=")) return new Response(firstPage);
+      return new Response("rate limited", { status: 429 });
+    }, new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: { nextPage: 5, cycleComplete: false, totalPages: 13 },
+    }));
+    expect(result.jobs).toHaveLength(50);
   });
 });

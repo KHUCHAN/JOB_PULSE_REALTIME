@@ -15880,6 +15880,7 @@ const crawlChristusHealth = async (
 };
 
 type CgiNjoynPage = {
+  responseStatus: number;
   page: number;
   total: number;
   totalPages: number;
@@ -15889,6 +15890,7 @@ type CgiNjoynPage = {
 };
 
 const CGI_NJOYN_PAGE_SIZE = 50;
+const CGI_NJOYN_MAX_PAGES_PER_PASS = 4;
 const CGI_NJOYN_LISTING_URL = "https://cgi.njoyn.com/CORP/xweb/xweb.asp?CLID=21001&page=JobListing&lang=1&CountryID=US";
 
 const cgiNjoynPageUrl = (page: number): string => {
@@ -15905,42 +15907,148 @@ const cgiNjoynReaderUrl = (listingUrl: string): string => {
   return `https://r.jina.ai/${target.href.replaceAll("&", "%26")}`;
 };
 
+type CgiNjoynRawRow = {
+  externalId: string;
+  href: string;
+  title: string;
+  jobFunction: string;
+  location: string;
+  country: string;
+  remote: boolean;
+};
+
+const splitMarkdownTableRow = (line: string): string[] | null => {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("|") || !trimmed.endsWith("|")) return null;
+  const cells: string[] = [];
+  let cell = "";
+  let escaped = false;
+  for (const character of trimmed.slice(1, -1)) {
+    if (escaped) {
+      cell += character;
+      escaped = false;
+    } else if (character === "\\") {
+      escaped = true;
+    } else if (character === "|") {
+      cells.push(cell.trim());
+      cell = "";
+    } else {
+      cell += character;
+    }
+  }
+  if (escaped) cell += "\\";
+  cells.push(cell.trim());
+  return cells;
+};
+
+const cgiNjoynRowsFromContent = (content: string): CgiNjoynRawRow[] => {
+  const htmlRows = [...content.matchAll(
+    /<tr\b([^>]*)>\s*<td\b[^>]*>\s*<a\b[^>]*href=["']([^"']*\bPage=JobDetails\b[^"']*)["'][^>]*>([\s\S]*?)<\/a>\s*<\/td>\s*<td\b[^>]*>([\s\S]*?)<\/td>\s*<td\b[^>]*>([\s\S]*?)<\/td>\s*<td\b[^>]*>([\s\S]*?)<\/td>\s*<td\b[^>]*>([\s\S]*?)<\/td>\s*<\/tr>/gi,
+  )].map((match): CgiNjoynRawRow => ({
+    externalId: decodeHtmlAttribute(plainText(match[3]) ?? "").trim(),
+    href: decodeHtmlAttribute(match[2]),
+    title: decodeHtmlAttribute(plainText(match[4]) ?? "").trim(),
+    jobFunction: decodeHtmlAttribute(plainText(match[5]) ?? "").trim(),
+    location: decodeHtmlAttribute(plainText(match[6]) ?? "").trim(),
+    country: decodeHtmlAttribute(plainText(match[7]) ?? "").trim(),
+    remote: /\bremotework=["']?true\b/i.test(match[1] ?? ""),
+  }));
+  if (htmlRows.length > 0) return htmlRows;
+
+  const markdownTableRows = content.split(/\r?\n/).flatMap((line): CgiNjoynRawRow[] => {
+    const cells = splitMarkdownTableRow(line);
+    if (!cells || cells.length !== 5) return [];
+    const identity = cells[0].match(/^\[([^\]]+)]\((https?:\/\/[^)]+)\)$/i);
+    if (!identity) return [];
+    return [{
+      externalId: identity[1].trim(),
+      href: identity[2].trim(),
+      title: decodeHtmlAttribute(cells[1]).trim(),
+      jobFunction: decodeHtmlAttribute(cells[2]).trim(),
+      location: decodeHtmlAttribute(cells[3]).trim(),
+      country: decodeHtmlAttribute(cells[4]).trim(),
+      remote: /\bremote\b/i.test(cells[3]),
+    }];
+  });
+  if (markdownTableRows.length > 0) return markdownTableRows;
+
+  return content.split(/(?=^##\s+J\d{4}-\d{4}\s+-\s+)/gmi).flatMap((section): CgiNjoynRawRow[] => {
+    const heading = section.match(/^##\s+(J\d{4}-\d{4})\s+-\s+([^\r\n]+)$/mi);
+    const jobFunction = section.match(/^Category\s+([^\r\n]+)$/mi)?.[1]?.trim();
+    const location = section.match(/^City\s+([^\r\n]+)$/mi)?.[1]?.trim();
+    const country = section.match(/^Country\s+([^\r\n]+)$/mi)?.[1]?.trim();
+    if (!heading || !jobFunction || !location || !country) return [];
+    const externalId = heading[1].trim();
+    const href = new URL("https://cgi.njoyn.com/CORP/xweb/xweb.asp");
+    for (const [key, value] of [
+      ["NTKN", "c"], ["clid", "21001"], ["Page", "JobDetails"],
+      ["Jobid", externalId], ["lang", "1"],
+    ]) href.searchParams.set(key, value);
+    return [{
+      externalId,
+      href: href.href,
+      title: decodeHtmlAttribute(heading[2]).trim(),
+      jobFunction: decodeHtmlAttribute(jobFunction),
+      location: decodeHtmlAttribute(location),
+      country: decodeHtmlAttribute(country),
+      remote: /\bremote\b/i.test(location),
+    }];
+  });
+};
+
+const cgiNjoynReaderSourceMatches = (content: string, expectedPage: number): boolean => {
+  const sourceValue = content.match(/^URL Source:\s*(https?:\/\/\S+)$/mi)?.[1];
+  if (!sourceValue) return false;
+  try {
+    const url = new URL(sourceValue);
+    const parameters = new Map([...url.searchParams].map(([key, value]) => [key.toLocaleLowerCase(), value]));
+    return /^https?:$/.test(url.protocol)
+      && url.hostname.toLocaleLowerCase() === "cgi.njoyn.com"
+      && !url.port
+      && url.pathname.toLocaleLowerCase() === "/corp/xweb/xweb.asp"
+      && parameters.get("clid") === "21001"
+      && parameters.get("page")?.toLocaleLowerCase() === "joblisting"
+      && parameters.get("countryid") === "US"
+      && Number(parameters.get("pn") ?? "1") === expectedPage;
+  } catch {
+    return false;
+  }
+};
+
 const parseCgiNjoynPage = (
-  html: string,
+  content: string,
   source: CrawlSource,
   expectedPage: number,
+  expectedCatalog?: { total: number; totalPages: number },
 ): CgiNjoynPage | null => {
-  const total = Number(html.match(/Search Results\s*\(([\d,]+)\)/i)?.[1]?.replaceAll(",", ""));
-  const pagination = html.match(/\bPage\s+(\d+)\s+of\s+(\d+)\b/i);
-  const page = Number(pagination?.[1]);
-  const totalPages = Number(pagination?.[2]);
+  const detectedTotal = Number(content.match(/Search Results\s*\(([\d,]+)\)/i)?.[1]?.replaceAll(",", ""));
+  const pagination = content.match(/\bPage\s+(\d+)\s+of\s+(\d+)\b/i);
+  const detectedPage = Number(pagination?.[1]);
+  const detectedTotalPages = Number(pagination?.[2]);
+  const hasCatalogMetadata = Number.isInteger(detectedTotal) && detectedTotal > 0
+    && detectedPage === expectedPage && Number.isInteger(detectedTotalPages);
+  const total = hasCatalogMetadata ? detectedTotal : expectedCatalog?.total ?? Number.NaN;
+  const page = hasCatalogMetadata ? detectedPage : expectedPage;
+  const totalPages = hasCatalogMetadata ? detectedTotalPages : expectedCatalog?.totalPages ?? Number.NaN;
   if (!Number.isInteger(total) || total <= 0 || page !== expectedPage
-    || !Number.isInteger(totalPages) || totalPages !== Math.ceil(total / CGI_NJOYN_PAGE_SIZE)) return null;
+    || !Number.isInteger(totalPages) || totalPages !== Math.ceil(total / CGI_NJOYN_PAGE_SIZE)
+    || (!hasCatalogMetadata && (!expectedCatalog || !cgiNjoynReaderSourceMatches(content, expectedPage)))) return null;
 
-  const rawRows = [...html.matchAll(
-    /<tr\b([^>]*)>\s*<td\b[^>]*>\s*<a\b[^>]*href=["']([^"']*\bPage=JobDetails\b[^"']*)["'][^>]*>([\s\S]*?)<\/a>\s*<\/td>\s*<td\b[^>]*>([\s\S]*?)<\/td>\s*<td\b[^>]*>([\s\S]*?)<\/td>\s*<td\b[^>]*>([\s\S]*?)<\/td>\s*<td\b[^>]*>([\s\S]*?)<\/td>\s*<\/tr>/gi,
-  )];
+  const rawRows = cgiNjoynRowsFromContent(content);
   const expectedJobs = expectedPage < totalPages
     ? CGI_NJOYN_PAGE_SIZE
     : total - CGI_NJOYN_PAGE_SIZE * (totalPages - 1);
   if (rawRows.length !== expectedJobs) return null;
-  const parsedRows = rawRows.map((match): { externalId: string; officialUrl: string; job: CrawledJob | null } | null => {
-    const rowAttributes = match[1] ?? "";
-    const externalId = decodeHtmlAttribute(plainText(match[3]) ?? "").trim();
-    const title = decodeHtmlAttribute(plainText(match[4]) ?? "").trim();
-    const jobFunction = decodeHtmlAttribute(plainText(match[5]) ?? "").trim();
-    const location = decodeHtmlAttribute(plainText(match[6]) ?? "").trim();
-    const country = decodeHtmlAttribute(plainText(match[7]) ?? "").trim();
-    const remote = /\bremotework=["']?true\b/i.test(rowAttributes);
+  const parsedRows = rawRows.map((row): { externalId: string; officialUrl: string; job: CrawledJob | null } | null => {
+    const { externalId, title, jobFunction, location, country, remote } = row;
     // Njoyn's CountryID=US filter also returns the global remote pool. Validate
     // those rows as part of the paged snapshot, but persist only rows whose
     // advertised country is explicitly United States.
-    if (!/^J\d{4}-\d{4}$/i.test(externalId) || !title || !country
-      || (country !== "United States" && !remote)) return null;
+    if (!/^J\d{4}-\d{4}$/i.test(externalId) || !title || !country) return null;
 
     let detailUrl: URL;
     try {
-      detailUrl = new URL(decodeHtmlAttribute(match[2]), CGI_NJOYN_LISTING_URL);
+      detailUrl = new URL(row.href, CGI_NJOYN_LISTING_URL);
     } catch {
       return null;
     }
@@ -15950,12 +16058,12 @@ const parseCgiNjoynPage = (
       || detailUrl.port || detailUrl.pathname.toLocaleLowerCase() !== "/corp/xweb/xweb.asp"
       || parameters.get("page")?.toLocaleLowerCase() !== "jobdetails"
       || parameters.get("clid") !== "21001" || parameters.get("jobid") !== externalId
-      || !brid || !/^\d+$/.test(brid)) return null;
+      || (brid != null && !/^\d+$/.test(brid))) return null;
 
     const officialUrl = new URL("https://cgi.njoyn.com/CORP/xweb/xweb.asp");
     for (const [key, value] of [
       ["NTKN", "c"], ["clid", "21001"], ["Page", "JobDetails"],
-      ["Jobid", externalId], ["BRID", brid], ["lang", "1"],
+      ["Jobid", externalId], ["lang", "1"],
     ]) officialUrl.searchParams.set(key, value);
     if (country !== "United States") return { externalId, officialUrl: officialUrl.href, job: null };
     const programs = classifyJobPrograms(title).keys;
@@ -15978,7 +16086,10 @@ const parseCgiNjoynPage = (
   });
   if (parsedRows.some((row) => row == null)) return null;
   const validRows = parsedRows as Array<{ externalId: string; officialUrl: string; job: CrawledJob | null }>;
+  if (new Set(validRows.map((row) => row.externalId)).size !== validRows.length
+    || new Set(validRows.map((row) => row.officialUrl)).size !== validRows.length) return null;
   return {
+    responseStatus: 200,
     page,
     total,
     totalPages,
@@ -15993,14 +16104,32 @@ const crawlCgiNjoyn = async (
   fetcher: typeof fetch,
 ): Promise<SourceCrawlResult> => {
   let responseStatus: number | null = null;
-  const fetchPage = async (page: number): Promise<CgiNjoynPage> => {
+  const fetchPage = async (
+    page: number,
+    expectedCatalog?: { total: number; totalPages: number },
+  ): Promise<CgiNjoynPage> => {
     const listingUrl = cgiNjoynPageUrl(page);
     try {
-      const direct = await fetchWithTimeout(fetcher, listingUrl, undefined, true, { attempts: 1, timeoutMs: 7_000 });
+      const form = page > 1 ? new URLSearchParams({
+        s: " EnterDate Desc ",
+        pn: String(page),
+        Inp_country: "US",
+        inp_Country_CGI: "US",
+        Inp_Keywords: "",
+        inp_City: "",
+      }) : null;
+      const direct = await fetchWithTimeout(fetcher, page === 1 ? listingUrl : CGI_NJOYN_LISTING_URL, form ? {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          referer: CGI_NJOYN_LISTING_URL,
+        },
+        body: form,
+      } : undefined, true, { attempts: 1, timeoutMs: 7_000 });
       responseStatus = direct.status;
       if (direct.ok) {
-        const parsed = parseCgiNjoynPage(await direct.text(), source, page);
-        if (parsed) return parsed;
+        const parsed = parseCgiNjoynPage(await direct.text(), source, page, expectedCatalog);
+        if (parsed) return { ...parsed, responseStatus: direct.status };
       } else {
         await direct.body?.cancel().catch(() => undefined);
       }
@@ -16008,41 +16137,83 @@ const crawlCgiNjoyn = async (
       // The independent reader below can recover a Radware-blocked Njoyn page.
     }
     const reader = await fetchWithTimeout(fetcher, cgiNjoynReaderUrl(listingUrl), {
-      headers: { accept: "text/html", "x-return-format": "html" },
+      headers: { accept: "text/markdown,text/plain,text/html" },
     }, false, { attempts: 1, timeoutMs: 10_000 });
+    responseStatus = reader.status;
     if (!reader.ok) {
       throw Object.assign(new Error(`CGI Njoyn reader returned HTTP ${reader.status}.`), {
         responseStatus: reader.status,
       });
     }
-    const parsed = parseCgiNjoynPage(await reader.text(), source, page);
+    const parsed = parseCgiNjoynPage(await reader.text(), source, page, expectedCatalog);
     if (!parsed) throw new Error(`CGI Njoyn returned an unusable US catalog page ${page}.`);
-    return parsed;
+    return { ...parsed, responseStatus: reader.status };
   };
 
   try {
-    const first = await fetchPage(1);
-    const pages: CgiNjoynPage[] = [first];
-    const remaining = Array.from({ length: first.totalPages - 1 }, (_, index) => index + 2);
-    for (let index = 0; index < remaining.length; index += 4) {
-      pages.push(...await Promise.all(remaining.slice(index, index + 4).map(fetchPage)));
+    // Page one is always refreshed so newly advertised roles are not delayed by
+    // a later checkpoint. The remaining bounded window resumes the full catalog
+    // walk without exhausting the shared reader's request allowance.
+    const indexPage = await fetchPage(1);
+    const requestedStart = Math.max(1, Math.trunc(source.crawlPageCursor ?? 1));
+    const startPage = requestedStart <= indexPage.totalPages ? requestedStart : 1;
+    const endPage = Math.min(indexPage.totalPages, startPage + CGI_NJOYN_MAX_PAGES_PER_PASS - 1);
+    const pages = new Map<number, CgiNjoynPage>([[1, indexPage]]);
+    const requestedPages = Array.from(
+      { length: endPage - startPage + 1 },
+      (_, offset) => startPage + offset,
+    ).filter((page) => page !== 1);
+    let firstFailedPage: number | null = null;
+    for (let offset = 0; offset < requestedPages.length && firstFailedPage == null; offset += 2) {
+      const batch = requestedPages.slice(offset, offset + 2);
+      const results = await Promise.allSettled(batch.map((page) => fetchPage(page, {
+        total: indexPage.total,
+        totalPages: indexPage.totalPages,
+      })));
+      for (let position = 0; position < results.length; position += 1) {
+        const pageNumber = batch[position];
+        const result = results[position];
+        if (result.status === "rejected" || result.value.total !== indexPage.total
+          || result.value.totalPages !== indexPage.totalPages) {
+          firstFailedPage = pageNumber;
+          break;
+        }
+        pages.set(pageNumber, result.value);
+      }
     }
-    const stable = pages.every((page, index) => page.page === index + 1
-      && page.total === first.total && page.totalPages === first.totalPages);
-    const rawIdentities = pages.flatMap((page) => page.rawIdentities);
-    const rawUrls = pages.flatMap((page) => page.rawUrls);
-    const jobs = pages.flatMap((page) => page.jobs);
-    const identities = new Set(jobs.map((job) => job.externalId));
-    const urls = new Set(jobs.map((job) => job.officialUrl));
-    if (!stable || rawIdentities.length !== first.total || new Set(rawIdentities).size !== rawIdentities.length
-      || new Set(rawUrls).size !== rawUrls.length || identities.size !== jobs.length || urls.size !== jobs.length) {
-      throw new Error("CGI Njoyn returned an incomplete or unstable US catalog.");
+
+    const contiguousPages: CgiNjoynPage[] = [];
+    for (let page = startPage; page <= endPage; page += 1) {
+      const parsed = pages.get(page);
+      if (!parsed || page === firstFailedPage) break;
+      contiguousPages.push(parsed);
     }
+    const selectedPages = startPage === 1 ? contiguousPages : [indexPage, ...contiguousPages];
+    if (selectedPages.length === 0) throw new Error("CGI Njoyn returned no stable checkpoint pages.");
+    const jobs = uniqueJobs(selectedPages.flatMap((page) => page.jobs));
+    const rawIdentities = contiguousPages.flatMap((page) => page.rawIdentities);
+    const rawUrls = contiguousPages.flatMap((page) => page.rawUrls);
+    if (new Set(rawIdentities).size !== rawIdentities.length
+      || new Set(rawUrls).size !== rawUrls.length
+      || jobs.length !== new Set(jobs.map((job) => job.externalId)).size
+      || jobs.length !== new Set(jobs.map((job) => job.officialUrl)).size) {
+      throw new Error("CGI Njoyn returned duplicate identities inside a checkpoint window.");
+    }
+    const lastSuccessfulPage = contiguousPages.at(-1)?.page ?? startPage - 1;
+    const cycleComplete = firstFailedPage == null && lastSuccessfulPage === indexPage.totalPages;
+    const completeListing = startPage === 1 && cycleComplete
+      && indexPage.totalPages <= CGI_NJOYN_MAX_PAGES_PER_PASS
+      && rawIdentities.length === indexPage.total;
     return {
       status: "succeeded",
-      responseStatus: responseStatus ?? 200,
-      completeListing: true,
+      responseStatus: indexPage.responseStatus,
+      completeListing,
       jobs,
+      pagination: {
+        nextPage: cycleComplete ? 1 : firstFailedPage ?? lastSuccessfulPage + 1,
+        cycleComplete,
+        totalPages: indexPage.totalPages,
+      },
       resolvedListingUrl: CGI_NJOYN_LISTING_URL,
       error: null,
     };
