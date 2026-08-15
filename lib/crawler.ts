@@ -14518,6 +14518,15 @@ const taleoClassicRichText = (value: string | undefined): string | null => {
   }
 };
 
+const taleoClassicPlainText = (value: string | undefined): string | null => {
+  if (!value?.trim()) return null;
+  try {
+    return icimsText(decodeURIComponent(value.replace(/%(?![0-9a-f]{2})/gi, "%25")));
+  } catch {
+    return icimsText(value);
+  }
+};
+
 const cincinnatiPrimaryLocation = (locations: string[]): {
   location: string;
   arrangement: CrawledJob["arrangement"];
@@ -14586,11 +14595,11 @@ const cincinnatiDetailJob = (
   source: CrawlSource,
 ): CrawledJob | null => {
   const values = taleoClassicStringArray(html);
-  const metaTitle = icimsText(html.match(/<meta\b[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']/i)?.[1]);
+  const metaTitle = taleoClassicPlainText(html.match(/<meta\b[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']/i)?.[1]);
   const internalId = values?.[0]?.trim();
-  const title = values?.[9]?.trim();
+  const title = taleoClassicPlainText(values?.[9]);
   const contestNo = values?.[10]?.trim();
-  const rawLocation = values?.[11]?.trim();
+  const rawLocation = taleoClassicPlainText(values?.[11]);
   const description = taleoClassicRichText(values?.[12]);
   const qualifications = taleoClassicRichText(values?.[14]);
   if (!values || values.length < 15 || internalId !== summary.jobId || contestNo !== summary.contestNo

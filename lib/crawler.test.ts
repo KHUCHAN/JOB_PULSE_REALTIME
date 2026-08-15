@@ -11930,7 +11930,9 @@ HUMAN RESOURCES Posted Date
     const summaries = Array.from({ length: 26 }, (_, index) => ({
       jobId: String(170_000 + index),
       contestNo: String(2_700_000 + index),
-      title: index === 0 ? "Data Science Intern" : `Insurance Analyst ${index}`,
+      title: index === 0 ? "Data Science Intern"
+        : index === 1 ? "Excess & Surplus - Underwriter"
+          : `Insurance Analyst ${index}`,
       location: index === 1 ? "Remote" : "OH-Fairfield",
     }));
     const facets = [
@@ -11961,12 +11963,13 @@ HUMAN RESOURCES Posted Date
       const description = encodeURIComponent(`<p>Build production analytics and travel 50%.</p><p>The pay range for this position is <strong>$26.44 - $31.25</strong> per hour.</p>`);
       const qualifications = encodeURIComponent("<p>Python and SQL experience.</p>");
       const rawLocation = summary.location === "Remote" ? "US-Remote" : "US-OH-Fairfield";
+      const encodedTitle = summary.title.replaceAll("&", "%26");
       const values = [
-        summary.jobId, "true", summary.jobId, "false", `Submission for ${summary.title}`, "false",
-        summary.jobId, "false", "true", summary.title, summary.contestNo, rawLocation,
+        summary.jobId, "true", summary.jobId, "false", `Submission for ${encodedTitle}`, "false",
+        summary.jobId, "false", "true", encodedTitle, summary.contestNo, rawLocation,
         `!*!${description}`, `!*!${description}`, `!*!${qualifications}`,
       ];
-      return `<meta property="og:title" content="${summary.title}"><input name="requisitionno" value="${summary.jobId}">
+      return `<meta property="og:title" content="${encodedTitle}"><input name="requisitionno" value="${summary.jobId}">
         <script>api.fillList("requisitionDescriptionInterface", "descRequisition", ${JSON.stringify(values)});</script>`;
     };
     const requestCounts = { corporate: 0, board: 0, search: 0, detail: 0 };
