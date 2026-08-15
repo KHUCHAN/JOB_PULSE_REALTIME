@@ -593,7 +593,7 @@ export async function POST(request: Request): Promise<Response> {
       return json(targets.find((item) => item.id === body.targetId) ?? null);
     }
     if (body.action === "ingestBrowserJobs") {
-      if (!await jobSnapshotIngestAuthorized(request)) return json({ error: "Crawler snapshot authorization is required." }, 401);
+      if (!await jobSnapshotIngestAuthorized(request)) return json({ error: "Official-origin crawler snapshot authorization is required." }, 401);
       const sourceId = typeof body.sourceId === "string" ? body.sourceId : "";
       const database = db();
       const source = await browserIngestSource(database, sourceId);
