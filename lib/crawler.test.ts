@@ -194,6 +194,162 @@ describe("crawlSource", () => {
     }));
   });
 
+  it("collects Community Health Systems' complete stable-ID catalog and enriches priority internships", async () => {
+    const listingUrl = "https://www.careershealthcare.com/job/";
+    const apiUrl = "https://api.careershealthcare.com/job/wp_job_grid";
+    const rows = Array.from({ length: 501 }, (_, index) => ({
+      internalId: String(110_000 + index),
+      requisitionId: String(130_000 + index),
+      title: index === 0 ? "Summer 2027 Data Analytics Intern" : `Clinical Role ${index}`,
+      facility: index === 0 ? "CHS Corporate" : "CHS Facility",
+      shift: index === 0 ? "Full Time" : "Part Time",
+      location: index === 0 ? "" : "Austin, TX",
+      officialUrl: `https://www.careershealthcare.com/job/${index === 0 ? "corporate///" : "hospital/tx/austin/"}role-${index}`,
+      applyUrl: `https://fa-evxo-saasfaprod1.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/job/${130_000 + index}`,
+    }));
+    const card = (row: typeof rows[number]) => `<div class="chs-job" data-id="${row.internalId}">
+      <h3>${row.facility}</h3><hr><div class="info"><h6 class="job-shift">${row.shift}</h6>
+      <h5 class="job-location">${row.location}</h5><h5 class="job-title"><a href="${row.officialUrl}">${row.title}</a></h5></div>
+      <div class="actions clearfix"><a href="${row.officialUrl}">Learn More</a><a href="${row.applyUrl}">Apply</a></div></div>`;
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "legacy-row-84",
+      company: "Community Health Systems",
+      postingUrl: "https://communityhealth.careers/",
+      adapter: "custom",
+    }, async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.href);
+      if (url.href.startsWith(apiUrl)) {
+        expect(url.searchParams.get("order-by")).toBe("id");
+        expect(url.searchParams.get("dir")).toBe("asc");
+        const offset = Number(url.searchParams.get("offset"));
+        const limit = Number(url.searchParams.get("limit"));
+        return Response.json({
+          payload: rows.slice(offset, offset + limit).map(card),
+          message: `${rows.length} Positions found.`,
+          meta: { total: rows.length },
+        });
+      }
+      const row = rows.find((candidate) => candidate.officialUrl === url.href);
+      if (!row) return new Response("unexpected", { status: 404 });
+      return new Response(`<script type="application/ld+json">${JSON.stringify({
+        "@context": "https://schema.org/",
+        "@type": "JobPosting",
+        datePosted: "2026-08-14",
+        title: row.title,
+        description: `<p>Build reliable healthcare data products with Python, SQL, analytics, and cross-functional engineering teams.</p>`,
+        jobLocation: {
+          "@type": "Place",
+          address: {
+            "@type": "PostalAddress",
+            addressLocality: row.location ? "Austin" : null,
+            addressRegion: row.location ? "TX" : "",
+            addressCountry: "US",
+          },
+        },
+        hiringOrganization: { "@type": "Organization", name: row.facility },
+        identifier: { "@type": "PropertyValue", name: "CHS Careers", value: row.requisitionId },
+        employmentType: row.shift === "Full Time" ? "FULL_TIME" : "PART_TIME",
+      })}</script><a href="${row.applyUrl}">Apply Now</a>`);
+    }, new Date("2026-08-15T22:00:00.000Z"));
+
+    expect(requests.filter((url) => url.startsWith(apiUrl))).toHaveLength(4);
+    expect(requests).toHaveLength(36);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      responseStatus: 200,
+      completeListing: false,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 1 },
+      resolvedListingUrl: listingUrl,
+      error: null,
+    }));
+    expect(result.jobs).toHaveLength(rows.length);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "130000",
+      requisitionId: "130000",
+      title: "Summer 2027 Data Analytics Intern",
+      location: "United States",
+      locationCountry: "United States",
+      employmentType: "Internship / Full-time",
+      businessUnit: "CHS Corporate",
+      shiftSchedule: "Full Time",
+      description: expect.stringContaining("Python, SQL, analytics"),
+      sourcePostedText: "2026-08-14",
+      publishedAt: "2026-08-14T00:00:00.000Z",
+      applyUrl: rows[0].applyUrl,
+      officialUrl: rows[0].officialUrl,
+    }));
+    expect(result.jobs.at(-1)).toEqual(expect.objectContaining({
+      externalId: "130500",
+      title: "Clinical Role 500",
+      location: "Austin, TX",
+      locationCity: "Austin",
+      locationState: "TX",
+      locationCountry: "United States",
+      officialUrl: rows.at(-1)!.officialUrl,
+    }));
+  });
+
+  it("fails Community Health Systems closed when stable-ID pages repeat a requisition", async () => {
+    const card = (internalId: number, requisitionId: number) => `<div class="chs-job" data-id="${internalId}">
+      <h3>CHS Facility</h3><h6 class="job-shift">Full Time</h6><h5 class="job-location">Austin, TX</h5>
+      <h5 class="job-title"><a href="https://www.careershealthcare.com/job/hospital/tx/austin/role-${internalId}">Clinical Role ${internalId}</a></h5>
+      <a href="https://www.careershealthcare.com/job/hospital/tx/austin/role-${internalId}">Learn More</a>
+      <a href="https://fa-evxo-saasfaprod1.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/job/${requisitionId}">Apply</a></div>`;
+    const firstPage = Array.from({ length: 500 }, (_, index) => card(110_000 + index, 130_000 + index));
+    const result = await crawlSource({
+      id: "legacy-row-84", company: "Community Health Systems",
+      postingUrl: "https://communityhealth.careers/", adapter: "custom",
+    }, async (input) => {
+      const url = new URL(String(input));
+      const offset = Number(url.searchParams.get("offset"));
+      return Response.json({
+        payload: offset === 0 ? firstPage : [firstPage[0]],
+        message: "501 Positions found.",
+        meta: { total: 501 },
+      });
+    }, new Date("2026-08-15T22:00:00.000Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed",
+      completeListing: false,
+      jobs: [],
+      resolvedListingUrl: "https://www.careershealthcare.com/job/",
+      error: "Community Health Systems job API returned duplicate, missing, or unordered jobs.",
+    }));
+  });
+
+  it("fails Community Health Systems closed when a catalog edge changes during collection", async () => {
+    const card = (internalId: number, requisitionId: number) => `<div class="chs-job" data-id="${internalId}">
+      <h3>CHS Facility</h3><h6 class="job-shift">Full Time</h6><h5 class="job-location">Austin, TX</h5>
+      <h5 class="job-title"><a href="https://www.careershealthcare.com/job/hospital/tx/austin/role-${internalId}">Clinical Role ${internalId}</a></h5>
+      <a href="https://www.careershealthcare.com/job/hospital/tx/austin/role-${internalId}">Learn More</a>
+      <a href="https://fa-evxo-saasfaprod1.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/job/${requisitionId}">Apply</a></div>`;
+    let catalogRead = false;
+    const result = await crawlSource({
+      id: "legacy-row-84", company: "Community Health Systems",
+      postingUrl: "https://communityhealth.careers/", adapter: "custom",
+    }, async (input) => {
+      const url = new URL(String(input));
+      const offset = Number(url.searchParams.get("offset"));
+      const limit = Number(url.searchParams.get("limit"));
+      if (limit === 500) {
+        catalogRead = true;
+        return Response.json({ payload: [card(110_000, 130_000), card(110_001, 130_001)], message: "2 Positions found.", meta: { total: 2 } });
+      }
+      const value = catalogRead && offset === 1 ? card(110_002, 130_002) : card(110_000, 130_000);
+      return Response.json({ payload: [value], message: "2 Positions found.", meta: { total: 2 } });
+    }, new Date("2026-08-15T22:00:00.000Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed",
+      completeListing: false,
+      jobs: [],
+      error: "Community Health Systems catalog changed during collection.",
+    }));
+  });
+
   it("reads every server-rendered Okta job with its location and stable requisition id", async () => {
     const html = `
       <div class="views-row even"><div class="views-field views-field-title"><span class="field-content">

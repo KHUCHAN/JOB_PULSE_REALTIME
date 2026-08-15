@@ -257,6 +257,7 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
   "legacy-row-74", // CACI International
   "legacy-row-79", // Chipotle Mexican Grill
   "legacy-row-81", // Cintas
+  "legacy-row-84", // Community Health Systems
   "legacy-row-90", // Dick's Sporting Goods
   "legacy-row-97", // GE Vernova
   "legacy-row-116", // Quest Diagnostics
@@ -19872,6 +19873,335 @@ const crawlDeutscheBankCareers = async (
   }
 };
 
+const COMMUNITY_HEALTH_LISTING_URL = "https://www.careershealthcare.com/job/";
+const COMMUNITY_HEALTH_API_URL = "https://api.careershealthcare.com/job/wp_job_grid";
+const COMMUNITY_HEALTH_PAGE_SIZE = 500;
+const COMMUNITY_HEALTH_MAX_TOTAL = 10_000;
+const COMMUNITY_HEALTH_DETAIL_LIMIT = 32;
+
+type CommunityHealthCatalogRecord = {
+  internalId: string;
+  facility: string;
+  applyUrl: string;
+  job: CrawledJob;
+};
+
+const communityHealthDetailUrl = (value: string | null | undefined): string | null => {
+  if (!value) return null;
+  try {
+    const url = new URL(decodeHtmlAttribute(value));
+    if (url.protocol !== "https:"
+      || url.hostname.toLocaleLowerCase() !== "www.careershealthcare.com"
+      || !url.pathname.startsWith("/job/")
+      || !url.pathname.split("/").filter(Boolean).at(-1)
+      || url.search || url.hash || url.username || url.password) return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+};
+
+const communityHealthApplyIdentity = (value: string | null | undefined): { url: string; requisitionId: string } | null => {
+  if (!value) return null;
+  try {
+    const url = new URL(decodeHtmlAttribute(value));
+    const match = url.pathname.match(/^\/hcmUI\/CandidateExperience\/en\/sites\/CX_1\/job\/(\d+)\/?$/i);
+    if (url.protocol !== "https:"
+      || url.hostname.toLocaleLowerCase() !== "fa-evxo-saasfaprod1.fa.ocs.oraclecloud.com"
+      || !match || url.search || url.hash || url.username || url.password) return null;
+    return { url: url.href, requisitionId: match[1] };
+  } catch {
+    return null;
+  }
+};
+
+const communityHealthCatalogRecord = (
+  source: CrawlSource,
+  value: unknown,
+): CommunityHealthCatalogRecord | null => {
+  if (typeof value !== "string") return null;
+  const internalId = value.match(/<div\b[^>]*class=["'][^"']*\bchs-job\b[^"']*["'][^>]*\bdata-id=["'](\d+)["']/i)?.[1]
+    ?? value.match(/<div\b[^>]*\bdata-id=["'](\d+)["'][^>]*class=["'][^"']*\bchs-job\b/i)?.[1]
+    ?? null;
+  const facility = icimsText(value.match(/<h3\b[^>]*>([\s\S]*?)<\/h3>/i)?.[1]);
+  const shift = icimsText(value.match(/<h6\b[^>]*class=["'][^"']*\bjob-shift\b[^"']*["'][^>]*>([\s\S]*?)<\/h6>/i)?.[1]);
+  const rawLocation = icimsText(value.match(/<h5\b[^>]*class=["'][^"']*\bjob-location\b[^"']*["'][^>]*>([\s\S]*?)<\/h5>/i)?.[1]);
+  const titleBlock = value.match(/<h5\b[^>]*class=["'][^"']*\bjob-title\b[^"']*["'][^>]*>([\s\S]*?)<\/h5>/i)?.[1] ?? null;
+  const titleAnchor = titleBlock ? anchorsFromHtml(titleBlock) : [];
+  const title = titleAnchor.length === 1 ? icimsText(titleAnchor[0].text) : null;
+  const officialUrl = titleAnchor.length === 1 ? communityHealthDetailUrl(titleAnchor[0].href) : null;
+  const applyLinks = anchorsFromHtml(value)
+    .map((anchor) => communityHealthApplyIdentity(anchor.href))
+    .filter((identity): identity is { url: string; requisitionId: string } => identity !== null);
+  const uniqueApplyLinks = [...new Map(applyLinks.map((identity) => [identity.url, identity])).values()];
+  if (!internalId || !facility || !shift || !title || !officialUrl || uniqueApplyLinks.length !== 1) return null;
+  const apply = uniqueApplyLinks[0];
+  const stateOnly = rawLocation?.match(/^,\s*([A-Z]{2})$/)?.[1] ?? null;
+  const location = stateOnly ?? rawLocation;
+  const locationParts = location?.split(",").map((part) => part.trim()).filter(Boolean) ?? [];
+  const locationCity = stateOnly ? null : locationParts[0] ?? null;
+  const locationState = stateOnly ?? locationParts[1] ?? null;
+  if (location && (!locationState || !/^[A-Z]{2}$/.test(locationState)
+    || (!stateOnly && locationParts.length !== 2))) return null;
+  const programs = classifyJobPrograms(title).keys;
+  const programType = programs.includes("coop")
+    ? "Co-op"
+    : programs.includes("internship") ? "Internship" : null;
+  const normalizedShift = normalizeEmploymentType(shift);
+  const employmentType = [programType, normalizedShift]
+    .filter((entry, index, values): entry is string => Boolean(entry)
+      && values.findIndex((candidate) => candidate?.toLocaleLowerCase() === entry!.toLocaleLowerCase()) === index)
+    .join(" / ") || null;
+  return {
+    internalId,
+    facility,
+    applyUrl: apply.url,
+    job: {
+      externalId: apply.requisitionId,
+      requisitionId: apply.requisitionId,
+      title,
+      company: source.company,
+      location,
+      ...(locationCity ? { locationCity } : {}),
+      ...(locationState ? { locationState } : {}),
+      locationCountry: "United States",
+      arrangement: /\bremote\b/i.test(`${title} ${location ?? ""}`) ? "remote" : "unknown",
+      employmentType,
+      summary: [facility, shift].filter(Boolean).join(" · "),
+      businessUnit: facility,
+      shiftSchedule: shift,
+      applyUrl: apply.url,
+      rawPayload: {
+        provider: "community-health-systems-api",
+        internalId,
+        facility,
+        shift,
+      },
+      officialUrl,
+      publishedAt: null,
+    },
+  };
+};
+
+const communityHealthClaimedDetailUrl = (node: JsonLdValue): string | null => {
+  const mainEntity = node.mainEntityOfPage;
+  return asText(node.url)
+    ?? (mainEntity && typeof mainEntity === "object"
+      ? asText((mainEntity as JsonLdValue).url) ?? asText((mainEntity as JsonLdValue)["@id"])
+      : asText(mainEntity));
+};
+
+const communityHealthDetailJob = (
+  html: string,
+  source: CrawlSource,
+  record: CommunityHealthCatalogRecord,
+): CrawledJob | null => {
+  const nodes = jsonLdScripts(html).flatMap(jobPostingNodes);
+  if (nodes.length !== 1) return null;
+  const node = nodes[0];
+  const claimedUrl = communityHealthClaimedDetailUrl(node);
+  if (claimedUrl && communityHealthDetailUrl(claimedUrl) !== record.job.officialUrl) return null;
+  const identifier = node.identifier;
+  const requisitionId = identifier && typeof identifier === "object"
+    ? asText((identifier as JsonLdValue).value) ?? asText((identifier as JsonLdValue)["@id"])
+    : asText(identifier);
+  const detailTitle = icimsText(asText(node.title));
+  const hiringOrganization = node.hiringOrganization && typeof node.hiringOrganization === "object"
+    ? node.hiringOrganization as JsonLdValue
+    : null;
+  const facility = icimsText(asText(hiringOrganization?.name));
+  const address = jobLocationAddress(node.jobLocation);
+  const country = icimsText(asText(address?.addressCountry));
+  if (requisitionId !== record.job.externalId
+    || !detailTitle || jobIdentityText(detailTitle) !== jobIdentityText(record.job.title)
+    || !facility || jobIdentityText(facility) !== jobIdentityText(record.facility)
+    || !country || !/^(?:US|USA|United States|United States of America)$/i.test(country)) return null;
+  const applyUrls = anchorsFromHtml(html)
+    .map((anchor) => communityHealthApplyIdentity(anchor.href))
+    .filter((identity): identity is { url: string; requisitionId: string } => identity !== null);
+  if (!applyUrls.some((identity) => identity.url === record.applyUrl && identity.requisitionId === requisitionId)) return null;
+  const detail = jsonLdJob({ ...node, url: record.job.officialUrl }, source);
+  if (!detail || detail.externalId !== requisitionId
+    || detail.officialUrl !== record.job.officialUrl
+    || jobIdentityText(detail.title) !== jobIdentityText(record.job.title)) return null;
+  const programKeys = classifyJobPrograms(record.job.title).keys;
+  const programType = programKeys.includes("coop")
+    ? "Co-op"
+    : programKeys.includes("internship") ? "Internship" : null;
+  const detailEmploymentType = normalizeEmploymentType(detail.employmentType);
+  const employmentType = [programType, detailEmploymentType]
+    .filter((entry, index, values): entry is string => Boolean(entry)
+      && values.findIndex((candidate) => candidate?.toLocaleLowerCase() === entry!.toLocaleLowerCase()) === index)
+    .join(" / ") || record.job.employmentType;
+  return {
+    ...record.job,
+    ...detail,
+    externalId: requisitionId,
+    requisitionId,
+    title: record.job.title,
+    location: record.job.location ?? (detail.location === "US" ? "United States" : detail.location),
+    locationCountry: "United States",
+    employmentType,
+    businessUnit: facility,
+    shiftSchedule: record.job.shiftSchedule,
+    applyUrl: record.applyUrl,
+    sourcePostedText: asText(node.datePosted),
+    rawPayload: record.job.rawPayload,
+    officialUrl: record.job.officialUrl,
+  };
+};
+
+const crawlCommunityHealthSystems = async (
+  source: CrawlSource,
+  fetcher: typeof fetch,
+  now: Date,
+): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  const fetchPage = async (offset: number, limit: number): Promise<{
+    total: number;
+    records: CommunityHealthCatalogRecord[];
+  }> => {
+    const endpoint = new URL(COMMUNITY_HEALTH_API_URL);
+    endpoint.searchParams.set("limit", String(limit));
+    endpoint.searchParams.set("offset", String(offset));
+    // The public UI defaults to title ordering, which is not a stable cursor
+    // when many clinical jobs share a title. The API's unique numeric row ID
+    // is monotonic and prevents an offset boundary from duplicating/skipping a
+    // live requisition.
+    endpoint.searchParams.set("order-by", "id");
+    endpoint.searchParams.set("dir", "asc");
+    const response = await fetchWithTimeout(fetcher, endpoint, {
+      headers: { accept: "application/json", referer: COMMUNITY_HEALTH_LISTING_URL },
+    }, false, { attempts: 1, timeoutMs: 8_000 });
+    responseStatus = response.status;
+    if (!response.ok) throw new Error(`Community Health Systems job API returned HTTP ${response.status}.`);
+    const payload = await response.json() as Record<string, unknown>;
+    const meta = payload.meta && typeof payload.meta === "object" ? payload.meta as Record<string, unknown> : null;
+    const total = Number(meta?.total);
+    const values = payload.payload;
+    const messageTotal = asText(payload.message)?.match(/^(\d+)\s+Positions found\.$/i)?.[1] ?? null;
+    if (!Number.isInteger(total) || total <= 0 || total > COMMUNITY_HEALTH_MAX_TOTAL
+      || messageTotal !== String(total) || !Array.isArray(values)) {
+      throw new Error("Community Health Systems job API returned invalid catalog metadata.");
+    }
+    const expectedCount = Math.min(limit, Math.max(0, total - offset));
+    if (values.length !== expectedCount) {
+      throw new Error("Community Health Systems job API returned a truncated catalog page.");
+    }
+    const normalized = values.map((value) => communityHealthCatalogRecord(source, value));
+    if (normalized.some((record) => !record)) {
+      throw new Error("Community Health Systems job API returned an unusable job identity.");
+    }
+    const records = normalized as CommunityHealthCatalogRecord[];
+    if (!records.every((record, index) => index === 0
+      || Number(records[index - 1].internalId) < Number(record.internalId))) {
+      throw new Error("Community Health Systems job API returned an unstable ID order.");
+    }
+    return { total, records };
+  };
+
+  try {
+    const first = await fetchPage(0, COMMUNITY_HEALTH_PAGE_SIZE);
+    const totalPages = Math.ceil(first.total / COMMUNITY_HEALTH_PAGE_SIZE);
+    const pages = new Map<number, CommunityHealthCatalogRecord[]>([[0, first.records]]);
+    const offsets = Array.from({ length: totalPages - 1 }, (_, index) => (index + 1) * COMMUNITY_HEALTH_PAGE_SIZE);
+    for (let start = 0; start < offsets.length; start += 5) {
+      const batch = offsets.slice(start, start + 5);
+      const responses = await Promise.all(batch.map((offset) => fetchPage(offset, COMMUNITY_HEALTH_PAGE_SIZE)));
+      responses.forEach((page, index) => {
+        if (page.total !== first.total) throw new Error("Community Health Systems catalog total changed during collection.");
+        pages.set(batch[index], page.records);
+      });
+    }
+    const catalog = [0, ...offsets].flatMap((offset) => pages.get(offset) ?? []);
+    const internalIds = catalog.map((record) => record.internalId);
+    const requisitionIds = catalog.map((record) => record.job.externalId);
+    const officialUrls = catalog.map((record) => record.job.officialUrl);
+    if (catalog.length !== first.total
+      || new Set(internalIds).size !== catalog.length
+      || new Set(requisitionIds).size !== catalog.length
+      || new Set(officialUrls).size !== catalog.length
+      || !catalog.every((record, index) => index === 0
+        || Number(catalog[index - 1].internalId) < Number(record.internalId))) {
+      throw new Error("Community Health Systems job API returned duplicate, missing, or unordered jobs.");
+    }
+
+    // Verify both edges after collection. New records use increasing IDs, so
+    // an insertion/deletion while offset pages are in flight changes the total
+    // or one of these two identities and cannot authorize stale closure.
+    const [firstStability, lastStability] = await Promise.all([
+      fetchPage(0, 1),
+      fetchPage(first.total - 1, 1),
+    ]);
+    const stable = firstStability.total === first.total
+      && lastStability.total === first.total
+      && firstStability.records[0]?.internalId === catalog[0].internalId
+      && firstStability.records[0]?.job.externalId === catalog[0].job.externalId
+      && jobIdentityText(firstStability.records[0]?.job.title) === jobIdentityText(catalog[0].job.title)
+      && lastStability.records[0]?.internalId === catalog.at(-1)?.internalId
+      && lastStability.records[0]?.job.externalId === catalog.at(-1)?.job.externalId
+      && jobIdentityText(lastStability.records[0]?.job.title) === jobIdentityText(catalog.at(-1)?.job.title);
+    if (!stable) throw new Error("Community Health Systems catalog changed during collection.");
+
+    // Reserve eight requests for the shared internship enrichment fallback.
+    const catalogRequests = totalPages + 2;
+    const detailBudget = Math.max(0, Math.min(COMMUNITY_HEALTH_DETAIL_LIMIT, 42 - catalogRequests));
+    const priority = catalog
+      .filter((record) => classifyJobPrograms(record.job.title).keys.length > 0)
+      .sort((left, right) => Number(right.internalId) - Number(left.internalId));
+    const priorityIds = new Set(priority.map((record) => record.internalId));
+    const rotating = catalog.filter((record) => !priorityIds.has(record.internalId));
+    const prioritySelection = priority.slice(0, detailBudget);
+    const rotatingBudget = Math.max(0, detailBudget - prioritySelection.length);
+    const rotatingStart = rotating.length === 0 || rotatingBudget === 0
+      ? 0
+      : (Math.floor(now.getTime() / (2 * 60 * 60 * 1_000)) * rotatingBudget) % rotating.length;
+    const rotatingSelection = Array.from({ length: Math.min(rotatingBudget, rotating.length) }, (_, index) =>
+      rotating[(rotatingStart + index) % rotating.length]);
+    const selected = [...prioritySelection, ...rotatingSelection];
+    const details = new Map<string, CrawledJob>();
+    const enrich = async (record: CommunityHealthCatalogRecord): Promise<void> => {
+      try {
+        const response = await fetchWithTimeout(fetcher, record.job.officialUrl, undefined, true, {
+          attempts: 1,
+          timeoutMs: 5_000,
+        });
+        if (!response.ok) return;
+        const responseUrl = communityHealthDetailUrl(response.url || record.job.officialUrl);
+        if (responseUrl !== record.job.officialUrl) return;
+        const detail = communityHealthDetailJob(await response.text(), source, record);
+        if (detail) details.set(record.internalId, detail);
+      } catch {
+        // The complete API catalog remains usable. The next two-hour pass
+        // rotates this optional full-description enrichment window.
+      }
+    };
+    for (let offset = 0; offset < selected.length; offset += 10) {
+      await Promise.all(selected.slice(offset, offset + 10).map(enrich));
+    }
+    return {
+      status: "succeeded",
+      responseStatus: responseStatus ?? 200,
+      // Require the existing two stable cycles before closing an unseen job,
+      // even though this pass validated the complete first-party catalog.
+      completeListing: false,
+      jobs: catalog.map((record) => details.get(record.internalId) ?? record.job),
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 1 },
+      resolvedListingUrl: COMMUNITY_HEALTH_LISTING_URL,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      resolvedListingUrl: COMMUNITY_HEALTH_LISTING_URL,
+      error: error instanceof Error ? error.message : "Unknown Community Health Systems crawler error.",
+    };
+  }
+};
+
 async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
   if ((source.discoveryDepth ?? 0) === 0) {
     try {
@@ -19897,6 +20227,9 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-811") {
     return crawlFastenalCareers(source, fetcher);
+  }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-84") {
+    return crawlCommunityHealthSystems(source, fetcher, now);
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-846") {
     return crawlPcaCareerSearch(source, fetcher);

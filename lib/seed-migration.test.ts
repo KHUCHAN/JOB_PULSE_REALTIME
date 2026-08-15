@@ -192,6 +192,7 @@ describe("large catalog US scope migration", () => {
     const cincinnatiRefresh = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0105_snapshot.json"), "utf8"));
     const molsonCoorsRefresh = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0106_snapshot.json"), "utf8"));
     const deutscheBankRefresh = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0107_snapshot.json"), "utf8"));
+    const communityHealthRefresh = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0108_snapshot.json"), "utf8"));
     const currentJournal = JSON.parse(readFileSync(resolve(drizzlePath, "meta/_journal.json"), "utf8"));
 
     expect(current.prevId).toBe(previous.id);
@@ -202,13 +203,14 @@ describe("large catalog US scope migration", () => {
     expect(cincinnatiRefresh.prevId).toBe(salesforceRefresh.id);
     expect(molsonCoorsRefresh.prevId).toBe(cincinnatiRefresh.id);
     expect(deutscheBankRefresh.prevId).toBe(molsonCoorsRefresh.id);
+    expect(communityHealthRefresh.prevId).toBe(deutscheBankRefresh.id);
     expect(currentJournal.entries.find((entry: { tag: string }) => entry.tag === "0100_large_catalog_us_scope")).toMatchObject({
       idx: 100,
       tag: "0100_large_catalog_us_scope",
     });
     expect(currentJournal.entries.at(-1)).toMatchObject({
-      idx: 107,
-      tag: "0107_refresh_sources_20260815223718",
+      idx: 108,
+      tag: "0108_refresh_sources_20260815231906",
     });
   });
 
@@ -235,5 +237,14 @@ describe("large catalog US scope migration", () => {
     expect(sql).toContain("'https://www.wayfair.com/careers/jobs'");
     expect(sql).toContain("'https://www.wayfair.com/careers'");
     expect(sql).not.toContain("'https://www.aboutwayfair.com/careers'");
+  });
+
+  it("persists only the verified Community Health Systems jobs URL in its catalog refresh", () => {
+    const sql = readFileSync(resolve(drizzlePath, "0108_refresh_sources_20260815231906.sql"), "utf8");
+
+    expect(sql).toContain("'legacy-row-84'");
+    expect(sql).toContain("'https://www.careershealthcare.com/job/'");
+    expect(sql).not.toContain("'p2-0089-cincinnati-financial'");
+    expect(sql).not.toContain("'legacy-row-836'");
   });
 });

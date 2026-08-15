@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:bc29a32fd20d9eb1ee4231347839f2a18f25da0debfe620c28928e1ac93202eb",
+  "version": "v2:sha256:84c2ec544093eb8c82550553d177637986ebd1fc0852331b157dde6af030dfeb",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -7926,7 +7926,7 @@
       "id": "legacy-row-84",
       "masterRow": 2084,
       "company": "Community Health Systems",
-      "postingUrl": "https://communityhealth.careers/",
+      "postingUrl": "https://www.careershealthcare.com/job/",
       "talentUrl": "https://communityhealth.careers/",
       "channel": "Community Health Systems Talent Network",
       "adapter": "custom",
@@ -7934,7 +7934,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-15",
       "enabled": true
     },
     {
@@ -23371,7 +23371,7 @@
       "officialUrl": "https://communityhealth.careers/",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-15"
     },
     {
       "id": "talent-legacy-row-85",
