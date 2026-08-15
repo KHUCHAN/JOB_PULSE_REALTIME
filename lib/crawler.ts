@@ -14907,6 +14907,71 @@ const supportsJsonLdDetailEnrichment = (jobUrl: string): boolean => {
   }
 };
 
+const barclaysReaderDetail = (
+  markdown: string,
+  source: CrawlSource,
+  job: CrawledJob,
+): { detail: CrawledJob; applyUrl: string | null } | null => {
+  let sourceUrl: URL;
+  let jobUrl: URL;
+  try {
+    const sourceText = markdown.match(/^[ \t]*URL Source:\s*(\S+)\s*$/im)?.[1];
+    if (!sourceText) return null;
+    sourceUrl = new URL(sourceText);
+    jobUrl = new URL(job.officialUrl);
+  } catch {
+    return null;
+  }
+  if (sourceUrl.hostname.toLocaleLowerCase() !== "search.jobs.barclays"
+    || jobUrl.hostname.toLocaleLowerCase() !== "search.jobs.barclays"
+    || sourceUrl.pathname.replace(/\/$/, "") !== jobUrl.pathname.replace(/\/$/, "")) return null;
+
+  const readerTitle = markdown.match(/^[ \t]*Title:\s*(.+?)\s+at Barclays\s*$/im)?.[1]?.trim();
+  if (!readerTitle || jobIdentityText(readerTitle) !== jobIdentityText(job.title)) return null;
+  const externalId = jobUrl.pathname.split("/").filter(Boolean).at(-1) ?? null;
+  if (!externalId || externalId !== job.externalId) return null;
+
+  const requisitionId = markdown.match(/\bReference Code:\s*(JR-[0-9]+)\b/i)?.[1] ?? null;
+  const dateLive = markdown.match(/\bDate live:\s*(\d{1,2}\/\d{1,2}\/\d{4})\b/i)?.[1] ?? null;
+  const contract = markdown.match(/\bContract:\s*([^\n]+)/i)?.[1]?.replace(/[*_`]/g, "").trim() ?? null;
+  const location = markdown.match(/Markdown Content:\s*\n+([^\n#][^\n]*)/i)?.[1]?.trim() ?? job.location;
+  const descriptionSection = markdown.split(/^[ \t]*##\s+Job description\s*$/im)[1]
+    ?.split(/^[ \t]*Links\/Buttons:\s*$/im)[0]
+    ?.trim() ?? null;
+  const description = descriptionSection
+    ? descriptionSection.replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/[*_`#]+/g, " ").replace(/\s+/g, " ").trim()
+    : null;
+  const applyUrl = [...markdown.matchAll(/\[Apply for job\]\((https:\/\/[^)]+)\)/gi)]
+    .map((match) => match[1])
+    .find((value) => {
+      try {
+        const candidate = new URL(value);
+        return candidate.hostname.toLocaleLowerCase() === "barclays.wd3.myworkdayjobs.com"
+          && /\/apply\/?$/i.test(candidate.pathname)
+          && Boolean(requisitionId && candidate.pathname.includes(`_${requisitionId}`));
+      } catch {
+        return false;
+      }
+    }) ?? null;
+
+  return {
+    detail: {
+      externalId: requisitionId ?? externalId,
+      title: readerTitle,
+      company: source.company,
+      location,
+      arrangement: /\bremote\b/i.test(location ?? "") ? "remote" : "unknown",
+      employmentType: normalizeEmploymentType(contract),
+      summary: description,
+      description,
+      ...(requisitionId ? { requisitionId } : {}),
+      officialUrl: job.officialUrl,
+      publishedAt: normalizedUsDate(dateLive),
+    },
+    applyUrl,
+  };
+};
+
 const enrichProgramJobDetails = async (
   result: SourceCrawlResult,
   source: CrawlSource,
@@ -15065,13 +15130,25 @@ const enrichProgramJobDetails = async (
     if (!supportsJsonLdDetailEnrichment(job.officialUrl)) return;
     try {
       const response = await fetchWithTimeout(fetcher, job.officialUrl, undefined, true, { attempts: 1, timeoutMs: 4_000 });
-      if (!response.ok) return;
-      const html = await response.text();
-      const detail = matchingJsonLdDetail(html, source, job);
-      if (!detail) return;
-      enriched[index] = mergeProgramJobDetail(job, detail, officialApplyUrl(html, response.url || job.officialUrl));
+      if (response.ok) {
+        const html = await response.text();
+        const detail = matchingJsonLdDetail(html, source, job);
+        if (detail) {
+          enriched[index] = mergeProgramJobDetail(job, detail, officialApplyUrl(html, response.url || job.officialUrl));
+          return;
+        }
+      }
     } catch {
       // A detail page is optional and must never make its verified listing fail.
+    }
+    // Barclays serves the listing to Worker egress consistently, but its
+    // individual TalentBrew detail page can omit structured data or reject the
+    // same request. The text reader is used only as an identity-checked detail
+    // fallback; the canonical and apply links remain first-party Barclays URLs.
+    if (new URL(job.officialUrl).hostname.toLocaleLowerCase() === "search.jobs.barclays") {
+      const markdown = await readerMarkdown(job.officialUrl, fetcher, { maxConcurrent: 1, timeoutMs: 8_000 });
+      const reader = markdown ? barclaysReaderDetail(markdown, source, job) : null;
+      if (reader) enriched[index] = mergeProgramJobDetail(job, reader.detail, reader.applyUrl);
     }
   };
   await Promise.all(selectedTargets.map(enrichOne));
