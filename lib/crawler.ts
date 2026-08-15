@@ -370,6 +370,11 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
     listingUrl: "https://jobs.ashbyhq.com/elliptic",
     adapter: "ashby",
   },
+  "p4-0271-fenergo": {
+    discovered: { kind: "workable", endpoint: "https://apply.workable.com/fenergocareers/" },
+    listingUrl: "https://apply.workable.com/fenergocareers/",
+    adapter: "custom",
+  },
   "p5-0889-elastic": {
     discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/elastic/jobs?content=true" },
     listingUrl: "https://job-boards.greenhouse.io/elastic",
@@ -460,6 +465,14 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
     listingUrl: "https://job-boards.greenhouse.io/scaleai",
     adapter: "greenhouse",
   },
+  "p4-0514-weights-biases": {
+    // W&B's first-party careers page now hands candidates to this dedicated
+    // board under CoreWeave. Keep the W&B-only tenant so the separate
+    // CoreWeave source does not duplicate the parent's full catalog.
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/weights_and_biases/jobs?content=true" },
+    listingUrl: "https://coreweave.com/careers/weights-biases",
+    adapter: "greenhouse",
+  },
   "p5-0615-harvey-ai": {
     discovered: { kind: "ashby", endpoint: "https://api.ashbyhq.com/posting-api/job-board/harvey" },
     listingUrl: "https://jobs.ashbyhq.com/harvey",
@@ -480,6 +493,11 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
     listingUrl: "https://job-boards.greenhouse.io/instacart",
     adapter: "greenhouse",
   },
+  "p5-0993-nerdwallet": {
+    discovered: { kind: "ashby", endpoint: "https://api.ashbyhq.com/posting-api/job-board/nerdwallet" },
+    listingUrl: "https://jobs.ashbyhq.com/nerdwallet",
+    adapter: "ashby",
+  },
   "p5-1011-oscar-health": {
     discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/oscar/jobs?content=true" },
     listingUrl: "https://job-boards.greenhouse.io/oscar",
@@ -494,6 +512,11 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
     discovered: { kind: "ashby", endpoint: "https://api.ashbyhq.com/posting-api/job-board/skydio" },
     listingUrl: "https://jobs.ashbyhq.com/skydio",
     adapter: "ashby",
+  },
+  "p4-0439-graylog": {
+    discovered: { kind: "lever", endpoint: "https://api.lever.co/v0/postings/graylog?mode=json" },
+    listingUrl: "https://jobs.lever.co/graylog",
+    adapter: "lever",
   },
   "p5-1116-zoox": {
     discovered: { kind: "lever", endpoint: "https://api.lever.co/v0/postings/zoox?mode=json" },

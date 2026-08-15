@@ -7685,6 +7685,76 @@ Wrong description.
     })]);
   });
 
+  it("uses NerdWallet's first-party Ashby embed instead of timing out on its rendered careers page", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p5-0993-nerdwallet", company: "NerdWallet", postingUrl: "https://www.nerdwallet.com/careers/jobs", adapter: "custom",
+    }, async (input) => {
+      requests.push(String(input));
+      return Response.json({ jobs: [{
+        id: "nerd-1", title: "Software Engineering Intern", employmentType: "Intern",
+        location: "NerdWallet US", isListed: true, isRemote: true, workplaceType: "Remote",
+        address: { postalAddress: { addressCountry: "United States" } },
+        jobUrl: "https://jobs.ashbyhq.com/nerdwallet/nerd-1",
+        applyUrl: "https://jobs.ashbyhq.com/nerdwallet/nerd-1/application",
+        publishedAt: "2026-08-14T20:00:00Z", descriptionPlain: "Build consumer financial products.",
+      }] });
+    }, new Date());
+
+    expect(requests).toEqual(["https://api.ashbyhq.com/posting-api/job-board/nerdwallet"]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: true, resolvedListingUrl: "https://jobs.ashbyhq.com/nerdwallet",
+    }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      title: "Software Engineering Intern", employmentType: "Internship", arrangement: "remote",
+      locationCountry: "United States",
+    })]);
+  });
+
+  it("uses Fenergo's official Workable board instead of stopping at its corporate careers shell", async () => {
+    const requests: Array<{ url: string; method: string; body: unknown }> = [];
+    const result = await crawlSource({
+      id: "p4-0271-fenergo", company: "Fenergo", postingUrl: "https://www.fenergo.com/careers/", adapter: "custom",
+    }, async (input, init) => {
+      requests.push({ url: String(input), method: init?.method ?? "GET", body: JSON.parse(String(init?.body)) });
+      return Response.json({
+        total: 1, nextPage: null, results: [{
+          id: 5362358, shortcode: "981E8AE7AF", title: "Software Engineer",
+          location: { city: "Dublin", region: "County Dublin", country: "Ireland", countryCode: "IE" },
+          locations: [{ city: "Dublin", region: "County Dublin", country: "Ireland", countryCode: "IE" }],
+          published: "2026-08-14T00:00:00.000Z", department: ["Engineering"], workplace: "hybrid",
+        }],
+      });
+    }, new Date());
+
+    expect(requests).toEqual([{
+      url: "https://apply.workable.com/api/v3/accounts/fenergocareers/jobs", method: "POST", body: {},
+    }]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: true, resolvedListingUrl: "https://apply.workable.com/fenergocareers/",
+    }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      title: "Software Engineer", department: "Engineering", arrangement: "hybrid",
+      officialUrl: "https://apply.workable.com/fenergocareers/j/981E8AE7AF/",
+    })]);
+  });
+
+  it("accepts Graylog's explicit empty official Lever board as an authoritative zero-job catalog", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p4-0439-graylog", company: "Graylog", postingUrl: "https://jobs.lever.co/graylog", adapter: "lever",
+    }, async (input) => {
+      requests.push(String(input));
+      return Response.json([]);
+    }, new Date());
+
+    expect(requests).toEqual(["https://api.lever.co/v0/postings/graylog?mode=json"]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: true, jobs: [],
+      resolvedListingUrl: "https://jobs.lever.co/graylog", error: null,
+    }));
+  });
+
   it("treats Replicate's explicit parent-company careers handoff as an authoritative empty standalone board", async () => {
     const result = await crawlSource({
       id: "p5-0715-replicate", company: "Replicate", postingUrl: "https://replicate.com/about", adapter: "custom",
@@ -7741,6 +7811,7 @@ Wrong description.
 
   it.each([
     ["p4-0367-the-trade-desk", "The Trade Desk", "https://careers.thetradedesk.com/", "https://boards-api.greenhouse.io/v1/boards/thetradedesk/jobs?content=true", "https://job-boards.greenhouse.io/thetradedesk"],
+    ["p4-0514-weights-biases", "Weights & Biases", "https://wandb.ai/careers", "https://boards-api.greenhouse.io/v1/boards/weights_and_biases/jobs?content=true", "https://coreweave.com/careers/weights-biases"],
     ["p4-0337-riot-games", "Riot Games", "https://www.riotgames.com/en/work-with-us", "https://boards-api.greenhouse.io/v1/boards/riotgames/jobs?content=true", "https://job-boards.greenhouse.io/riotgames"],
     ["p2-0146-oportun", "Oportun", "https://www.oportun.com/careers", "https://boards-api.greenhouse.io/v1/boards/oportun/jobs?content=true", "https://job-boards.greenhouse.io/oportun"],
     ["p4-0430-fastly", "Fastly", "https://www.fastly.com/careers", "https://boards-api.greenhouse.io/v1/boards/fastly/jobs?content=true", "https://job-boards.greenhouse.io/fastly"],
