@@ -7850,6 +7850,130 @@ Wrong description.
     }));
   });
 
+  it("uses Standard Chartered's exact US country facet and enriches its 2027 internships", async () => {
+    const pageNumbers: number[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.href === "https://jobs.standardchartered.com/search/?locale=en_GB") {
+        return new Response(`<script>var resultStyles = { currentLocale: 'en_GB' }; j2w.SearchResultsUnify.removeResultContent()</script>`);
+      }
+      if (url.pathname === "/services/recruiting/v1/jobs") {
+        const body = JSON.parse(String(init?.body)) as {
+          pageNumber: number;
+          locale: string;
+          location: string;
+          facetFilters: Record<string, string[]>;
+        };
+        expect(body.locale).toBe("en_GB");
+        expect(body.location).toBe("");
+        expect(body.facetFilters).toEqual({ jobLocationCountry: ["United States"] });
+        pageNumbers.push(body.pageNumber);
+        const start = body.pageNumber * 10;
+        const count = body.pageNumber < 2 ? 10 : 2;
+        return Response.json({
+          totalJobs: 22,
+          jobSearchResult: Array.from({ length: count }, (_, index) => {
+            const id = String(57312 + start + index);
+            const internship = body.pageNumber === 0 && index === 0;
+            return { response: {
+              id,
+              unifiedStandardTitle: internship
+                ? "Global Banking Internship Programme US 2027"
+                : `Banking role ${id}`,
+              unifiedUrlTitle: internship
+                ? "Global-Banking-Internship-Programme-US-2027"
+                : `Banking-role-${id}`,
+              jobLocationShort: ["New York, USA "],
+              jobLocationCountry: ["United States"],
+              unifiedStandardStart: "06/07/2026",
+              unifiedStandardEnd: "31/12/2026",
+              mfield1: ["Corporate & Commercial Banking"],
+            } };
+          }),
+        });
+      }
+      if (url.pathname.includes("/job/Global-Banking-Internship-Programme-US-2027/57312-en_GB")) {
+        return new Response(`
+          <span itemprop="title">Global Banking Internship Programme US 2027</span>
+          <span class="joblayouttoken-label">Requisition Number:</span><span>57312</span>
+          <span class="joblayouttoken-label">Job Location (Short):</span><span>New York, USA</span>
+          <span class="joblayouttoken-label">Work Type:</span><span>Hybrid Working</span>
+          <span class="joblayouttoken-label">Employment Type:</span><span>Internship</span>
+          <span class="joblayouttoken-label">Posting Start Date:</span><span>06/07/2026</span>
+          <span class="joblayouttoken-label">Posting End Date:</span><span>31/12/2026</span>
+          <span class="joblayouttoken-label">Job Description:</span><span>Build models and analyze banking data with Python.</span>
+          <a class="apply" href="/talentcommunity/apply/57312/?locale=en_GB">Apply now</a>
+        `);
+      }
+      throw new Error(`Unexpected Standard Chartered request: ${url.href}`);
+    };
+
+    const result = await crawlSource({
+      id: "p4-0353-standard-chartered",
+      company: "Standard Chartered (US)",
+      postingUrl: "https://www.sc.com/us/careers/",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-15T00:00:00.000Z"));
+
+    expect(pageNumbers.sort((left, right) => left - right)).toEqual([0, 1, 2]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      resolvedListingUrl: "https://jobs.standardchartered.com/search/?locale=en_GB",
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 3 },
+    }));
+    expect(result.jobs).toHaveLength(22);
+    expect(result.jobs.every((job) => job.locationCountry === "United States")).toBe(true);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "57312",
+      requisitionId: "57312",
+      title: "Global Banking Internship Programme US 2027",
+      location: "New York, USA",
+      locationCountry: "United States",
+      arrangement: "hybrid",
+      employmentType: "Internship",
+      jobFunction: "Corporate & Commercial Banking",
+      description: "Build models and analyze banking data with Python.",
+      publishedAt: "2026-07-06T00:00:00.000Z",
+      validThrough: "2026-12-31T00:00:00.000Z",
+      officialUrl: "https://jobs.standardchartered.com/job/Global-Banking-Internship-Programme-US-2027/57312-en_GB",
+      applyUrl: "https://jobs.standardchartered.com/talentcommunity/apply/57312/?locale=en_GB",
+    }));
+  });
+
+  it("fails Standard Chartered closed when the US facet returns a foreign row", async () => {
+    const result = await crawlSource({
+      id: "p4-0353-standard-chartered",
+      company: "Standard Chartered (US)",
+      postingUrl: "https://www.sc.com/us/careers/",
+      adapter: "custom",
+    }, async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/search/") {
+        return new Response(`<script>var resultStyles = { currentLocale: 'en_GB' }; j2w.SearchResultsUnify.removeResultContent()</script>`);
+      }
+      if (url.pathname === "/services/recruiting/v1/jobs") {
+        const body = JSON.parse(String(init?.body)) as { facetFilters: Record<string, string[]> };
+        expect(body.facetFilters).toEqual({ jobLocationCountry: ["United States"] });
+        return Response.json({
+          totalJobs: 1,
+          jobSearchResult: [{ response: {
+            id: "999",
+            unifiedStandardTitle: "Foreign role",
+            unifiedUrlTitle: "Foreign-role",
+            jobLocationShort: ["London, GBR"],
+            jobLocationCountry: ["United Kingdom"],
+          } }],
+        });
+      }
+      return new Response("Not found", { status: 404 });
+    }, new Date("2026-08-15T00:00:00.000Z"));
+
+    expect(result.status).not.toBe("succeeded");
+    expect(result.completeListing).toBe(false);
+    expect(result.jobs).toEqual([]);
+  });
+
   it("loads a complete Cornerstone career-site catalog through its public API", async () => {
     const requests: Array<{ url: string; authorization: string | null }> = [];
     const context = {

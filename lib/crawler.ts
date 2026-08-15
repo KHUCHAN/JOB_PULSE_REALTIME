@@ -125,6 +125,7 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
   "p2-0041-jpmorgan-chase",
   "p2-0048-metlife",
   "p2-0050-morgan-stanley",
+  "p4-0353-standard-chartered",
   "p2-0064-unitedhealth-group",
   "p2-0066-visa",
   "p4-0203-lseg",
@@ -343,6 +344,10 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
   "p2-0040-jefferies": {
     oracle: { apiOrigin: "https://hdid.fa.us2.oraclecloud.com", site: "CX_1" },
     listingUrl: "https://careers.jefferies.com/#en/sites/CX_1",
+    adapter: "custom",
+  },
+  "p4-0353-standard-chartered": {
+    listingUrl: "https://jobs.standardchartered.com/search/?locale=en_GB",
     adapter: "custom",
   },
   "p4-0209-aci-worldwide": {
@@ -6197,14 +6202,36 @@ type SuccessFactorsUnifiedJob = {
   urlTitle?: unknown;
   custprimecity?: unknown;
   custCountryRegion?: unknown;
+  jobLocationShort?: unknown;
+  jobLocationCountry?: unknown;
   unifiedStandardStart?: unknown;
+  unifiedStandardEnd?: unknown;
   jobFunction?: unknown;
   department?: unknown;
+  mfield1?: unknown;
+  cust_csb_employmentType?: unknown;
+  cust_csb_worktype?: unknown;
 };
 
 type SuccessFactorsUnifiedPayload = {
   jobSearchResult?: Array<{ response?: SuccessFactorsUnifiedJob }>;
   totalJobs?: unknown;
+};
+
+const successFactorsTextValues = (value: unknown): string[] => (
+  Array.isArray(value) ? value : [value]
+).flatMap((item) => asText(item) ?? []);
+
+const successFactorsDate = (value: unknown): string | null => {
+  const text = asText(value);
+  const match = text?.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!match) return normalizedDate(text);
+  const date = new Date(Date.UTC(Number(match[3]), Number(match[2]) - 1, Number(match[1])));
+  return date.getUTCFullYear() === Number(match[3])
+    && date.getUTCMonth() === Number(match[2]) - 1
+    && date.getUTCDate() === Number(match[1])
+    ? date.toISOString()
+    : null;
 };
 
 const successFactorsUnifiedJob = (
@@ -6216,29 +6243,51 @@ const successFactorsUnifiedJob = (
   const externalId = value.id == null ? null : String(value.id).trim() || null;
   const title = plainText(asText(value.unifiedStandardTitle) ?? asText(value.urlTitle));
   if (!externalId || !title) return null;
-  const city = asText(value.custprimecity);
-  const countries = Array.isArray(value.custCountryRegion)
-    ? value.custCountryRegion.flatMap((country) => asText(country) ?? [])
-    : asText(value.custCountryRegion) ? [asText(value.custCountryRegion)!] : [];
-  const location = [city, ...countries].filter(Boolean).join(", ") || null;
+  const listedLocations = successFactorsTextValues(value.jobLocationShort);
+  const city = asText(value.custprimecity)
+    ?? listedLocations[0]?.split(",")[0]?.trim()
+    ?? null;
+  const countries = successFactorsTextValues(value.jobLocationCountry).length > 0
+    ? successFactorsTextValues(value.jobLocationCountry)
+    : successFactorsTextValues(value.custCountryRegion);
+  const location = listedLocations.join("; ") || [city, ...countries].filter(Boolean).join(", ") || null;
   const rawSlug = asText(value.unifiedUrlTitle) ?? asText(value.urlTitle) ?? title;
-  const slug = decodeHtmlAttribute(rawSlug).replace(/[^A-Za-z0-9._~-]+/g, "-").replace(/^-|-$/g, "");
+  let decodedSlug = decodeHtmlAttribute(rawSlug);
+  try {
+    decodedSlug = decodeURIComponent(decodedSlug);
+  } catch {
+    // Preserve a malformed but bounded source slug; the requisition ID still
+    // provides the authoritative identity in the final URL.
+  }
+  const slug = decodedSlug.replace(/[^A-Za-z0-9._~-]+/g, "-").replace(/^-|-$/g, "");
   const programs = classifyJobPrograms(title);
+  const employmentType = successFactorsTextValues(value.cust_csb_employmentType).join(" / ") || null;
+  const workType = successFactorsTextValues(value.cust_csb_worktype).join(" / ");
+  const functionName = successFactorsTextValues(value.mfield1)[0]
+    ?? asText(value.department)
+    ?? asText(value.jobFunction);
   return {
     externalId,
     title: decodeHtmlAttribute(title),
     company: source.company,
     location,
-    arrangement: /\bremote\b/i.test(location ?? "") ? "remote" : "unknown",
-    employmentType: programs.keys.length > 0 ? "Internship" : null,
+    arrangement: /\bremote\b/i.test(`${location ?? ""} ${workType}`)
+      ? "remote"
+      : /\bhybrid\b/i.test(workType)
+        ? "hybrid"
+        : /\b(?:office|on-?site)\b/i.test(workType) ? "onsite" : "unknown",
+    employmentType: programs.keys.includes("coop")
+      ? "Co-op"
+      : programs.keys.includes("internship") ? "Internship" : employmentType,
     summary: null,
-    ...(asText(value.department) ?? asText(value.jobFunction) ? { department: asText(value.department) ?? asText(value.jobFunction) } : {}),
+    ...(functionName ? { jobFunction: functionName } : {}),
     ...(city ? { locationCity: city } : {}),
     ...(countries[0] ? { locationCountry: countries[0] } : {}),
     requisitionId: externalId,
     ...(asText(value.unifiedStandardStart) ? { sourcePostedText: asText(value.unifiedStandardStart) } : {}),
     officialUrl: new URL(`/job/${encodeURIComponent(slug)}/${encodeURIComponent(externalId)}-${encodeURIComponent(locale)}`, origin).href,
-    publishedAt: null,
+    publishedAt: successFactorsDate(value.unifiedStandardStart),
+    validThrough: successFactorsDate(value.unifiedStandardEnd),
   };
 };
 
@@ -6249,9 +6298,11 @@ const crawlSuccessFactorsUnified = async (
 ): Promise<SourceCrawlResult | null> => {
   if (!/SearchResultsUnify|rmk-jobs-search/i.test(html)) return null;
   const page = new URL(source.postingUrl);
-  const locale = page.searchParams.get("locale") || "en_US";
+  const htmlLocale = html.match(/\bcurrentLocale\s*:\s*["']([a-z]{2}_[A-Z]{2})["']/)?.[1];
+  const locale = page.searchParams.get("locale") || htmlLocale || "en_US";
   const endpoint = new URL("/services/recruiting/v1/jobs", page.origin);
   const maximumPages = 40;
+  const requestedUsScope = source.regionScope === "us";
   const fetchPage = async (pageNumber: number, sessionCookie?: string): Promise<{ payload: SuccessFactorsUnifiedPayload; jobs: CrawledJob[]; valid: boolean; sessionCookie?: string } | null> => {
     try {
       const response = await fetchWithTimeout(fetcher, endpoint, {
@@ -6271,7 +6322,11 @@ const crawlSuccessFactorsUnified = async (
           sortBy: "date",
           keywords: "",
           location: "",
-          facetFilters: {},
+          // The free-text location field can return global false positives on
+          // SAP Career Site Builder. The country facet is exact and every
+          // returned row is validated again below before it can advance the
+          // authoritative US checkpoint.
+          facetFilters: requestedUsScope ? { jobLocationCountry: ["United States"] } : {},
           brand: "",
           skills: [],
           categoryId: 0,
@@ -6284,8 +6339,11 @@ const crawlSuccessFactorsUnified = async (
       const raw = payload.jobSearchResult;
       if (!Array.isArray(raw)) return null;
       const jobs = raw.flatMap(({ response: job }) => job ? successFactorsUnifiedJob(source, page.origin, locale, job) ?? [] : []);
+      const scopeValid = !requestedUsScope || jobs.every((job) =>
+        /^(?:US|USA|United States)$/i.test(job.locationCountry ?? ""),
+      );
       const responseCookie = response.headers.get("set-cookie")?.match(/^\s*([^;,]+=[^;,]+)/)?.[1];
-      return { payload, jobs, valid: jobs.length === raw.length, ...(responseCookie ? { sessionCookie: responseCookie } : {}) };
+      return { payload, jobs, valid: jobs.length === raw.length && scopeValid, ...(responseCookie ? { sessionCookie: responseCookie } : {}) };
     } catch {
       return null;
     }
@@ -15298,6 +15356,78 @@ const supportsJsonLdDetailEnrichment = (jobUrl: string): boolean => {
   }
 };
 
+const standardCharteredDetail = (
+  html: string,
+  source: CrawlSource,
+  job: CrawledJob,
+  responseUrl: string,
+): { detail: CrawledJob; applyUrl: string | null } | null => {
+  let expected: URL;
+  let finalPage: URL;
+  try {
+    expected = new URL(job.officialUrl);
+    finalPage = new URL(responseUrl || job.officialUrl);
+  } catch {
+    return null;
+  }
+  if (expected.hostname.toLocaleLowerCase() !== "jobs.standardchartered.com"
+    || finalPage.origin !== expected.origin) return null;
+
+  const tokenHtml = (label: string): string | null => html.match(new RegExp(
+    `<span\\b[^>]*class=["'][^"']*\\bjoblayouttoken-label\\b[^"']*["'][^>]*>\\s*${label}:?[^<]*<\\/span>\\s*<span\\b[^>]*>([\\s\\S]*?)<\\/span>`,
+    "i",
+  ))?.[1] ?? null;
+  const title = plainText(html.match(/<span\b[^>]*itemprop=["']title["'][^>]*>([\s\S]*?)<\/span>/i)?.[1]);
+  const requisitionId = plainText(tokenHtml("Requisition Number"));
+  if (!title || !requisitionId || requisitionId !== job.externalId
+    || jobIdentityText(title) !== jobIdentityText(job.title)
+    || !finalPage.pathname.split("/").some((segment) => segment.startsWith(`${requisitionId}-`))) return null;
+
+  const location = plainText(tokenHtml("Job Location \\(Short\\)")) ?? job.location;
+  const workType = plainText(tokenHtml("Work Type"));
+  const employmentType = plainText(tokenHtml("Employment Type"));
+  const postedText = plainText(tokenHtml("Posting Start Date"));
+  const validThroughText = plainText(tokenHtml("Posting End Date"));
+  const descriptionOpening = html.match(/<span\b[^>]*itemprop=["']description["'][^>]*>/i);
+  const descriptionStart = descriptionOpening?.index == null
+    ? -1
+    : descriptionOpening.index + descriptionOpening[0].length;
+  const relativeApplyStart = descriptionStart >= 0
+    ? html.slice(descriptionStart).search(/<div\b[^>]*class=["'][^"']*\bapplylink\b/i)
+    : -1;
+  const applyStart = relativeApplyStart >= 0 ? descriptionStart + relativeApplyStart : -1;
+  const descriptionRegion = descriptionStart >= 0 && applyStart > descriptionStart
+    ? html.slice(descriptionStart, applyStart)
+    : null;
+  const outerDescriptionEnd = descriptionRegion?.toLocaleLowerCase().lastIndexOf("</span>") ?? -1;
+  const description = plainText(outerDescriptionEnd >= 0
+    ? descriptionRegion!.slice(0, outerDescriptionEnd)
+    : tokenHtml("Job Description"));
+  const arrangement = /\bremote\b/i.test(`${location ?? ""} ${workType ?? ""}`)
+    ? "remote"
+    : /\bhybrid\b/i.test(workType ?? "")
+      ? "hybrid"
+      : /\b(?:office|on-?site)\b/i.test(workType ?? "") ? "onsite" : "unknown";
+  return {
+    detail: {
+      externalId: requisitionId,
+      requisitionId,
+      title,
+      company: source.company,
+      location,
+      arrangement,
+      employmentType,
+      summary: description,
+      description,
+      officialUrl: job.officialUrl,
+      sourcePostedText: postedText,
+      publishedAt: successFactorsDate(postedText),
+      validThrough: successFactorsDate(validThroughText),
+    },
+    applyUrl: officialApplyUrl(html, finalPage.href),
+  };
+};
+
 const barclaysReaderDetail = (
   markdown: string,
   source: CrawlSource,
@@ -15546,11 +15676,25 @@ const enrichProgramJobDetails = async (
         // Detail enrichment is optional; the verified listing remains usable.
       }
     }
-    if (!supportsJsonLdDetailEnrichment(job.officialUrl)) return;
+    const supportsStandardCharteredDetail = (() => {
+      try {
+        return new URL(job.officialUrl).hostname.toLocaleLowerCase() === "jobs.standardchartered.com";
+      } catch {
+        return false;
+      }
+    })();
+    if (!supportsJsonLdDetailEnrichment(job.officialUrl) && !supportsStandardCharteredDetail) return;
     try {
       const response = await fetchWithTimeout(fetcher, job.officialUrl, undefined, true, { attempts: 1, timeoutMs: 4_000 });
       if (response.ok) {
         const html = await response.text();
+        if (supportsStandardCharteredDetail) {
+          const detail = standardCharteredDetail(html, source, job, response.url || job.officialUrl);
+          if (detail) {
+            enriched[index] = mergeProgramJobDetail(job, detail.detail, detail.applyUrl);
+            return;
+          }
+        }
         const detail = matchingJsonLdDetail(html, source, job);
         if (detail) {
           enriched[index] = mergeProgramJobDetail(job, detail, officialApplyUrl(html, response.url || job.officialUrl));
