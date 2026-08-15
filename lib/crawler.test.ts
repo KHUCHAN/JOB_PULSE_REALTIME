@@ -3343,10 +3343,12 @@ Wrong description.
 
   it("retries an unusable successful Talemetry reader body without cache", async () => {
     const headers: Array<string | null> = [];
+    const engines: Array<string | null> = [];
     const fetcher: typeof fetch = async (input, init) => {
       const url = String(input);
       if (!url.startsWith("https://r.jina.ai/")) return new Response("blocked", { status: 403 });
       headers.push(new Headers(init?.headers).get("x-no-cache"));
+      engines.push(new Headers(init?.headers).get("x-engine"));
       if (headers.length === 1) return new Response("Title: Just a moment...", { status: 200 });
       return Response.json({
         current_page: 2,
@@ -3363,6 +3365,7 @@ Wrong description.
     }, fetcher, new Date());
 
     expect(headers).toEqual([null, "true"]);
+    expect(engines).toEqual([null, "browser"]);
     expect(result).toEqual(expect.objectContaining({
       status: "succeeded",
       pagination: { nextPage: 1, cycleComplete: true, totalPages: 2 },

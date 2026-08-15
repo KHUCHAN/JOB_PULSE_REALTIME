@@ -4388,9 +4388,9 @@ const crawlTalemetryJson = async (
         const reader = await fetchWithTimeout(fetcher, `https://r.jina.ai/${endpoint.href}`, {
           headers: {
             accept: "text/plain",
-            ...(attempt > 0 ? { "x-no-cache": "true" } : {}),
+            ...(attempt > 0 ? { "x-no-cache": "true", "x-engine": "browser" } : {}),
           },
-        }, false, { attempts: 1, timeoutMs: 12_000 });
+        }, false, { attempts: 1, timeoutMs: attempt > 0 ? 18_000 : 12_000 });
         const parsed = reader.ok ? parseTalemetryPayload(await reader.text()) : null;
         if (parsed) return parsed;
       } catch {
