@@ -2615,6 +2615,49 @@ Wrong description.
     expect(result.jobs.every((job) => job.location?.includes("United States"))).toBe(true);
   });
 
+  it("routes Fluor's corporate careers page to its official US Eightfold catalog", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "legacy-row-813",
+      company: "Fluor",
+      postingUrl: "https://www.fluor.com/careers",
+      adapter: "custom",
+    }, async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.href);
+      expect(url.pathname).toBe("/api/pcsx/search");
+      expect(url.searchParams.get("domain")).toBe("fluor.com");
+      expect(url.searchParams.get("location")).toBe("United States");
+      return Response.json({ data: {
+        count: 1,
+        positions: [{
+          id: 1099555458023,
+          name: "Process Engineer Intern",
+          location: "Houston, US-TX, United States",
+          atsJobId: "7976",
+          positionUrl: "/careers/job/1099555458023",
+          type: "Internship",
+          department: "Engineering",
+        }],
+      } });
+    }, new Date());
+
+    expect(requests).toEqual([
+      "https://careers.fluor.com/api/pcsx/search?domain=fluor.com&query=&location=United+States&start=0",
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://careers.fluor.com/careers?domain=fluor.com",
+      jobs: [expect.objectContaining({
+        externalId: "7976",
+        title: "Process Engineer Intern",
+        location: "Houston, US-TX, United States",
+        officialUrl: "https://careers.fluor.com/careers/job/1099555458023",
+      })],
+    }));
+  });
+
   it("routes PayPal's corporate careers home to its official Eightfold job feed", async () => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input) => {

@@ -102,6 +102,16 @@ type VerifiedSourceFeed = {
   adapter: CrawlSource["adapter"];
 };
 
+const isEightfoldListingUrl = (value: string): boolean => {
+  try {
+    const page = new URL(value);
+    return page.hostname.endsWith("eightfold.ai")
+      || (page.pathname.replace(/\/$/, "") === "/careers" && page.searchParams.has("domain"));
+  } catch {
+    return false;
+  }
+};
+
 // These verified multinational catalogs are large enough that retaining the
 // clearly non-US portion adds substantial write and review cost. Keep this
 // source-level rather than result-size based: paged adapters may return small
@@ -244,6 +254,7 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
   "legacy-row-116", // Quest Diagnostics
   "legacy-row-124", // Ulta Beauty
   "legacy-row-129", // Williams-Sonoma
+  "legacy-row-813", // Fluor
   "legacy-row-777", // Ace Hardware
   "legacy-row-780", // Albertsons
   "legacy-row-792", // Builders FirstSource
@@ -331,6 +342,10 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
   "audit-row-430": { listingUrl: "https://www.tractorsupply.careers/search/?q=&locationsearch=&sortColumn=referencedate&sortDirection=desc", adapter: "custom" },
   "legacy-row-821": {
     listingUrl: "https://www.group1careers.com/results",
+    adapter: "custom",
+  },
+  "legacy-row-813": {
+    listingUrl: "https://careers.fluor.com/careers?domain=fluor.com",
     adapter: "custom",
   },
   "p2-0050-morgan-stanley": {
@@ -14925,7 +14940,7 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
         : await crawlDiscoveredFeed(source, verifiedFeed.discovered, fetcher)
       : verifiedDayforceIdentity
         ? await crawlDayforce({ ...source, postingUrl: verifiedFeed.listingUrl }, verifiedDayforceIdentity, fetcher)
-      : new URL(verifiedFeed.listingUrl).hostname.endsWith("eightfold.ai")
+      : isEightfoldListingUrl(verifiedFeed.listingUrl)
         ? await crawlEightfold({ ...source, postingUrl: verifiedFeed.listingUrl, adapter: verifiedFeed.adapter }, fetcher)
         : await crawlJsonLd({
             ...source,
@@ -15092,8 +15107,7 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   if (new URL(source.postingUrl).hostname === "careers.epam.com") return crawlEpam(source, fetcher);
   if (new URL(source.postingUrl).hostname.endsWith("mediatek.com")) return crawlMediaTek(source, fetcher);
   if (new URL(source.postingUrl).hostname.endsWith("mckinsey.com") && new URL(source.postingUrl).pathname.includes("/careers/search-jobs")) return crawlMcKinsey(source, fetcher);
-  if (sourcePage.hostname.endsWith("eightfold.ai")
-    || (sourcePage.pathname.replace(/\/$/, "") === "/careers" && sourcePage.searchParams.has("domain"))) {
+  if (isEightfoldListingUrl(sourcePage.href)) {
     return crawlEightfold(source, fetcher);
   }
   if (new URL(source.postingUrl).hostname === "myjobs.adp.com") return crawlAdpMyJobs(source, fetcher);
