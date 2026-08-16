@@ -18835,29 +18835,51 @@ const crawlDayforce = async (
       .filter(([page]) => page <= lastCompletePage)
       .sort(([left], [right]) => left - right)
       .flatMap(([, postings]) => postings);
-    const hasStableIdentities = (postings: DayforcePosting[]): boolean => {
-      const identities = postings.map((posting) => dayforceScalarText(posting.jobPostingId));
-      return identities.every((identity): identity is string => Boolean(identity))
-        && new Set(identities).size === identities.length;
+    const normalizeStableIdentities = (postings: DayforcePosting[]): {
+      postings: DayforcePosting[];
+      hadDuplicates: boolean;
+    } | null => {
+      const byIdentity = new Map<string, DayforcePosting>();
+      for (const posting of postings) {
+        const identity = dayforceScalarText(posting.jobPostingId);
+        const title = asText(posting.jobTitle);
+        if (!identity || !title) return null;
+        const existing = byIdentity.get(identity);
+        if (existing) {
+          if (asText(existing.jobTitle) !== title
+            || dayforceScalarText(existing.jobReqId) !== dayforceScalarText(posting.jobReqId)) return null;
+          continue;
+        }
+        byIdentity.set(identity, posting);
+      }
+      return { postings: [...byIdentity.values()], hadDuplicates: byIdentity.size !== postings.length };
     };
     let raw = flattenPages(pages);
-    if (!hasStableIdentities(raw)) {
+    let normalizedIdentities = normalizeStableIdentities(raw);
+    if (!normalizedIdentities || normalizedIdentities.hadDuplicates) {
       // Some Dayforce tenants occasionally repeat an offset page while several
-      // pages are requested concurrently. Retry the bounded segment once in
-      // order, then still fail closed if the catalog remains inconsistent.
-      const retriedPages = new Map<number, DayforcePosting[]>();
-      for (let page = startPage; page <= lastCompletePage; page += 1) {
-        const retried = await fetchPage(page);
-        if (!retried.valid || retried.total !== catalog.total) {
-          throw new Error("Dayforce returned duplicate or unusable job identities.");
+      // pages are requested concurrently, and a live insertion can also move
+      // one posting across a page boundary during a sequential pass. Retry the
+      // bounded segment once in order. If a stable pass is still unavailable,
+      // retain only identity-consistent rows and keep the cycle incomplete so
+      // the partial snapshot can never close a previously observed posting.
+      for (let attempt = 0; attempt < 1; attempt += 1) {
+        const retriedPages = new Map<number, DayforcePosting[]>();
+        for (let page = startPage; page <= lastCompletePage; page += 1) {
+          const retried = await fetchPage(page);
+          if (!retried.valid || retried.total !== catalog.total) {
+            throw new Error("Dayforce returned duplicate or unusable job identities.");
+          }
+          retriedPages.set(page, retried.postings);
         }
-        retriedPages.set(page, retried.postings);
-      }
-      raw = flattenPages(retriedPages);
-      if (!hasStableIdentities(raw)) {
-        throw new Error("Dayforce returned duplicate or unusable job identities.");
+        raw = flattenPages(retriedPages);
+        normalizedIdentities = normalizeStableIdentities(raw);
+        if (normalizedIdentities && !normalizedIdentities.hadDuplicates) break;
       }
     }
+    if (!normalizedIdentities) throw new Error("Dayforce returned duplicate or unusable job identities.");
+    const identityUnstable = normalizedIdentities.hadDuplicates;
+    raw = normalizedIdentities.postings;
     const canonicalListingUrl = referer;
     const jobs = uniqueJobs(raw.flatMap((posting): CrawledJob[] => {
       const externalId = dayforceScalarText(posting.jobPostingId);
@@ -18893,7 +18915,7 @@ const crawlDayforce = async (
       }];
     }));
     if (jobs.length !== raw.length) throw new Error("Dayforce returned duplicate or unusable job identities.");
-    const cycleComplete = firstFailedPage === null && endPage === totalPages;
+    const cycleComplete = firstFailedPage === null && endPage === totalPages && !identityUnstable;
     return {
       status: "succeeded",
       responseStatus: responseStatus ?? catalog.status,
@@ -18901,13 +18923,17 @@ const crawlDayforce = async (
       jobs,
       ...(totalPages > 1 || source.crawlPageCursor != null ? {
         pagination: {
-          nextPage: cycleComplete ? 1 : firstFailedPage ?? Math.max(startPage + 1, endPage),
+          nextPage: cycleComplete || identityUnstable ? 1 : firstFailedPage ?? Math.max(startPage + 1, endPage),
           cycleComplete,
           totalPages,
         },
       } : {}),
       resolvedListingUrl: canonicalListingUrl,
-      error: firstFailedPage == null ? null : `Dayforce catalog page ${firstFailedPage} was unavailable.`,
+      error: firstFailedPage != null
+        ? `Dayforce catalog page ${firstFailedPage} was unavailable.`
+        : identityUnstable
+          ? "Dayforce catalog shifted during pagination; retained unique jobs without stale closure."
+          : null,
     };
   } catch (error) {
     const status = typeof error === "object" && error && "responseStatus" in error

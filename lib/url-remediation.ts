@@ -155,17 +155,22 @@ export const isSafeCareerListingUrl = (company: string, originalUrl: string, can
   if (NON_LISTING_PATH.test(`${candidate.pathname}${candidate.search}`)) return false;
   // CGI's official careers CTA uses an opaque Njoyn tenant ID, so neither the
   // company name nor its domain appears in the vendor URL. Admit only CGI's
-  // exact US JobListing tenant and only when the stored source is CGI-owned.
-  const candidateParameters = new Map(
-    [...candidate.searchParams].map(([key, value]) => [key.toLocaleLowerCase(), value]),
-  );
+  // exact US JobListing tenant when the stored source is CGI-owned or already
+  // points at that same previously validated tenant.
+  const isExactCgiUsCatalog = (url: URL): boolean => {
+    const parameters = new Map(
+      [...url.searchParams].map(([key, value]) => [key.toLocaleLowerCase(), value]),
+    );
+    return url.protocol === "https:"
+      && url.hostname.toLocaleLowerCase() === "cgi.njoyn.com"
+      && url.pathname.toLocaleLowerCase() === "/corp/xweb/xweb.asp"
+      && parameters.get("clid") === "21001"
+      && parameters.get("page")?.toLocaleLowerCase() === "joblisting"
+      && parameters.get("countryid")?.toLocaleUpperCase() === "US";
+  };
   if (company.trim().toLocaleLowerCase() === "cgi"
-    && /(?:^|\.)cgi\.com$/i.test(original.hostname)
-    && candidate.hostname.toLocaleLowerCase() === "cgi.njoyn.com"
-    && candidate.pathname.toLocaleLowerCase() === "/corp/xweb/xweb.asp"
-    && candidateParameters.get("clid") === "21001"
-    && candidateParameters.get("page")?.toLocaleLowerCase() === "joblisting"
-    && candidateParameters.get("countryid") === "US") return true;
+    && isExactCgiUsCatalog(candidate)
+    && (/(?:^|\.)cgi\.com$/i.test(original.hostname) || isExactCgiUsCatalog(original))) return true;
   if (isSafeCareerRecommendation(company, originalUrl, candidate.href)) return true;
   if (isPublicAtsCatalogUrl(candidate.href)) return true;
   try {

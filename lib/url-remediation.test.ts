@@ -100,7 +100,9 @@ describe("career URL remediation", () => {
   it("admits only CGI's exact official Njoyn US tenant", () => {
     const listing = "https://cgi.njoyn.com/CORP/xweb/xweb.asp?CLID=21001&page=JobListing&lang=1&CountryID=US";
     expect(isSafeCareerListingUrl("CGI", "https://www.cgi.com/en/careers", listing)).toBe(true);
+    expect(isSafeCareerListingUrl("CGI", listing, listing)).toBe(true);
     expect(isSafeCareerListingUrl("CGI", "https://www.cgi.com/en/careers", listing.replace("21001", "99999"))).toBe(false);
+    expect(isSafeCareerListingUrl("CGI", listing.replace("21001", "99999"), listing)).toBe(false);
     expect(isSafeCareerListingUrl("Another Company", "https://example.com/careers", listing)).toBe(false);
   });
 });

@@ -11888,6 +11888,50 @@ We are an equal opportunity employer.`;
     expect(result.jobs).toHaveLength(25);
   });
 
+  it("keeps a shifting Dayforce catalog usable without allowing stale closure", async () => {
+    let requests = 0;
+    const fetcher: typeof fetch = async (input, init) => {
+      if (String(input).endsWith("/api/auth/csrf")) {
+        return Response.json({ csrfToken: "csrf" }, {
+          headers: { "set-cookie": "__Host-next-auth.csrf-token=cookie; Path=/; Secure" },
+        });
+      }
+      requests += 1;
+      const body = JSON.parse(String(init?.body)) as { paginationStart: number };
+      const ids = body.paginationStart === 0
+        ? Array.from({ length: 25 }, (_, index) => index + 1)
+        : [25, 26, 27, 28, 29];
+      return Response.json({
+        maxCount: 30,
+        offset: body.paginationStart,
+        count: ids.length,
+        jobPostings: ids.map((id) => ({
+          jobPostingId: id,
+          jobReqId: 5_000 + id,
+          jobTitle: `Role ${id}`,
+          postingLocations: [],
+        })),
+      });
+    };
+
+    const result = await crawlSource({
+      id: "dayforce-shifting-test",
+      company: "Example",
+      postingUrl: "https://jobs.dayforcehcm.com/en-US/example/CANDIDATEPORTAL",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-15T12:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: { nextPage: 1, cycleComplete: false, totalPages: 2 },
+      error: "Dayforce catalog shifted during pagination; retained unique jobs without stale closure.",
+    }));
+    expect(result.jobs).toHaveLength(29);
+    expect(new Set(result.jobs.map((job) => job.externalId)).size).toBe(29);
+    expect(requests).toBe(4);
+  });
+
   it("crawls Energy Transfer's complete SelectMinds session catalog and enriches internship details", async () => {
     const origin = "https://energytransfer.referrals.selectminds.com";
     const listingUrl = `${origin}/ETP/jobs/search`;
