@@ -6,6 +6,7 @@ import { classifyAiDataJob } from "../lib/job-topic-classifier";
 import { classifyJobPrograms } from "../lib/job-program-classifier";
 import { classifyRecruitingYears } from "../lib/job-recruiting-year-classifier";
 import { inferEmploymentTypeFromPrograms, isCoopEmploymentType, normalizeEmploymentType } from "../lib/employment-type";
+import { jobPostingIdentityKeys } from "../lib/job-posting-identity";
 import { syncResumeMatchesForUrls } from "../lib/resume-match-store";
 
 type SourceRow = {
@@ -24,6 +25,13 @@ type ExistingJobRow = {
   official_url: string;
   status: "open" | "closed";
   resume_match_hash: string | null;
+};
+
+type SourceSyncRow = {
+  company: string;
+  posting_url: string;
+  alert_baseline_at: string | null;
+  previous_success_at: string | null;
 };
 
 type PagedCrawlState = {
@@ -106,6 +114,30 @@ const isNavigationArtifact = (job: ExistingJobRow): boolean => {
   if (/\.(?:pdf|docx?)(?:[?#]|$)/i.test(job.official_url)) return true;
   if (/^(?:home|sites|university|university overview|recruitment fraud|saved jobs(?:\s*0)?|go to saved jobs(?:\s*0)?|know your rights|job listing|students and graduates|events?(?:\s*\d+)?|sitemap|i am an employee|skip to main content\.?)$/i.test(title)) return true;
   return /\/hcmUI\/CandidateExperience\/sitemaps(?:\/|$)|\/sites\/[^/]+\/events(?:\/|$)|\/fscmUI\/faces\/deeplink[^#]*ICE_JOB_SEARCH_RESP/i.test(job.official_url);
+};
+
+const publishedAfterBaseline = (
+  publishedAt: unknown,
+  baselineAt: string | null,
+  previousSuccessAt: string | null,
+): boolean => {
+  const timestamp = (value: string | null): number => {
+    if (!value) return Number.NaN;
+    const isoValue = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(value)
+      ? `${value.replace(" ", "T")}Z`
+      : value;
+    return Date.parse(isoValue);
+  };
+  if (typeof publishedAt !== "string" || !publishedAt.trim()) return true;
+  const publishedTime = timestamp(publishedAt);
+  const cutoffs = [baselineAt, previousSuccessAt]
+    .map(timestamp)
+    .filter(Number.isFinite);
+  if (!Number.isFinite(publishedTime) || cutoffs.length === 0) return true;
+  // Some ATSes expose a date without a time zone. Keep a 36-hour boundary so
+  // a genuinely new midnight-dated posting is not rejected around deployment
+  // or scheduler boundaries, while month-old recovery inventory stays quiet.
+  return publishedTime >= Math.max(...cutoffs) - 36 * 60 * 60 * 1_000;
 };
 
 export const chunksOf = <T>(values: T[], size: number): T[][] => {
@@ -417,9 +449,18 @@ export class D1CrawlStore implements CrawlStore {
   ): Promise<{ created: number; updated: number; closed: number }> {
     const now = new Date().toISOString();
     const sourceResult = await this.db.prepare(`
-      SELECT company, posting_url FROM sources WHERE id = ? LIMIT 1
-    `).bind(sourceId).all<{ company: string; posting_url: string }>();
-    const source = sourceResult.results[0] ?? { company: null, posting_url: null };
+      SELECT company, posting_url, alert_baseline_at,
+             (SELECT max(finished_at) FROM crawl_runs
+              WHERE source_id = ? AND status = 'succeeded') AS previous_success_at
+      FROM sources WHERE id = ? LIMIT 1
+    `).bind(sourceId, sourceId).all<SourceSyncRow>();
+    const sourceRow = sourceResult.results[0];
+    const source = {
+      company: sourceRow?.company ?? null,
+      posting_url: sourceRow?.posting_url ?? null,
+      alert_baseline_at: sourceRow?.alert_baseline_at ?? null,
+      previous_success_at: sourceRow?.previous_success_at ?? null,
+    };
     jobs = withoutIncomingAtsMirrors(jobs, source.posting_url);
     const existingResult = await this.db.prepare(`
       SELECT id, external_id, requisition_id, title, official_url, status, resume_match_hash
@@ -471,11 +512,11 @@ export class D1CrawlStore implements CrawlStore {
       .filter((row) => existingByUrl.has(canonicalProtocolUrl(row.official_url)))
       .map((row) => row.id));
     const resumeTouchedUrls = new Set<string>();
-    const notificationEligibleUrls = new Set<string>();
-    // A source with no real catalog rows is being initialized. Its first
-    // complete feed is a baseline, not a set of newly published jobs.
-    const hasPriorCatalogRows = existingResult.results.some((row) => !isNavigationArtifact(row));
-    const allowNewJobNotifications = !options.suppressNotifications && hasPriorCatalogRows;
+    // Existing sources receive a baseline timestamp in the migration. A newly
+    // added source remains NULL through its first authoritative ingestion, so
+    // that initial inventory cannot be mistaken for newly posted work. This
+    // also lets a previously empty company alert on its first later opening.
+    const allowNewJobNotifications = !options.suppressNotifications && source.alert_baseline_at !== null;
     const recordFor = async (job: CrawledJob): Promise<Record<string, unknown>> => {
       const aiData = classifyAiDataJob(job);
       const areaMemberships = classifyJobAreas(job).map((area) => ({
@@ -514,6 +555,12 @@ export class D1CrawlStore implements CrawlStore {
         publishedAt: job.publishedAt,
         programKeys,
       });
+      const identityKeys = jobPostingIdentityKeys({
+        sourceId,
+        requisitionId: job.requisitionId,
+        externalId: job.externalId,
+        officialUrl: job.officialUrl,
+      });
       const record = boundedJobRecord({
         id: crypto.randomUUID(), sourceId, externalId: job.externalId, title: job.title,
         company: job.company, location: job.location, arrangement: job.arrangement,
@@ -532,7 +579,7 @@ export class D1CrawlStore implements CrawlStore {
         experienceRequirements: job.experienceRequirements ?? null, experienceLevel: job.experienceLevel ?? null,
         shiftSchedule: job.shiftSchedule ?? null, travelRequirements: job.travelRequirements ?? null,
         securityClearance: job.securityClearance ?? null, languages: job.languages ?? [],
-        requisitionId: job.requisitionId ?? null, applyUrl: job.applyUrl ?? null,
+        requisitionId: job.requisitionId ?? null, ...identityKeys, applyUrl: job.applyUrl ?? null,
         sourcePostedText: job.sourcePostedText ?? null, sourceUpdatedAt: job.sourceUpdatedAt ?? null,
         validThrough: job.validThrough ?? null, rawPayload: job.rawPayload ?? null,
         officialUrl: job.officialUrl, publishedAt: job.publishedAt, firstSeenAt: now, lastSeenAt: now,
@@ -635,16 +682,11 @@ export class D1CrawlStore implements CrawlStore {
       for (const record of records) {
         const officialUrl = String(record.officialUrl);
         const previous = existingByUrl.get(officialUrl);
-        if (!previous && allowNewJobNotifications) notificationEligibleUrls.add(officialUrl);
-        if (previous && allowNewJobNotifications && previous.resume_match_hash !== record.resumeMatchHash
-          && record.locationRegion === "us"
-          && (record.programKeys as string[]).includes("internship")
-          && !(record.programKeys as string[]).includes("coop")
-          && (record.recruitingYears as number[]).includes(2027)) {
-          // Recovery path: a previously seen posting can become newly
-          // eligible after a crawler fixes missing region/program metadata.
-          notificationEligibleUrls.add(officialUrl);
-        }
+        record.alertDiscoveredAfterBaseline = Number(Boolean(
+          !previous
+          && allowNewJobNotifications
+          && publishedAfterBaseline(record.publishedAt, source.alert_baseline_at, source.previous_success_at),
+        ));
         if (!previous || previous.status === "closed" || previous.resume_match_hash !== record.resumeMatchHash) {
           resumeTouchedUrls.add(officialUrl);
         }
@@ -659,9 +701,10 @@ export class D1CrawlStore implements CrawlStore {
           location_country, location_region, location_postal_code, latitude, longitude, salary_min, salary_max,
           salary_currency, salary_interval, benefits, education_requirements, experience_requirements,
           experience_level, shift_schedule, travel_requirements, security_clearance, languages,
-          requisition_id, apply_url, source_posted_text, source_updated_at, valid_through, raw_payload,
+          requisition_id, requisition_identity_key, external_identity_key, url_identity_key,
+          apply_url, source_posted_text, source_updated_at, valid_through, raw_payload,
           published_at, first_seen_at, last_seen_at, closed_at, topic_classified_at, area_classified_at,
-          open_generation, reopened_at, resume_match_hash
+          open_generation, reopened_at, alert_discovered_after_baseline, resume_match_hash
         )
         SELECT
           json_extract(value, '$.id'), json_extract(value, '$.sourceId'),
@@ -681,10 +724,13 @@ export class D1CrawlStore implements CrawlStore {
           json_extract(value, '$.benefits'), json_extract(value, '$.educationRequirements'), json_extract(value, '$.experienceRequirements'),
           json_extract(value, '$.experienceLevel'), json_extract(value, '$.shiftSchedule'), json_extract(value, '$.travelRequirements'),
           json_extract(value, '$.securityClearance'), json_extract(value, '$.languages'), json_extract(value, '$.requisitionId'),
-          json_extract(value, '$.applyUrl'), json_extract(value, '$.sourcePostedText'), json_extract(value, '$.sourceUpdatedAt'),
+          json_extract(value, '$.requisitionIdentityKey'), json_extract(value, '$.externalIdentityKey'),
+          json_extract(value, '$.urlIdentityKey'), json_extract(value, '$.applyUrl'),
+          json_extract(value, '$.sourcePostedText'), json_extract(value, '$.sourceUpdatedAt'),
           json_extract(value, '$.validThrough'), json_extract(value, '$.rawPayload'), json_extract(value, '$.publishedAt'),
           json_extract(value, '$.firstSeenAt'), json_extract(value, '$.lastSeenAt'), NULL,
           json_extract(value, '$.topicClassifiedAt'), json_extract(value, '$.areaClassifiedAt'), 1, NULL,
+          json_extract(value, '$.alertDiscoveredAfterBaseline'),
           json_extract(value, '$.resumeMatchHash')
         FROM json_each(?)
         WHERE true
@@ -729,6 +775,9 @@ export class D1CrawlStore implements CrawlStore {
           security_clearance = COALESCE(excluded.security_clearance, jobs.security_clearance),
           languages = CASE WHEN excluded.languages <> '[]' THEN excluded.languages ELSE jobs.languages END,
           requisition_id = COALESCE(excluded.requisition_id, jobs.requisition_id),
+          requisition_identity_key = COALESCE(jobs.requisition_identity_key, excluded.requisition_identity_key),
+          external_identity_key = COALESCE(jobs.external_identity_key, excluded.external_identity_key),
+          url_identity_key = COALESCE(jobs.url_identity_key, excluded.url_identity_key),
           apply_url = COALESCE(excluded.apply_url, jobs.apply_url),
           source_posted_text = COALESCE(excluded.source_posted_text, jobs.source_posted_text),
           source_updated_at = COALESCE(excluded.source_updated_at, jobs.source_updated_at),
@@ -921,8 +970,13 @@ export class D1CrawlStore implements CrawlStore {
       sourceId,
       [...resumeTouchedUrls],
       now,
-      [...notificationEligibleUrls],
     );
+
+    await this.db.prepare(`
+      UPDATE sources
+      SET alert_baseline_at = COALESCE(alert_baseline_at, ?), updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).bind(now, sourceId).run();
 
     if (options.suppressNotifications) {
       // Remove any queued items created by an earlier page of this same
@@ -951,6 +1005,11 @@ export class D1CrawlStore implements CrawlStore {
           SET notification_eligible = 0
           WHERE notified_at IS NULL
             AND job_id IN (SELECT id FROM jobs WHERE source_id = ?)
+        `).bind(sourceId),
+        this.db.prepare(`
+          UPDATE jobs
+          SET alert_discovered_after_baseline = 0, updated_at = CURRENT_TIMESTAMP
+          WHERE source_id = ?
         `).bind(sourceId),
       ]);
     }

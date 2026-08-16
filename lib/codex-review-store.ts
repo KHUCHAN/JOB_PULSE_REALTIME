@@ -1,4 +1,5 @@
 import { canonicalOpenJobNotExists } from "./job-canonical";
+import { postingIdentityHistoryMatchSql } from "./job-posting-identity";
 import { internshipOnlySql } from "./job-program-policy";
 
 export type CodexReviewDecision = "approve" | "reject";
@@ -27,6 +28,8 @@ type ReviewTargetRow = {
   first_seen_at: string;
   reopened_at: string | null;
   activation_watermark: string | null;
+  alert_discovered_after_baseline: number;
+  already_notified: number;
 };
 
 const boundedText = (value: unknown, max: number): string => (
@@ -49,9 +52,9 @@ const safeUrl = (value: string): string | null => {
 };
 
 const isNewSinceActivation = (row: ReviewTargetRow): boolean => {
+  if (row.alert_discovered_after_baseline !== 1) return false;
   if (!row.activation_watermark) return true;
-  return row.first_seen_at > row.activation_watermark
-    || (row.reopened_at !== null && row.reopened_at > row.activation_watermark);
+  return row.first_seen_at > row.activation_watermark;
 };
 
 const targetFor = async (
@@ -63,7 +66,13 @@ const targetFor = async (
   if (!jobId && !officialUrl) return null;
   return database.prepare(`
     SELECT jm.id AS job_match_id, j.id AS job_id, j.official_url, j.apply_url,
-           j.first_seen_at, j.reopened_at, mp.activation_watermark
+           j.first_seen_at, j.reopened_at, mp.activation_watermark,
+           j.alert_discovered_after_baseline,
+           EXISTS (
+             SELECT 1 FROM notification_identity_history history
+             WHERE history.profile_id = mp.id
+               AND ${postingIdentityHistoryMatchSql("j", "history")}
+           ) AS already_notified
     FROM job_matches jm
     JOIN jobs j ON j.id = jm.job_id
     JOIN match_profiles mp ON mp.keyword_id = jm.keyword_id
@@ -105,7 +114,11 @@ export const applyCodexReviews = async (
       continue;
     }
     if (!isNewSinceActivation(target)) {
-      result.missing.push({ jobId: target.job_id, officialUrl: target.official_url, reason: "job_is_before_activation_watermark" });
+      result.missing.push({ jobId: target.job_id, officialUrl: target.official_url, reason: "job_is_not_new_after_source_baseline" });
+      continue;
+    }
+    if (target.already_notified === 1) {
+      result.missing.push({ jobId: target.job_id, officialUrl: target.official_url, reason: "posting_identity_already_notified" });
       continue;
     }
     if (verifiedUrl !== target.official_url && verifiedUrl !== target.apply_url) {

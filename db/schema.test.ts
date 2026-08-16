@@ -12,6 +12,7 @@ describe("filterable job schema", () => {
       "businessUnit", "jobFamily", "jobFunction", "industry", "secondaryLocations",
       "locationCity", "locationState", "locationCountry", "salaryMin", "salaryMax",
       "salaryCurrency", "salaryInterval", "experienceLevel", "requisitionId", "rawPayload",
+      "requisitionIdentityKey", "externalIdentityKey", "urlIdentityKey", "alertDiscoveredAfterBaseline",
     ]));
   });
 
@@ -31,6 +32,13 @@ describe("filterable job schema", () => {
 
   it("stores a per-source facet generation lease for overlap-safe cleanup", () => {
     expect(Object.keys(getTableColumns(schema.sources))).toContain("facetSyncGeneration");
+    expect(Object.keys(getTableColumns(schema.sources))).toContain("alertBaselineAt");
+  });
+
+  it("stores durable posting delivery identities independently from notification envelopes", () => {
+    expect(Object.keys(getTableColumns(schema.notificationIdentityHistory))).toEqual(expect.arrayContaining([
+      "profileId", "recipient", "identityKey", "firstSentAt", "notificationId", "jobMatchId",
+    ]));
   });
 
   it("indexes the structured equality and range predicates used by job search", () => {

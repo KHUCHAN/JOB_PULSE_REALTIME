@@ -23,9 +23,14 @@ The Codex two-hour automation is monitoring-only: it reviews the scheduled workf
 
 Codex review candidates are exposed through the authenticated
 `GET /api/pulse?resource=resumeReviewCandidates&limit=100` feed. It returns only
-current, open internship/co-op matches that do not already have a Codex review;
-the reviewer still decides U.S. region, 2027 cycle, and profile fit. Approved
-records are submitted with `submitCodexReview`, which wakes the Gmail queue.
+current, open internships discovered after each source's baseline that do not
+already have a Codex review or durable posting-identity delivery history; the
+reviewer still decides U.S. region, 2027 cycle, and profile fit. Approved
+records are submitted in bounded `submitCodexReview` calls with
+`dispatch=false`. After the whole review pass, one `dispatchCodexReviewBatch`
+call plans and sends a single digest containing that batch. Requisition,
+external ATS, and canonical official-URL identities prevent a reopened or
+URL-variant posting from being mailed again.
 The scheduled alert action returns a non-2xx response for delivery/auth errors
 so GitHub Actions cannot report a green run when email dispatch failed.
 

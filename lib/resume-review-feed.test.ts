@@ -22,7 +22,10 @@ const databaseWithCandidates = (): DatabaseSync => {
       notification_eligible INTEGER NOT NULL
     );
     CREATE TABLE job_topics (job_id TEXT NOT NULL, topic_key TEXT NOT NULL);
-    CREATE TABLE codex_reviews (job_match_id TEXT PRIMARY KEY);
+    CREATE TABLE codex_reviews (
+      job_match_id TEXT PRIMARY KEY,
+      profile_id TEXT NOT NULL DEFAULT 'chanyoung-resume'
+    );
     INSERT INTO match_profiles VALUES ('chanyoung-resume', 'resume-keyword');
     INSERT INTO jobs VALUES
       ('job-new', 'Acme', 'Data Science Intern 2027', 'Los Angeles, CA', 'us',
@@ -39,13 +42,24 @@ const databaseWithCandidates = (): DatabaseSync => {
        '[]', NULL, NULL, NULL, NULL, 'Co-Op', NULL, NULL, NULL,
        '2026-08-14T20:00:00.000Z', '2026-08-14T20:00:00.000Z', '2026-08-14T20:00:00.000Z', 'open', 1);
     ALTER TABLE jobs ADD COLUMN reopened_at TEXT;
+    ALTER TABLE jobs ADD COLUMN requisition_identity_key TEXT;
+    ALTER TABLE jobs ADD COLUMN external_identity_key TEXT;
+    ALTER TABLE jobs ADD COLUMN url_identity_key TEXT;
+    ALTER TABLE jobs ADD COLUMN alert_discovered_after_baseline INTEGER NOT NULL DEFAULT 1;
     ALTER TABLE match_profiles ADD COLUMN activation_watermark TEXT;
+    CREATE TABLE notification_identity_history (
+      profile_id TEXT NOT NULL, recipient TEXT NOT NULL, identity_key TEXT NOT NULL,
+      first_sent_at TEXT NOT NULL, notification_id TEXT, job_match_id TEXT,
+      PRIMARY KEY(profile_id, recipient, identity_key)
+    );
+    UPDATE jobs SET url_identity_key = 'url:' || lower(official_url);
     UPDATE match_profiles SET activation_watermark = '2026-08-13T00:00:00.000Z';
     INSERT INTO jobs VALUES
       ('job-old', 'Acme', 'Old Data Intern 2027', 'Los Angeles, CA', 'us',
        'https://careers.acme.example/jobs/old', NULL, NULL, NULL, NULL, NULL,
        '[]', NULL, NULL, NULL, NULL, 'Internship', NULL, NULL, NULL,
-       '2026-08-12T20:00:00.000Z', '2026-08-12T20:00:00.000Z', '2026-08-12T20:00:00.000Z', 'open', 1, NULL);
+       '2026-08-12T20:00:00.000Z', '2026-08-12T20:00:00.000Z', '2026-08-12T20:00:00.000Z', 'open', 1,
+       NULL, NULL, NULL, 'url:https://careers.acme.example/jobs/old', 0);
     INSERT INTO job_matches VALUES
       ('match-new', 'job-new', 'resume-keyword', 80, '["role|Data"]', 1, 1, 0),
       ('match-reviewed', 'job-reviewed', 'resume-keyword', 90, '[]', 1, 1, 0);
@@ -58,7 +72,7 @@ const databaseWithCandidates = (): DatabaseSync => {
       ('job-reviewed', 'program:coop'),
       ('job-coop-pending', 'program:internship');
     INSERT INTO job_topics VALUES ('job-old', 'program:internship');
-    INSERT INTO codex_reviews VALUES ('match-reviewed');
+    INSERT INTO codex_reviews (job_match_id) VALUES ('match-reviewed');
   `);
   return sqlite;
 };
@@ -81,6 +95,18 @@ describe("resume review feed", () => {
     expect(await listResumeReviewCandidates(createD1ForSqlite(databaseWithCandidates()), 500)).toHaveLength(1);
   });
 
+  it("does not review baseline inventory or an identity already delivered", async () => {
+    const baseline = databaseWithCandidates();
+    baseline.prepare("UPDATE jobs SET alert_discovered_after_baseline = 0 WHERE id = 'job-new'").run();
+    expect(await listResumeReviewCandidates(createD1ForSqlite(baseline), 100)).toEqual([]);
+
+    const sent = databaseWithCandidates();
+    sent.prepare(`INSERT INTO notification_identity_history
+      VALUES ('chanyoung-resume', 'kimchany@usc.edu', 'url:https://careers.acme.example/jobs/new',
+              '2026-08-13T21:00:00.000Z', 'notification-1', 'match-old')`).run();
+    expect(await listResumeReviewCandidates(createD1ForSqlite(sent), 100)).toEqual([]);
+  });
+
   it("prioritizes likely US 2027 candidates ahead of a fresher global backlog", async () => {
     const sqlite = databaseWithCandidates();
     sqlite.exec(`
@@ -88,7 +114,8 @@ describe("resume review feed", () => {
         ('job-global-newer', 'Global Co', 'Marketing Intern', NULL, 'unknown',
          'https://careers.global.example/jobs/newer', NULL, NULL, NULL, NULL, NULL,
          '[]', NULL, NULL, NULL, NULL, 'Internship', NULL, NULL, NULL,
-         NULL, '2026-08-14T23:00:00.000Z', '2026-08-14T23:00:00.000Z', 'open', 1, NULL);
+         NULL, '2026-08-14T23:00:00.000Z', '2026-08-14T23:00:00.000Z', 'open', 1,
+         NULL, NULL, NULL, 'url:https://careers.global.example/jobs/newer', 1);
       INSERT INTO job_matches VALUES
         ('match-global-newer', 'job-global-newer', 'resume-keyword', 99, '[]', 1, 1, 0);
       INSERT INTO job_topics VALUES ('job-global-newer', 'program:internship');
@@ -105,7 +132,8 @@ describe("resume review feed", () => {
         ('job-us-newer-low-fit', 'Bulk Launch Co', 'Human Resources Intern 2027', 'New York, NY', 'us',
          'https://careers.bulk.example/jobs/newer', NULL, NULL, NULL, NULL, NULL,
          '[]', NULL, NULL, NULL, NULL, 'Internship', NULL, NULL, NULL,
-         '2026-08-14T23:00:00.000Z', '2026-08-14T23:00:00.000Z', '2026-08-14T23:00:00.000Z', 'open', 1, NULL);
+         '2026-08-14T23:00:00.000Z', '2026-08-14T23:00:00.000Z', '2026-08-14T23:00:00.000Z', 'open', 1,
+         NULL, NULL, NULL, 'url:https://careers.bulk.example/jobs/newer', 1);
       INSERT INTO job_matches VALUES
         ('match-us-newer-low-fit', 'job-us-newer-low-fit', 'resume-keyword', 0, '[]', 1, 1, 0);
       INSERT INTO job_topics VALUES

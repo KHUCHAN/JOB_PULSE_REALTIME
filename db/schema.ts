@@ -20,6 +20,7 @@ export const sources = sqliteTable("sources", {
   checkedAt: text("checked_at").notNull(),
   lastCrawledAt: text("last_crawled_at"),
   nextCrawlAt: text("next_crawl_at"),
+  alertBaselineAt: text("alert_baseline_at"),
   facetSyncGeneration: text("facet_sync_generation"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
@@ -77,6 +78,9 @@ export const jobs = sqliteTable("jobs", {
   securityClearance: text("security_clearance"),
   languages: text("languages", { mode: "json" }).$type<string[]>().notNull().default(sql`'[]'`),
   requisitionId: text("requisition_id"),
+  requisitionIdentityKey: text("requisition_identity_key"),
+  externalIdentityKey: text("external_identity_key"),
+  urlIdentityKey: text("url_identity_key"),
   applyUrl: text("apply_url"),
   sourcePostedText: text("source_posted_text"),
   sourceUpdatedAt: text("source_updated_at"),
@@ -87,6 +91,7 @@ export const jobs = sqliteTable("jobs", {
   status: text("status", { enum: ["open", "closed"] }).notNull().default("open"),
   openGeneration: integer("open_generation").notNull().default(1),
   reopenedAt: text("reopened_at"),
+  alertDiscoveredAfterBaseline: integer("alert_discovered_after_baseline", { mode: "boolean" }).notNull().default(false),
   resumeMatchHash: text("resume_match_hash"),
   reviewState: text("review_state", { enum: ["new", "saved", "hidden", "applied"] }).notNull().default("new"),
   publishedAt: text("published_at"),
@@ -102,6 +107,9 @@ export const jobs = sqliteTable("jobs", {
   index("jobs_status_first_seen_idx").on(table.status, table.firstSeenAt),
   index("jobs_status_topic_classified_id_idx").on(table.status, table.topicClassifiedAt, table.id),
   index("jobs_company_idx").on(table.company),
+  index("jobs_requisition_identity_idx").on(table.requisitionIdentityKey),
+  index("jobs_external_identity_idx").on(table.externalIdentityKey),
+  index("jobs_url_identity_idx").on(table.urlIdentityKey),
   index("jobs_status_company_idx").on(table.status, table.company),
   index("jobs_status_arrangement_idx").on(table.status, table.arrangement),
   index("jobs_status_employment_type_idx").on(table.status, table.employmentType),
@@ -299,6 +307,17 @@ export const notificationItems = sqliteTable("notification_items", {
 }, (table) => [
   uniqueIndex("notification_items_match_recipient_unique").on(table.jobMatchId, table.recipient),
   index("notification_items_notification_idx").on(table.notificationId),
+]);
+
+export const notificationIdentityHistory = sqliteTable("notification_identity_history", {
+  profileId: text("profile_id").notNull(),
+  recipient: text("recipient").notNull(),
+  identityKey: text("identity_key").notNull(),
+  firstSentAt: text("first_sent_at").notNull(),
+  notificationId: text("notification_id"),
+  jobMatchId: text("job_match_id"),
+}, (table) => [
+  primaryKey({ columns: [table.profileId, table.recipient, table.identityKey] }),
 ]);
 
 export const talentTargets = sqliteTable("talent_targets", {

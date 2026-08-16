@@ -43,7 +43,9 @@ export const alertDatabaseWithMatches = (matchCount = 2): DatabaseSync => {
       id TEXT PRIMARY KEY, company TEXT NOT NULL, title TEXT NOT NULL, location TEXT,
       official_url TEXT NOT NULL, apply_url TEXT, published_at TEXT, first_seen_at TEXT NOT NULL,
       employment_type TEXT,
-      status TEXT NOT NULL, open_generation INTEGER NOT NULL
+      status TEXT NOT NULL, open_generation INTEGER NOT NULL,
+      requisition_identity_key TEXT, external_identity_key TEXT, url_identity_key TEXT,
+      alert_discovered_after_baseline INTEGER NOT NULL DEFAULT 1
     );
     CREATE TABLE job_topics (job_id TEXT NOT NULL, topic_key TEXT NOT NULL);
     CREATE TABLE job_matches (
@@ -62,6 +64,11 @@ export const alertDatabaseWithMatches = (matchCount = 2): DatabaseSync => {
       recipient TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(job_match_id, recipient)
     );
+    CREATE TABLE notification_identity_history (
+      profile_id TEXT NOT NULL, recipient TEXT NOT NULL, identity_key TEXT NOT NULL,
+      first_sent_at TEXT NOT NULL, notification_id TEXT, job_match_id TEXT,
+      PRIMARY KEY(profile_id, recipient, identity_key)
+    );
     INSERT INTO match_profiles (id, keyword_id, enabled, next_digest_at)
       VALUES ('chanyoung-resume', 'resume-keyword-chanyoung', 1, '2026-08-10T12:00:00.000Z');
     INSERT INTO profile_recipients VALUES
@@ -69,9 +76,10 @@ export const alertDatabaseWithMatches = (matchCount = 2): DatabaseSync => {
       ('chanyoung-resume', 'lupeter@usc.edu', 1);
   `);
   for (let index = 1; index <= matchCount; index += 1) {
-    sqlite.prepare(`INSERT INTO jobs (id, company, title, location, official_url, apply_url, published_at, first_seen_at, employment_type, status, open_generation)
-      VALUES (?, 'Acme', ?, 'Los Angeles, CA', ?, NULL, NULL, ?, 'Internship', 'open', 1)`).run(
+    sqlite.prepare(`INSERT INTO jobs (id, company, title, location, official_url, apply_url, published_at, first_seen_at, employment_type, status, open_generation, url_identity_key)
+      VALUES (?, 'Acme', ?, 'Los Angeles, CA', ?, NULL, NULL, ?, 'Internship', 'open', 1, ?)`).run(
       `job-${index}`, `Machine Learning Intern ${index}`, `https://example.com/${index}`, "2026-08-10T12:01:00.000Z",
+      `url:https://example.com/${index}`,
     );
     sqlite.prepare(`INSERT INTO job_matches VALUES (?, ?, 'resume-keyword-chanyoung', 92, ?, 1, 1, 1, NULL)`).run(
       `match-${index}`, `job-${index}`, '["role:ai-ml|AI or machine learning role|35"]',

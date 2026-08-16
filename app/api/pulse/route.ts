@@ -687,17 +687,24 @@ export async function POST(request: Request): Promise<Response> {
       const alerts = body.dispatch === true ? await runResumeAlerts(db()) : null;
       return json({ ...result, alerts });
     }
+    if (body.action === "dispatchCodexReviewBatch") {
+      if (!codexReviewAuthorized(request)) return json({ error: "Codex review authorization is required." }, 401);
+      const alerts = await runResumeAlerts(db());
+      return json({ alerts }, resumeAlertHttpStatus(alerts));
+    }
     if (body.action === "repairBarclaysJobIdentity") {
       if (!codexReviewAuthorized(request)) return json({ error: "Codex review authorization is required." }, 401);
       const repair = normalizeBarclaysJobIdentityRepair(body);
       if (!repair) return json({ error: "A verified Barclays job identity is required." }, 400);
       const updated = await db().prepare(`
         UPDATE jobs
-        SET requisition_id = ?, apply_url = ?, updated_at = CURRENT_TIMESTAMP
+        SET requisition_id = ?,
+            requisition_identity_key = 'req:p4-0225-barclays-us:' || lower(trim(?)),
+            apply_url = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ? AND source_id = 'p4-0225-barclays-us'
           AND official_url = ? AND status = 'open'
         RETURNING id
-      `).bind(repair.requisitionId, repair.applyUrl, repair.jobId, repair.officialUrl).first<{ id: string }>();
+      `).bind(repair.requisitionId, repair.requisitionId, repair.applyUrl, repair.jobId, repair.officialUrl).first<{ id: string }>();
       if (!updated) return json({ error: "The current Barclays posting was not found." }, 404);
       const row = await db().prepare(`
         SELECT ${jobDetailProjection("j")}

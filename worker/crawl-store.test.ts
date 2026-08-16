@@ -61,7 +61,12 @@ describe("D1CrawlStore enriched job persistence", () => {
   const fakeDb = (options: {
     duplicateFacetConstraint?: boolean;
     failFacetInsert?: boolean;
-    source?: { company: string; posting_url: string };
+    source?: {
+      company: string;
+      posting_url: string;
+      alert_baseline_at?: string | null;
+      previous_success_at?: string | null;
+    };
     existingJobs?: Array<{ id: string; external_id: string | null; requisition_id?: string | null; title: string; official_url: string; status: string; resume_match_hash: string | null }>;
   } = {}) => {
     const calls: Array<{ sql: string; values: unknown[] }> = [];
@@ -72,7 +77,7 @@ describe("D1CrawlStore enriched job persistence", () => {
             calls.push({ sql, values });
             return {
               all: async () => ({
-                results: sql.includes("SELECT company, posting_url FROM sources")
+                results: sql.includes("SELECT company, posting_url, alert_baseline_at")
                   ? options.source ? [options.source] : []
                   : sql.includes("SELECT id, external_id, requisition_id, title, official_url, status, resume_match_hash")
                   ? options.existingJobs ?? []
@@ -130,6 +135,54 @@ describe("D1CrawlStore enriched job persistence", () => {
     expect(insert?.sql).toContain("employment_type = COALESCE(excluded.employment_type, jobs.employment_type)");
     expect(insert?.sql).toContain("description_hash = COALESCE(excluded.description_hash, jobs.description_hash)");
     expect(insert?.sql).toContain("WHEN jobs.status = 'closed' THEN jobs.open_generation + 1");
+    expect(record.alertDiscoveredAfterBaseline).toBe(0);
+  });
+
+  it("marks only a fresh insert after an established source baseline as alertable", async () => {
+    const baseline = "2026-08-16T10:00:00.000Z";
+    const { db, calls } = fakeDb({
+      source: {
+        company: "Acme",
+        posting_url: "https://jobs.example",
+        alert_baseline_at: baseline,
+        previous_success_at: "2026-08-16T09:00:00.000Z",
+      },
+    });
+
+    await new D1CrawlStore(db).syncJobs("source-1", [{
+      externalId: "REQ-NEW", requisitionId: "REQ-NEW", title: "AI Intern", company: "Acme",
+      location: "Los Angeles, CA", arrangement: "onsite", employmentType: "Internship",
+      summary: null, officialUrl: "https://jobs.example/REQ-NEW", publishedAt: "2026-08-16T10:05:00.000Z",
+    }], true);
+
+    const insert = calls.find((call) => call.sql.includes("INSERT INTO jobs"));
+    const record = JSON.parse(String(insert?.values[0]))[0];
+    expect(record).toMatchObject({
+      alertDiscoveredAfterBaseline: 1,
+      requisitionIdentityKey: "req:source-1:req-new",
+      externalIdentityKey: "ext:source-1:req-new",
+      urlIdentityKey: "url:https://jobs.example/req-new",
+    });
+  });
+
+  it("keeps an old posting discovered by a crawler repair out of the new-email path", async () => {
+    const { db, calls } = fakeDb({
+      source: {
+        company: "Acme",
+        posting_url: "https://jobs.example",
+        alert_baseline_at: "2026-08-16T10:00:00.000Z",
+        previous_success_at: "2026-08-16T11:00:00.000Z",
+      },
+    });
+
+    await new D1CrawlStore(db).syncJobs("source-1", [{
+      externalId: "REQ-OLD", title: "Old Data Intern", company: "Acme", location: "Remote, US",
+      arrangement: "remote", employmentType: "Internship", summary: null,
+      officialUrl: "https://jobs.example/REQ-OLD", publishedAt: "2026-07-01T00:00:00.000Z",
+    }], true);
+
+    const insert = calls.find((call) => call.sql.includes("INSERT INTO jobs"));
+    expect(JSON.parse(String(insert?.values[0]))[0].alertDiscoveredAfterBaseline).toBe(0);
   });
 
   it("repairs a changed canonical URL in place when the ATS external ID is stable", async () => {

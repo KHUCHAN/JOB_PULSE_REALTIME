@@ -1,4 +1,5 @@
 import { canonicalOpenJobNotExists } from "./job-canonical";
+import { postingIdentityHistoryMatchSql, postingIdentityOverlapSql } from "./job-posting-identity";
 import { internshipOnlySql } from "./job-program-policy";
 
 export interface ResumeReviewCandidate {
@@ -109,19 +110,58 @@ export const listResumeReviewCandidates = async (
     WHERE mp.id = 'chanyoung-resume'
       AND jm.is_active = 1 AND jm.notification_eligible = 0
       AND jm.open_generation = j.open_generation AND j.status = 'open'
+      AND j.alert_discovered_after_baseline = 1
       AND ${canonicalOpenJobNotExists("j")}
       AND ${internshipOnlySql("j")}
       -- Keep the feed aligned with applyCodexReviews: candidates that existed
       -- before the profile was activated are not reviewable and must not be
-      -- returned on every scheduled pass. A later reopen makes them eligible.
+      -- returned on every scheduled pass. Reopening an already stored posting
+      -- is not a new discovery and therefore does not create another email.
       AND (
         mp.activation_watermark IS NULL
         OR j.first_seen_at > mp.activation_watermark
-        OR (j.reopened_at IS NOT NULL AND j.reopened_at > mp.activation_watermark)
       )
       AND NOT EXISTS (
         SELECT 1 FROM codex_reviews reviewed
         WHERE reviewed.job_match_id = jm.id
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM codex_reviews prior_review
+        JOIN job_matches prior_match ON prior_match.id = prior_review.job_match_id
+        JOIN jobs prior_job ON prior_job.id = prior_match.job_id
+        WHERE prior_review.profile_id = mp.id
+          AND ${postingIdentityOverlapSql("j", "prior_job")}
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM notification_identity_history history
+        WHERE history.profile_id = mp.id
+          AND ${postingIdentityHistoryMatchSql("j", "history")}
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM job_matches better_match
+        JOIN jobs better_job ON better_job.id = better_match.job_id
+        WHERE better_match.keyword_id = jm.keyword_id
+          AND better_match.is_active = 1 AND better_match.notification_eligible = 0
+          AND better_match.open_generation = better_job.open_generation
+          AND better_job.status = 'open' AND better_job.alert_discovered_after_baseline = 1
+          AND ${internshipOnlySql("better_job")}
+          AND ${postingIdentityOverlapSql("j", "better_job")}
+          AND NOT EXISTS (
+            SELECT 1 FROM codex_reviews better_review
+            WHERE better_review.job_match_id = better_match.id
+          )
+          AND (
+            better_match.score > jm.score
+            OR (better_match.score = jm.score
+              AND COALESCE(better_job.published_at, better_job.first_seen_at)
+                > COALESCE(j.published_at, j.first_seen_at))
+            OR (better_match.score = jm.score
+              AND COALESCE(better_job.published_at, better_job.first_seen_at)
+                = COALESCE(j.published_at, j.first_seen_at)
+              AND better_match.id < jm.id)
+          )
       )
     -- The feed remains an internship-only candidate set; Codex still makes
     -- every region/year/fit decision. Prioritize records whose extracted

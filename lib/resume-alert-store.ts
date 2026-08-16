@@ -1,6 +1,7 @@
 import type { DigestJob } from "./gmail-message";
 import type { ResumeAlertStatus } from "./domain";
 import { canonicalOpenJobNotExists } from "./job-canonical";
+import { postingIdentityHistoryMatchSql, postingIdentityOverlapSql } from "./job-posting-identity";
 import { jobHasCoopSql } from "./job-program-policy";
 
 export interface PlannedNotification {
@@ -59,8 +60,8 @@ export const planResumeDigests = async (
   database: D1Database,
   profileId: string,
   now: string,
-  pageSize = 25,
-  maxMessages = 4,
+  pageSize = 500,
+  maxMessages = 1,
 ): Promise<PlannedNotification[]> => {
   const owner = crypto.randomUUID();
   const leaseUntil = plusMinutes(now, 5);
@@ -90,8 +91,8 @@ export const planResumeDigests = async (
       WHERE profile_id = ? AND enabled = 1
       ORDER BY recipient
     `).bind(profileId).all<RecipientRow>();
-    const boundedPageSize = Math.max(1, Math.min(25, Math.trunc(pageSize)));
-    const boundedMessageLimit = Math.max(1, Math.min(4, Math.trunc(maxMessages)));
+    const boundedPageSize = Math.max(1, Math.min(500, Math.trunc(pageSize)));
+    const boundedMessageLimit = Math.max(1, Math.min(1, Math.trunc(maxMessages)));
     const enabledRecipients = recipients.results.map((row) => row.recipient);
     const matches = await database.prepare(`
       SELECT jm.id, json_group_array(pr.recipient) AS pending_recipients
@@ -102,13 +103,39 @@ export const planResumeDigests = async (
         ON ni.job_match_id = jm.id AND ni.recipient = pr.recipient
       WHERE jm.keyword_id = ? AND jm.is_active = 1 AND jm.notification_eligible = 1
         AND jm.open_generation = j.open_generation AND j.status = 'open'
+        AND j.alert_discovered_after_baseline = 1
         AND ${canonicalOpenJobNotExists("j")}
         AND NOT ${jobHasCoopSql("j")}
         AND ni.id IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM notification_identity_history history
+          WHERE history.profile_id = ? AND history.recipient = pr.recipient
+            AND ${postingIdentityHistoryMatchSql("j", "history")}
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM job_matches better_match
+          JOIN jobs better_job ON better_job.id = better_match.job_id
+          WHERE better_match.keyword_id = jm.keyword_id
+            AND better_match.is_active = 1 AND better_match.notification_eligible = 1
+            AND better_match.open_generation = better_job.open_generation
+            AND better_job.status = 'open' AND better_job.alert_discovered_after_baseline = 1
+            AND ${postingIdentityOverlapSql("j", "better_job")}
+            AND (
+              better_match.score > jm.score
+              OR (better_match.score = jm.score
+                AND COALESCE(better_job.published_at, better_job.first_seen_at)
+                  > COALESCE(j.published_at, j.first_seen_at))
+              OR (better_match.score = jm.score
+                AND COALESCE(better_job.published_at, better_job.first_seen_at)
+                  = COALESCE(j.published_at, j.first_seen_at)
+                AND better_match.id < jm.id)
+            )
+        )
       GROUP BY jm.id, jm.score, j.published_at, j.first_seen_at
       ORDER BY jm.score DESC, COALESCE(j.published_at, j.first_seen_at) DESC, jm.id
       LIMIT ?
-    `).bind(profileId, keywordId, boundedPageSize * boundedMessageLimit + 1).all<PendingMatchRow>();
+    `).bind(profileId, keywordId, profileId, boundedPageSize * boundedMessageLimit + 1).all<PendingMatchRow>();
 
     // A normal digest has the exact same pending recipient set for every job,
     // so all recipients share one MIME message. If a prior partial delivery
@@ -258,32 +285,48 @@ export const markNotificationSent = async (
   providerMessageId: string,
   now: string,
 ): Promise<void> => {
-  await database.prepare(`
-    UPDATE notifications
-    SET status = 'sent', provider_message_id = ?, sent_at = ?, error = NULL,
-        lease_owner = NULL, lease_expires_at = NULL, next_retry_at = NULL
-    WHERE id = ? AND status = 'sending'
-  `).bind(providerMessageId, now, notificationId).run();
-  await database.prepare(`
-    UPDATE match_profiles SET last_digest_at = ?, last_error = NULL, gmail_state = 'connected', updated_at = CURRENT_TIMESTAMP
-    WHERE keyword_id = (SELECT keyword_id FROM notifications WHERE id = ?)
-  `).bind(now, notificationId).run();
-  await database.prepare(`
-    UPDATE job_matches
-    SET notified_at = ?
-    WHERE id IN (SELECT job_match_id FROM notification_items WHERE notification_id = ?)
-      AND NOT EXISTS (
-        SELECT 1 FROM profile_recipients pr
-        JOIN match_profiles mp ON mp.id = pr.profile_id
-        WHERE mp.keyword_id = job_matches.keyword_id AND pr.enabled = 1
-          AND NOT EXISTS (
-            SELECT 1 FROM notification_items all_items
-            JOIN notifications sent_notification ON sent_notification.id = all_items.notification_id
-            WHERE all_items.job_match_id = job_matches.id
-              AND all_items.recipient = pr.recipient AND sent_notification.status = 'sent'
-          )
+  await database.batch([
+    database.prepare(`
+      UPDATE notifications
+      SET status = 'sent', provider_message_id = ?, sent_at = ?, error = NULL,
+          lease_owner = NULL, lease_expires_at = NULL, next_retry_at = NULL
+      WHERE id = ? AND status = 'sending'
+    `).bind(providerMessageId, now, notificationId),
+    database.prepare(`
+      INSERT OR IGNORE INTO notification_identity_history (
+        profile_id, recipient, identity_key, first_sent_at, notification_id, job_match_id
       )
-  `).bind(now, notificationId).run();
+      SELECT mp.id, ni.recipient, CAST(identity.value AS TEXT), ?, ni.notification_id, jm.id
+      FROM notification_items ni
+      JOIN job_matches jm ON jm.id = ni.job_match_id
+      JOIN jobs j ON j.id = jm.job_id
+      JOIN match_profiles mp ON mp.keyword_id = jm.keyword_id
+      JOIN json_each(json_array(
+        j.requisition_identity_key, j.external_identity_key, j.url_identity_key
+      )) identity
+      WHERE ni.notification_id = ? AND identity.value IS NOT NULL
+    `).bind(now, notificationId),
+    database.prepare(`
+      UPDATE match_profiles SET last_digest_at = ?, last_error = NULL, gmail_state = 'connected', updated_at = CURRENT_TIMESTAMP
+      WHERE keyword_id = (SELECT keyword_id FROM notifications WHERE id = ?)
+    `).bind(now, notificationId),
+    database.prepare(`
+      UPDATE job_matches
+      SET notified_at = ?
+      WHERE id IN (SELECT job_match_id FROM notification_items WHERE notification_id = ?)
+        AND NOT EXISTS (
+          SELECT 1 FROM profile_recipients pr
+          JOIN match_profiles mp ON mp.id = pr.profile_id
+          WHERE mp.keyword_id = job_matches.keyword_id AND pr.enabled = 1
+            AND NOT EXISTS (
+              SELECT 1 FROM notification_items all_items
+              JOIN notifications sent_notification ON sent_notification.id = all_items.notification_id
+              WHERE all_items.job_match_id = job_matches.id
+                AND all_items.recipient = pr.recipient AND sent_notification.status = 'sent'
+            )
+        )
+    `).bind(now, notificationId),
+  ]);
 };
 
 export const markNotificationFailed = async (
@@ -406,11 +449,17 @@ export const getResumeAlertStatus = async (
     JOIN jobs j ON j.id = jm.job_id
     WHERE mp.id = ? AND jm.is_active = 1 AND jm.notification_eligible = 1
       AND jm.open_generation = j.open_generation AND j.status = 'open'
+      AND j.alert_discovered_after_baseline = 1
       AND ${canonicalOpenJobNotExists("j")}
       AND NOT ${jobHasCoopSql("j")}
       AND EXISTS (
         SELECT 1 FROM profile_recipients pr WHERE pr.profile_id = mp.id AND pr.enabled = 1
           AND NOT EXISTS (SELECT 1 FROM notification_items ni WHERE ni.job_match_id = jm.id AND ni.recipient = pr.recipient)
+          AND NOT EXISTS (
+            SELECT 1 FROM notification_identity_history history
+            WHERE history.profile_id = mp.id AND history.recipient = pr.recipient
+              AND ${postingIdentityHistoryMatchSql("j", "history")}
+          )
       )
   `).bind(profileId).first<{ total: number }>();
   return {

@@ -51,7 +51,9 @@ const database = (): DatabaseSync => {
     CREATE TABLE jobs (
       id TEXT PRIMARY KEY, official_url TEXT NOT NULL, apply_url TEXT, first_seen_at TEXT NOT NULL,
       reopened_at TEXT, status TEXT NOT NULL, open_generation INTEGER NOT NULL, company TEXT NOT NULL,
-      location_region TEXT NOT NULL, employment_type TEXT
+      location_region TEXT NOT NULL, employment_type TEXT,
+      requisition_identity_key TEXT, external_identity_key TEXT, url_identity_key TEXT,
+      alert_discovered_after_baseline INTEGER NOT NULL DEFAULT 1
     );
     CREATE TABLE job_topics (job_id TEXT NOT NULL, topic_key TEXT NOT NULL);
     CREATE TABLE job_matches (
@@ -65,11 +67,17 @@ const database = (): DatabaseSync => {
     );
     CREATE TABLE notifications (id TEXT PRIMARY KEY, status TEXT NOT NULL, keyword_id TEXT);
     CREATE TABLE notification_items (id TEXT PRIMARY KEY, notification_id TEXT NOT NULL, job_match_id TEXT NOT NULL);
+    CREATE TABLE notification_identity_history (
+      profile_id TEXT NOT NULL, recipient TEXT NOT NULL, identity_key TEXT NOT NULL,
+      first_sent_at TEXT NOT NULL, notification_id TEXT, job_match_id TEXT,
+      PRIMARY KEY(profile_id, recipient, identity_key)
+    );
     INSERT INTO match_profiles VALUES ('chanyoung-resume', 'resume-keyword-chanyoung', 1, '2026-08-13T10:00:00.000Z', '2026-08-13T20:00:00.000Z', CURRENT_TIMESTAMP);
     INSERT INTO jobs (id, official_url, apply_url, first_seen_at, reopened_at, status, open_generation, company, location_region, employment_type)
       VALUES ('job-new', 'https://careers.example.com/job-new', 'https://careers.example.com/apply-new', '2026-08-13T12:00:00.000Z', NULL, 'open', 1, 'Acme', 'us', 'Internship');
     INSERT INTO job_topics VALUES ('job-new', 'program:internship'), ('job-new', 'year:2027');
     INSERT INTO job_matches VALUES ('match-new', 'job-new', 'resume-keyword-chanyoung', 1, 1, 0, NULL);
+    UPDATE jobs SET url_identity_key = 'url:https://careers.example.com/job-new' WHERE id = 'job-new';
   `);
   return sqlite;
 };
@@ -126,7 +134,24 @@ describe("Codex review persistence", () => {
       rationale: "Looks relevant.",
       verifiedUrl: "https://careers.example.com/job-new",
     }]);
-    expect(old.missing[0]?.reason).toBe("job_is_before_activation_watermark");
+    expect(old.missing[0]?.reason).toBe("job_is_not_new_after_source_baseline");
+  });
+
+  it("rejects a later match when the durable posting identity was already sent", async () => {
+    const sqlite = database();
+    sqlite.prepare(`INSERT INTO notification_identity_history
+      VALUES ('chanyoung-resume', 'kimchany@usc.edu', 'url:https://careers.example.com/job-new',
+              '2026-08-13T12:30:00.000Z', 'notification-1', 'older-match')`).run();
+
+    const result = await applyCodexReviews(createD1(sqlite), [{
+      officialUrl: "https://careers.example.com/job-new",
+      decision: "approve",
+      rationale: "Relevant internship.",
+      verifiedUrl: "https://careers.example.com/job-new",
+    }]);
+
+    expect(result.missing[0]?.reason).toBe("posting_identity_already_notified");
+    expect(sqlite.prepare("SELECT count(*) AS total FROM codex_reviews").get()).toEqual({ total: 0 });
   });
 
   it("rejects non-approve/reject decisions and leaves the match pending", async () => {

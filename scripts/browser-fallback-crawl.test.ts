@@ -156,6 +156,10 @@ describe("browser fallback persistenceSql", () => {
     expect(sql).toContain("area_classified_at");
     expect(sql).toMatch(/v3:\d{4}-\d{2}-\d{2}T/);
     expect(sql).toContain("location_region=CASE WHEN excluded.location_region='unknown'");
+    expect(sql).toContain("requisition_identity_key");
+    expect(sql).toContain("url:https://jobs.example.com/swe-1");
+    expect(sql).toContain("alert_discovered_after_baseline) VALUES");
+    expect(sql).toContain("alert_baseline_at=COALESCE(alert_baseline_at");
     expect(sql).toContain("DELETE FROM job_topics WHERE topic_key LIKE 'area:%'");
     expect(sql).toContain("area:software-engineering");
   });

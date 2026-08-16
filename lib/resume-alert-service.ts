@@ -64,7 +64,10 @@ export const processDueResumeAlerts = async (
     return emptyResult(true);
   }
   const nowIso = now.toISOString();
-  const planned = await planResumeDigests(database, "chanyoung-resume", nowIso, 25);
+  // One Codex review pass produces one digest envelope. The review feed is
+  // bounded to 100 rows per page and five pages, so 500 keeps a whole monitor
+  // batch together while remaining far below Gmail's message-size limit.
+  const planned = await planResumeDigests(database, "chanyoung-resume", nowIso, 500, 1);
   const claimed = await claimDueNotifications(database, "chanyoung-resume", nowIso, 4);
   const result = { ...emptyResult(), planned: planned.length };
   for (const [index, notification] of claimed.entries()) {

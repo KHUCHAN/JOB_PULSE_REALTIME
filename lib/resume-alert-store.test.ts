@@ -3,6 +3,7 @@ import {
   claimDueNotifications,
   clearResumeAlertBacklog,
   getResumeAlertStatus,
+  markNotificationSent,
   planResumeDigests,
   purgeCoopResumeNotifications,
 } from "./resume-alert-store";
@@ -30,24 +31,24 @@ describe("resume digest reservation", () => {
     sqlite.prepare("UPDATE match_profiles SET next_digest_at = '2026-08-10T12:00:30.000Z'").run();
 
     const planned = await planResumeDigests(
-      createD1ForSqlite(sqlite), "chanyoung-resume", "2026-08-10T12:00:00.000Z", 25,
+      createD1ForSqlite(sqlite), "chanyoung-resume", "2026-08-10T12:00:00.000Z", 500, 1,
     );
 
     expect(planned).toHaveLength(1);
   });
 
-  it("splits more than 25 jobs into deterministic parts up to the four-message cap", async () => {
+  it("keeps the complete Codex review batch in one digest", async () => {
     const sqlite = alertDatabaseWithMatches(60);
     const planned = await planResumeDigests(
-      createD1ForSqlite(sqlite), "chanyoung-resume", "2026-08-10T12:00:00.000Z", 25,
+      createD1ForSqlite(sqlite), "chanyoung-resume", "2026-08-10T12:00:00.000Z", 500, 1,
     );
 
-    expect(planned.map((item) => item.jobCount)).toEqual([25, 25, 10]);
+    expect(planned.map((item) => item.jobCount)).toEqual([60]);
     expect(sqlite.prepare("SELECT count(*) AS total FROM notification_items").get()).toEqual({ total: 120 });
     expect(sqlite.prepare(
       "SELECT recipient, count(*) AS total FROM notifications GROUP BY recipient ORDER BY recipient",
     ).all()).toEqual([
-      { recipient: "kimchany@usc.edu, lupeter@usc.edu", total: 3 },
+      { recipient: "kimchany@usc.edu, lupeter@usc.edu", total: 1 },
     ]);
     expect(sqlite.prepare("SELECT next_digest_at FROM match_profiles").get()).toEqual({
       next_digest_at: "2026-08-10T14:00:00.000Z",
@@ -75,6 +76,36 @@ describe("resume digest reservation", () => {
     expect(claimed[0].recipient).toBe("kimchany@usc.edu, lupeter@usc.edu");
     expect(claimed[0].jobs).toHaveLength(1);
     expect(claimed[0].jobs[0]?.officialUrl).toBe("https://example.com/1");
+  });
+
+  it("never reserves a URL variant after the same requisition was sent", async () => {
+    const sqlite = alertDatabaseWithMatches(1);
+    sqlite.prepare("UPDATE jobs SET requisition_identity_key = 'req:acme:req-42' WHERE id = 'job-1'").run();
+    const db = createD1ForSqlite(sqlite);
+    await planResumeDigests(db, "chanyoung-resume", "2026-08-10T12:00:00.000Z", 500, 1);
+    const [claimed] = await claimDueNotifications(db, "chanyoung-resume", "2026-08-10T12:00:01.000Z", 1);
+    await markNotificationSent(db, claimed.id, "gmail-message-1", "2026-08-10T12:00:02.000Z");
+
+    sqlite.exec(`
+      UPDATE match_profiles SET next_digest_at = '2026-08-10T12:01:00.000Z';
+      INSERT INTO jobs (
+        id, company, title, location, official_url, first_seen_at, employment_type,
+        status, open_generation, requisition_identity_key, url_identity_key
+      ) VALUES (
+        'job-variant', 'Acme', 'Machine Learning Intern', 'Los Angeles, CA',
+        'https://example.com/1/apply', '2026-08-10T12:02:00.000Z', 'Internship',
+        'open', 2, 'req:acme:req-42', 'url:https://example.com/1'
+      );
+      INSERT INTO job_matches VALUES (
+        'match-variant', 'job-variant', 'resume-keyword-chanyoung', 95, '[]', 2, 1, 1, NULL
+      );
+    `);
+
+    expect(await planResumeDigests(
+      db, "chanyoung-resume", "2026-08-10T12:02:01.000Z", 500, 1,
+    )).toEqual([]);
+    expect(sqlite.prepare("SELECT count(*) AS total FROM notification_identity_history").get())
+      .toEqual({ total: 4 });
   });
 
   it("reports canonical approved jobs that are still waiting for an email envelope", async () => {
