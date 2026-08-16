@@ -118,7 +118,7 @@ const isEightfoldListingUrl = (value: string): boolean => {
 // checkpoint segments, and changing scope between segments would make stale
 // closure nondeterministic. Unknown and mixed/global roles remain visible so
 // an incomplete location never causes a potentially relevant US role to drop.
-export const LARGE_CATALOG_US_SCOPE_POLICY_VERSION = "large-us-v4";
+export const LARGE_CATALOG_US_SCOPE_POLICY_VERSION = "large-us-v5";
 export const US_SCOPED_LARGE_CATALOGS = new Set([
   "audit-row-319", // Baker Hughes
   "audit-row-338", // Cummins
@@ -130,6 +130,7 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
   "legacy-row-836", // Molson Coors Beverage
   "legacy-row-837", // Mondelez
   "legacy-row-878", // Vertiv
+  "legacy-row-886", // Yum Brands
   "p1-0003-ey",
   "p1-0007-kroll",
   "p2-0029-capital-one",
@@ -226,6 +227,7 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
   "p5-1039-revolut",
   "p5-1041-rippling",
   "p5-1050-samsung-semiconductor",
+  "p5-1054-siemens-eda",
   "p5-1104-wayfair",
   "p5-1109-western-digital",
   // Additional catalogs with at least 1,000 live rows in the 2026-08-15
@@ -12382,6 +12384,139 @@ const crawlJobsynWithSitemapFallback = async (
   return await crawlJobsynSitemap(canonical, fetcher) ?? direct;
 };
 
+const YUM_SITEMAP_URL = "https://jobs.yum.com/sitemap.xml";
+
+const yumSitemapLocation = (slug: string): {
+  label: string;
+  city: string | null;
+  state: string | null;
+  country: string | null;
+} => {
+  const countrySuffixes = [
+    ["united-arab-emirates", "United Arab Emirates"],
+    ["united-kingdom", "United Kingdom"],
+    ["united-states", "United States"],
+    ["south-africa", "South Africa"],
+    ["viet-nam", "Vietnam"],
+    ["switzerland", "Switzerland"],
+    ["thailand", "Thailand"],
+    ["singapore", "Singapore"],
+    ["france", "France"],
+    ["canada", "Canada"],
+    ["brazil", "Brazil"],
+    ["malta", "Malta"],
+    ["india", "India"],
+    ["china", "China"],
+    ["usa", "United States"],
+  ] as const;
+  const normalized = slug.toLocaleLowerCase().replace(/^-+|-+$/g, "");
+  const countryEntry = countrySuffixes.find(([suffix]) => normalized === suffix || normalized.endsWith(`-${suffix}`));
+  const country = countryEntry?.[1] ?? null;
+  const localitySlug = countryEntry
+    ? normalized === countryEntry[0] ? "" : normalized.slice(0, -(countryEntry[0].length + 1))
+    : normalized;
+  const localityTokens = localitySlug.split("-").filter(Boolean);
+  const candidateRegion = localityTokens.at(-1)?.toLocaleUpperCase() ?? "";
+  const hasRegion = /^(?:United States|Canada|Brazil)$/.test(country ?? "") && /^[A-Z]{2}$/.test(candidateRegion);
+  const state = hasRegion ? candidateRegion : null;
+  const citySlug = (hasRegion ? localityTokens.slice(0, -1) : localityTokens).join("-");
+  const city = citySlug ? careerSlugLocation(citySlug) : country === "Singapore" ? "Singapore" : null;
+  return {
+    label: [city, state, country].filter(Boolean).join(", ") || careerSlugLocation(slug),
+    city,
+    state,
+    country,
+  };
+};
+
+const crawlYumCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  try {
+    const response = await fetchWithTimeout(fetcher, YUM_SITEMAP_URL, {
+      headers: { accept: "application/xml,text/xml;q=0.9" },
+    }, false, { attempts: 1, timeoutMs: 10_000 });
+    responseStatus = response.status;
+    if (!response.ok) throw Object.assign(
+      new Error(`Yum careers sitemap returned HTTP ${response.status}.`),
+      { responseStatus: response.status },
+    );
+    const body = await response.text();
+    const recordBodies = [...body.matchAll(/<url\b[^>]*>([\s\S]*?)<\/url>/gi)].map((record) => record[1]);
+    if (recordBodies.length === 0) throw new Error("Yum careers sitemap contained no URL records.");
+    const records: Array<{ url: URL; lastModified: string | null }> = [];
+    for (const recordBody of recordBodies) {
+      const rawUrl = recordBody.match(/<loc>\s*([\s\S]*?)\s*<\/loc>/i)?.[1];
+      if (!rawUrl) throw new Error("Yum careers sitemap contained a URL record without an identity.");
+      let url: URL;
+      try {
+        url = new URL(decodeHtmlAttribute(rawUrl.trim()));
+      } catch {
+        throw new Error("Yum careers sitemap contained an invalid URL identity.");
+      }
+      if (url.origin !== "https://jobs.yum.com" || url.username || url.password || url.port || url.search || url.hash) {
+        throw new Error("Yum careers sitemap contained a non-canonical URL identity.");
+      }
+      if (!url.pathname.startsWith("/jobs/")) continue;
+      if (!/^\/jobs\/[^/]+\/[^/]+\/[^/]+\/\d+\/?$/i.test(url.pathname)) {
+        throw new Error("Yum careers sitemap contained a malformed job identity.");
+      }
+      records.push({
+        url,
+        lastModified: recordBody.match(/<lastmod(?:ified)?>\s*([\s\S]*?)\s*<\/lastmod(?:ified)?>/i)?.[1]?.trim() ?? null,
+      });
+    }
+    const uniqueRecords = new Map(records.map((record) => [record.url.href.replace(/\/$/, ""), record]));
+    if (records.length === 0 || uniqueRecords.size !== records.length) {
+      throw new Error("Yum careers sitemap contained duplicate or unusable job identities.");
+    }
+    const jobs = [...uniqueRecords.values()].flatMap((record): CrawledJob[] => {
+      const match = record.url.pathname.match(/^\/jobs\/([^/]+)\/([^/]+)\/([^/]+)\/(\d+)\/?$/i);
+      if (!match) return [];
+      const [, categorySlug, locationSlug, titleSlug, externalId] = match;
+      const title = careerSlugTitle(titleSlug);
+      const location = yumSitemapLocation(locationSlug);
+      const programs = classifyJobPrograms(title).keys;
+      return [{
+        externalId,
+        title,
+        company: source.company,
+        location: location.label,
+        arrangement: /\bremote\b/i.test(location.label) ? "remote" : "unknown",
+        employmentType: programs.some((key) => key === "internship" || key === "coop") ? "Internship" : null,
+        summary: null,
+        jobFamily: careerSlugTitle(categorySlug),
+        ...(location.city ? { locationCity: location.city } : {}),
+        ...(location.state ? { locationState: location.state } : {}),
+        ...(location.country ? { locationCountry: location.country } : {}),
+        requisitionId: externalId,
+        officialUrl: record.url.href.replace(/\/$/, ""),
+        sourceUpdatedAt: normalizedDate(record.lastModified),
+        publishedAt: normalizedDate(record.lastModified),
+      }];
+    });
+    if (jobs.length !== records.length) throw new Error("Yum careers sitemap normalization was incomplete.");
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: true,
+      jobs,
+      resolvedListingUrl: "https://jobs.yum.com/?brand=yum",
+      error: null,
+    };
+  } catch (error) {
+    const status = typeof error === "object" && error && "responseStatus" in error
+      ? Number((error as { responseStatus: unknown }).responseStatus)
+      : responseStatus;
+    return {
+      status: isBlockedHttpStatus(status) ? "blocked" : "failed",
+      responseStatus: status,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Yum careers crawler error.",
+    };
+  }
+};
+
 const htmlBlocksStartingAt = (html: string, pattern: RegExp): string[] => {
   const starts = [...html.matchAll(pattern)].map((match) => match.index ?? 0);
   return starts.map((start, index) => html.slice(start, starts[index + 1] ?? html.length));
@@ -21721,8 +21856,17 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-793") {
     return crawlJobsynWithSitemapFallback(source, "https://burlingtonstores.jobs/jobs/", fetcher);
   }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "audit-row-306") {
+    return crawlJobsynWithSitemapFallback(source, "https://careers.alaskaair.com/jobs/", fetcher);
+  }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "audit-row-338") {
     return crawlJobsynWithSitemapFallback(source, "https://cummins.jobs/jobs", fetcher);
+  }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-1054-siemens-eda") {
+    return crawlJobsynWithSitemapFallback(source, "https://jobs.sw.siemens.com/jobs/", fetcher);
+  }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-886") {
+    return crawlYumCareers(source, fetcher);
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-814") {
     return crawlFoxCareers(source, fetcher);

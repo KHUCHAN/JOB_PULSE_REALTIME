@@ -10577,6 +10577,131 @@ We are an equal opportunity employer.`;
     ]);
   });
 
+  it("recovers Alaska Air from its official Jobsyn sitemap when Worker API egress is blocked", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "audit-row-306",
+      company: "Alaska Air Group",
+      postingUrl: "https://careers.alaskaair.com/",
+      adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url.startsWith("https://prod-search-api.jobsyn.org/")) return new Response("Forbidden", { status: 403 });
+      expect(url).toBe("https://careers.alaskaair.com/sitemaps/jobs_1.xml");
+      return new Response(`<urlset>
+        <url><loc>https://careers.alaskaair.com/seatac-wa/software-engineering-intern/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/job/</loc><lastmod>2026-08-15</lastmod></url>
+        <url><loc>https://careers.alaskaair.com/portland-or/data-analyst/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB/job/</loc><lastmod>2026-08-14</lastmod></url>
+      </urlset>`);
+    }, new Date());
+
+    expect(requests).toEqual([
+      "https://prod-search-api.jobsyn.org/api/v1/solr/search?page=1",
+      "https://careers.alaskaair.com/sitemaps/jobs_1.xml",
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      resolvedListingUrl: "https://careers.alaskaair.com/jobs/",
+    }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({ title: "Software Engineering Intern", locationState: "WA", locationCountry: "United States" }),
+      expect.objectContaining({ title: "Data Analyst", locationState: "OR", locationCountry: "United States" }),
+    ]);
+  });
+
+  it("recovers Siemens EDA from its official Jobsyn sitemap and retains only US roles", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p5-1054-siemens-eda",
+      company: "Siemens EDA",
+      postingUrl: "https://jobs.sw.siemens.com/",
+      adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url.startsWith("https://prod-search-api.jobsyn.org/")) return new Response("Forbidden", { status: 403 });
+      expect(url).toBe("https://jobs.sw.siemens.com/sitemaps/jobs_1.xml");
+      return new Response(`<urlset>
+        <url><loc>https://jobs.sw.siemens.com/fremont-ca/ai-software-engineering-intern/11111111111111111111111111111111/job/</loc><lastmod>2026-08-15</lastmod></url>
+        <url><loc>https://jobs.sw.siemens.com/pune-ind/software-engineer/22222222222222222222222222222222/job/</loc><lastmod>2026-08-14</lastmod></url>
+      </urlset>`);
+    }, new Date());
+
+    expect(requests).toEqual([
+      "https://prod-search-api.jobsyn.org/api/v1/solr/search?page=1",
+      "https://jobs.sw.siemens.com/sitemaps/jobs_1.xml",
+    ]);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: false }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        title: "AI Software Engineering Intern",
+        employmentType: "Internship",
+        locationState: "CA",
+        locationCountry: "United States",
+      }),
+    ]);
+  });
+
+  it("loads Yum's complete official sitemap and retains only US roles", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "legacy-row-886",
+      company: "Yum Brands",
+      postingUrl: "https://jobs.yum.com/?brand=yum",
+      adapter: "custom",
+    }, async (input) => {
+      requests.push(String(input));
+      return new Response(`<?xml version="1.0"?><urlset>
+        <url><loc>https://jobs.yum.com</loc></url>
+        <url><loc>https://jobs.yum.com/jobs/digital/irvine-ca-united-states/2027-ai-software-engineering-intern/5501</loc><lastmod>2026-08-16</lastmod></url>
+        <url><loc>https://jobs.yum.com/jobs/general/smith-county-ks-usa/sr-software-engineer-ii-byte-pos/5494</loc><lastmod>2026-08-15</lastmod></url>
+        <url><loc>https://jobs.yum.com/jobs/finance-and-accounting/gurgaon-haryana-india/specialist-accounts-receivable/5251</loc><lastmod>2026-08-14</lastmod></url>
+      </urlset>`);
+    }, new Date());
+
+    expect(requests).toEqual(["https://jobs.yum.com/sitemap.xml"]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://jobs.yum.com/?brand=yum",
+    }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        externalId: "5501",
+        title: "2027 AI Software Engineering Intern",
+        employmentType: "Internship",
+        jobFamily: "Digital",
+        location: "Irvine, CA, United States",
+        locationCountry: "United States",
+        publishedAt: "2026-08-16T00:00:00.000Z",
+      }),
+      expect.objectContaining({
+        externalId: "5494",
+        location: "Smith County, KS, United States",
+        locationState: "KS",
+      }),
+    ]);
+  });
+
+  it("does not authorize Yum closures from a malformed official sitemap", async () => {
+    const result = await crawlSource({
+      id: "legacy-row-886",
+      company: "Yum Brands",
+      postingUrl: "https://jobs.yum.com/?brand=yum",
+      adapter: "custom",
+    }, async () => new Response(`<urlset>
+      <url><loc>https://jobs.yum.com/jobs/digital/irvine-ca-united-states/missing-requisition</loc></url>
+    </urlset>`), new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed",
+      completeListing: false,
+      jobs: [],
+      error: "Yum careers sitemap contained a malformed job identity.",
+    }));
+  });
+
   it("uses Cummins' official sitemap fallback and retains only its US-scoped catalog", async () => {
     const result = await crawlSource({
       id: "audit-row-338",
