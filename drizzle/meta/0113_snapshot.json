@@ -1084,27 +1084,6 @@
           ],
           "isUnique": false
         },
-        "jobs_requisition_identity_idx": {
-          "name": "jobs_requisition_identity_idx",
-          "columns": [
-            "requisition_identity_key"
-          ],
-          "isUnique": false
-        },
-        "jobs_external_identity_idx": {
-          "name": "jobs_external_identity_idx",
-          "columns": [
-            "external_identity_key"
-          ],
-          "isUnique": false
-        },
-        "jobs_url_identity_idx": {
-          "name": "jobs_url_identity_idx",
-          "columns": [
-            "url_identity_key"
-          ],
-          "isUnique": false
-        },
         "jobs_status_company_idx": {
           "name": "jobs_status_company_idx",
           "columns": [

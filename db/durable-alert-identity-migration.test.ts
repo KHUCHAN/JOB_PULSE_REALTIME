@@ -3,7 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 
 describe("durable posting alert identity migration", () => {
-  it("baselines existing inventory, backfills sent identities, and clears only unsent envelopes", () => {
+  it("baselines existing inventory, backfills sent identities without scanning every job, and clears only unsent envelopes", () => {
     const sqlite = new DatabaseSync(":memory:");
     sqlite.exec(`
       CREATE TABLE sources (id TEXT PRIMARY KEY);
@@ -54,15 +54,15 @@ describe("durable posting alert identity migration", () => {
     expect(sqlite.prepare(`SELECT alert_discovered_after_baseline, requisition_identity_key,
       external_identity_key, url_identity_key FROM jobs`).get()).toEqual({
       alert_discovered_after_baseline: 0,
-      requisition_identity_key: "req:p4-0225-barclays-us:jr-0000128099",
-      external_identity_key: "ext:p4-0225-barclays-us:jr-0000128099",
-      url_identity_key: "url:https://search.jobs.barclays/job/new-york/role/13015/99217260160",
+      requisition_identity_key: null,
+      external_identity_key: null,
+      url_identity_key: null,
     });
     expect(sqlite.prepare("SELECT count(*) AS total FROM notification_identity_history").get())
       .toEqual({ total: 3 });
     expect(sqlite.prepare("SELECT id FROM notifications ORDER BY id").all()).toEqual([{ id: "sent-1" }]);
     expect(sqlite.prepare("SELECT notification_eligible FROM job_matches").get())
-      .toEqual({ notification_eligible: 0 });
+      .toEqual({ notification_eligible: 1 });
     expect(sqlite.prepare("SELECT alert_baseline_at IS NOT NULL AS ready FROM sources").get())
       .toEqual({ ready: 1 });
   });
