@@ -63,7 +63,7 @@ jobs:
           REQUEST_FALLBACK_INGEST_URL: https://job-pulse-realtime.autodev61.chatgpt.site/api/pulse
           # Penn Medicine's official Talemetry map feed is available from the
           # independent runner but its edge rejects Sites Worker egress.
-          REQUEST_FALLBACK_SOURCE_IDS: p5-0722-saic,p5-1039-revolut,p4-0241-cgi,p5-1018-penn-medicine,audit-row-342,legacy-row-826
+          REQUEST_FALLBACK_SOURCE_IDS: p5-0722-saic,p5-1039-revolut,p4-0241-cgi,p5-1018-penn-medicine,audit-row-342,legacy-row-826,p2-0075-american-family-insurance
         run: node scripts/request-fallback-crawl.ts
 
   browser-recovery:
