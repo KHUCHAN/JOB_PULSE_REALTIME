@@ -8343,11 +8343,18 @@ const crawlSuccessFactorsUnified = async (
   source: CrawlSource,
   html: string,
   fetcher: typeof fetch,
+  bootstrapCookie?: string,
 ): Promise<SourceCrawlResult | null> => {
   if (!/SearchResultsUnify|rmk-jobs-search/i.test(html)) return null;
   const page = new URL(source.postingUrl);
   const htmlLocale = html.match(/\bcurrentLocale\s*:\s*["']([a-z]{2}_[A-Z]{2})["']/)?.[1];
   const locale = page.searchParams.get("locale") || htmlLocale || "en_US";
+  const configuredCountryFacet = html.match(
+    /\bfieldId\s*:\s*["'](jobLocationCountry|custCountryRegion)["']/i,
+  )?.[1];
+  const countryFacet = configuredCountryFacet === "custCountryRegion"
+    ? "custCountryRegion"
+    : "jobLocationCountry";
   const endpoint = new URL("/services/recruiting/v1/jobs", page.origin);
   const maximumPages = 40;
   const requestedUsScope = source.regionScope === "us";
@@ -8374,7 +8381,7 @@ const crawlSuccessFactorsUnified = async (
           // SAP Career Site Builder. The country facet is exact and every
           // returned row is validated again below before it can advance the
           // authoritative US checkpoint.
-          facetFilters: requestedUsScope ? { jobLocationCountry: ["United States"] } : {},
+          facetFilters: requestedUsScope ? { [countryFacet]: ["United States"] } : {},
           brand: "",
           skills: [],
           categoryId: 0,
@@ -8390,7 +8397,13 @@ const crawlSuccessFactorsUnified = async (
       const scopeValid = !requestedUsScope || jobs.every((job) =>
         /^(?:US|USA|United States)$/i.test(job.locationCountry ?? ""),
       );
-      const responseCookie = response.headers.get("set-cookie")?.match(/^\s*([^;,]+=[^;,]+)/)?.[1];
+      const cookieJar = new Map<string, string>();
+      for (const pair of (sessionCookie ?? "").split(/;\s*/)) {
+        const name = pair.split("=", 1)[0]?.trim();
+        if (name && pair.includes("=")) cookieJar.set(name, pair);
+      }
+      mergeCookies(cookieJar, response);
+      const responseCookie = [...cookieJar.values()].join("; ") || undefined;
       return { payload, jobs, valid: jobs.length === raw.length && scopeValid, ...(responseCookie ? { sessionCookie: responseCookie } : {}) };
     } catch {
       return null;
@@ -8401,7 +8414,7 @@ const crawlSuccessFactorsUnified = async (
   // Bootstrap page 1 on every invocation. Besides giving us an invariant page
   // size, its JSESSIONID keeps the public API's ordering stable across all
   // subsequent page requests in this checkpoint segment.
-  const first = await fetchPage(1);
+  const first = await fetchPage(1, bootstrapCookie);
   if (!first) return null;
   const total = Number(first.payload.totalJobs);
   if (!Number.isInteger(total) || total < 0) return null;
@@ -11214,6 +11227,11 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
           : redirected;
       }
     }
+    const bootstrapCookie = responseCookies(response)
+      .map((value) => value.split(";", 1)[0]?.trim() ?? "")
+      .filter((value) => /^[!#$%&'*+.^_`|~0-9A-Za-z-]+=[^;]*$/.test(value))
+      .slice(0, 8)
+      .join("; ") || undefined;
     const html = await response.text();
     const inactiveCareerPage = verifiedInactiveCareerPage(source, finalPage, html);
     if (inactiveCareerPage) return {
@@ -11315,7 +11333,7 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
         };
       }
     }
-    const successFactorsUnified = await crawlSuccessFactorsUnified(source, html, fetcher);
+    const successFactorsUnified = await crawlSuccessFactorsUnified(source, html, fetcher, bootstrapCookie);
     if (successFactorsUnified) return successFactorsUnified;
     const successFactors = await crawlSuccessFactorsPages(source, html, fetcher);
     if (successFactors) return successFactors;

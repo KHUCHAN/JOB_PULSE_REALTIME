@@ -8944,14 +8944,17 @@ We are an equal opportunity employer.`;
   });
 
   it("checkpoints the SuccessFactors unified jobs API without skipping a page", async () => {
-    const requests: Array<{ url: string; pageNumber: number | null }> = [];
+    const requests: Array<{ url: string; pageNumber: number | null; facetFilters: unknown }> = [];
     const fetcher: typeof fetch = async (input, init) => {
       const url = String(input);
       if (url === "https://careers.acme.example/search/?locale=en_US") {
-        return new Response('<script>j2w.SearchResultsUnify.removeResultContent()</script><meta content="rmk-jobs-search">');
+        return new Response('<script>j2w.SearchResultsUnify.removeResultContent(); var fields = [{ fieldId: "custCountryRegion" }]</script><meta content="rmk-jobs-search">', {
+          headers: { "set-cookie": "JSESSIONID=bootstrap-session; Path=/; Secure; HttpOnly" },
+        });
       }
-      const body = JSON.parse(String(init?.body)) as { pageNumber: number };
-      requests.push({ url, pageNumber: body.pageNumber });
+      expect(new Headers(init?.headers).get("cookie")).toBe("JSESSIONID=bootstrap-session");
+      const body = JSON.parse(String(init?.body)) as { pageNumber: number; facetFilters: unknown };
+      requests.push({ url, pageNumber: body.pageNumber, facetFilters: body.facetFilters });
       const start = body.pageNumber * 10;
       const count = body.pageNumber === 0 ? 10 : 1;
       return Response.json({
@@ -8972,11 +8975,12 @@ We are an equal opportunity employer.`;
       company: "Acme",
       postingUrl: "https://careers.acme.example/search/?locale=en_US",
       adapter: "custom",
+      regionScope: "us",
     }, fetcher, new Date());
 
     expect(requests).toEqual([
-      { url: "https://careers.acme.example/services/recruiting/v1/jobs", pageNumber: 0 },
-      { url: "https://careers.acme.example/services/recruiting/v1/jobs", pageNumber: 1 },
+      { url: "https://careers.acme.example/services/recruiting/v1/jobs", pageNumber: 0, facetFilters: { custCountryRegion: ["United States"] } },
+      { url: "https://careers.acme.example/services/recruiting/v1/jobs", pageNumber: 1, facetFilters: { custCountryRegion: ["United States"] } },
     ]);
     expect(result).toEqual(expect.objectContaining({
       status: "succeeded",
