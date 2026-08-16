@@ -1,6 +1,10 @@
 {
   "overrides": {
     "audit-row-342": { "url": "https://delta.avature.net/en_US/careers/SearchJobs", "adapter": "custom" },
+    "audit-row-355": { "url": "https://equitable.taleo.net/careersection/eqh_1/jobsearch.ftl?lang=en&portal=36105020509", "adapter": "custom", "checkedAt": "2026-08-15" },
+    "audit-row-422": { "url": "https://ejhp.fa.us6.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_2/jobs", "adapter": "custom", "checkedAt": "2026-08-15" },
+    "p2-0075-american-family-insurance": { "url": "https://careers.amfam.com/jobs/", "adapter": "custom", "checkedAt": "2026-08-15" },
+    "legacy-row-875": { "url": "https://valero.taleo.net/careersection/2/jobsearch.ftl?lang=en", "adapter": "custom", "checkedAt": "2026-08-15" },
     "p2-0067-wells-fargo": { "url": "https://www.wellsfargojobs.com/en/jobs/", "adapter": "custom" },
     "p4-0450-jfrog": { "url": "https://join.jfrog.com/positions", "adapter": "custom" },
     "p4-0451-k2-integrity": { "url": "https://k2integrity.careers.hibob.com/jobs", "adapter": "custom" },
@@ -119,7 +123,6 @@
     "audit-row-344": { "url": "https://diamondbackenergy.wd12.myworkdayjobs.com/DBE", "adapter": "workday" },
     "audit-row-349": { "url": "https://www.duke-energy.com/our-company/careers", "adapter": "custom" },
     "audit-row-350": { "url": "https://www.echostar.com/gfj/", "adapter": "custom" },
-    "audit-row-355": { "url": "https://equitable.com/careers-at-equitable", "adapter": "custom" },
     "audit-row-356": { "url": "https://app.eightfold.ai/careers?domain=elcompanies.com", "adapter": "custom" },
     "audit-row-368": { "url": "https://henryschein.wd1.myworkdayjobs.com/External_Careers", "adapter": "workday" },
     "p2-0113-golden-1-credit-union": { "url": "https://jobs.dayforcehcm.com/en-US/golden1/CANDIDATEPORTAL", "adapter": "dayforce" },

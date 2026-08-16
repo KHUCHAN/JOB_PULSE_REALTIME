@@ -10022,6 +10022,57 @@ We are an equal opportunity employer.`;
     })]);
   });
 
+  it("uses Sherwin-Williams' official Oracle catalog and keeps only US jobs", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "audit-row-422",
+      company: "Sherwin-Williams",
+      postingUrl: "https://jobsearch.sherwin.com/",
+      adapter: "custom",
+    }, async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.href);
+      expect(url.origin + url.pathname).toBe(
+        "https://ejhp.fa.us6.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitions",
+      );
+      expect(url.searchParams.get("finder")).toContain("siteNumber=CX_2");
+      return Response.json({ items: [{
+        TotalJobsCount: 2,
+        requisitionList: [{
+          Id: "260801",
+          Title: "2027 Data Science Summer Intern",
+          PrimaryLocation: "Cleveland, OH",
+          PrimaryLocationCountry: "US",
+          JobSchedule: "Internship",
+          ShortDescriptionStr: "Build production analytics systems.",
+          PostedDate: "2026-08-15",
+        }, {
+          Id: "260802",
+          Title: "Software Developer",
+          PrimaryLocation: "Toronto, Canada",
+          PrimaryLocationCountry: "CA",
+          ShortDescriptionStr: "Build business applications.",
+          PostedDate: "2026-08-15",
+        }],
+      }] });
+    }, new Date());
+
+    expect(requests).toHaveLength(1);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://ejhp.fa.us6.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_2/jobs",
+    }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "260801",
+      requisitionId: "260801",
+      title: "2027 Data Science Summer Intern",
+      employmentType: "Internship",
+      locationCountry: "US",
+      officialUrl: "https://ejhp.fa.us6.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_2/job/260801",
+    })]);
+  });
+
   it("paginates Vanguard's official M-Cloud API with rich filter fields and exact closure checks", async () => {
     const offsets: number[] = [];
     const total = 25;
@@ -13523,6 +13574,304 @@ We are an equal opportunity employer.`;
       completeListing: false,
       jobs: [],
       error: "Tampa General Taleo catalog returned duplicate or missing requisitions.",
+    }));
+  });
+
+  it("collects Equitable's stable public Taleo catalog without closing hidden advertised rows", async () => {
+    const boardUrl = "https://equitable.taleo.net/careersection/eqh_1/jobsearch.ftl?lang=en&portal=36105020509";
+    const searchUrl = "https://equitable.taleo.net/careersection/rest/jobboard/searchjobs?lang=en&portal=36105020509";
+    const rows = [{
+      jobId: "420166", contestNo: "260000EM", title: "2027 Summer Intern - Talent Acquisition",
+      employmentType: "Full-time", location: "UNITED STATES-NC-Charlotte",
+    }, {
+      jobId: "420167", contestNo: "260000ET", title: "Regional Controls Manager",
+      employmentType: "Full-time", location: "UNITED STATES-Remote",
+    }];
+    const requisitionList = rows.map((row) => ({
+      jobId: row.jobId,
+      contestNo: row.contestNo,
+      column: [row.title, row.employmentType, JSON.stringify([row.location]), ""],
+      linkedColumn: 0,
+      locationsColumns: [2],
+    }));
+    const filters = ["POSTING_DATE", "ORGANIZATION", "LOCATION", "JOB_FIELD", "JOB_SCHEDULE", "JOB_LOCALE"];
+    const facets = filters.map((id) => ({ id, facetValueResults: [{ id: "1", text: id, quantity: "2" }] }));
+    const detail = (row: typeof rows[number]) => {
+      const description = `!*!${encodeURIComponent(`<p>${row.title} supports people analytics and recruiting technology.</p>`)}`;
+      const qualifications = `!*!${encodeURIComponent("<p>Python, SQL, and analytics experience.</p>")}`;
+      const values = [
+        row.jobId, "true", row.jobId, "false", `Submission for ${row.title}`, "false", row.jobId,
+        "false", "true", row.title, row.contestNo, row.location, "Equitable", row.employmentType,
+        description, description, qualifications, qualifications,
+      ];
+      return `<meta property="og:title" content="${row.title}"><input name="requisitionno" value="${row.jobId}">
+        <script>api.fillList("requisitionDescriptionInterface", "descRequisition", ${JSON.stringify(values)});</script>`;
+    };
+    const requests = { board: 0, search: 0, detail: 0 };
+    const result = await crawlSource({
+      id: "audit-row-355", company: "Equitable Holdings",
+      postingUrl: "https://equitableholdings.com/careers", adapter: "custom",
+    }, async (input, init) => {
+      const url = String(input);
+      if (url === boardUrl) {
+        requests.board += 1;
+        return new Response(`<script>portalNo: '36105020509', urlCode: 'eqh_1'</script>
+          ${filters.slice(0, 5).map((id) => `<div id="filter-${id}"></div>`).join("")}`);
+      }
+      if (url === searchUrl) {
+        requests.search += 1;
+        const body = JSON.parse(String(init?.body)) as { pageNo: number };
+        expect(body).toEqual(expect.objectContaining({
+          fieldData: { fields: { KEYWORD: "", LOCATION: "" }, valid: true },
+        }));
+        expect([1, 2]).toContain(body.pageNo);
+        return Response.json({
+          requisitionList: body.pageNo === 1 ? requisitionList : [], facetResults: facets,
+          pagingData: { currentPageNo: body.pageNo, pageSize: 25, totalCount: 26 },
+          careerSectionUnAvailable: false,
+        });
+      }
+      requests.detail += 1;
+      const contestNo = new URL(url).searchParams.get("job");
+      const row = rows.find((candidate) => candidate.contestNo === contestNo);
+      return row ? new Response(detail(row)) : new Response("missing", { status: 404 });
+    }, new Date("2026-08-15T16:00:00Z"));
+
+    expect(requests).toEqual({ board: 1, search: 4, detail: 2 });
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: false, resolvedListingUrl: boardUrl, error: null,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 2 },
+    }));
+    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "420166",
+      requisitionId: "260000EM",
+      title: "2027 Summer Intern - Talent Acquisition",
+      employmentType: "Internship",
+      locationCity: "Charlotte",
+      locationState: "NC",
+      locationCountry: "United States",
+      arrangement: "onsite",
+      qualifications: "Python, SQL, and analytics experience.",
+      officialUrl: "https://equitable.taleo.net/careersection/eqh_1/jobdetail.ftl?job=260000EM&lang=en",
+      applyUrl: "https://equitable.taleo.net/careersection/application.jss?type=1&lang=en&portal=36105020509&reqNo=420166",
+    }));
+    expect(result.facets?.map(({ key }) => key)).toEqual(filters.map((id) => id.toLocaleLowerCase()));
+  });
+
+  it("collects Valero's complete stable Taleo catalog with official detail dates", async () => {
+    const boardUrl = "https://valero.taleo.net/careersection/2/jobsearch.ftl?lang=en";
+    const searchUrl = "https://valero.taleo.net/careersection/rest/jobboard/searchjobs?lang=en&portal=101430233";
+    const rows = [{
+      jobId: "311130", contestNo: "260017O", title: "Data Science Summer Intern 2027", location: "US-TX-San Antonio",
+    }, {
+      jobId: "312639", contestNo: "26001B7", title: "Refinery Inspector", location: "US-TN-Memphis",
+    }];
+    const requisitionList = rows.map((row) => ({
+      jobId: row.jobId,
+      contestNo: row.contestNo,
+      column: [row.title, row.contestNo, JSON.stringify([row.location])],
+      linkedColumn: 0,
+      locationsColumns: [2],
+    }));
+    const filters = ["LOCATION", "JOB_FIELD", "JOB_LOCALE"];
+    const facets = filters.map((id) => ({ id, facetValueResults: [{ id: "1", text: id, quantity: "2" }] }));
+    const detail = (row: typeof rows[number]) => {
+      const description = `!*!${encodeURIComponent(`<p>${row.title} builds data and energy software.</p>`)}`;
+      const qualifications = `!*!${encodeURIComponent("<p>Python, SQL, and statistics.</p>")}`;
+      const values = [
+        row.jobId, "true", row.jobId, "false", `Submission for ${row.title}`, "false", row.jobId,
+        "false", "true", row.title, row.contestNo, description, description, qualifications, qualifications,
+        "Technology", "Technology", row.location, row.location, "", "", "Aug 14, 2026, 9:25:43 AM",
+      ];
+      return `<meta property="og:title" content="${row.title}"><input name="requisitionno" value="${row.jobId}">
+        <script>api.fillList("requisitionDescriptionInterface", "descRequisition", ${JSON.stringify(values)});</script>`;
+    };
+    const requests = { board: 0, search: 0, detail: 0 };
+    const result = await crawlSource({
+      id: "legacy-row-875", company: "Valero Energy",
+      postingUrl: "https://www.valero.com/careers", adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      if (url === boardUrl) {
+        requests.board += 1;
+        return new Response(`<script>portalNo: '101430233', urlCode: '2'</script>
+          ${filters.map((id) => `<div id="filter-${id}"></div>`).join("")}`);
+      }
+      if (url === searchUrl) {
+        requests.search += 1;
+        return Response.json({
+          requisitionList, facetResults: facets,
+          pagingData: { currentPageNo: 1, pageSize: 25, totalCount: 2 },
+          careerSectionUnAvailable: false,
+        });
+      }
+      requests.detail += 1;
+      const contestNo = new URL(url).searchParams.get("job");
+      const row = rows.find((candidate) => candidate.contestNo === contestNo);
+      return row ? new Response(detail(row)) : new Response("missing", { status: 404 });
+    }, new Date("2026-08-15T16:00:00Z"));
+
+    expect(requests).toEqual({ board: 1, search: 2, detail: 2 });
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: true, resolvedListingUrl: boardUrl, error: null,
+    }));
+    expect(result).not.toHaveProperty("pagination");
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "311130",
+      requisitionId: "260017O",
+      title: "Data Science Summer Intern 2027",
+      employmentType: "Internship",
+      locationCity: "San Antonio",
+      locationState: "TX",
+      locationCountry: "United States",
+      sourcePostedText: "Aug 14, 2026, 9:25:43 AM",
+      publishedAt: "2026-08-14T00:00:00.000Z",
+      officialUrl: "https://valero.taleo.net/careersection/2/jobdetail.ftl?job=260017O&lang=en",
+    }));
+  });
+
+  it("fails generic classic Taleo closed when two catalog snapshots disagree", async () => {
+    const boardUrl = "https://valero.taleo.net/careersection/2/jobsearch.ftl?lang=en";
+    const searchUrl = "https://valero.taleo.net/careersection/rest/jobboard/searchjobs?lang=en&portal=101430233";
+    const filters = ["LOCATION", "JOB_FIELD", "JOB_LOCALE"];
+    let searchCalls = 0;
+    const result = await crawlSource({
+      id: "legacy-row-875", company: "Valero Energy", postingUrl: "https://www.valero.com/careers", adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      if (url === boardUrl) return new Response(`<script>portalNo: '101430233', urlCode: '2'</script>
+        ${filters.map((id) => `<div id="filter-${id}"></div>`).join("")}`);
+      if (url === searchUrl) {
+        searchCalls += 1;
+        const suffix = searchCalls === 1 ? "A" : "B";
+        return Response.json({
+          requisitionList: [{
+            jobId: searchCalls === 1 ? "311130" : "311131", contestNo: `26001${suffix}`,
+            column: [`Engineer ${suffix}`, `26001${suffix}`, JSON.stringify(["US-TX-San Antonio"])],
+            linkedColumn: 0, locationsColumns: [2],
+          }],
+          facetResults: filters.map((id) => ({ id, facetValueResults: [{ id: "1", text: id, quantity: "1" }] })),
+          pagingData: { currentPageNo: 1, pageSize: 25, totalCount: 1 }, careerSectionUnAvailable: false,
+        });
+      }
+      return new Response("unexpected", { status: 500 });
+    }, new Date());
+
+    expect(searchCalls).toBe(2);
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed", completeListing: false, jobs: [],
+      error: "Valero Taleo catalog changed or became inconsistent during pagination.",
+    }));
+  });
+
+  it("collects American Family's complete reader-visible catalog and enriches official Workday links", async () => {
+    const listingUrl = "https://careers.amfam.com/jobs/";
+    const firstReader = `https://r.jina.ai/${listingUrl}?pagesize=50`;
+    const secondReader = "https://r.jina.ai/https://careers.amfam.com/jobs/?pagesize=50%26page=2";
+    const rows = Array.from({ length: 51 }, (_, index) => ({
+      id: `R${39_000 + index}`,
+      title: index === 0 ? "2027 Data Science Summer Intern"
+        : index === 1 ? "Lead Engineer, Internal Developer Platform" : `Insurance Analyst ${index}`,
+      location: index === 0 ? "Madison, Wisconsin" : "Boston, Massachusetts",
+      arrangement: index === 0 ? "Hybrid" : "On-site",
+    }));
+    const card = (row: typeof rows[number]) => `<div class="card card-job" data-id="${row.id.toLocaleLowerCase()}">
+      <div class="card-body"><h2 class="card-title"><a class="stretched-link js-view-job"
+        href="/jobs/${row.id.toLocaleLowerCase()}/${row.title.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-$/, "")}/">${row.title}</a></h2>
+      <ul class="list-inline job-meta"><li class="list-inline-item"><svg /> ${row.location}</li>
+      <li class="list-inline-item"><svg /> American Family Insurance</li>
+      <li class="list-inline-item"><svg /> ${row.arrangement}</li></ul></div></div>`;
+    const listing = (page: number) => {
+      const pageRows = page === 1 ? rows.slice(0, 50) : rows.slice(50);
+      const start = (page - 1) * 50 + 1;
+      const end = start + pageRows.length - 1;
+      return `<p class="job-count">Displaying <strong>${start}</strong> to <strong>${end}</strong> of <strong>51</strong> matching jobs</p>
+        <div class="grid job-listing" id="js-job-search-results" data-results="51">${pageRows.map(card).join("")}</div>`;
+    };
+    const officialUrl = (row: typeof rows[number]) =>
+      `https://careers.amfam.com/jobs/${row.id.toLocaleLowerCase()}/${row.title.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-$/, "")}/`;
+    const detail = (row: typeof rows[number]) => {
+      const official = officialUrl(row);
+      const job = {
+        "@context": "https://schema.org", "@type": "JobPosting", title: row.title,
+        description: `<p>${row.title} builds production analytics and software products.</p><p>Interns and contingent workers are not eligible for benefits.</p>`,
+        identifier: row.id, mainEntityOfPage: official, url: official, datePosted: "2026-08-15",
+        employmentType: indexOf(row) === 0 ? "INTERN" : "FULL_TIME",
+        hiringOrganization: { "@type": "Organization", name: "American Family Insurance" },
+        industry: "Technology",
+        jobLocation: [{ "@type": "Place", address: {
+          "@type": "PostalAddress", addressCountry: "United States of America",
+          addressLocality: row.location.split(",")[0], addressRegion: row.location.split(",")[1].trim(),
+        } }],
+      };
+      const slug = row.title.replace(/[^A-Za-z0-9]+/g, "-").replace(/-$/, "");
+      const collisionSuffix = indexOf(row) === 0 ? "" : "-2";
+      return `<a class="js-apply-now" href="https://amfam.wd1.myworkdayjobs.com/Careers/job/WI-Madison/${slug}_${row.id}${collisionSuffix}/apply">Apply Now</a>
+        <script type="application/ld+json">${JSON.stringify(job)}</script>`;
+    };
+    const indexOf = (row: typeof rows[number]) => rows.findIndex((candidate) => candidate.id === row.id);
+    const requests = { listing: 0, detail: 0 };
+    const result = await crawlSource({
+      id: "p2-0075-american-family-insurance", company: "American Family Insurance",
+      postingUrl: "https://www.amfam.com/careers", adapter: "custom",
+    }, async (input, init) => {
+      const url = String(input);
+      expect(new Headers(init?.headers).get("x-respond-with")).toBe("html");
+      if (url === firstReader) {
+        requests.listing += 1;
+        return new Response(listing(1));
+      }
+      if (url === secondReader) {
+        requests.listing += 1;
+        return new Response(listing(2));
+      }
+      requests.detail += 1;
+      const official = url.replace(/^https:\/\/r\.jina\.ai\//, "");
+      const row = rows.find((candidate) => official === officialUrl(candidate));
+      return row ? new Response(detail(row)) : new Response("missing", { status: 404 });
+    }, new Date("2026-08-15T16:00:00Z"));
+
+    expect(requests).toEqual({ listing: 2, detail: 8 });
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: false, resolvedListingUrl: listingUrl, error: null,
+    }));
+    expect(result.jobs).toHaveLength(51);
+    expect(result.jobs.filter((job) => job.description)).toHaveLength(8);
+    expect(result.jobs.filter((job) => job.applyUrl)).toHaveLength(8);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "R39000",
+      requisitionId: "R39000",
+      title: "2027 Data Science Summer Intern",
+      locationCountry: "United States",
+      arrangement: "hybrid",
+      employmentType: "Internship",
+      publishedAt: "2026-08-15T00:00:00.000Z",
+      sourcePostedText: "2026-08-15",
+      businessUnit: "American Family Insurance",
+      officialUrl: "https://careers.amfam.com/jobs/r39000/2027-data-science-summer-intern/",
+      applyUrl: "https://amfam.wd1.myworkdayjobs.com/Careers/job/WI-Madison/2027-Data-Science-Summer-Intern_R39000/apply",
+    }));
+    expect(result.jobs[1].title).toBe("Lead Engineer, Internal Developer Platform");
+    expect(result.jobs[1].employmentType).not.toBe("Internship");
+  });
+
+  it("fails American Family closed when a reader page is truncated", async () => {
+    const card = `<div class="card card-job" data-id="r39000"><div class="card-body">
+      <h2 class="card-title"><a href="/jobs/r39000/data-science-intern/">Data Science Intern</a></h2>
+      <ul class="list-inline job-meta"><li class="list-inline-item">Madison, Wisconsin</li>
+      <li class="list-inline-item">American Family Insurance</li><li class="list-inline-item">Hybrid</li></ul></div></div>`;
+    const result = await crawlSource({
+      id: "p2-0075-american-family-insurance", company: "American Family Insurance",
+      postingUrl: "https://www.amfam.com/careers", adapter: "custom",
+    }, async (input) => String(input) === "https://r.jina.ai/https://careers.amfam.com/jobs/?pagesize=50"
+      ? new Response(`<p>Displaying <strong>1</strong> to <strong>50</strong> of <strong>51</strong> matching jobs</p>
+        <div id="js-job-search-results" data-results="51">${card}</div>`)
+      : new Response("missing", { status: 404 }), new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed", completeListing: false, jobs: [],
+      error: "American Family careers reader returned an incomplete or invalid listing page.",
     }));
   });
 

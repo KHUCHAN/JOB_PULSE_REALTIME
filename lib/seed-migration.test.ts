@@ -194,6 +194,7 @@ describe("large catalog US scope migration", () => {
     const deutscheBankRefresh = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0107_snapshot.json"), "utf8"));
     const communityHealthRefresh = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0108_snapshot.json"), "utf8"));
     const pennMedicineRefresh = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0109_snapshot.json"), "utf8"));
+    const officialCatalogRefresh = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0110_snapshot.json"), "utf8"));
     const currentJournal = JSON.parse(readFileSync(resolve(drizzlePath, "meta/_journal.json"), "utf8"));
 
     expect(current.prevId).toBe(previous.id);
@@ -206,13 +207,14 @@ describe("large catalog US scope migration", () => {
     expect(deutscheBankRefresh.prevId).toBe(molsonCoorsRefresh.id);
     expect(communityHealthRefresh.prevId).toBe(deutscheBankRefresh.id);
     expect(pennMedicineRefresh.prevId).toBe(communityHealthRefresh.id);
+    expect(officialCatalogRefresh.prevId).toBe(pennMedicineRefresh.id);
     expect(currentJournal.entries.find((entry: { tag: string }) => entry.tag === "0100_large_catalog_us_scope")).toMatchObject({
       idx: 100,
       tag: "0100_large_catalog_us_scope",
     });
     expect(currentJournal.entries.at(-1)).toMatchObject({
-      idx: 109,
-      tag: "0109_refresh_sources_20260815234622",
+      idx: 110,
+      tag: "0110_refresh_sources_20260816013212",
     });
   });
 

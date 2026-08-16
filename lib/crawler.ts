@@ -124,6 +124,7 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
   "audit-row-359", // FedEx
   "audit-row-369", // Hertz
   "audit-row-378", // JLL
+  "audit-row-422", // Sherwin-Williams
   "legacy-row-128", // Wabtec
   "legacy-row-836", // Molson Coors Beverage
   "legacy-row-837", // Mondelez
@@ -422,6 +423,11 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
   },
   "p4-0289-hcltech": {
     listingUrl: "https://careers.hcltech.com/search/?locale=en_US",
+    adapter: "custom",
+  },
+  "audit-row-422": {
+    oracle: { apiOrigin: "https://ejhp.fa.us6.oraclecloud.com", site: "CX_2" },
+    listingUrl: "https://ejhp.fa.us6.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_2/jobs",
     adapter: "custom",
   },
   "p4-0329-point-b": {
@@ -14554,6 +14560,16 @@ type TampaGeneralTaleoSummary = CincinnatiTaleoSummary & {
   employmentType: string | null;
 };
 
+type GenericClassicTaleoConfig = {
+  label: string;
+  listingUrl: string;
+  origin: string;
+  section: string;
+  portal: string;
+  visibleFilters: string[];
+  requestFilters: string[];
+};
+
 type PcaCareerPagePayload = {
   postings?: unknown;
   showingCount?: unknown;
@@ -14565,6 +14581,29 @@ const CINCINNATI_TALEO_LISTING_URL = "https://cinfin.taleo.net/careersection/ex/
 const CINCINNATI_TALEO_SEARCH_URL = "https://cinfin.taleo.net/careersection/rest/jobboard/searchjobs?lang=en&portal=101430233";
 const TAMPA_GENERAL_TALEO_LISTING_URL = "https://tgh.taleo.net/careersection/ex/jobsearch.ftl?lang=en";
 const TAMPA_GENERAL_TALEO_SEARCH_URL = "https://tgh.taleo.net/careersection/rest/jobboard/searchjobs?lang=en&portal=101430233";
+const GENERIC_CLASSIC_TALEO_BOARDS: Record<string, GenericClassicTaleoConfig> = {
+  "audit-row-355": {
+    label: "Equitable",
+    listingUrl: "https://equitable.taleo.net/careersection/eqh_1/jobsearch.ftl?lang=en&portal=36105020509",
+    origin: "https://equitable.taleo.net",
+    section: "eqh_1",
+    portal: "36105020509",
+    visibleFilters: ["POSTING_DATE", "ORGANIZATION", "LOCATION", "JOB_FIELD", "JOB_SCHEDULE"],
+    requestFilters: ["POSTING_DATE", "ORGANIZATION", "LOCATION", "JOB_FIELD", "JOB_SCHEDULE", "JOB_LOCALE"],
+  },
+  "legacy-row-875": {
+    label: "Valero",
+    listingUrl: "https://valero.taleo.net/careersection/2/jobsearch.ftl?lang=en",
+    origin: "https://valero.taleo.net",
+    section: "2",
+    portal: "101430233",
+    visibleFilters: ["LOCATION", "JOB_FIELD", "JOB_LOCALE"],
+    requestFilters: ["LOCATION", "JOB_FIELD", "JOB_LOCALE"],
+  },
+};
+const AMERICAN_FAMILY_LISTING_URL = "https://careers.amfam.com/jobs/";
+const AMERICAN_FAMILY_READER_ORIGIN = "https://r.jina.ai";
+const AMERICAN_FAMILY_PAGE_SIZE = 50;
 const ENTERPRISE_PRODUCTS_CORPORATE_JOB_OPENINGS_URL = "https://www.enterpriseproducts.com/careers/job-openings/";
 const ENTERPRISE_PRODUCTS_TALEO_LISTING_URL = "https://epco.taleo.net/careersection/alljobs/jobsearch.ftl?lang=en&location=101372523&radius=1&radiusType=K&searchExpanded=false&dropListSize=1000";
 const PCA_CAREER_SEARCH_URL = "https://careers.packagingcorp.com/career-search/";
@@ -16091,6 +16130,631 @@ const crawlTampaGeneralTaleo = async (source: CrawlSource, fetcher: typeof fetch
       completeListing: false,
       jobs: [],
       error: error instanceof Error ? error.message : "Unknown Tampa General Taleo crawler error.",
+    };
+  }
+};
+
+const sameExactUrl = (value: string, expected: string): boolean => {
+  try {
+    const actual = new URL(value);
+    const target = new URL(expected);
+    if (actual.origin !== target.origin || actual.pathname !== target.pathname
+      || actual.username || actual.password || actual.port || actual.hash
+      || actual.searchParams.size !== target.searchParams.size) return false;
+    const remaining = [...actual.searchParams.entries()];
+    for (const [key, expectedValue] of target.searchParams) {
+      const index = remaining.findIndex(([candidateKey, candidateValue]) =>
+        candidateKey === key && candidateValue === expectedValue);
+      if (index < 0) return false;
+      remaining.splice(index, 1);
+    }
+    return remaining.length === 0;
+  } catch {
+    return false;
+  }
+};
+
+const genericClassicTaleoSearchUrl = (config: GenericClassicTaleoConfig): string => {
+  const url = new URL("/careersection/rest/jobboard/searchjobs", config.origin);
+  url.searchParams.set("lang", "en");
+  url.searchParams.set("portal", config.portal);
+  return url.href;
+};
+
+const genericClassicTaleoSearchBody = (config: GenericClassicTaleoConfig, pageNo: number): string => JSON.stringify({
+  fieldData: { fields: { KEYWORD: "", LOCATION: "" }, valid: true },
+  filterSelectionParam: {
+    searchFilterSelections: config.requestFilters.map((id) => ({ id, selectedValues: [] })),
+  },
+  sortingSelection: { sortBySelectionParam: "3", ascendingSortingOrder: true },
+  multilineEnabled: true,
+  pageNo,
+});
+
+const genericClassicTaleoSummary = (
+  value: TaleoClassicRequisition,
+  config: GenericClassicTaleoConfig,
+): TampaGeneralTaleoSummary | null => {
+  const jobId = asText(value.jobId);
+  const contestNo = asText(value.contestNo);
+  const columns = Array.isArray(value.column) ? value.column : null;
+  const title = asText(columns?.[0]);
+  const locationColumns = Array.isArray(value.locationsColumns) ? value.locationsColumns.map(Number) : null;
+  const locationIndex = locationColumns?.[0];
+  if (!jobId || !/^\d{3,12}$/.test(jobId) || !contestNo || !/^[a-z0-9][a-z0-9_-]{4,39}$/i.test(contestNo)
+    || !columns || columns.length < 3 || columns.length > 8 || !title || Number(value.linkedColumn) !== 0
+    || !locationColumns || locationColumns.length !== 1 || !Number.isSafeInteger(locationIndex)
+    || locationIndex == null || locationIndex < 1 || locationIndex >= columns.length) return null;
+  let locations: unknown;
+  try {
+    locations = JSON.parse(asText(columns[locationIndex]) ?? "");
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(locations) || locations.length < 1 || locations.length > 40
+    || locations.some((location) => typeof location !== "string" || !location.trim())) return null;
+  const normalizedLocations = locations.map((location) => String(location).trim());
+  const listedType = locationIndex === 2 && asText(columns[1]) !== contestNo ? asText(columns[1]) : null;
+  const official = new URL(`/careersection/${config.section}/jobdetail.ftl`, config.origin);
+  official.searchParams.set("job", contestNo);
+  official.searchParams.set("lang", "en");
+  const apply = new URL("/careersection/application.jss", config.origin);
+  apply.searchParams.set("type", "1");
+  apply.searchParams.set("lang", "en");
+  apply.searchParams.set("portal", config.portal);
+  apply.searchParams.set("reqNo", jobId);
+  return {
+    jobId,
+    contestNo,
+    title,
+    locations: normalizedLocations,
+    officialUrl: official.href,
+    applyUrl: apply.href,
+    employmentType: normalizeEmploymentType(listedType) ?? listedType,
+  };
+};
+
+const genericClassicTaleoLocation = (locations: string[]): {
+  location: string;
+  city: string | null;
+  state: string | null;
+  country: string | null;
+  arrangement: CrawledJob["arrangement"];
+} => {
+  const primary = locations[0]?.split("-").map((part) => part.trim()).filter(Boolean) ?? [];
+  const countryToken = primary[0]?.toLocaleLowerCase();
+  const country = countryToken === "us" || countryToken === "united states"
+    ? "United States" : primary[0] ?? null;
+  const remote = locations.some((location) => /\bremote\b/i.test(location));
+  return {
+    location: locations.join("; "),
+    country,
+    state: remote ? null : primary.length >= 2 ? primary[1] : null,
+    city: remote ? null : primary.length >= 3 ? primary.slice(2).join("-") : null,
+    arrangement: remote ? "remote" : "unknown",
+  };
+};
+
+const genericClassicTaleoSummaryJob = (
+  summary: TampaGeneralTaleoSummary,
+  source: CrawlSource,
+  config: GenericClassicTaleoConfig,
+): CrawledJob => {
+  const location = genericClassicTaleoLocation(summary.locations);
+  const programs = classifyJobPrograms(summary.title).keys;
+  return {
+    externalId: summary.jobId,
+    requisitionId: summary.contestNo,
+    title: summary.title,
+    company: source.company,
+    location: location.location,
+    arrangement: location.arrangement,
+    employmentType: programs.includes("coop") ? "Co-op"
+      : programs.includes("internship") ? "Internship" : summary.employmentType,
+    summary: null,
+    ...(summary.locations.length > 1 ? { secondaryLocations: summary.locations.slice(1) } : {}),
+    ...(location.city ? { locationCity: location.city } : {}),
+    ...(location.state ? { locationState: location.state } : {}),
+    ...(location.country ? { locationCountry: location.country } : {}),
+    applyUrl: summary.applyUrl,
+    rawPayload: { taleoPortal: config.portal, taleoInternalJobId: summary.jobId },
+    officialUrl: summary.officialUrl,
+    publishedAt: null,
+  };
+};
+
+const genericClassicTaleoPublishedAt = (value: string | null): string | null => {
+  const match = value?.match(
+    /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2}),\s+(\d{4})(?:,|$)/i,
+  );
+  if (!match) return null;
+  const month = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+    .indexOf(match[1].toLocaleLowerCase());
+  const day = Number(match[2]);
+  const year = Number(match[3]);
+  const date = new Date(Date.UTC(year, month, day));
+  return month >= 0 && date.getUTCFullYear() === year && date.getUTCMonth() === month && date.getUTCDate() === day
+    ? date.toISOString() : null;
+};
+
+const genericClassicTaleoDetailJob = (
+  summary: TampaGeneralTaleoSummary,
+  html: string,
+  source: CrawlSource,
+  config: GenericClassicTaleoConfig,
+): CrawledJob | null => {
+  const values = taleoClassicStringArray(html);
+  const metaTitle = taleoClassicPlainText(html.match(
+    /<meta\b[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']/i,
+  )?.[1]);
+  const internalId = values?.[0]?.trim();
+  const title = taleoClassicPlainText(values?.[9]);
+  const contestNo = values?.[10]?.trim();
+  if (!values || values.length < 12 || internalId !== summary.jobId || contestNo !== summary.contestNo
+    || !title || jobIdentityText(title) !== jobIdentityText(summary.title)
+    || !metaTitle || jobIdentityText(metaTitle) !== jobIdentityText(summary.title)
+    || !new RegExp(`name=["']requisitionno["'][^>]*value=["']${summary.jobId}["']`, "i").test(html)) return null;
+  const richSections: string[] = [];
+  for (const value of values.slice(11)) {
+    if (!/^!\*!/.test(value)) continue;
+    const text = taleoClassicRichText(value);
+    if (text && text.length >= 10
+      && !richSections.some((existing) => jobIdentityText(existing) === jobIdentityText(text))) richSections.push(text);
+  }
+  const description = richSections[0] ?? null;
+  if (!description) return null;
+  const sourcePostedText = [...values].reverse()
+    .map((value) => taleoClassicPlainText(value))
+    .find((value) => /^(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4}(?:,|$)/i.test(value ?? "")) ?? null;
+  const job = genericClassicTaleoSummaryJob(summary, source, config);
+  const arrangementText = values.map((value) => taleoClassicPlainText(value) ?? "").join(" ");
+  return {
+    ...job,
+    arrangement: /\bremote\b/i.test(arrangementText)
+      ? "remote" : /\bhybrid\b/i.test(arrangementText) ? "hybrid" : "onsite",
+    summary: description.slice(0, 1_200),
+    description,
+    ...(richSections[1] ? { qualifications: richSections[1] } : {}),
+    ...(sourcePostedText ? {
+      sourcePostedText,
+      publishedAt: genericClassicTaleoPublishedAt(sourcePostedText),
+    } : {}),
+  };
+};
+
+const genericClassicTaleoFacets = (
+  values: unknown,
+  total: number,
+  config: GenericClassicTaleoConfig,
+): CrawledFacet[] | null => {
+  if (!Array.isArray(values)) return null;
+  const expected = new Set(config.requestFilters);
+  const facets = (values as TaleoClassicFacet[]).flatMap((facet): CrawledFacet[] => {
+    const id = asText(facet.id);
+    if (!id || !expected.has(id) || !Array.isArray(facet.facetValueResults)) return [];
+    const facetValues = facet.facetValueResults.flatMap((raw): CrawledFacet["values"] => {
+      if (!raw || typeof raw !== "object") return [];
+      const value = raw as { id?: unknown; text?: unknown; quantity?: unknown };
+      const key = asText(value.id);
+      const label = asText(value.text);
+      const quantity = asText(value.quantity);
+      const count = quantity == null ? null : Number(quantity);
+      return key && label && (count == null || (Number.isSafeInteger(count) && count >= 0 && count <= total * 40))
+        ? [{ key, label, count }] : [];
+    });
+    if (facetValues.length !== facet.facetValueResults.length
+      || new Set(facetValues.map(({ key }) => key)).size !== facetValues.length) return [];
+    return [{
+      key: id.toLocaleLowerCase(),
+      label: id.split("_").map((part) => `${part[0]}${part.slice(1).toLocaleLowerCase()}`).join(" "),
+      values: facetValues,
+    }];
+  });
+  return facets.length === expected.size && new Set(facets.map(({ key }) => key)).size === expected.size
+    ? facets : null;
+};
+
+const crawlGenericClassicTaleo = async (
+  source: CrawlSource,
+  config: GenericClassicTaleoConfig,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  let failureStatus: number | null = null;
+  try {
+    const boardResponse = await fetchWithTimeout(fetcher, config.listingUrl, {
+      headers: { accept: "text/html,application/xhtml+xml" },
+    }, true, { attempts: 1, timeoutMs: 10_000 });
+    responseStatus = boardResponse.status;
+    if (!boardResponse.ok) {
+      failureStatus = boardResponse.status;
+      throw new Error(`${config.label} Taleo board returned HTTP ${boardResponse.status}.`);
+    }
+    if (!sameExactUrl(boardResponse.url || config.listingUrl, config.listingUrl)) {
+      throw new Error(`${config.label} Taleo board redirected outside its verified public catalog.`);
+    }
+    const boardHtml = await boardResponse.text();
+    if (!new RegExp(`portalNo\\s*:\\s*["']${config.portal}["']`, "i").test(boardHtml)
+      || !new RegExp(`urlCode\\s*:\\s*["']${config.section}["']`, "i").test(boardHtml)
+      || config.visibleFilters.some((id) =>
+        !new RegExp(`<div\\b[^>]*id=["']filter-${id}["']`, "i").test(boardHtml))) {
+      throw new Error(`${config.label} Taleo board returned invalid public search configuration.`);
+    }
+
+    const searchUrl = genericClassicTaleoSearchUrl(config);
+    const fetchSearchPage = async (pageNo: number): Promise<TaleoClassicSearchPayload> => {
+      const response = await fetchWithTimeout(fetcher, searchUrl, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+          cookie: "locale=en",
+          referer: config.listingUrl,
+          tz: "GMT-07:00",
+          tzname: "America/Los_Angeles",
+        },
+        body: genericClassicTaleoSearchBody(config, pageNo),
+      }, true, { attempts: 1, timeoutMs: 10_000 });
+      responseStatus = response.status;
+      if (!response.ok) {
+        failureStatus = response.status;
+        throw new Error(`${config.label} Taleo search returned HTTP ${response.status}.`);
+      }
+      if (response.url && !sameExactUrl(response.url, searchUrl)) {
+        throw new Error(`${config.label} Taleo search redirected outside its verified endpoint.`);
+      }
+      return await response.json() as TaleoClassicSearchPayload;
+    };
+
+    const firstPage = await fetchSearchPage(1);
+    const total = Number(firstPage.pagingData?.totalCount);
+    const pageSize = Number(firstPage.pagingData?.pageSize);
+    const totalPages = Math.ceil(total / pageSize);
+    if (!Number.isSafeInteger(total) || total < 1 || total > 500 || pageSize !== 25
+      || !Number.isSafeInteger(totalPages) || totalPages < 1 || totalPages > 20) {
+      throw new Error(`${config.label} Taleo search returned invalid catalog metadata.`);
+    }
+    const fetchPass = async (seed?: TaleoClassicSearchPayload): Promise<TaleoClassicSearchPayload[]> => {
+      const pages = new Map<number, TaleoClassicSearchPayload>();
+      if (seed) pages.set(1, seed);
+      const firstMissing = seed ? 2 : 1;
+      for (let page = firstMissing; page <= totalPages; page += 6) {
+        const pageNumbers = Array.from({ length: Math.min(6, totalPages - page + 1) }, (_, index) => page + index);
+        const responses = await Promise.all(pageNumbers.map(async (pageNo) => ({
+          pageNo,
+          payload: await fetchSearchPage(pageNo),
+        })));
+        responses.forEach(({ pageNo, payload }) => pages.set(pageNo, payload));
+      }
+      return Array.from({ length: totalPages }, (_, index) => pages.get(index + 1)!);
+    };
+    const normalizePass = (pages: TaleoClassicSearchPayload[]): TampaGeneralTaleoSummary[] | null => {
+      const summaries: TampaGeneralTaleoSummary[] = [];
+      for (let index = 0; index < pages.length; index += 1) {
+        const pageNo = index + 1;
+        const page = pages[index];
+        const rows = Array.isArray(page.requisitionList) ? page.requisitionList as TaleoClassicRequisition[] : null;
+        const maximumRows = Math.min(pageSize, total - index * pageSize);
+        if (page.careerSectionUnAvailable !== false || Number(page.pagingData?.currentPageNo) !== pageNo
+          || Number(page.pagingData?.pageSize) !== pageSize || Number(page.pagingData?.totalCount) !== total
+          || !rows || (rows.length < 1 && pageNo !== totalPages) || rows.length > maximumRows) return null;
+        const normalized = rows.flatMap((row) => genericClassicTaleoSummary(row, config) ?? []);
+        if (normalized.length !== rows.length) return null;
+        summaries.push(...normalized);
+      }
+      return new Set(summaries.map(({ jobId }) => jobId)).size === summaries.length
+        && new Set(summaries.map(({ contestNo }) => contestNo)).size === summaries.length
+        && new Set(summaries.map(({ officialUrl }) => officialUrl)).size === summaries.length
+        ? summaries : null;
+    };
+
+    const firstPass = normalizePass(await fetchPass(firstPage));
+    const secondPages = await fetchPass();
+    const secondPass = normalizePass(secondPages);
+    if (!firstPass || !secondPass || firstPass.length !== secondPass.length
+      || firstPass.map(({ jobId, contestNo }) => `${jobId}:${contestNo}`).join("|")
+        !== secondPass.map(({ jobId, contestNo }) => `${jobId}:${contestNo}`).join("|")) {
+      throw new Error(`${config.label} Taleo catalog changed or became inconsistent during pagination.`);
+    }
+    const facets = genericClassicTaleoFacets(secondPages[0].facetResults, total, config);
+    if (!facets) throw new Error(`${config.label} Taleo search returned malformed native facets.`);
+
+    const detailBudget = Math.max(0, 50 - (1 + 2 * totalPages));
+    const detailSummaries = secondPass.map((summary, index) => ({ summary, index }))
+      .sort((left, right) => {
+        const leftProgram = classifyJobPrograms(left.summary.title).keys.length > 0 ? 0 : 1;
+        const rightProgram = classifyJobPrograms(right.summary.title).keys.length > 0 ? 0 : 1;
+        return leftProgram - rightProgram || left.index - right.index;
+      })
+      .slice(0, detailBudget)
+      .map(({ summary }) => summary);
+    const enriched = new Map<string, CrawledJob>();
+    const fetchDetail = async (summary: TampaGeneralTaleoSummary): Promise<void> => {
+      try {
+        const response = await fetchWithTimeout(fetcher, summary.officialUrl, {
+          headers: { accept: "text/html,application/xhtml+xml", cookie: "locale=en", referer: config.listingUrl },
+        }, true, { attempts: 1, timeoutMs: 10_000 });
+        if (!response.ok || (response.url && !sameExactUrl(response.url, summary.officialUrl))) return;
+        const job = genericClassicTaleoDetailJob(summary, await response.text(), source, config);
+        if (job) enriched.set(summary.officialUrl, job);
+      } catch {
+        // Detail enrichment is optional; the stable REST catalog remains authoritative.
+      }
+    };
+    for (let index = 0; index < detailSummaries.length; index += 4) {
+      await Promise.all(detailSummaries.slice(index, index + 4).map(fetchDetail));
+    }
+    const completeListing = secondPass.length === total;
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing,
+      jobs: secondPass.map((summary) =>
+        enriched.get(summary.officialUrl) ?? genericClassicTaleoSummaryJob(summary, source, config)),
+      facets,
+      ...(!completeListing ? { pagination: { nextPage: 1, cycleComplete: true, totalPages } } : {}),
+      resolvedListingUrl: config.listingUrl,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: isBlockedHttpStatus(failureStatus ?? responseStatus) ? "blocked" : "failed",
+      responseStatus: failureStatus ?? responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : `Unknown ${config.label} Taleo crawler error.`,
+    };
+  }
+};
+
+const americanFamilyReaderUrl = (officialUrl: string): string =>
+  `${AMERICAN_FAMILY_READER_ORIGIN}/${officialUrl.replaceAll("&", "%26")}`;
+
+const americanFamilyListingUrl = (page: number): string => {
+  const url = new URL(AMERICAN_FAMILY_LISTING_URL);
+  url.searchParams.set("pagesize", String(AMERICAN_FAMILY_PAGE_SIZE));
+  if (page > 1) url.searchParams.set("page", String(page));
+  return url.href;
+};
+
+const americanFamilyListingCard = (html: string, source: CrawlSource): CrawledJob | null => {
+  const rawId = html.match(/<div\b[^>]*class=["'][^"']*\bcard-job\b[^"']*["'][^>]*\bdata-id=["'](r\d{4,10})["']/i)?.[1];
+  const titleMatch = html.match(
+    /<h2\b[^>]*class=["'][^"']*\bcard-title\b[^"']*["'][^>]*>\s*<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>\s*<\/h2>/i,
+  );
+  const title = icimsText(titleMatch?.[2]);
+  if (!rawId || !title || !titleMatch?.[1]) return null;
+  let officialUrl: URL;
+  try {
+    officialUrl = new URL(decodeHtmlAttribute(titleMatch[1]), AMERICAN_FAMILY_LISTING_URL);
+  } catch {
+    return null;
+  }
+  const pathId = officialUrl.pathname.match(/^\/jobs\/(r\d{4,10})\/[a-z0-9-]+\/$/i)?.[1];
+  if (officialUrl.origin !== "https://careers.amfam.com" || pathId?.toLocaleLowerCase() !== rawId.toLocaleLowerCase()
+    || officialUrl.username || officialUrl.password || officialUrl.port || officialUrl.search || officialUrl.hash) return null;
+  const meta = [...html.matchAll(/<li\b[^>]*class=["'][^"']*\blist-inline-item\b[^"']*["'][^>]*>([\s\S]*?)<\/li>/gi)]
+    .map((match) => icimsText(match[1])).filter((value): value is string => Boolean(value));
+  if (meta.length < 2) return null;
+  const location = meta[0].replace(/\s+\+\s*\d+\s+other locations?$/i, "").trim();
+  const businessUnit = meta[1];
+  const arrangementText = meta.slice(2).find((value) => /^(?:remote|hybrid|on[ -]?site)$/i.test(value)) ?? null;
+  if (!location || !businessUnit) return null;
+  const programs = classifyJobPrograms(title).keys;
+  const externalId = rawId.toLocaleUpperCase();
+  return {
+    externalId,
+    requisitionId: externalId,
+    title,
+    company: source.company,
+    location,
+    locationCountry: "United States",
+    arrangement: /^remote$/i.test(arrangementText ?? "") ? "remote"
+      : /^hybrid$/i.test(arrangementText ?? "") ? "hybrid"
+        : /^on[ -]?site$/i.test(arrangementText ?? "") ? "onsite" : "unknown",
+    employmentType: programs.includes("coop") ? "Co-op"
+      : programs.includes("internship") ? "Internship" : null,
+    summary: null,
+    businessUnit,
+    rawPayload: { provider: "american-family-careers", listedArrangement: arrangementText },
+    officialUrl: officialUrl.href,
+    publishedAt: null,
+  };
+};
+
+const americanFamilyListingPage = (
+  html: string,
+  page: number,
+  source: CrawlSource,
+  expectedTotal?: number,
+): { total: number; jobs: CrawledJob[] } | null => {
+  const count = html.match(
+    /Displaying\s*<strong>(\d+)<\/strong>\s*to\s*<strong>(\d+)<\/strong>\s*of\s*<strong>(\d+)<\/strong>\s*matching jobs/i,
+  );
+  const dataTotal = html.match(/\bid=["']js-job-search-results["'][^>]*\bdata-results=["'](\d+)["']/i)?.[1];
+  if (!count || !dataTotal) return null;
+  const start = Number(count[1]);
+  const end = Number(count[2]);
+  const total = Number(count[3]);
+  const expectedStart = (page - 1) * AMERICAN_FAMILY_PAGE_SIZE + 1;
+  const expectedEnd = Math.min(page * AMERICAN_FAMILY_PAGE_SIZE, total);
+  if (!Number.isSafeInteger(total) || total < 1 || total > 1_000 || Number(dataTotal) !== total
+    || (expectedTotal != null && total !== expectedTotal) || start !== expectedStart || end !== expectedEnd) return null;
+  const blocks = htmlBlocksStartingAt(
+    html,
+    /<div\b[^>]*class=["'][^"']*\bcard\b[^"']*\bcard-job\b[^"']*["'][^>]*\bdata-id=["']r\d{4,10}["'][^>]*>/gi,
+  );
+  const jobs = blocks.flatMap((block) => americanFamilyListingCard(block, source) ?? []);
+  const expectedRows = expectedEnd - expectedStart + 1;
+  return blocks.length === expectedRows && jobs.length === expectedRows
+    && new Set(jobs.map(({ externalId }) => externalId)).size === jobs.length
+    && new Set(jobs.map(({ officialUrl }) => officialUrl)).size === jobs.length
+    ? { total, jobs } : null;
+};
+
+const americanFamilyApplyUrl = (html: string, externalId: string): string | null => {
+  const urls = anchorsFromHtml(html).flatMap(({ href, text }) => {
+    if (!/^apply now$/i.test(text)) return [];
+    try {
+      const url = new URL(href);
+      const id = url.pathname.match(
+        /^\/Careers\/job\/[a-z0-9%._~-]+\/[a-z0-9%._~-]+_[rR](\d{4,10})(?:-\d{1,3})?\/apply$/i,
+      )?.[1];
+      return url.origin === "https://amfam.wd1.myworkdayjobs.com"
+        && `R${id}` === externalId && !url.username && !url.password && !url.port && !url.search && !url.hash
+        ? [url.href] : [];
+    } catch {
+      return [];
+    }
+  });
+  const unique = [...new Set(urls)];
+  return unique.length === 1 ? unique[0] : null;
+};
+
+const americanFamilyDetailJob = (
+  html: string,
+  record: CrawledJob,
+  source: CrawlSource,
+): CrawledJob | null => {
+  const nodes = jsonLdScripts(html).flatMap(jobPostingNodes);
+  if (nodes.length !== 1 || !record.externalId) return null;
+  const node = nodes[0];
+  const claimedUrl = asText(node.url) ?? asText(node.mainEntityOfPage);
+  const identifier = node.identifier && typeof node.identifier === "object"
+    ? asText((node.identifier as JsonLdValue).value) ?? asText((node.identifier as JsonLdValue)["@id"])
+    : asText(node.identifier);
+  const title = icimsText(asText(node.title));
+  const hiringOrganization = node.hiringOrganization && typeof node.hiringOrganization === "object"
+    ? node.hiringOrganization as JsonLdValue : null;
+  const businessUnit = icimsText(asText(hiringOrganization?.name));
+  const applyUrl = americanFamilyApplyUrl(html, record.externalId);
+  if (!claimedUrl || !sameExactUrl(claimedUrl, record.officialUrl)
+    || identifier?.toLocaleUpperCase() !== record.externalId || !title
+    || jobIdentityText(title) !== jobIdentityText(record.title) || !businessUnit || !applyUrl) return null;
+  const detail = jsonLdJob({ ...node, url: record.officialUrl }, source);
+  if (!detail || detail.externalId?.toLocaleUpperCase() !== record.externalId
+    || detail.officialUrl !== record.officialUrl || jobIdentityText(detail.title) !== jobIdentityText(record.title)
+    || !detail.description) return null;
+  const locations = (Array.isArray(node.jobLocation) ? node.jobLocation : node.jobLocation ? [node.jobLocation] : [])
+    .map((value) => jobLocation(value)).filter((value): value is string => Boolean(value));
+  // American Family appends generic benefits boilerplate mentioning interns
+  // to every description. Program identity must come from the role title so
+  // a full-time role cannot become an internship through that boilerplate.
+  const programKeys = classifyJobPrograms(record.title).keys;
+  return {
+    ...record,
+    ...detail,
+    externalId: record.externalId,
+    requisitionId: record.externalId,
+    title: record.title,
+    location: locations[0] ?? record.location,
+    ...(locations.length > 1 ? { secondaryLocations: locations.slice(1) } : {}),
+    locationCountry: "United States",
+    arrangement: /\bremote\b/i.test(detail.description) ? "remote"
+      : /\bhybrid\b/i.test(detail.description) ? "hybrid" : record.arrangement,
+    employmentType: programKeys.includes("coop") ? "Co-op"
+      : programKeys.includes("internship") ? "Internship" : detail.employmentType,
+    businessUnit,
+    ...(asText(node.industry) ? { industry: asText(node.industry) } : {}),
+    applyUrl,
+    sourcePostedText: asText(node.datePosted),
+    rawPayload: record.rawPayload,
+    officialUrl: record.officialUrl,
+  };
+};
+
+const crawlAmericanFamilyCareers = async (
+  source: CrawlSource,
+  fetcher: typeof fetch,
+  now: Date,
+): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  const fetchListingPage = async (page: number, expectedTotal?: number): Promise<{ total: number; jobs: CrawledJob[] }> => {
+    const official = americanFamilyListingUrl(page);
+    const response = await fetchWithTimeout(fetcher, americanFamilyReaderUrl(official), {
+      headers: { accept: "text/html,application/xhtml+xml", "x-respond-with": "html" },
+    }, false, { attempts: 1, timeoutMs: 12_000 });
+    responseStatus = response.status;
+    if (!response.ok) throw new Error(`American Family careers reader returned HTTP ${response.status}.`);
+    const parsed = americanFamilyListingPage(await response.text(), page, source, expectedTotal);
+    if (!parsed) throw new Error("American Family careers reader returned an incomplete or invalid listing page.");
+    return parsed;
+  };
+  try {
+    const first = await fetchListingPage(1);
+    const totalPages = Math.ceil(first.total / AMERICAN_FAMILY_PAGE_SIZE);
+    if (!Number.isSafeInteger(totalPages) || totalPages < 1 || totalPages > 49) {
+      throw new Error("American Family careers returned invalid catalog metadata.");
+    }
+    const pages = new Map<number, CrawledJob[]>([[1, first.jobs]]);
+    for (let page = 2; page <= totalPages; page += 6) {
+      const pageNumbers = Array.from({ length: Math.min(6, totalPages - page + 1) }, (_, index) => page + index);
+      const results = await Promise.all(pageNumbers.map(async (pageNumber) => ({
+        pageNumber,
+        result: await fetchListingPage(pageNumber, first.total),
+      })));
+      results.forEach(({ pageNumber, result }) => pages.set(pageNumber, result.jobs));
+    }
+    const jobs = Array.from({ length: totalPages }, (_, index) => pages.get(index + 1) ?? []).flat();
+    if (jobs.length !== first.total || new Set(jobs.map(({ externalId }) => externalId)).size !== jobs.length
+      || new Set(jobs.map(({ officialUrl }) => officialUrl)).size !== jobs.length) {
+      throw new Error("American Family careers reader returned duplicate or missing jobs.");
+    }
+
+    const programJobs = jobs.filter((job) => classifyJobPrograms(job.title).keys.length > 0);
+    const priorityUrls = new Set(programJobs.map(({ officialUrl }) => officialUrl));
+    const rotating = jobs.filter((job) => !priorityUrls.has(job.officialUrl));
+    // The reader permits 20 requests per minute. Three 50-row listing pages
+    // plus at most eight rotating details leave ample room for another source
+    // sharing the same Worker egress while keeping this crawl below 11 calls.
+    const detailLimit = Math.max(0, Math.min(8, 20 - totalPages));
+    const programStart = programJobs.length <= detailLimit
+      ? 0 : (Math.floor(now.getTime() / (2 * 60 * 60 * 1_000)) * detailLimit) % programJobs.length;
+    const selectedPrograms = Array.from({ length: Math.min(detailLimit, programJobs.length) }, (_, index) =>
+      programJobs[(programStart + index) % programJobs.length]);
+    const rotatingBudget = Math.max(0, detailLimit - selectedPrograms.length);
+    const rotatingStart = rotating.length === 0 || rotatingBudget === 0
+      ? 0
+      : (Math.floor(now.getTime() / (2 * 60 * 60 * 1_000)) * rotatingBudget) % rotating.length;
+    const selected = [
+      ...selectedPrograms,
+      ...Array.from({ length: Math.min(rotatingBudget, rotating.length) }, (_, index) =>
+        rotating[(rotatingStart + index) % rotating.length]),
+    ];
+    const enriched = new Map<string, CrawledJob>();
+    const fetchDetail = async (record: CrawledJob): Promise<void> => {
+      try {
+        const response = await fetchWithTimeout(fetcher, americanFamilyReaderUrl(record.officialUrl), {
+          headers: { accept: "text/html,application/xhtml+xml", "x-respond-with": "html" },
+        }, false, { attempts: 1, timeoutMs: 12_000 });
+        if (!response.ok) return;
+        const detail = americanFamilyDetailJob(await response.text(), record, source);
+        if (detail) enriched.set(record.officialUrl, detail);
+      } catch {
+        // The fully validated listing remains usable; a later pass rotates this optional detail window.
+      }
+    };
+    for (let index = 0; index < selected.length; index += 4) {
+      await Promise.all(selected.slice(index, index + 4).map(fetchDetail));
+    }
+    return {
+      status: "succeeded",
+      responseStatus,
+      // r.jina exposes the complete first-party HTML but is still a proxy.
+      // Keep this catalog addition-only so a stale proxy snapshot can never
+      // close jobs that the official edge still serves.
+      completeListing: false,
+      jobs: jobs.map((job) => enriched.get(job.officialUrl) ?? job),
+      resolvedListingUrl: AMERICAN_FAMILY_LISTING_URL,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown American Family careers crawler error.",
     };
   }
 };
@@ -20323,6 +20987,13 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-1072-tampa-general-hospital") {
     return crawlTampaGeneralTaleo(source, fetcher);
+  }
+  const genericClassicTaleo = (source.discoveryDepth ?? 0) === 0
+    ? GENERIC_CLASSIC_TALEO_BOARDS[source.id]
+    : undefined;
+  if (genericClassicTaleo) return crawlGenericClassicTaleo(source, genericClassicTaleo, fetcher);
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p2-0075-american-family-insurance") {
+    return crawlAmericanFamilyCareers(source, fetcher, now);
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p2-0192-ally-financial") {
     return crawlAllyCareers(source, fetcher, now);
