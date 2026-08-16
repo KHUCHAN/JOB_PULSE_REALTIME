@@ -1989,6 +1989,134 @@ Wrong description.
     ]);
   });
 
+  it("paginates NeoGenomics' canonical Jobvite search and reads li.job cards", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p5-0992-neogenomics",
+      company: "NeoGenomics",
+      postingUrl: "https://jobs.jobvite.com/neogenomics",
+      adapter: "custom",
+    }, async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.href);
+      const page = Number(url.searchParams.get("p") ?? 0);
+      return new Response(page === 0
+        ? `<main><div class="jv-pagination-text">1-2 of 3</div><ul>
+            <li class="job"><a class="jv-job-list-name" href="/neogenomics/job/firstJob1">Data Science Intern</a><p class="jv-job-list-location">Fort Myers, Florida</p></li>
+            <li class="job"><a class="jv-job-list-name" href="/neogenomics/job/secondJob2">Software Engineer</a><p class="jv-job-list-location">Remote, United States</p></li>
+          </ul><a href="/neogenomics/search/?p=1" class="jv-pagination-next">Next</a></main>`
+        : `<main><div class="jv-pagination-text">3-3 of 3</div><ul>
+            <li class="job"><a class="jv-job-list-name" href="/neogenomics/job/thirdJob3">Bioinformatics Analyst</a><p class="jv-job-list-location">Carlsbad, California</p></li>
+          </ul></main>`);
+    }, new Date());
+
+    expect(requests).toEqual([
+      "https://jobs.jobvite.com/neogenomics/search",
+      "https://jobs.jobvite.com/neogenomics/search?p=1",
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://jobs.jobvite.com/neogenomics/search",
+    }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({ externalId: "firstJob1", title: "Data Science Intern", employmentType: "Internship", location: "Fort Myers, Florida" }),
+      expect.objectContaining({ externalId: "secondJob2", arrangement: "remote" }),
+      expect.objectContaining({ externalId: "thirdJob3", title: "Bioinformatics Analyst" }),
+    ]);
+  });
+
+  it("fails NeoGenomics closed when a paginated Jobvite page repeats", async () => {
+    const repeated = `<main><div class="jv-pagination-text">1-1 of 2</div><ul>
+      <li class="job"><a class="jv-job-list-name" href="/neogenomics/job/sameJob11">Data Analyst</a><p class="jv-job-list-location">Fort Myers, Florida</p></li>
+    </ul><a href="?p=1">Next</a></main>`;
+    const result = await crawlSource({
+      id: "p5-0992-neogenomics",
+      company: "NeoGenomics",
+      postingUrl: "https://jobs.jobvite.com/neogenomics",
+      adapter: "custom",
+    }, async () => new Response(repeated), new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed",
+      completeListing: false,
+      jobs: [],
+      error: expect.stringContaining("page 2"),
+    }));
+  });
+
+  it("loads Fox's complete server-rendered catalog and verifies a stable first page", async () => {
+    const requests: URL[] = [];
+    const foxPage = (page: number, total: number) => {
+      const start = page * 10;
+      const count = Math.min(10, total - start);
+      return `<input id="hiddenJobCount" type="hidden" value="${total - start}" />${Array.from({ length: count }, (_, index) => {
+        const number = start + index + 1;
+        const identity = `R500${String(number).padStart(5, "0")}`;
+        const title = number === 1 ? "2027 Software Engineering Intern" : `Engineering Role ${number}`;
+        return `<div class="jobListing">
+          <a class="searchResultTitle" href="/Search/JobDetail/${identity}/engineering-role-${number}-fox-corporation">${title} (${identity})</a>
+          <p class="searchResultBrand">Fox Corporation</p>
+          <p class="searchResultDetail"><span>Los Angeles, California</span><span>;</span></p>
+          <p class="searchResultDetail">Job Posting Date: August ${15 - page}, 2026</p>
+        </div>`;
+      }).join("")}`;
+    };
+    const result = await crawlSource({
+      id: "legacy-row-814",
+      company: "Fox",
+      postingUrl: "https://www.foxcareers.com/Search/SearchResults",
+      adapter: "custom",
+    }, async (input) => {
+      const url = new URL(String(input));
+      requests.push(url);
+      return new Response(foxPage(Number(url.searchParams.get("page")), 21));
+    }, new Date());
+
+    expect(requests.map((url) => Number(url.searchParams.get("page")))).toEqual([0, 1, 2, 0]);
+    expect(requests.every((url) => url.pathname === "/Search/JobsList/")).toBe(true);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://www.foxcareers.com/Search/SearchResults",
+    }));
+    expect(result.jobs).toHaveLength(21);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "R50000001",
+      title: "2027 Software Engineering Intern",
+      employmentType: "Internship",
+      businessUnit: "Fox Corporation",
+      location: "Los Angeles, California",
+      publishedAt: "2026-08-15T00:00:00.000Z",
+    }));
+  });
+
+  it("fails Fox closed when the catalog changes during pagination", async () => {
+    let call = 0;
+    const result = await crawlSource({
+      id: "legacy-row-814",
+      company: "Fox",
+      postingUrl: "https://www.foxcareers.com/Search/SearchResults",
+      adapter: "custom",
+    }, async () => {
+      call += 1;
+      const identity = call === 1 ? "R50000001" : "R50000002";
+      return new Response(`<input id="hiddenJobCount" value="1" /><div class="jobListing">
+        <a class="searchResultTitle" href="/Search/JobDetail/${identity}/data-scientist-fox-corporation">Data Scientist (${identity})</a>
+        <p class="searchResultBrand">Fox Corporation</p>
+        <p class="searchResultDetail"><span>New York, New York</span><span>;</span></p>
+        <p class="searchResultDetail">Job Posting Date: August 15, 2026</p>
+      </div>`);
+    }, new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed",
+      completeListing: false,
+      jobs: [],
+      error: expect.stringContaining("changed during pagination"),
+    }));
+  });
+
   it("derives a locale-scoped Radancy search catalog only from a strong landing-page marker", async () => {
     const requests: string[] = [];
     const landing = [
@@ -3660,6 +3788,30 @@ HUMAN RESOURCES Posted Date
     ]);
     expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
     expect(result.jobs).toEqual([expect.objectContaining({ company: "Google DeepMind", title: "Research Engineer" })]);
+  });
+
+  it("routes Mandiant through Google's exact official keyword catalog", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p4-0306-mandiant",
+      company: "Mandiant / Google Cloud",
+      postingUrl: "https://www.google.com/about/careers/applications/",
+      adapter: "custom",
+    }, async (input) => {
+      requests.push(String(input));
+      return new Response(`<span class="SWhIm">1</span> jobs matched
+        <a href="/about/careers/applications/jobs/results/987-cyber-defense-consultant-mandiant" aria-label="Learn more about Cyber Defense Consultant, Mandiant"></a>`);
+    }, new Date());
+
+    expect(requests).toEqual([
+      "https://www.google.com/about/careers/applications/jobs/results/?q=Mandiant",
+    ]);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "987",
+      company: "Mandiant / Google Cloud",
+      title: "Cyber Defense Consultant, Mandiant",
+    })]);
   });
 
   it("extracts Block's complete embedded job catalog instead of the first rendered slice", async () => {
@@ -10361,6 +10513,71 @@ We are an equal opportunity employer.`;
         locationCountry: "United States",
       }),
       expect.objectContaining({ title: "Outside Sales Representative", location: "Tulsa, OK" }),
+    ]);
+  });
+
+  it("recovers Burlington from its official Jobsyn sitemap when Worker API egress is blocked", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "legacy-row-793",
+      company: "Burlington Stores",
+      postingUrl: "https://burlingtonstores.jobs/",
+      adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url.startsWith("https://prod-search-api.jobsyn.org/")) return new Response("Forbidden", { status: 403 });
+      expect(url).toBe("https://burlingtonstores.jobs/sitemaps/jobs_1.xml");
+      return new Response(`<urlset>
+        <url><loc>https://burlingtonstores.jobs/los-angeles-ca/software-engineering-intern/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/job/</loc><lastmod>2026-08-15</lastmod></url>
+        <url><loc>https://burlingtonstores.jobs/san-juan-pr/data-analyst/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB/job/</loc><lastmod>2026-08-14</lastmod></url>
+      </urlset>`);
+    }, new Date());
+
+    expect(requests).toEqual([
+      "https://prod-search-api.jobsyn.org/api/v1/solr/search?page=1",
+      "https://burlingtonstores.jobs/sitemaps/jobs_1.xml",
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      resolvedListingUrl: "https://burlingtonstores.jobs/jobs/",
+    }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        title: "Software Engineering Intern",
+        location: "Los Angeles, CA",
+        locationCountry: "United States",
+        employmentType: "Internship",
+        publishedAt: "2026-08-15T00:00:00.000Z",
+      }),
+      expect.objectContaining({ location: "San Juan, PR", locationState: "PR", locationCountry: "United States" }),
+    ]);
+  });
+
+  it("uses Cummins' official sitemap fallback and retains only its US-scoped catalog", async () => {
+    const result = await crawlSource({
+      id: "audit-row-338",
+      company: "Cummins",
+      postingUrl: "https://cummins.jobs/jobs",
+      adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      if (url.startsWith("https://prod-search-api.jobsyn.org/")) return new Response("Forbidden", { status: 403 });
+      expect(url).toBe("https://cummins.jobs/sitemaps/jobs_1.xml");
+      return new Response(`<urlset>
+        <url><loc>https://cummins.jobs/columbus-in/2027-data-science-intern/11111111111111111111111111111111/job/</loc><lastmod>2026-08-15</lastmod></url>
+        <url><loc>https://cummins.jobs/pune-ind/software-engineer/22222222222222222222222222222222/job/</loc><lastmod>2026-08-14</lastmod></url>
+      </urlset>`);
+    }, new Date());
+
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: false }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        title: "2027 Data Science Intern",
+        location: "Columbus, IN",
+        locationCountry: "United States",
+      }),
     ]);
   });
 

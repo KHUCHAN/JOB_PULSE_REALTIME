@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:2a027829d35514dbb6ff810f700bf62cd97e6d546407ce6fa7b7f4cf87d2fd36",
+  "version": "v2:sha256:7efbcabbfde7406ca32e00ad055b35a2141e5e6d04ebf9a7bfcec0c3278bc4b0",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -12126,7 +12126,7 @@
       "id": "p5-0992-neogenomics",
       "masterRow": 2603,
       "company": "NeoGenomics",
-      "postingUrl": "https://jobs.jobvite.com/neogenomics",
+      "postingUrl": "https://jobs.jobvite.com/neogenomics/search",
       "talentUrl": "https://www.neogenomics.com/careers",
       "channel": "공식 채용공고 검색·지원",
       "adapter": "custom",
@@ -12134,7 +12134,7 @@
       "confidence": "medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-15",
       "enabled": true
     },
     {
@@ -14406,7 +14406,7 @@
       "id": "legacy-row-793",
       "masterRow": 2793,
       "company": "Burlington Stores",
-      "postingUrl": "https://burlingtonstores.jobs/",
+      "postingUrl": "https://burlingtonstores.jobs/jobs/",
       "talentUrl": "https://burlingtonstores.jobs/",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -14414,7 +14414,7 @@
       "confidence": "high-medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-15",
       "enabled": true
     },
     {
@@ -19716,7 +19716,7 @@
       "id": "p4-0306-mandiant",
       "masterRow": 3228,
       "company": "Mandiant / Google Cloud",
-      "postingUrl": "https://www.google.com/about/careers/applications/",
+      "postingUrl": "https://www.google.com/about/careers/applications/jobs/results/?q=Mandiant",
       "talentUrl": "https://www.google.com/about/careers/applications/",
       "channel": "Google Careers candidate applications/profile",
       "adapter": "custom",
@@ -19724,7 +19724,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-15",
       "enabled": true
     },
     {
@@ -25611,7 +25611,7 @@
       "officialUrl": "https://www.neogenomics.com/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-15"
     },
     {
       "id": "talent-p5-0993-nerdwallet",
@@ -26771,7 +26771,7 @@
       "officialUrl": "https://burlingtonstores.jobs/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-15"
     },
     {
       "id": "talent-legacy-row-794",
@@ -29603,7 +29603,7 @@
       "officialUrl": "https://www.google.com/about/careers/applications/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-15"
     },
     {
       "id": "talent-p4-0309-microsoft",
