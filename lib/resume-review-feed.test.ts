@@ -60,6 +60,12 @@ const databaseWithCandidates = (): DatabaseSync => {
        '[]', NULL, NULL, NULL, NULL, 'Internship', NULL, NULL, NULL,
        '2026-08-12T20:00:00.000Z', '2026-08-12T20:00:00.000Z', '2026-08-12T20:00:00.000Z', 'open', 1,
        NULL, NULL, NULL, 'url:https://careers.acme.example/jobs/old', 0);
+    INSERT INTO jobs VALUES
+      ('job-clinical-extern', 'Hospital', 'Nurse Extern Renal PRN', 'Indianapolis, IN', 'us',
+       'https://careers.hospital.example/jobs/extern', NULL, NULL, NULL, NULL, NULL,
+       '[]', NULL, NULL, NULL, NULL, 'Internship', NULL, NULL, NULL,
+       NULL, '2026-08-14T21:00:00.000Z', '2026-08-14T21:00:00.000Z', 'open', 1,
+       NULL, NULL, NULL, 'url:https://careers.hospital.example/jobs/extern', 1);
     INSERT INTO job_matches VALUES
       ('match-new', 'job-new', 'resume-keyword', 80, '["role|Data"]', 1, 1, 0),
       ('match-reviewed', 'job-reviewed', 'resume-keyword', 90, '[]', 1, 1, 0);
@@ -67,11 +73,14 @@ const databaseWithCandidates = (): DatabaseSync => {
       ('match-coop-pending', 'job-coop-pending', 'resume-keyword', 95, '[]', 1, 1, 0);
     INSERT INTO job_matches VALUES
       ('match-old', 'job-old', 'resume-keyword', 70, '[]', 1, 1, 0);
+    INSERT INTO job_matches VALUES
+      ('match-clinical-extern', 'job-clinical-extern', 'resume-keyword', 95, '[]', 1, 1, 0);
     INSERT INTO job_topics VALUES
       ('job-new', 'program:internship'), ('job-new', 'year:2027'),
       ('job-reviewed', 'program:coop'),
       ('job-coop-pending', 'program:internship');
     INSERT INTO job_topics VALUES ('job-old', 'program:internship');
+    INSERT INTO job_topics VALUES ('job-clinical-extern', 'program:internship');
     INSERT INTO codex_reviews (job_match_id) VALUES ('match-reviewed');
   `);
   return sqlite;

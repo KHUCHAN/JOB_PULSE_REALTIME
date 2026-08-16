@@ -102,8 +102,16 @@ describe("job program classifier", () => {
     "Specialist - Talent Acquisition – Early Talent & Intern Recruiting",
     "Campus Recruiter - Internship Program Hiring",
     "Intern Program Coordinator",
+    "Nurse Extern Renal PRN",
+    "Radiology Tech Extern 1",
+    "Student Nurse Extern - Emergency Department",
+    "Pharmacy Extern - Inpatient",
   ])("does not classify false positive: %s", (title) => {
     expect(classifyJobPrograms(title).keys).toEqual([]);
+  });
+
+  it("keeps a non-clinical externship classified", () => {
+    expect(classifyJobPrograms("2027 Data Science Externship").keys).toEqual(["internship"]);
   });
 
   it("keeps an actual talent acquisition intern classified", () => {

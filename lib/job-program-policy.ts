@@ -16,6 +16,27 @@ const verifiedCoopOfficialUrlSql = (alias: string): string => verifiedCoopOffici
   .map((prefix) => `substr(lower(coalesce(${alias}.official_url, '')), 1, ${prefix.length}) = '${prefix}'`)
   .join(" OR ");
 
+const normalizedTitleTokens = (alias: string): string => `lower(' ' ||
+  replace(replace(replace(replace(replace(replace(replace(replace(replace(
+    coalesce(${alias}.title, ''), '-', ' '), '‐', ' '), '‑', ' '), '–', ' '), '—', ' '),
+    '/', ' '), '(', ' '), ')', ' '), ',', ' ')
+  || ' ')`;
+
+/** Clinical extern shifts are credential-track hospital jobs, not internships. */
+export const jobHasClinicalExternSql = (alias = "j"): string => {
+  const title = normalizedTitleTokens(alias);
+  const externToken = ["extern", "externs", "externship", "externships"]
+    .map((token) => `${title} LIKE '% ${token} %'`)
+    .join(" OR ");
+  const clinicalToken = [
+    "nurse", "nursing", "radiology", "radiologic", "pharmacy", "pharmacist",
+    "respiratory care", "respiratory therapy", "surgical tech", "surgical technologist",
+    "patient care", "medical assistant", "sonography", "sonographer",
+    "imaging technologist", "clinical laboratory", "laboratory technologist",
+  ].map((token) => `${title} LIKE '% ${token} %'`).join(" OR ");
+  return `((${externToken}) AND (${clinicalToken}))`;
+};
+
 export const jobHasCoopSql = (alias = "j"): string => `(
   ${normalizedEmploymentType(alias)} LIKE '%coop%'
   OR ${verifiedCoopOfficialUrlSql(alias)}
@@ -31,4 +52,5 @@ export const internshipOnlySql = (alias = "j"): string => `(
     WHERE internship_topic.job_id = ${alias}.id AND internship_topic.topic_key = 'program:internship'
   )
   AND NOT ${jobHasCoopSql(alias)}
+  AND NOT ${jobHasClinicalExternSql(alias)}
 )`;

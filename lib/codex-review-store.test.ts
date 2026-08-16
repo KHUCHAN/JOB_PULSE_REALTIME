@@ -51,7 +51,7 @@ const database = (): DatabaseSync => {
     CREATE TABLE jobs (
       id TEXT PRIMARY KEY, official_url TEXT NOT NULL, apply_url TEXT, first_seen_at TEXT NOT NULL,
       reopened_at TEXT, status TEXT NOT NULL, open_generation INTEGER NOT NULL, company TEXT NOT NULL,
-      location_region TEXT NOT NULL, employment_type TEXT,
+      title TEXT, location_region TEXT NOT NULL, employment_type TEXT,
       requisition_identity_key TEXT, external_identity_key TEXT, url_identity_key TEXT,
       alert_discovered_after_baseline INTEGER NOT NULL DEFAULT 1
     );

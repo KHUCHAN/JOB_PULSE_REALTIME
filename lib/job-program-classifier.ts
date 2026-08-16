@@ -69,7 +69,13 @@ export function classifyJobPrograms(title: string): JobProgramClassification {
   // Keep the exclusion narrow so titles such as "Talent Acquisition Intern"
   // still classify correctly while "Intern Recruiting Specialist" does not.
   const internshipProgramSupportRole = /(?:\b(?:talent acquisition|campus recruit(?:er|ing)|human resources)\b.*\bintern(?:ship)? (?:program )?(?:recruiting|hiring|coordination)\b|\bintern(?:ship)? (?:program )?(?:recruiting|hiring|coordinat(?:or|ion))\b)/u.test(normalized);
-  const internship = internshipProgramSupportRole ? undefined : firstMatch(normalized, internshipRules);
+  const internshipCandidate = internshipProgramSupportRole ? undefined : firstMatch(normalized, internshipRules);
+  // Hospitals use "extern" for supervised clinical shifts that are neither a
+  // recruiting-cycle internship nor interchangeable with a summer internship.
+  // Keep genuine non-clinical externships (for example, data-science
+  // externships) while excluding credential-track clinical job families.
+  const clinicalExternRole = internshipCandidate?.label === "externship" && /\b(?:nurs(?:e|ing)|radiolog(?:y|ic)|pharmac(?:y|ist)|respiratory (?:care|therap(?:y|ist))|surgical (?:tech|technologist)|patient care|medical assistant|sonograph(?:y|er)|imaging technologist|clinical laboratory|laboratory technologist)\b/u.test(normalized);
+  const internship = clinicalExternRole ? undefined : internshipCandidate;
   const coop = firstMatch(normalized, coopRules);
   const keys: JobProgramKey[] = [];
   const evidence: Partial<Record<JobProgramKey, string>> = {};
