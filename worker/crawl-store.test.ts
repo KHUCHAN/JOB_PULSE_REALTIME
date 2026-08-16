@@ -165,6 +165,55 @@ describe("D1CrawlStore enriched job persistence", () => {
     }]);
   });
 
+  it("merges an enriched Barclays locale URL into a legacy listing without stored IDs", async () => {
+    const title = "Quantitative Finance Associate Summer Internship Program 2027 New York";
+    const legacyUrl = "https://search.jobs.barclays/job/new-york/quantitative-finance-associate-summer-internship-program-2027-new-york/13015/99217260160";
+    const enrichedUrl = "https://search.jobs.barclays/en/job/new-york/quantitative-finance-associate-summer-internship-program-2027-new-york/13015/99217260160";
+    const { db, calls } = fakeDb({
+      source: { company: "Barclays US", posting_url: "https://search.jobs.barclays/en/search-jobs" },
+      existingJobs: [{
+        id: "legacy-listing",
+        external_id: null,
+        requisition_id: null,
+        title,
+        official_url: legacyUrl,
+        status: "open",
+        resume_match_hash: null,
+      }],
+    });
+    const store = new D1CrawlStore(db);
+
+    await store.syncJobs("p4-0225-barclays-us", [{
+      externalId: "99217260160",
+      requisitionId: "JR-0000128099",
+      title,
+      company: "Barclays US",
+      location: "New York, 745 7th Avenue",
+      arrangement: "onsite",
+      employmentType: "Internship / Full-time",
+      summary: "Quantitative finance internship.",
+      description: "Build quantitative models and software for the trading business.",
+      applyUrl: "https://barclays.wd3.myworkdayjobs.com/External_Career_Site_Barclays/job/New-York-745-7th-Avenue/Quantitative-Finance-Associate-Summer-Internship-Program-2027-New-York_JR-0000128099/apply",
+      officialUrl: enrichedUrl,
+      publishedAt: "2026-08-14T00:00:00.000Z",
+    }], false);
+
+    const repair = calls.find((call) => call.sql.includes("UPDATE jobs") && call.sql.includes("officialUrl") && call.sql.includes("json_each"));
+    expect(JSON.parse(String(repair?.values[0]))).toEqual([{
+      id: "legacy-listing",
+      officialUrl: enrichedUrl,
+    }]);
+    const inserted = calls.find((call) => call.sql.includes("INSERT INTO jobs"));
+    expect(JSON.parse(String(inserted?.values[0]))).toEqual([
+      expect.objectContaining({
+        officialUrl: enrichedUrl,
+        externalId: "99217260160",
+        requisitionId: "JR-0000128099",
+        description: "Build quantitative models and software for the trading business.",
+      }),
+    ]);
+  });
+
   it("closes an ATS mirror when the first-party listing resolves the same requisition", async () => {
     const title = "Quantitative Finance Associate Summer Internship Program 2027 New York";
     const listingUrl = "https://search.jobs.barclays/job/new-york/quantitative-finance-associate-summer-internship-program-2027-new-york/13015/99217260160";

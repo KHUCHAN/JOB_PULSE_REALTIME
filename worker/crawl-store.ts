@@ -48,6 +48,20 @@ const mirrorTitle = (value: string): string => value.normalize("NFKC")
   .replace(/\s+/g, " ")
   .trim();
 
+const canonicalListingIdentityUrl = (value: string): string => {
+  try {
+    const url = new URL(value);
+    url.hash = "";
+    if (url.hostname.toLocaleLowerCase() === "search.jobs.barclays") {
+      url.pathname = url.pathname.replace(/^\/en(?=\/job\/)/i, "");
+      if (url.pathname.length > 1) url.pathname = url.pathname.replace(/\/+$/, "");
+    }
+    return url.href;
+  } catch {
+    return value;
+  }
+};
+
 const firstPartyMirrorUrls = (jobs: CrawledJob[], postingUrl: string | null): Map<string, string> => {
   let sourceOrigin: string | null = null;
   try {
@@ -424,6 +438,13 @@ export class D1CrawlStore implements CrawlStore {
       }
     };
     const existingByUrl = new Map(existingResult.results.map((row) => [row.official_url, row]));
+    const existingByListingIdentity = new Map<string, ExistingJobRow[]>();
+    for (const row of existingResult.results) {
+      const identity = canonicalListingIdentityUrl(row.official_url);
+      const matches = existingByListingIdentity.get(identity) ?? [];
+      matches.push(row);
+      existingByListingIdentity.set(identity, matches);
+    }
     const existingByExternalId = new Map(existingResult.results.flatMap((row) =>
       row.external_id ? [[row.external_id, row] as const] : [],
     ));
@@ -570,9 +591,13 @@ export class D1CrawlStore implements CrawlStore {
             .flatMap((identity) => existingByMirrorIdentity.get(identity) ?? []))]
             .filter((row) => mirrorTitle(row.title) === recordTitle)
           : [];
+        const listingMatches = isFirstPartyListing
+          ? (existingByListingIdentity.get(canonicalListingIdentityUrl(officialUrl)) ?? [])
+            .filter((row) => mirrorTitle(row.title) === recordTitle)
+          : [];
         const existingTarget = existingByUrl.get(officialUrl);
         if (existingTarget) {
-          for (const mirror of identityMatches) {
+          for (const mirror of [...identityMatches, ...listingMatches]) {
             if (mirror.id !== existingTarget.id && mirror.official_url !== officialUrl && mirror.status === "open") {
               duplicateJobIds.add(mirror.id);
             }
@@ -580,9 +605,9 @@ export class D1CrawlStore implements CrawlStore {
           return [];
         }
         const exactExternal = externalId ? existingByExternalId.get(externalId) : null;
-        const existing = exactExternal ?? identityMatches[0] ?? null;
+        const existing = exactExternal ?? listingMatches[0] ?? identityMatches[0] ?? null;
         if (!existing || existing.official_url === officialUrl) return [];
-        for (const mirror of identityMatches) {
+        for (const mirror of [...identityMatches, ...listingMatches]) {
           if (mirror.id !== existing.id && mirror.status === "open") duplicateJobIds.add(mirror.id);
         }
         return [{ id: existing.id, officialUrl }];
