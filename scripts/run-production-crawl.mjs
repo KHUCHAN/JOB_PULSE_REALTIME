@@ -133,7 +133,12 @@ const alertDispatch = await postAction("scheduledProcessAlerts", 110_000);
 
 const getJson = async (resource) => {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(new Error(`${resource} verification exceeded 30 seconds.`)), 30_000);
+  // The overview query can briefly exceed 30 seconds while the just-finished
+  // crawl is flushing a large source into D1. Keep final health verification
+  // authoritative instead of turning a successful 20-minute drain into a
+  // false workflow failure. The workflow's 25-minute cap still bounds this.
+  const verificationTimeoutMs = 90_000;
+  const timeout = setTimeout(() => controller.abort(new Error(`${resource} verification exceeded 90 seconds.`)), verificationTimeoutMs);
   try {
     const response = await fetch(`${apiUrl}?resource=${encodeURIComponent(resource)}`, {
       headers: { accept: "application/json" },
