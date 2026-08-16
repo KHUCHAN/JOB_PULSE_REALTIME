@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:7efbcabbfde7406ca32e00ad055b35a2141e5e6d04ebf9a7bfcec0c3278bc4b0",
+  "version": "v2:sha256:3867b1f52caafbfd982f5f89c89f5a7bf504e1fc10f5a8364a226d7b9165c564",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -4851,15 +4851,15 @@
       "id": "p2-0110-franklin-templeton",
       "masterRow": 1251,
       "company": "Franklin Templeton",
-      "postingUrl": "https://www.franklintempleton.com/careers",
+      "postingUrl": "https://franklintempleton.wd5.myworkdayjobs.com/Primary-External-1",
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-08",
+      "checkedAt": "2026-08-15",
       "enabled": true
     },
     {
@@ -14526,7 +14526,7 @@
       "id": "legacy-row-801",
       "masterRow": 2801,
       "company": "Darden Restaurants",
-      "postingUrl": "https://www.darden.com/careers",
+      "postingUrl": "https://dardenrscjobs.recruiting.com/",
       "talentUrl": "https://careers.darden.com/",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -14534,7 +14534,7 @@
       "confidence": "high-medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-08",
+      "checkedAt": "2026-08-15",
       "enabled": true
     },
     {
@@ -14886,7 +14886,7 @@
       "id": "legacy-row-825",
       "masterRow": 2825,
       "company": "Insight Enterprises",
-      "postingUrl": "https://jobs.insight.com/",
+      "postingUrl": "https://jobsearch.insight.com/?locale=en_US",
       "talentUrl": "https://jobs.insight.com/",
       "channel": "공식 Career Portal",
       "adapter": "custom",
@@ -14894,7 +14894,7 @@
       "confidence": "high-medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-15",
       "enabled": true
     },
     {
@@ -26835,7 +26835,7 @@
       "officialUrl": "https://careers.darden.com/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-08"
+      "checkedAt": "2026-08-15"
     },
     {
       "id": "talent-legacy-row-802",
@@ -27027,7 +27027,7 @@
       "officialUrl": "https://jobs.insight.com/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-15"
     },
     {
       "id": "talent-legacy-row-826",

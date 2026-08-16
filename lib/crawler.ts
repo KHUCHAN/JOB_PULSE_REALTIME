@@ -118,7 +118,7 @@ const isEightfoldListingUrl = (value: string): boolean => {
 // checkpoint segments, and changing scope between segments would make stale
 // closure nondeterministic. Unknown and mixed/global roles remain visible so
 // an incomplete location never causes a potentially relevant US role to drop.
-export const LARGE_CATALOG_US_SCOPE_POLICY_VERSION = "large-us-v3";
+export const LARGE_CATALOG_US_SCOPE_POLICY_VERSION = "large-us-v4";
 export const US_SCOPED_LARGE_CATALOGS = new Set([
   "audit-row-319", // Baker Hughes
   "audit-row-338", // Cummins
@@ -8510,14 +8510,19 @@ const successFactorsJobsFromHtml = (html: string, source: CrawlSource): CrawledJ
     const postedText = field("jobDate");
     const locationParts = location?.split(",").map((value) => value.trim()).filter(Boolean) ?? [];
     const lastLocationPart = locationParts.at(-1) ?? "";
-    const countryIndex = locationParts.length >= 4 && /\d/.test(lastLocationPart)
-      ? locationParts.length - 2
-      : locationParts.length >= 3 || /^(?:US|USA|United States)$/i.test(lastLocationPart)
-        ? locationParts.length - 1
-        : -1;
+    const explicitUsIndex = locationParts.findLastIndex((value) => /^(?:US|USA|United States)$/i.test(value));
+    const trailingPostalOrPlaceholder = /\d/.test(lastLocationPart) || /^(?:N\/?A|NA)$/i.test(lastLocationPart);
+    const countryIndex = explicitUsIndex >= 0
+      ? explicitUsIndex
+      : trailingPostalOrPlaceholder && locationParts.length >= 3
+        ? locationParts.length - 2
+        : locationParts.length >= 3
+          ? locationParts.length - 1
+          : -1;
     const rawCountry = countryIndex >= 0 ? locationParts[countryIndex] : null;
     const usLocation = /^(?:US|USA|United States)$/i.test(rawCountry ?? "");
     const locationCountry = usLocation ? "United States" : rawCountry;
+    const leadingUsStateOnly = usLocation && countryIndex === 1 && /^[A-Z]{2}$/i.test(locationParts[0] ?? "");
     const programs = classifyJobPrograms(title).keys;
     const arrangement = /\bremote\b/i.test(`${location ?? ""} ${shiftSchedule ?? ""}`)
       ? "remote"
@@ -8536,8 +8541,10 @@ const successFactorsJobsFromHtml = (html: string, source: CrawlSource): CrawledJ
       summary: [department, shiftSchedule].filter(Boolean).join(" · ") || null,
       department,
       ...(shiftSchedule ? { shiftSchedule } : {}),
-      ...(locationParts.length >= 2 ? { locationCity: locationParts[0] } : {}),
-      ...(usLocation && countryIndex >= 2 ? { locationState: locationParts[countryIndex - 1] } : {}),
+      ...(locationParts.length >= 2 && !leadingUsStateOnly ? { locationCity: locationParts[0] } : {}),
+      ...(usLocation && countryIndex >= 2
+        ? { locationState: locationParts[countryIndex - 1] }
+        : leadingUsStateOnly ? { locationState: locationParts[0] } : {}),
       ...(locationCountry ? { locationCountry } : {}),
       requisitionId: externalId,
       officialUrl: officialUrl.href,
@@ -14147,6 +14154,363 @@ const crawlFedEx = async (source: CrawlSource, fetcher: typeof fetch): Promise<S
     resolvedListingUrl: fedexListingUrl(1),
     error: firstFailedPage == null ? null : `FedEx US catalog page ${firstFailedPage} was unavailable or unstable.`,
   };
+};
+
+type DardenParadoxJob = {
+  uniqueID?: unknown;
+  reference?: unknown;
+  title?: unknown;
+  companyName?: unknown;
+  locations?: unknown;
+  isRemote?: unknown;
+  employmentType?: unknown;
+  applyURL?: unknown;
+  originalURL?: unknown;
+  customFields?: unknown;
+};
+
+type DardenListingPage = {
+  status: number;
+  total: number;
+  jobs: CrawledJob[];
+};
+
+const dardenListingUrl = (page: number): string => `https://dardenrscjobs.recruiting.com/jobs/page/${page}`;
+
+const dardenParadoxUrl = (value: unknown, uniqueId: string): string | null => {
+  const text = asText(value);
+  if (!text) return null;
+  try {
+    const url = new URL(text);
+    if (url.protocol !== "https:" || url.hostname !== "darden.paradox.ai" || url.port
+      || url.username || url.password || url.hash
+      || url.pathname !== "/co/DardenRestaurantSupportCenter/Job"
+      || url.searchParams.get("job_id") !== uniqueId
+      || [...url.searchParams.keys()].some((key) => key !== "job_id")) return null;
+    const canonical = new URL("https://darden.paradox.ai/co/DardenRestaurantSupportCenter/Job");
+    canonical.searchParams.set("job_id", uniqueId);
+    return canonical.href;
+  } catch {
+    return null;
+  }
+};
+
+const dardenParadoxJob = (value: unknown, source: CrawlSource): CrawledJob | null => {
+  if (!value || typeof value !== "object") return null;
+  const job = value as DardenParadoxJob;
+  const uniqueId = asText(job.uniqueID);
+  const externalId = asText(job.reference);
+  const title = asText(job.title);
+  const companyName = asText(job.companyName);
+  if (!uniqueId || !/^PDX_DRSC_[A-Z0-9-]+_\d+$/i.test(uniqueId)
+    || !externalId || !/^[A-Z]\d+-\d+-\d+$/i.test(externalId)
+    || !title || !companyName || !/Darden Restaurant Support Center/i.test(companyName)) return null;
+  const applyUrl = dardenParadoxUrl(job.applyURL, uniqueId);
+  const originalUrl = dardenParadoxUrl(job.originalURL, uniqueId);
+  if (!applyUrl || originalUrl !== applyUrl) return null;
+
+  if (!Array.isArray(job.locations) || job.locations.length === 0) return null;
+  const locations = job.locations.filter((location): location is FedExLocation => Boolean(location) && typeof location === "object");
+  if (locations.length !== job.locations.length) return null;
+  const primary = locations.find((location) => asText(location.countryAbbr)?.toLocaleUpperCase() === "US"
+    || /^United States(?: of America)?$/i.test(asText(location.country) ?? ""));
+  if (!primary) return null;
+  const locationValues = [...new Set(locations.map(fedexLocationText).filter((location): location is string => Boolean(location)))];
+  if (locationValues.length === 0) return null;
+
+  const fields = fedexCustomFields(job.customFields);
+  const programs = classifyJobPrograms(title).keys;
+  const employmentLabels = Array.isArray(job.employmentType)
+    ? [...new Set(job.employmentType.flatMap((entry) => normalizeEmploymentType(asText(entry))?.split(" / ") ?? []))]
+    : [];
+  if (programs.includes("coop") && !employmentLabels.includes("Co-op")) employmentLabels.unshift("Co-op");
+  else if (programs.includes("internship") && !employmentLabels.includes("Internship")) employmentLabels.unshift("Internship");
+  const remote = job.isRemote === true || locations.every((location) => location.isRemote === true
+    || /^remote$/i.test(asText(location.locationName) ?? ""));
+  const latitude = typeof primary.latitude === "number" && Number.isFinite(primary.latitude) ? primary.latitude : null;
+  const longitude = typeof primary.longitude === "number" && Number.isFinite(primary.longitude) ? primary.longitude : null;
+
+  return {
+    externalId,
+    title,
+    company: source.company,
+    location: locationValues.join("; "),
+    arrangement: remote ? "remote" : "onsite",
+    employmentType: employmentLabels.join(" / ") || null,
+    summary: fields.get("cf_functional_area") ?? null,
+    ...(fields.get("cf_functional_area") ? { department: fields.get("cf_functional_area") } : {}),
+    ...(fields.get("cf_brand") ? { businessUnit: fields.get("cf_brand") } : {}),
+    ...(asText(primary.locationName) ? { office: asText(primary.locationName) } : {}),
+    ...(locationValues.length > 1 ? { secondaryLocations: locationValues.slice(1) } : {}),
+    ...(asText(primary.city) ? { locationCity: asText(primary.city) } : {}),
+    ...(asText(primary.stateAbbr) ?? asText(primary.state) ? { locationState: asText(primary.stateAbbr) ?? asText(primary.state) } : {}),
+    locationCountry: "US",
+    ...(asText(primary.zipCode) ?? asText(primary.postalCode) ? { locationPostalCode: asText(primary.zipCode) ?? asText(primary.postalCode) } : {}),
+    ...(latitude != null ? { latitude } : {}),
+    ...(longitude != null ? { longitude } : {}),
+    requisitionId: externalId,
+    applyUrl,
+    rawPayload: { paradoxJobId: uniqueId },
+    officialUrl: applyUrl,
+    publishedAt: null,
+  };
+};
+
+const dardenListingPage = (html: string, page: number, source: CrawlSource, status: number): DardenListingPage | null => {
+  const payload = embeddedJsonObject(html, "window.__PRELOAD_STATE__ = ");
+  const jobSearch = payload?.jobSearch;
+  if (!jobSearch || typeof jobSearch !== "object") return null;
+  const state = jobSearch as JsonLdValue;
+  const params = state.params;
+  const rawJobs = state.jobs;
+  const total = state.totalJob;
+  if (!params || typeof params !== "object" || !Array.isArray(rawJobs)
+    || !Number.isSafeInteger(total) || Number(total) <= 0) return null;
+  const request = params as JsonLdValue;
+  const filter = request.filter;
+  if (request.page_number !== page
+    || (request.page_size != null && request.page_size !== 10)
+    || !filter || typeof filter !== "object" || Array.isArray(filter) || Object.keys(filter).length !== 0) return null;
+  const expected = Math.min(10, Math.max(0, Number(total) - (page - 1) * 10));
+  if (rawJobs.length !== expected) return null;
+  const jobs = rawJobs.map((job) => dardenParadoxJob(job, source));
+  if (jobs.some((job) => job === null)) return null;
+  const normalized = jobs as CrawledJob[];
+  const identities = normalized.map((job) => job.externalId);
+  if (new Set(identities).size !== identities.length) return null;
+  return { status, total: Number(total), jobs: normalized };
+};
+
+const crawlDardenRestaurantSupport = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  const fetchPage = async (page: number): Promise<DardenListingPage | null> => {
+    try {
+      const endpoint = dardenListingUrl(page);
+      const response = await fetchWithTimeout(fetcher, endpoint, undefined, true, { attempts: 1, timeoutMs: 10_000 });
+      responseStatus = response.status;
+      if (!response.ok) return null;
+      if (response.url) {
+        const final = new URL(response.url);
+        if (final.origin !== "https://dardenrscjobs.recruiting.com" || final.pathname !== `/jobs/page/${page}`
+          || final.search || final.hash) return null;
+      }
+      return dardenListingPage(await response.text(), page, source, response.status);
+    } catch {
+      return null;
+    }
+  };
+
+  const first = await fetchPage(1);
+  if (!first) return {
+    status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+    responseStatus,
+    completeListing: false,
+    jobs: [],
+    error: "Darden's official Paradox catalog did not return a usable first page.",
+  };
+  const totalPages = Math.ceil(first.total / 10);
+  if (totalPages > 20) return {
+    status: "failed", responseStatus: first.status, completeListing: false, jobs: [],
+    error: "Darden's official Paradox catalog exceeded its verified pagination bound.",
+  };
+  const pages: DardenListingPage[] = [first];
+  const pageNumbers = Array.from({ length: Math.max(0, totalPages - 1) }, (_, index) => index + 2);
+  for (let index = 0; index < pageNumbers.length; index += 4) {
+    const batch = await Promise.all(pageNumbers.slice(index, index + 4).map(fetchPage));
+    if (batch.some((page) => page === null)) return {
+      status: "failed", responseStatus, completeListing: false, jobs: [],
+      error: "Darden's official Paradox catalog changed or failed during pagination.",
+    };
+    pages.push(...batch as DardenListingPage[]);
+  }
+  const stableFirst = await fetchPage(1);
+  if (!stableFirst || stableFirst.total !== first.total
+    || stableFirst.jobs.map((job) => job.externalId).join("\n") !== first.jobs.map((job) => job.externalId).join("\n")) return {
+    status: "failed", responseStatus, completeListing: false, jobs: [],
+    error: "Darden's official Paradox catalog changed during pagination.",
+  };
+  const jobs = pages.flatMap((page) => page.jobs);
+  const identities = jobs.map((job) => job.externalId ?? job.officialUrl);
+  if (pages.some((page) => page.total !== first.total) || jobs.length !== first.total
+    || new Set(identities).size !== identities.length) return {
+    status: "failed", responseStatus, completeListing: false, jobs: [],
+    error: "Darden's official Paradox catalog returned duplicate or incomplete identities.",
+  };
+  return {
+    status: "succeeded",
+    responseStatus: first.status,
+    completeListing: true,
+    jobs,
+    resolvedListingUrl: "https://dardenrscjobs.recruiting.com/",
+    error: null,
+  };
+};
+
+type SolarEdgePosition = {
+  family: string;
+  city: string;
+  title: string;
+  pid: string;
+  cleanId: string;
+};
+
+const solarEdgeListingUrl = "https://corporate.solaredge.com/en/careers/open-positions?country=United%20States";
+
+const solarEdgeHtmlText = (value: string | null | undefined): string | null => {
+  const text = plainText(value?.replace(/&nbsp;|&#160;/gi, " "));
+  return text ? decodeHtmlAttribute(text) : null;
+};
+
+const solarEdgeSettings = (html: string): JsonLdValue | null => {
+  const script = html.match(/<script\b(?=[^>]*\bdata-drupal-selector=["']drupal-settings-json["'])[^>]*>([\s\S]*?)<\/script>/i)?.[1];
+  if (!script) return null;
+  try {
+    const parsed = JSON.parse(script) as unknown;
+    return parsed && typeof parsed === "object" ? parsed as JsonLdValue : null;
+  } catch {
+    return null;
+  }
+};
+
+const solarEdgePositions = (html: string): SolarEdgePosition[] | null => {
+  const settings = solarEdgeSettings(html);
+  if (settings?.selectedCountry !== "United States") return null;
+  const positions = settings.positions;
+  if (!positions || typeof positions !== "object" || Array.isArray(positions)) return null;
+  const unitedStates = (positions as JsonLdValue)["United States"];
+  if (!unitedStates || typeof unitedStates !== "object" || Array.isArray(unitedStates)) return null;
+  const result: SolarEdgePosition[] = [];
+  for (const [family, citiesValue] of Object.entries(unitedStates as JsonLdValue)) {
+    if (!family.trim() || !citiesValue || typeof citiesValue !== "object" || Array.isArray(citiesValue)) return null;
+    for (const [cityKey, jobsValue] of Object.entries(citiesValue as JsonLdValue)) {
+      if (!cityKey.trim() || !Array.isArray(jobsValue) || jobsValue.length === 0) return null;
+      for (const value of jobsValue) {
+        if (!value || typeof value !== "object") return null;
+        const job = value as JsonLdValue;
+        const title = asText(job.pname);
+        const pid = asText(job.pid);
+        const cleanId = asText(job.clean_pid);
+        const location = asText(job.location);
+        const city = asText(job.city);
+        if (!title || !pid || !cleanId || location !== "United States" || !city || city !== cityKey
+          || !/^[A-Z0-9]{2}\.[A-Z0-9]{3}$/i.test(pid) || cleanId !== pid.replace(".", "")) return null;
+        result.push({ family, city, title, pid, cleanId });
+      }
+    }
+  }
+  if (result.length === 0 || new Set(result.map((job) => job.cleanId)).size !== result.length) return null;
+
+  const anchors = [...html.matchAll(
+    /<a\b(?=[^>]*\bclass\s*=\s*["'][^"']*\bjob-link\b[^"']*["'])[^>]*\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>/gi,
+  )].map((match) => decodeHtmlAttribute(match[1] ?? match[2] ?? match[3] ?? ""));
+  if (anchors.length !== result.length) return null;
+  const linkedIds: string[] = [];
+  for (const href of anchors) {
+    try {
+      const url = new URL(href, solarEdgeListingUrl);
+      const identity = url.searchParams.get("position")?.match(/^comeet-([A-Z0-9]{5})$/i)?.[1]?.toLocaleUpperCase();
+      if (url.origin !== "https://corporate.solaredge.com" || url.pathname !== "/en/careers/open-positions"
+        || url.hash || !identity || [...url.searchParams.keys()].some((key) => key !== "position")) return null;
+      linkedIds.push(identity);
+    } catch {
+      return null;
+    }
+  }
+  if (new Set(linkedIds).size !== linkedIds.length
+    || result.some((job) => !linkedIds.includes(job.cleanId.toLocaleUpperCase()))) return null;
+  return result;
+};
+
+const solarEdgeDetailJob = (html: string, position: SolarEdgePosition, source: CrawlSource, officialUrl: string): CrawledJob | null => {
+  const title = solarEdgeHtmlText(html.match(/<h2\b[^>]*class=["'][^"']*\bposition-title\b[^"']*["'][^>]*>([\s\S]*?)<\/h2>/i)?.[1]);
+  const location = solarEdgeHtmlText(html.match(/<div\b[^>]*class=["'][^"']*\bjob-city\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/i)?.[1]);
+  const descriptionStart = html.search(/<div\b[^>]*class=["'][^"']*\bpos_description-container\b/i);
+  const requirementsStart = html.search(/<div\b[^>]*class=["'][^"']*\bpos-requirements-container\b/i);
+  const applyStart = html.search(/<div\b[^>]*id=["']commit-cont-form["']/i);
+  const description = descriptionStart >= 0 && requirementsStart > descriptionStart
+    ? solarEdgeHtmlText(html.slice(descriptionStart, requirementsStart)) : null;
+  const qualifications = requirementsStart >= 0 && applyStart > requirementsStart
+    ? solarEdgeHtmlText(html.slice(requirementsStart, applyStart)) : null;
+  const uid = html.match(/<script\b[^>]*\btype=["']comeet-applyform["'][^>]*\bdata-position-uid=["']([^"']+)["'][^>]*>/i)?.[1]
+    ?? html.match(/<script\b[^>]*\bdata-position-uid=["']([^"']+)["'][^>]*\btype=["']comeet-applyform["'][^>]*>/i)?.[1];
+  if (!title || title !== position.title || !location || !location.startsWith("United States")
+    || !location.includes(position.city) || !description || !qualifications || uid !== position.pid) return null;
+  const cityState = position.city.match(/^(.+),\s*([A-Z]{2})$/);
+  const programs = classifyJobPrograms(`${title} ${description.slice(0, 500)}`).keys;
+  const employmentType = programs.includes("coop") ? "Co-op" : programs.includes("internship") ? "Internship" : null;
+  const remote = /\bremote\b/i.test(`${location} ${description.slice(0, 2_000)}`);
+  return {
+    externalId: position.pid,
+    title,
+    company: source.company,
+    location,
+    arrangement: remote ? "remote" : "onsite",
+    employmentType,
+    summary: description.slice(0, 1_000),
+    description,
+    qualifications,
+    jobFamily: position.family,
+    ...(cityState ? { locationCity: cityState[1], locationState: cityState[2] } : { locationCity: position.city }),
+    locationCountry: "US",
+    requisitionId: position.pid,
+    applyUrl: officialUrl,
+    rawPayload: { cleanId: position.cleanId },
+    officialUrl,
+    publishedAt: null,
+  };
+};
+
+const crawlSolarEdgeUs = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  try {
+    const response = await fetchWithTimeout(fetcher, solarEdgeListingUrl, undefined, true, { attempts: 1, timeoutMs: 10_000 });
+    responseStatus = response.status;
+    if (!response.ok) throw new Error(`SolarEdge US catalog returned HTTP ${response.status}.`);
+    if (response.url) {
+      const final = new URL(response.url);
+      if (final.origin !== "https://corporate.solaredge.com" || final.pathname !== "/en/careers/open-positions"
+        || final.searchParams.get("country") !== "United States" || final.hash
+        || [...final.searchParams.keys()].some((key) => key !== "country")) throw new Error("SolarEdge US catalog redirected outside its verified listing URL.");
+    }
+    const positions = solarEdgePositions(await response.text());
+    if (!positions) throw new Error("SolarEdge US catalog did not expose a complete verified Drupal position set.");
+
+    const jobs: Array<CrawledJob | null> = Array.from({ length: positions.length }, () => null);
+    for (let index = 0; index < positions.length; index += 4) {
+      await Promise.all(positions.slice(index, index + 4).map(async (position, offset) => {
+        const detail = new URL("https://corporate.solaredge.com/en/careers/open-positions");
+        detail.searchParams.set("position", `comeet-${position.cleanId}`);
+        const detailResponse = await fetchWithTimeout(fetcher, detail, undefined, true, { attempts: 1, timeoutMs: 10_000 });
+        if (!detailResponse.ok) return;
+        if (detailResponse.url) {
+          const final = new URL(detailResponse.url);
+          if (final.origin !== detail.origin || final.pathname !== detail.pathname
+            || final.searchParams.get("position") !== `comeet-${position.cleanId}` || final.hash
+            || [...final.searchParams.keys()].some((key) => key !== "position")) return;
+        }
+        jobs[index + offset] = solarEdgeDetailJob(await detailResponse.text(), position, source, detail.href);
+      }));
+    }
+    if (jobs.some((job) => job === null)) throw new Error("SolarEdge returned a missing or mismatched official job detail.");
+    const normalized = jobs as CrawledJob[];
+    if (new Set(normalized.map((job) => job.externalId)).size !== normalized.length) throw new Error("SolarEdge returned duplicate official job identities.");
+    return {
+      status: "succeeded",
+      responseStatus: response.status,
+      completeListing: true,
+      jobs: normalized,
+      resolvedListingUrl: solarEdgeListingUrl,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown SolarEdge US catalog error.",
+    };
+  }
 };
 
 const crawlAceJobs = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
@@ -21362,6 +21726,12 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-814") {
     return crawlFoxCareers(source, fetcher);
+  }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-801") {
+    return crawlDardenRestaurantSupport(source, fetcher);
+  }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-1059-solaredge") {
+    return crawlSolarEdgeUs(source, fetcher);
   }
   // Apply an ID-pinned feed only at the root. Redirect/candidate recursion
   // keeps the same source ID, so reapplying it at discovery depth 1 would

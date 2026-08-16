@@ -151,6 +151,20 @@ export async function ensureCatalogSeeded(
         SET next_crawl_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
         WHERE id IN (SELECT value FROM json_each(?))
       `).bind(JSON.stringify(batch)).run();
+      // Scope-policy changes are authoritative catalog changes, not ordinary
+      // incomplete crawl segments. Jobs that an older global policy admitted
+      // cannot be rediscovered by the new US-only policy, so close only rows
+      // already classified as positively non-US. Unknown and mixed rows stay
+      // open, which keeps ambiguous US opportunities fail-safe.
+      await database.prepare(`
+        UPDATE jobs
+        SET status = 'closed',
+            closed_at = COALESCE(closed_at, CURRENT_TIMESTAMP),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE source_id IN (SELECT value FROM json_each(?))
+          AND status = 'open'
+          AND location_region = 'non_us'
+      `).bind(JSON.stringify(batch)).run();
     }
     // Publish the marker last. If a request is interrupted above, the next
     // request sees the old version and retries the idempotent reset.

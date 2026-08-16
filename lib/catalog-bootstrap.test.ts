@@ -93,6 +93,10 @@ describe("runtime catalog bootstrap", () => {
       CREATE TABLE catalog_state (
         key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL
       );
+      CREATE TABLE jobs (
+        id TEXT PRIMARY KEY, source_id TEXT NOT NULL, status TEXT NOT NULL,
+        location_region TEXT, closed_at TEXT, updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
     `);
     const database = {
       prepare(sql: string) {
@@ -115,6 +119,11 @@ describe("runtime catalog bootstrap", () => {
     expect(sqlite.prepare("SELECT count(*) AS count FROM talent_targets").get()).toEqual({ count: 1 });
 
     sqlite.prepare("UPDATE sources SET next_crawl_at = '2099-01-01 00:00:00' WHERE id = ?").run(seed.sources[0].id);
+    sqlite.prepare("INSERT INTO jobs (id, source_id, status, location_region) VALUES (?, ?, ?, ?), (?, ?, ?, ?), (?, ?, ?, ?)").run(
+      "non-us", seed.sources[0].id, "open", "non_us",
+      "unknown", seed.sources[0].id, "open", "unknown",
+      "other-source", seed.sources[1].id, "open", "non_us",
+    );
     sqlite.prepare("INSERT INTO catalog_state (key, value) VALUES (?, ?), (?, ?)").run(
       `crawl_page_checkpoint:${seed.sources[0].id}`, JSON.stringify({ nextPage: 9 }),
       `crawl_page_checkpoint:${seed.sources[1].id}`, JSON.stringify({ nextPage: 7 }),
@@ -152,6 +161,26 @@ describe("runtime catalog bootstrap", () => {
       .toEqual({ due: 1 });
     expect(sqlite.prepare("SELECT value FROM catalog_state WHERE key = 'crawler_scope_policy'").get())
       .toEqual({ value: "large-us-test-v1" });
+    expect(sqlite.prepare("SELECT id, status, closed_at AS closedAt FROM jobs ORDER BY id").all()).toEqual([
+      { id: "non-us", status: "closed", closedAt: expect.any(String) },
+      { id: "other-source", status: "open", closedAt: null },
+      { id: "unknown", status: "open", closedAt: null },
+    ]);
+
+    // Re-running the same policy is a no-op, so rows are not repeatedly
+    // rewritten and a later non-US row remains open until the next version.
+    sqlite.prepare("INSERT INTO jobs (id, source_id, status, location_region) VALUES (?, ?, ?, ?)").run(
+      "later-non-us", seed.sources[0].id, "open", "non_us",
+    );
+    await ensureCatalogSeeded(database, {
+      ...seed,
+      version: "catalog-v2",
+      sources: [{ ...seed.sources[0], postingUrl: "https://example.com/updated" }],
+    }, {
+      version: "large-us-test-v1",
+      sourceIds: [seed.sources[0].id],
+    });
+    expect(sqlite.prepare("SELECT status FROM jobs WHERE id = 'later-non-us'").get()).toEqual({ status: "open" });
     sqlite.close();
   });
 });

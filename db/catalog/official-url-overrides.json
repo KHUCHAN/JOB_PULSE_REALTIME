@@ -1,5 +1,8 @@
 {
   "overrides": {
+    "legacy-row-801": { "url": "https://dardenrscjobs.recruiting.com/", "adapter": "custom", "checkedAt": "2026-08-15" },
+    "legacy-row-825": { "url": "https://jobsearch.insight.com/?locale=en_US", "adapter": "custom", "checkedAt": "2026-08-15" },
+    "p2-0110-franklin-templeton": { "url": "https://franklintempleton.wd5.myworkdayjobs.com/Primary-External-1", "adapter": "workday", "checkedAt": "2026-08-15" },
     "audit-row-342": { "url": "https://delta.avature.net/en_US/careers/SearchJobs", "adapter": "custom" },
     "audit-row-355": { "url": "https://equitable.taleo.net/careersection/eqh_1/jobsearch.ftl?lang=en&portal=36105020509", "adapter": "custom", "checkedAt": "2026-08-15" },
     "audit-row-422": { "url": "https://ejhp.fa.us6.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_2/jobs", "adapter": "custom", "checkedAt": "2026-08-15" },

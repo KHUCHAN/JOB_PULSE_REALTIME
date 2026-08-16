@@ -196,6 +196,7 @@ describe("large catalog US scope migration", () => {
     const pennMedicineRefresh = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0109_snapshot.json"), "utf8"));
     const officialCatalogRefresh = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0110_snapshot.json"), "utf8"));
     const jobsynFoxJobviteRefresh = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0111_snapshot.json"), "utf8"));
+    const dardenSolarEdgeRefresh = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0112_snapshot.json"), "utf8"));
     const currentJournal = JSON.parse(readFileSync(resolve(drizzlePath, "meta/_journal.json"), "utf8"));
 
     expect(current.prevId).toBe(previous.id);
@@ -210,13 +211,14 @@ describe("large catalog US scope migration", () => {
     expect(pennMedicineRefresh.prevId).toBe(communityHealthRefresh.id);
     expect(officialCatalogRefresh.prevId).toBe(pennMedicineRefresh.id);
     expect(jobsynFoxJobviteRefresh.prevId).toBe(officialCatalogRefresh.id);
+    expect(dardenSolarEdgeRefresh.prevId).toBe(jobsynFoxJobviteRefresh.id);
     expect(currentJournal.entries.find((entry: { tag: string }) => entry.tag === "0100_large_catalog_us_scope")).toMatchObject({
       idx: 100,
       tag: "0100_large_catalog_us_scope",
     });
     expect(currentJournal.entries.at(-1)).toMatchObject({
-      idx: 111,
-      tag: "0111_refresh_sources_20260816020854",
+      idx: 112,
+      tag: "0112_refresh_sources_20260816025225",
     });
   });
 

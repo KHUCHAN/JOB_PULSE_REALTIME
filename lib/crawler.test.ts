@@ -2845,6 +2845,28 @@ HUMAN RESOURCES Posted Date
     expect(result.jobs.map((job) => job.title)).toEqual(["Role 1", "Role 2"]);
   });
 
+  it("normalizes SuccessFactors US locations before a postal or NA placeholder", async () => {
+    const result = await crawlSource({
+      id: "legacy-row-825", company: "Insight Enterprises", postingUrl: "https://jobsearch.insight.com/?locale=en_US", adapter: "custom",
+    }, async () => new Response([
+      '<link href="https://rmkcdn.successfactors.com/theme.css">',
+      '<span class="paginationLabel">Results <b>1 – 2</b> of <b>2</b></span>',
+      '<tr class="data-row"><a class="jobTitle-link" href="/job/Hanover-Park-Technician-IL-NA/1401288900/">Technician</a><span class="jobLocation">Hanover Park, IL, US, NA</span></tr>',
+      '<tr class="data-row"><a class="jobTitle-link" href="/job/Transformation-Engineer-AZ-85286/1401424800/">Transformation Engineer</a><span class="jobLocation">AZ, US, 85286</span></tr>',
+    ].join("")), new Date());
+
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        location: "Hanover Park, IL, US, NA", locationCity: "Hanover Park",
+        locationState: "IL", locationCountry: "United States",
+      }),
+      expect.objectContaining({
+        location: "AZ, US, 85286", locationState: "AZ", locationCountry: "United States",
+      }),
+    ]);
+    expect(result.jobs[1].locationCity).toBeUndefined();
+  });
+
   it("promotes a SuccessFactors landing page to its complete search catalog", async () => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input) => {
@@ -11307,6 +11329,166 @@ We are an equal opportunity employer.`;
       expect.objectContaining({ externalId: "oEgCAfwQ", title: "Country Manager", location: "Minato City, Tokyo" }),
       expect.objectContaining({ externalId: "oPRBAfwB", title: "Senior Sales Engineer", location: "Minato City, Tokyo" }),
     ]);
+  });
+
+  it("loads Darden's complete official Paradox catalog with stable pagination", async () => {
+    const job = (index: number) => {
+      const uniqueId = `PDX_DRSC_30484A14-8790-4869-AF64-343EDA071B3${String(index).padStart(2, "0")}_88118`;
+      const reference = `P14-${83_500 + index}-0`;
+      const officialUrl = `https://darden.paradox.ai/co/DardenRestaurantSupportCenter/Job?job_id=${uniqueId}`;
+      return {
+        uniqueID: uniqueId,
+        reference,
+        title: index === 1 ? "Data Analytics Intern 2027" : `Restaurant Support Role ${index}`,
+        companyName: "paradox-dardenapi.paradox.ai-Darden Restaurant Support Center",
+        locations: [{
+          zipCode: "32837", locationName: "Restaurant Support Center", city: "Orlando",
+          state: "Florida", stateAbbr: "FL", country: "United States", countryAbbr: "US",
+          latitude: 28.418, longitude: -81.426, locationParsedText: "Orlando, FL 32837, United States",
+          isRemote: false,
+        }],
+        isRemote: false,
+        employmentType: [],
+        applyURL: officialUrl,
+        originalURL: officialUrl,
+        customFields: [
+          { cfKey: "cf_functional_area", value: index === 1 ? "Information Technology" : "Operations" },
+          { cfKey: "cf_brand", value: "Darden" },
+        ],
+      };
+    };
+    const allJobs = Array.from({ length: 11 }, (_, index) => job(index + 1));
+    const requestedPages: number[] = [];
+    const result = await crawlSource({
+      id: "legacy-row-801", company: "Darden Restaurants", postingUrl: "https://dardenrscjobs.recruiting.com/", adapter: "custom",
+    }, async (input) => {
+      const page = Number(new URL(String(input)).pathname.match(/\/jobs\/page\/(\d+)$/)?.[1]);
+      requestedPages.push(page);
+      const jobs = page === 1 ? allJobs.slice(0, 10) : allJobs.slice(10);
+      return new Response(`<script>window.__PRELOAD_STATE__ = ${JSON.stringify({
+        jobSearch: { params: { page_number: page, page_size: 10, filter: {} }, totalJob: allJobs.length, jobs },
+      })};</script>`);
+    }, new Date("2026-08-15T00:00:00Z"));
+
+    expect(requestedPages).toEqual([1, 2, 1]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://dardenrscjobs.recruiting.com/",
+    }));
+    expect(result.jobs).toHaveLength(11);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "P14-83501-0",
+      requisitionId: "P14-83501-0",
+      title: "Data Analytics Intern 2027",
+      employmentType: "Internship",
+      location: "Orlando, FL 32837, United States",
+      locationCity: "Orlando",
+      locationState: "FL",
+      locationCountry: "US",
+      department: "Information Technology",
+      businessUnit: "Darden",
+      officialUrl: expect.stringContaining("https://darden.paradox.ai/co/DardenRestaurantSupportCenter/Job?job_id="),
+    }));
+  });
+
+  it("fails Darden closed when a Paradox identity is repeated across pages", async () => {
+    const uniqueId = "PDX_DRSC_30484A14-8790-4869-AF64-343EDA071B36_88118";
+    const raw = {
+      uniqueID: uniqueId,
+      reference: "P14-83559-0",
+      title: "Compliance Manager",
+      companyName: "Darden Restaurant Support Center",
+      locations: [{ city: "Orlando", stateAbbr: "FL", country: "United States", countryAbbr: "US", locationParsedText: "Orlando, FL, United States" }],
+      applyURL: `https://darden.paradox.ai/co/DardenRestaurantSupportCenter/Job?job_id=${uniqueId}`,
+      originalURL: `https://darden.paradox.ai/co/DardenRestaurantSupportCenter/Job?job_id=${uniqueId}`,
+      customFields: [],
+    };
+    const result = await crawlSource({
+      id: "legacy-row-801", company: "Darden Restaurants", postingUrl: "https://dardenrscjobs.recruiting.com/", adapter: "custom",
+    }, async (input) => {
+      const page = Number(new URL(String(input)).pathname.match(/(\d+)$/)?.[1]);
+      const count = page === 1 ? 10 : 1;
+      return new Response(`<script>window.__PRELOAD_STATE__ = ${JSON.stringify({
+        jobSearch: { params: { page_number: page, page_size: 10, filter: {} }, totalJob: 11, jobs: Array.from({ length: count }, () => raw) },
+      })};</script>`);
+    }, new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed", completeListing: false, jobs: [],
+      error: expect.stringContaining("usable first page"),
+    }));
+  });
+
+  it("loads every SolarEdge US Drupal position and verifies its official detail", async () => {
+    const positions = {
+      "United States": {
+        "R&D Software": {
+          "Austin, TX": [{ pname: "Software Engineering Intern 2027", pid: "04.D6E", clean_pid: "04D6E", location: "United States", city: "Austin, TX" }],
+        },
+        "Quality & Reliability": {
+          "Milpitas, CA": [{ pname: "Data Quality Engineer", pid: "D7.B63", clean_pid: "D7B63", location: "United States", city: "Milpitas, CA" }],
+        },
+      },
+    };
+    const listing = `<script data-drupal-selector="drupal-settings-json" type="application/json">${JSON.stringify({
+      positions, selectedCountry: "United States",
+    })}</script>
+      <a href="?position=comeet-04D6E" class="coh-link job-link">Software Engineering Intern 2027 Austin, TX</a>
+      <a class="job-link" href="?position=comeet-D7B63">Data Quality Engineer Milpitas, CA</a>`;
+    const detail = (title: string, city: string, pid: string) => `
+      <h2 class="position-title">${title}</h2><div class="job-city">United States, ${city}</div>
+      <div class="pos_description-container"><p>Build production software, analytics, and clean-energy systems.</p></div>
+      <div class="pos-requirements-container"><ul><li>Bachelor's degree and Python experience.</li></ul></div>
+      <div id="commit-cont-form"><script type="comeet-applyform" data-position-uid="${pid}"></script></div>`;
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p5-1059-solaredge", company: "SolarEdge", postingUrl: "https://corporate.solaredge.com/en/careers/open-positions", adapter: "custom",
+    }, async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.href);
+      const identity = url.searchParams.get("position");
+      if (!identity) return new Response(listing);
+      return new Response(identity === "comeet-04D6E"
+        ? detail("Software Engineering Intern 2027", "Austin, TX", "04.D6E")
+        : detail("Data Quality Engineer", "Milpitas, CA", "D7.B63"));
+    }, new Date("2026-08-15T00:00:00Z"));
+
+    expect(requests).toEqual([
+      "https://corporate.solaredge.com/en/careers/open-positions?country=United%20States",
+      "https://corporate.solaredge.com/en/careers/open-positions?position=comeet-04D6E",
+      "https://corporate.solaredge.com/en/careers/open-positions?position=comeet-D7B63",
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: true,
+      resolvedListingUrl: "https://corporate.solaredge.com/en/careers/open-positions?country=United%20States",
+    }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        externalId: "04.D6E", title: "Software Engineering Intern 2027", employmentType: "Internship",
+        location: "United States, Austin, TX", locationCity: "Austin", locationState: "TX", locationCountry: "US",
+        jobFamily: "R&D Software", description: expect.stringContaining("production software"),
+        officialUrl: "https://corporate.solaredge.com/en/careers/open-positions?position=comeet-04D6E",
+      }),
+      expect.objectContaining({ externalId: "D7.B63", title: "Data Quality Engineer", locationState: "CA" }),
+    ]);
+  });
+
+  it("fails SolarEdge closed when a rendered detail does not match the Drupal catalog", async () => {
+    const listing = `<script data-drupal-selector="drupal-settings-json">${JSON.stringify({
+      selectedCountry: "United States",
+      positions: { "United States": { Sales: { "Austin, TX": [{ pname: "Account Executive", pid: "04.D6E", clean_pid: "04D6E", location: "United States", city: "Austin, TX" }] } } },
+    })}</script><a class="job-link" href="?position=comeet-04D6E">Account Executive</a>`;
+    const result = await crawlSource({
+      id: "p5-1059-solaredge", company: "SolarEdge", postingUrl: "https://corporate.solaredge.com/en/careers/open-positions", adapter: "custom",
+    }, async (input) => new URL(String(input)).searchParams.has("position")
+      ? new Response(`<h2 class="position-title">Foreign Role</h2><div class="job-city">Germany</div>`)
+      : new Response(listing), new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed", completeListing: false, jobs: [],
+      error: "SolarEdge returned a missing or mismatched official job detail.",
+    }));
   });
 
   it("checkpoints FedEx's official US catalog and enriches internship details", async () => {
