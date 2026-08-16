@@ -24,6 +24,10 @@ const ingestUrl = process.env.REQUEST_FALLBACK_INGEST_URL?.trim() || `${siteUrl}
 const sourceIds = [...new Set((process.env.REQUEST_FALLBACK_SOURCE_IDS ?? "p5-0722-saic,p5-1039-revolut")
   .split(",").map((value) => value.trim()).filter(Boolean))].slice(0, 10);
 const concurrency = 2;
+const checkpointedSourceIds = new Set([
+  "p4-0241-cgi",
+  "p5-1018-penn-medicine",
+]);
 let cachedOidc = { value: "", expiresAt: 0 };
 
 const githubOidcToken = async (): Promise<string> => {
@@ -71,7 +75,7 @@ const liveSources = async (): Promise<CrawlSource[]> => {
 
 const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
   try {
-    const result = source.id === "p4-0241-cgi"
+    const result = checkpointedSourceIds.has(source.id)
       ? await recoverCheckpointedCatalog(source, fetch, crawlSource)
       : await crawlSource(source, fetch, new Date());
     if (result.status !== "succeeded" || result.jobs.length === 0) {
