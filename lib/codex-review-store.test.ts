@@ -102,6 +102,34 @@ describe("Codex review persistence", () => {
       .toEqual({ next_digest_at: "2026-08-13T13:00:00.000Z" });
   });
 
+  it("accepts a current co-op match for the same Codex approval workflow", async () => {
+    const sqlite = database();
+    sqlite.exec(`
+      INSERT INTO jobs (
+        id, official_url, apply_url, first_seen_at, reopened_at, status, open_generation,
+        company, title, location_region, employment_type, url_identity_key
+      ) VALUES (
+        'job-coop', 'https://careers.example.com/job-coop', NULL,
+        '2026-08-13T12:30:00.000Z', NULL, 'open', 1, 'Acme',
+        'Data Engineering Co-op 2027', 'us', 'Co-op',
+        'url:https://careers.example.com/job-coop'
+      );
+      INSERT INTO job_topics VALUES ('job-coop', 'program:coop'), ('job-coop', 'year:2027');
+      INSERT INTO job_matches VALUES ('match-coop', 'job-coop', 'resume-keyword-chanyoung', 1, 1, 0, NULL);
+    `);
+
+    const result = await applyCodexReviews(createD1(sqlite), [{
+      officialUrl: "https://careers.example.com/job-coop",
+      decision: "approve",
+      rationale: "US 2027 co-op with relevant data engineering work; work-term dates require verification.",
+      verifiedUrl: "https://careers.example.com/job-coop",
+    }], "2026-08-13T13:00:00.000Z");
+
+    expect(result).toMatchObject({ accepted: 1, approved: 1, rejected: 0, missing: [] });
+    expect(sqlite.prepare("SELECT notification_eligible FROM job_matches WHERE id = 'match-coop'").get())
+      .toEqual({ notification_eligible: 1 });
+  });
+
   it("leaves region and recruiting-year adjudication to Codex", async () => {
     const sqlite = database();
     sqlite.prepare("UPDATE jobs SET location_region = 'non_us' WHERE id = 'job-new'").run();

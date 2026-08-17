@@ -11822,10 +11822,37 @@ const crawlIbm = async (source: CrawlSource, fetcher: typeof fetch): Promise<Sou
   // bounded set of 2027 student detail pages through the same reader fallback
   // used by other JS-rendered career sites so Co-Op (Fixed Term) cannot be
   // mislabeled as a summer internship.
-  const detailEmploymentTypes = new Map<string, string>();
+  const detailMetadata = new Map<string, { employmentType: string | null; publishedAt: string | null }>();
+  const numericIbmJobId = (hit: IbmJob): number => {
+    try {
+      const value = new URL(hit._source?.url ?? "", "https://careers.ibm.com").searchParams.get("jobId");
+      const parsed = Number(value);
+      return Number.isSafeInteger(parsed) ? parsed : 0;
+    } catch {
+      return 0;
+    }
+  };
+  const ibmPublishedAt = (value: string | undefined): string | null => {
+    const match = value?.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4})$/);
+    if (!match) return normalizedDate(value);
+    const month = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+      .indexOf(match[2].toLowerCase());
+    if (month < 0) return null;
+    const year = Number(match[3]);
+    const day = Number(match[1]);
+    const date = new Date(Date.UTC(year, month, day));
+    return date.getUTCFullYear() === year && date.getUTCMonth() === month && date.getUTCDate() === day
+      ? date.toISOString()
+      : null;
+  };
   const detailCandidates = raw.filter((hit) => hit._id && hit._source?.url
     && /\b2027\b/i.test(hit._source.title ?? "")
-    && /\b(?:intern(?:ship)?|co[\s-]?op|coop)\b/i.test(hit._source.title ?? "")).slice(0, 24);
+    && /\b(?:intern(?:ship)?|co[\s-]?op|coop)\b/i.test(hit._source.title ?? ""))
+    // IBM's catalog is relevance-sorted rather than freshness-sorted. Give
+    // the bounded detail budget to the newest requisition identities so a new
+    // fixed-term co-op cannot inherit the list feed's generic Intern label.
+    .sort((left, right) => numericIbmJobId(right) - numericIbmJobId(left))
+    .slice(0, 24);
   for (let index = 0; index < detailCandidates.length; index += 4) {
     const details = await Promise.all(detailCandidates.slice(index, index + 4).map(async (hit) => {
       try {
@@ -11836,12 +11863,16 @@ const crawlIbm = async (source: CrawlSource, fetcher: typeof fetch): Promise<Sou
         });
         const value = markdown?.match(/\bEmployment type\s*\n+\s*([^\n]+)/i)?.[1]?.trim();
         const employmentType = normalizeEmploymentType(value);
-        return hit._id && employmentType ? [hit._id, employmentType] as const : null;
+        const dateValue = markdown?.match(/\bDate posted\s*\n+\s*([^\n]+)/i)?.[1]?.trim();
+        const publishedAt = ibmPublishedAt(dateValue);
+        return hit._id && (employmentType || publishedAt)
+          ? [hit._id, { employmentType, publishedAt }] as const
+          : null;
       } catch {
         return null;
       }
     }));
-    for (const detail of details) if (detail) detailEmploymentTypes.set(detail[0], detail[1]);
+    for (const detail of details) if (detail) detailMetadata.set(detail[0], detail[1]);
   }
   const jobs = raw.flatMap((hit): CrawledJob[] => {
     const value = hit._source;
@@ -11851,7 +11882,8 @@ const crawlIbm = async (source: CrawlSource, fetcher: typeof fetch): Promise<Sou
     const location = value.field_keyword_19 ?? null;
     const arrangementText = value.field_keyword_17 ?? "";
     const programs = classifyJobPrograms(value.title).keys;
-    const employmentType = detailEmploymentTypes.get(hit._id)
+    const detail = detailMetadata.get(hit._id);
+    const employmentType = detail?.employmentType
       ?? (programs.includes("coop") ? "Co-op" : programs.includes("internship") ? "Internship" : null);
     return [{
       externalId: hit._id,
@@ -11868,7 +11900,7 @@ const crawlIbm = async (source: CrawlSource, fetcher: typeof fetch): Promise<Sou
       officialUrl: jobId
         ? `https://careers.ibm.com/en_US/careers/JobDetail?jobId=${encodeURIComponent(jobId)}`
         : parsed.href,
-      publishedAt: null,
+      publishedAt: detail?.publishedAt ?? null,
     }];
   });
   const unique = uniqueJobs(jobs);

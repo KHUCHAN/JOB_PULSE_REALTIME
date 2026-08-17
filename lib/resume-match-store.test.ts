@@ -180,6 +180,37 @@ describe("resume match persistence migration", () => {
     ).get()).toEqual({ notification_eligible: 0 });
   });
 
+  it("keeps a newly seen co-op pending for Codex review", async () => {
+    const sqlite = migratedSqlite();
+    sqlite.exec(`
+      INSERT INTO sources (id) VALUES ('source');
+      UPDATE match_profiles SET enabled = 1, activation_watermark = '2026-08-10T12:00:00.000Z';
+      INSERT INTO jobs (
+        id, source_id, title, company, location_region,
+        official_url, status, first_seen_at, last_seen_at
+      ) VALUES (
+        'coop-new', 'source', 'Data Engineering Co-op 2027', 'Acme', 'us',
+        'https://example.com/coop-new', 'open',
+        '2026-08-10T12:01:00.000Z', '2026-08-10T12:01:00.000Z'
+      );
+      INSERT INTO job_topics (job_id, topic_key) VALUES
+        ('coop-new', 'program:coop'), ('coop-new', 'year:2027');
+    `);
+
+    await syncResumeMatchesForUrls(
+      createD1(sqlite), "source", ["https://example.com/coop-new"],
+      "2026-08-10T12:02:00.000Z", ["https://example.com/coop-new"],
+    );
+
+    expect(sqlite.prepare(
+      "SELECT is_active, notification_eligible, matched_terms FROM job_matches WHERE job_id = 'coop-new'",
+    ).get()).toMatchObject({
+      is_active: 1,
+      notification_eligible: 0,
+      matched_terms: expect.stringContaining("Server program gate: internship or co-op"),
+    });
+  });
+
   it("does not notify a post-watermark job unless the current crawl inserted it", async () => {
     const sqlite = migratedSqlite();
     sqlite.exec(`

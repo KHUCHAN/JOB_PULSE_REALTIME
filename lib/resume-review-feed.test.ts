@@ -89,7 +89,7 @@ const databaseWithCandidates = (): DatabaseSync => {
 describe("resume review feed", () => {
   it("returns only current unreviewed internship/co-op matches", async () => {
     const candidates = await listResumeReviewCandidates(createD1ForSqlite(databaseWithCandidates()), 100);
-    expect(candidates).toHaveLength(1);
+    expect(candidates).toHaveLength(2);
     expect(candidates[0]).toMatchObject({
       matchId: "match-new",
       jobId: "job-new",
@@ -97,22 +97,29 @@ describe("resume review feed", () => {
       recruitingYears: [2027],
       skills: ["Python"],
     });
+    expect(candidates[1]).toMatchObject({
+      matchId: "match-coop-pending",
+      jobId: "job-coop-pending",
+      employmentType: "Co-Op",
+    });
   });
 
   it("bounds the feed to one hundred candidates", async () => {
     expect(await listResumeReviewCandidates(createD1ForSqlite(databaseWithCandidates()), 0)).toHaveLength(1);
-    expect(await listResumeReviewCandidates(createD1ForSqlite(databaseWithCandidates()), 500)).toHaveLength(1);
+    expect(await listResumeReviewCandidates(createD1ForSqlite(databaseWithCandidates()), 500)).toHaveLength(2);
   });
 
   it("does not review baseline inventory or an identity already delivered", async () => {
     const baseline = databaseWithCandidates();
-    baseline.prepare("UPDATE jobs SET alert_discovered_after_baseline = 0 WHERE id = 'job-new'").run();
+    baseline.prepare("UPDATE jobs SET alert_discovered_after_baseline = 0 WHERE id IN ('job-new', 'job-coop-pending')").run();
     expect(await listResumeReviewCandidates(createD1ForSqlite(baseline), 100)).toEqual([]);
 
     const sent = databaseWithCandidates();
     sent.prepare(`INSERT INTO notification_identity_history
       VALUES ('chanyoung-resume', 'kimchany@usc.edu', 'url:https://careers.acme.example/jobs/new',
-              '2026-08-13T21:00:00.000Z', 'notification-1', 'match-old')`).run();
+              '2026-08-13T21:00:00.000Z', 'notification-1', 'match-old'),
+             ('chanyoung-resume', 'kimchany@usc.edu', 'url:https://careers.acme.example/jobs/coop-pending',
+              '2026-08-14T21:00:00.000Z', 'notification-2', 'match-old')`).run();
     expect(await listResumeReviewCandidates(createD1ForSqlite(sent), 100)).toEqual([]);
   });
 

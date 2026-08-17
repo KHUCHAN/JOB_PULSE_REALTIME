@@ -1,6 +1,6 @@
 import { canonicalOpenJobNotExists } from "./job-canonical";
 import { postingIdentityHistoryMatchSql, postingIdentityOverlapSql } from "./job-posting-identity";
-import { internshipOnlySql } from "./job-program-policy";
+import { internshipOrCoopSql } from "./job-program-policy";
 
 export interface ResumeReviewCandidate {
   matchId: string;
@@ -81,7 +81,7 @@ const parseNumberArray = (value: string | null): number[] => parseStringArray(va
 const boundedLimit = (value: number | undefined): number => Math.max(1, Math.min(100, Math.trunc(value ?? 100)));
 
 /**
- * Returns current internship (not co-op) resume matches that still need Codex
+ * Returns current internship/co-op resume matches that still need Codex
  * adjudication. The server deliberately does not decide region, recruiting
  * year, or profile fit; it only supplies the bounded candidate set.
  */
@@ -112,7 +112,7 @@ export const listResumeReviewCandidates = async (
       AND jm.open_generation = j.open_generation AND j.status = 'open'
       AND j.alert_discovered_after_baseline = 1
       AND ${canonicalOpenJobNotExists("j")}
-      AND ${internshipOnlySql("j")}
+      AND ${internshipOrCoopSql("j")}
       -- Keep the feed aligned with applyCodexReviews: candidates that existed
       -- before the profile was activated are not reviewable and must not be
       -- returned on every scheduled pass. Reopening an already stored posting
@@ -146,7 +146,7 @@ export const listResumeReviewCandidates = async (
           AND better_match.is_active = 1 AND better_match.notification_eligible = 0
           AND better_match.open_generation = better_job.open_generation
           AND better_job.status = 'open' AND better_job.alert_discovered_after_baseline = 1
-          AND ${internshipOnlySql("better_job")}
+          AND ${internshipOrCoopSql("better_job")}
           AND ${postingIdentityOverlapSql("j", "better_job")}
           AND NOT EXISTS (
             SELECT 1 FROM codex_reviews better_review
@@ -163,7 +163,7 @@ export const listResumeReviewCandidates = async (
               AND better_match.id < jm.id)
           )
       )
-    -- The feed remains an internship-only candidate set; Codex still makes
+    -- The feed remains a student-program candidate set; Codex still makes
     -- every region/year/fit decision. Prioritize records whose extracted
     -- signals indicate the user's target, then use the coarse resume score
     -- before freshness. Otherwise a 100-row low-fit company launch can starve

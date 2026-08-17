@@ -4,7 +4,6 @@ import {
   markNotificationFailed,
   markNotificationSent,
   planResumeDigests,
-  purgeCoopResumeNotifications,
   releaseClaimedNotifications,
 } from "./resume-alert-store";
 
@@ -55,7 +54,6 @@ export const processDueResumeAlerts = async (
   now: Date,
   fetcher: typeof fetch = fetch,
 ): Promise<ResumeDispatchResult> => {
-  await purgeCoopResumeNotifications(database, "chanyoung-resume");
   if (!config) {
     await database.prepare(`
       UPDATE match_profiles SET gmail_state = 'unconfigured', updated_at = CURRENT_TIMESTAMP

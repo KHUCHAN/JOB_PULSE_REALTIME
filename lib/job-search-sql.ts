@@ -158,9 +158,8 @@ JOIN job_matches resume_match
  AND resume_match.open_generation = j.open_generation
  AND resume_match.is_active = 1`;
     fromBindings.push("chanyoung-resume");
-    // Resume view is the personal internship shortlist; semester co-op terms
-    // must not leak into it even when their title contains "Intern".
-    add(`NOT ${jobHasCoopSql("j")}`);
+    // Resume view includes both internships and co-ops that reached the
+    // personal matching pipeline. Exact program filters remain available.
   }
 
   const areas = asNormalizedValues(filters.areas)

@@ -5,7 +5,6 @@ import {
   getResumeAlertStatus,
   markNotificationSent,
   planResumeDigests,
-  purgeCoopResumeNotifications,
 } from "./resume-alert-store";
 import { alertDatabaseWithMatches, createD1ForSqlite } from "./resume-alert-test-helper";
 
@@ -130,21 +129,22 @@ describe("resume digest reservation", () => {
     expect(sqlite.prepare("SELECT notification_eligible FROM job_matches").get()).toEqual({ notification_eligible: 0 });
   });
 
-  it("purges a stale co-op item before Gmail can claim it", async () => {
+  it("includes an approved co-op and warns when its work-term dates are unknown", async () => {
     const sqlite = alertDatabaseWithMatches(0);
     sqlite.prepare(`INSERT INTO jobs (id, company, title, location, official_url, first_seen_at, employment_type, status, open_generation)
       VALUES ('coop-job', 'IBM', 'Data Engineer Intern 2027', 'Dallas, TX', 'https://careers.ibm.com/jobs/128639', '2026-08-14T12:00:00.000Z', 'Co-op', 'open', 1)`).run();
     sqlite.prepare(`INSERT INTO job_matches VALUES ('coop-match', 'coop-job', 'resume-keyword-chanyoung', 95, '[]', 1, 1, 1, NULL)`).run();
-    sqlite.prepare(`INSERT INTO notifications (id, keyword_id, channel, recipient, status, job_count, scheduled_at)
-      VALUES ('coop-notification', 'resume-keyword-chanyoung', 'email', 'kimchany@usc.edu', 'queued', 1, '2026-08-14T12:00:00.000Z')`).run();
-    sqlite.prepare(`INSERT INTO notification_items (id, notification_id, job_match_id, recipient)
-      VALUES ('coop-item', 'coop-notification', 'coop-match', 'kimchany@usc.edu')`).run();
+    sqlite.prepare("INSERT INTO job_topics VALUES ('coop-job', 'program:coop')").run();
+    const db = createD1ForSqlite(sqlite);
 
-    await purgeCoopResumeNotifications(createD1ForSqlite(sqlite), "chanyoung-resume");
+    const planned = await planResumeDigests(db, "chanyoung-resume", "2026-08-14T12:00:00.000Z", 25);
+    const claimed = await claimDueNotifications(db, "chanyoung-resume", "2026-08-14T12:00:01.000Z", 1);
 
-    expect(sqlite.prepare("SELECT notification_eligible FROM job_matches WHERE id = 'coop-match'").get())
-      .toEqual({ notification_eligible: 0 });
-    expect(sqlite.prepare("SELECT count(*) AS total FROM notifications").get()).toEqual({ total: 0 });
+    expect(planned).toHaveLength(1);
+    expect(claimed[0]?.jobs[0]).toMatchObject({
+      program: "Co-op",
+      scheduleNote: "Work-term dates not stated; verify possible semester overlap",
+    });
   });
 
   it("rolls back an interrupted envelope reservation and keeps the digest due", async () => {

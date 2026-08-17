@@ -119,12 +119,11 @@ const jsonChunks = <T>(values: T[], maxBytes = 1_500_000): T[][] => {
   return result;
 };
 
-// The crawler owns only the coarse internship gate. Co-op is deliberately
-// excluded because the profile cannot take semester work terms; Codex reviews
-// region, year, role, authorization, and profile fit before a notification is
-// enabled.
+// The crawler owns only the coarse student-program gate. Codex reviews region,
+// year, role, authorization, profile fit, and any stated work-term dates before
+// a notification is enabled.
 const isProgramCandidate = (candidate: ResumeMatchCandidate): boolean =>
-  candidate.programKeys.includes("internship") && !candidate.programKeys.includes("coop");
+  candidate.programKeys.some((key) => key === "internship" || key === "coop");
 
 const persistDecisions = async (
   database: D1Database,
@@ -136,7 +135,7 @@ const persistDecisions = async (
     .filter(({ candidate }) => isProgramCandidate(candidate))
     .map(({ candidate, decision }) => {
       const matchedTerms = decision.evidence.map((item) => `${item.code}|${item.label}|${item.points}`);
-        matchedTerms.push("candidate:internship|Server program gate: internship (co-op excluded)|0");
+        matchedTerms.push("candidate:student-program|Server program gate: internship or co-op|0");
       return {
         id: crypto.randomUUID(),
         jobId: candidate.id,

@@ -1,4 +1,4 @@
-/** SQL predicates shared by the internship-only resume/email paths. */
+/** SQL predicates shared by the internship/co-op resume and email paths. */
 const normalizedEmploymentType = (alias: string): string =>
   `lower(replace(replace(replace(replace(coalesce(${alias}.employment_type, ''), '_', ''), '-', ''), ' ', ''), '/', ''))`;
 
@@ -7,9 +7,11 @@ const normalizedEmploymentType = (alias: string): string =>
 // requisition 128639 as a generic internship, while its official detail page
 // explicitly says "Co-Op (Fixed Term)". The crawler detail enrichment will
 // persist the canonical value on the next IBM pass; this guard prevents the
-// stale row from leaking into the internship-only paths in the meantime.
+// stale row from being presented as an internship in the meantime.
 const verifiedCoopOfficialUrlPrefixes = [
   "https://careers.ibm.com/en_us/careers/jobdetail?jobid=128639",
+  "https://careers.ibm.com/en_us/careers/jobdetail?jobid=128709",
+  "https://careers.ibm.com/en_us/careers/jobdetail?jobid=128792",
 ] as const;
 
 const verifiedCoopOfficialUrlSql = (alias: string): string => verifiedCoopOfficialUrlPrefixes
@@ -52,5 +54,19 @@ export const internshipOnlySql = (alias = "j"): string => `(
     WHERE internship_topic.job_id = ${alias}.id AND internship_topic.topic_key = 'program:internship'
   )
   AND NOT ${jobHasCoopSql(alias)}
+  AND NOT ${jobHasClinicalExternSql(alias)}
+)`;
+
+/**
+ * Student work programs that should be sent to Codex for final review. Co-op
+ * is intentionally included: the reviewer verifies region, recruiting year,
+ * profile fit, and any stated work-term dates before approving email delivery.
+ */
+export const internshipOrCoopSql = (alias = "j"): string => `(
+  EXISTS (
+    SELECT 1 FROM job_topics student_program_topic
+    WHERE student_program_topic.job_id = ${alias}.id
+      AND student_program_topic.topic_key IN ('program:internship', 'program:coop')
+  )
   AND NOT ${jobHasClinicalExternSql(alias)}
 )`;

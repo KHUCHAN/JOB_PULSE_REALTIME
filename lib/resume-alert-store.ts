@@ -29,6 +29,8 @@ type DigestRow = {
   first_seen_at: string;
   score: number;
   matched_terms: string;
+  program: "Internship" | "Co-op";
+  is_summer: number;
 };
 
 const plusMinutes = (value: string, minutes: number): string => new Date(
@@ -105,7 +107,6 @@ export const planResumeDigests = async (
         AND jm.open_generation = j.open_generation AND j.status = 'open'
         AND j.alert_discovered_after_baseline = 1
         AND ${canonicalOpenJobNotExists("j")}
-        AND NOT ${jobHasCoopSql("j")}
         AND ni.id IS NULL
         AND NOT EXISTS (
           SELECT 1 FROM notification_identity_history history
@@ -234,7 +235,12 @@ export const claimDueNotifications = async (
   const ids = claimed.results.map((row) => row.id);
   const jobs = await database.prepare(`
     SELECT DISTINCT ni.notification_id, j.company, j.title, j.location, j.official_url,
-           j.published_at, j.first_seen_at, jm.score, jm.matched_terms
+           j.published_at, j.first_seen_at, jm.score, jm.matched_terms,
+           CASE WHEN ${jobHasCoopSql("j")} THEN 'Co-op' ELSE 'Internship' END AS program,
+           EXISTS (
+             SELECT 1 FROM job_topics summer_topic
+             WHERE summer_topic.job_id = j.id AND summer_topic.topic_key = 'season:summer'
+           ) AS is_summer
     FROM notification_items ni
     JOIN job_matches jm ON jm.id = ni.job_match_id
     JOIN jobs j ON j.id = jm.job_id
@@ -252,6 +258,12 @@ export const claimDueNotifications = async (
       score: row.score,
       reasons: evidenceLabels(row.matched_terms),
       officialUrl: row.official_url,
+      program: row.program,
+      scheduleNote: row.program === "Co-op"
+        ? row.is_summer === 1
+          ? "Summer work term"
+          : "Work-term dates not stated; verify possible semester overlap"
+        : null,
     });
     grouped.set(row.notification_id, list);
   }
@@ -379,52 +391,6 @@ export const clearResumeAlertBacklog = async (
   ]);
 };
 
-/**
- * Remove stale co-op items that may have been approved before the internship-
- * only policy was enabled. This runs immediately before planning/claiming so
- * an already queued co-op item can never be delivered by Gmail.
- */
-export const purgeCoopResumeNotifications = async (
-  database: D1Database,
-  profileId: "chanyoung-resume",
-): Promise<void> => {
-  await database.batch([
-    database.prepare(`
-      DELETE FROM notification_items
-      WHERE notification_id IN (
-        SELECT id FROM notifications
-        WHERE keyword_id = (SELECT keyword_id FROM match_profiles WHERE id = ?)
-          AND status <> 'sent'
-      )
-      AND job_match_id IN (
-        SELECT jm.id
-        FROM job_matches jm
-        JOIN jobs j ON j.id = jm.job_id
-        WHERE jm.keyword_id = (SELECT keyword_id FROM match_profiles WHERE id = ?)
-          AND ${jobHasCoopSql("j")}
-      )
-    `).bind(profileId, profileId),
-    database.prepare(`
-      UPDATE job_matches
-      SET notification_eligible = 0
-      WHERE keyword_id = (SELECT keyword_id FROM match_profiles WHERE id = ?)
-        AND EXISTS (
-          SELECT 1 FROM jobs j
-          WHERE j.id = job_matches.job_id AND ${jobHasCoopSql("j")}
-        )
-    `).bind(profileId),
-    database.prepare(`
-      DELETE FROM notifications
-      WHERE keyword_id = (SELECT keyword_id FROM match_profiles WHERE id = ?)
-        AND status <> 'sent'
-        AND NOT EXISTS (
-          SELECT 1 FROM notification_items
-          WHERE notification_id = notifications.id
-        )
-    `).bind(profileId),
-  ]);
-};
-
 export const getResumeAlertStatus = async (
   database: D1Database,
   profileId: "chanyoung-resume",
@@ -451,7 +417,6 @@ export const getResumeAlertStatus = async (
       AND jm.open_generation = j.open_generation AND j.status = 'open'
       AND j.alert_discovered_after_baseline = 1
       AND ${canonicalOpenJobNotExists("j")}
-      AND NOT ${jobHasCoopSql("j")}
       AND EXISTS (
         SELECT 1 FROM profile_recipients pr WHERE pr.profile_id = mp.id AND pr.enabled = 1
           AND NOT EXISTS (SELECT 1 FROM notification_items ni WHERE ni.job_match_id = jm.id AND ni.recipient = pr.recipient)

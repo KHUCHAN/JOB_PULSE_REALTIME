@@ -4489,7 +4489,7 @@ HUMAN RESOURCES Posted Date
         } });
       }
       expect(url).toBe("https://r.jina.ai/https://careers.ibm.com/en_US/careers/JobDetail?jobId=128639");
-      return new Response("Job Title\n\nData Engineer Intern 2027\n\nEmployment type\n\nCo-Op (Fixed Term)\n");
+      return new Response("Job Title\n\nData Engineer Intern 2027\n\nDate posted\n\n14-Aug-2026\n\nEmployment type\n\nCo-Op (Fixed Term)\n");
     };
 
     const result = await crawlSource({
@@ -4500,7 +4500,44 @@ HUMAN RESOURCES Posted Date
     expect(result.jobs).toEqual([expect.objectContaining({
       title: "Data Engineer Intern 2027",
       employmentType: "Co-op",
+      publishedAt: "2026-08-14T00:00:00.000Z",
     })]);
+  });
+
+  it("prioritizes the newest IBM requisitions within the bounded detail budget", async () => {
+    const hits = Array.from({ length: 25 }, (_, index) => {
+      const jobId = index === 24 ? 128792 : 100_000 + index;
+      return { _id: `hash-${jobId}`, _source: {
+        title: `Data Intern 2027 ${jobId}`,
+        url: `https://careers.ibm.com/en_US/careers/JobDetail?jobId=${jobId}`,
+        description: "Build data systems.",
+        field_keyword_19: "Lansing, US",
+      } };
+    });
+    const detailIds: number[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url === "https://www-api.ibm.com/search/api/v2") {
+        return Response.json({ hits: { total: { value: hits.length }, hits } });
+      }
+      const jobId = Number(new URL(url.replace("https://r.jina.ai/", "")).searchParams.get("jobId"));
+      detailIds.push(jobId);
+      return new Response(jobId === 128792
+        ? "Date posted\n\n14-Aug-2026\n\nEmployment type\n\nCo-Op (Fixed Term)\n"
+        : "Employment type\n\nInternship\n");
+    };
+
+    const result = await crawlSource({
+      id: "p5-0624-ibm", company: "IBM",
+      postingUrl: "https://www.ibm.com/careers/search", adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(new Set(detailIds).size).toBe(24);
+    expect(detailIds).toContain(128792);
+    expect(result.jobs.find((job) => job.requisitionId === "128792")).toEqual(expect.objectContaining({
+      employmentType: "Co-op",
+      publishedAt: "2026-08-14T00:00:00.000Z",
+    }));
   });
 
   it("checkpoints IBM catalogs that exceed the Worker request budget", async () => {

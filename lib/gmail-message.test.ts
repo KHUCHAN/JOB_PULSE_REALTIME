@@ -18,6 +18,8 @@ describe("Gmail digest MIME", () => {
         score: 92,
         reasons: ["Machine Learning", "Python"],
         officialUrl: "https://jobs.example/apply?id=1&source=pulse",
+        program: "Co-op",
+        scheduleNote: "Work-term dates not stated; verify possible semester overlap",
       }],
       siteUrl: "https://job-pulse-realtime.cksdud985.chatgpt.site/jobs?resumeMatch=chanyoung-resume",
     }));
@@ -26,6 +28,8 @@ describe("Gmail digest MIME", () => {
     expect(raw).toContain("Content-Language: en");
     expect(raw).toContain('<html lang="en">');
     expect(raw).toContain("Machine Learning Intern");
+    expect(raw).toContain("Program: Co-op");
+    expect(raw).toContain("verify possible semester overlap");
     expect(raw).toContain("&amp;");
     expect(raw).not.toContain("(213) 598-7426");
   });

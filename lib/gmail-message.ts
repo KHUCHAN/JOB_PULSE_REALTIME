@@ -6,6 +6,8 @@ export interface DigestJob {
   score: number;
   reasons: string[];
   officialUrl: string;
+  program?: "Internship" | "Co-op";
+  scheduleNote?: string | null;
 }
 
 export interface GmailMessageInput {
@@ -65,6 +67,8 @@ const renderPlainText = (input: ReturnType<typeof validated>): string => [
   ...input.jobs.flatMap((job, index) => [
     `${index + 1}. ${job.company} — ${job.title}`,
     `${job.location} · ${job.timing} · ${job.score}% match`,
+    ...(job.program ? [`Program: ${job.program}`] : []),
+    ...(job.scheduleNote ? [`Schedule: ${job.scheduleNote}`] : []),
     ...(job.reasons.length ? [`Why: ${job.reasons.join(" · ")}`] : []),
     job.officialUrl,
     "",
@@ -78,6 +82,8 @@ const renderHtml = (input: ReturnType<typeof validated>): string => `<!doctype h
 ${input.jobs.map((job) => `<article style="border:1px solid #dbeafe;border-radius:12px;padding:14px;margin:12px 0">
 <strong>${escapeHtml(job.company)} — ${escapeHtml(job.title)}</strong>
 <div>${escapeHtml(job.location)} · ${escapeHtml(job.timing)} · ${job.score}% match</div>
+${job.program ? `<div>Program: ${escapeHtml(job.program)}</div>` : ""}
+${job.scheduleNote ? `<div>Schedule: ${escapeHtml(job.scheduleNote)}</div>` : ""}
 ${job.reasons.length ? `<div>Why: ${job.reasons.map(escapeHtml).join(" · ")}</div>` : ""}
 <a href="${escapeHtml(job.officialUrl)}">Open official posting</a>
 </article>`).join("")}
