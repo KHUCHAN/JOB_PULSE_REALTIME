@@ -1,5 +1,4 @@
 import { canonicalOpenJobNotExists } from "./job-canonical";
-import { postingIdentityHistoryMatchSql, postingIdentityOverlapSql } from "./job-posting-identity";
 import { internshipOrCoopSql } from "./job-program-policy";
 
 export interface ResumeReviewCandidate {
@@ -64,6 +63,19 @@ type Row = {
   recruiting_years: string | null;
 };
 
+type CandidateIndexRow = {
+  match_id: string;
+  job_id: string;
+  score: number;
+  ranking_time: string;
+  priority_bucket: number;
+  requisition_identity_key: string | null;
+  external_identity_key: string | null;
+  url_identity_key: string | null;
+};
+
+type IdentityRow = { identity_key: string };
+
 const parseStringArray = (value: string | null): string[] => {
   if (!value) return [];
   try {
@@ -80,15 +92,102 @@ const parseNumberArray = (value: string | null): number[] => parseStringArray(va
 
 const boundedLimit = (value: number | undefined): number => Math.max(1, Math.min(100, Math.trunc(value ?? 100)));
 
-/**
- * Returns current internship/co-op resume matches that still need Codex
- * adjudication. The server deliberately does not decide region, recruiting
- * year, or profile fit; it only supplies the bounded candidate set.
- */
-export const listResumeReviewCandidates = async (
+// Keep the JSON identity bind comfortably below D1's statement-size ceiling
+// even when an ATS emits unusually long application URLs.
+const CANDIDATE_PAGE_SIZE = 250;
+const MAX_CANDIDATES_SCANNED = 50_000;
+
+const identityKeys = (row: CandidateIndexRow): string[] => [
+  row.requisition_identity_key,
+  row.external_identity_key,
+  row.url_identity_key,
+].filter((value): value is string => Boolean(value));
+
+const excludedIdentityKeys = async (
   database: D1Database,
-  limit?: number,
-): Promise<ResumeReviewCandidate[]> => {
+  keys: string[],
+): Promise<Set<string>> => {
+  if (keys.length === 0) return new Set();
+  const result = await database.prepare(`
+    WITH requested(identity_key) AS (
+      SELECT DISTINCT value FROM json_each(?)
+    ), reviewed(identity_key) AS (
+      SELECT prior_job.requisition_identity_key
+      FROM codex_reviews prior_review
+      JOIN job_matches prior_match ON prior_match.id = prior_review.job_match_id
+      JOIN jobs prior_job ON prior_job.id = prior_match.job_id
+      JOIN requested ON requested.identity_key = prior_job.requisition_identity_key
+      WHERE prior_review.profile_id = 'chanyoung-resume'
+      UNION
+      SELECT prior_job.external_identity_key
+      FROM codex_reviews prior_review
+      JOIN job_matches prior_match ON prior_match.id = prior_review.job_match_id
+      JOIN jobs prior_job ON prior_job.id = prior_match.job_id
+      JOIN requested ON requested.identity_key = prior_job.external_identity_key
+      WHERE prior_review.profile_id = 'chanyoung-resume'
+      UNION
+      SELECT prior_job.url_identity_key
+      FROM codex_reviews prior_review
+      JOIN job_matches prior_match ON prior_match.id = prior_review.job_match_id
+      JOIN jobs prior_job ON prior_job.id = prior_match.job_id
+      JOIN requested ON requested.identity_key = prior_job.url_identity_key
+      WHERE prior_review.profile_id = 'chanyoung-resume'
+    )
+    SELECT identity_key FROM reviewed WHERE identity_key IS NOT NULL
+    UNION
+    SELECT history.identity_key
+    FROM notification_identity_history history
+    JOIN requested ON requested.identity_key = history.identity_key
+    WHERE history.profile_id = 'chanyoung-resume'
+  `).bind(JSON.stringify(keys)).all<IdentityRow>();
+  return new Set(result.results.map((row) => row.identity_key));
+};
+
+const candidateIndexPage = async (
+  database: D1Database,
+  offset: number,
+): Promise<CandidateIndexRow[]> => {
+  const result = await database.prepare(`
+    SELECT jm.id AS match_id, j.id AS job_id, jm.score,
+           COALESCE(j.published_at, j.first_seen_at) AS ranking_time,
+           CASE
+             WHEN j.location_region = 'us' AND EXISTS (
+               SELECT 1 FROM job_topics priority_year
+               WHERE priority_year.job_id = j.id AND priority_year.topic_key = 'year:2027'
+             ) THEN 0
+             WHEN EXISTS (
+               SELECT 1 FROM job_topics priority_year
+               WHERE priority_year.job_id = j.id AND priority_year.topic_key = 'year:2027'
+             ) THEN 1
+             WHEN j.location_region = 'us' THEN 2
+             ELSE 3
+           END AS priority_bucket,
+           j.requisition_identity_key, j.external_identity_key, j.url_identity_key
+    FROM job_matches jm
+    JOIN match_profiles mp ON mp.keyword_id = jm.keyword_id
+    JOIN jobs j ON j.id = jm.job_id
+    WHERE mp.id = 'chanyoung-resume'
+      AND jm.is_active = 1 AND jm.notification_eligible = 0
+      AND jm.open_generation = j.open_generation AND j.status = 'open'
+      AND j.alert_discovered_after_baseline = 1
+      AND ${canonicalOpenJobNotExists("j")}
+      AND ${internshipOrCoopSql("j")}
+      AND (mp.activation_watermark IS NULL OR j.first_seen_at > mp.activation_watermark)
+      AND NOT EXISTS (
+        SELECT 1 FROM codex_reviews reviewed
+        WHERE reviewed.job_match_id = jm.id
+      )
+    ORDER BY priority_bucket, jm.score DESC, ranking_time DESC, jm.id
+    LIMIT ? OFFSET ?
+  `).bind(CANDIDATE_PAGE_SIZE, offset).all<CandidateIndexRow>();
+  return result.results;
+};
+
+const hydrateCandidates = async (
+  database: D1Database,
+  matchIds: string[],
+): Promise<Row[]> => {
+  if (matchIds.length === 0) return [];
   const result = await database.prepare(`
     SELECT jm.id AS match_id, j.id AS job_id, j.company, j.title, j.location,
            COALESCE(j.location_region, 'unknown') AS location_region,
@@ -104,87 +203,55 @@ export const listResumeReviewCandidates = async (
            COALESCE((SELECT json_group_array(substr(t.topic_key, 6))
                      FROM job_topics t
                      WHERE t.job_id = j.id AND t.topic_key GLOB 'year:*'), '[]') AS recruiting_years
-    FROM job_matches jm
-    JOIN match_profiles mp ON mp.keyword_id = jm.keyword_id
+    FROM json_each(?) selected
+    JOIN job_matches jm ON jm.id = selected.value
     JOIN jobs j ON j.id = jm.job_id
-    WHERE mp.id = 'chanyoung-resume'
-      AND jm.is_active = 1 AND jm.notification_eligible = 0
-      AND jm.open_generation = j.open_generation AND j.status = 'open'
-      AND j.alert_discovered_after_baseline = 1
-      AND ${canonicalOpenJobNotExists("j")}
-      AND ${internshipOrCoopSql("j")}
-      -- Keep the feed aligned with applyCodexReviews: candidates that existed
-      -- before the profile was activated are not reviewable and must not be
-      -- returned on every scheduled pass. Reopening an already stored posting
-      -- is not a new discovery and therefore does not create another email.
-      AND (
-        mp.activation_watermark IS NULL
-        OR j.first_seen_at > mp.activation_watermark
-      )
-      AND NOT EXISTS (
-        SELECT 1 FROM codex_reviews reviewed
-        WHERE reviewed.job_match_id = jm.id
-      )
-      AND NOT EXISTS (
-        SELECT 1
-        FROM codex_reviews prior_review
-        JOIN job_matches prior_match ON prior_match.id = prior_review.job_match_id
-        JOIN jobs prior_job ON prior_job.id = prior_match.job_id
-        WHERE prior_review.profile_id = mp.id
-          AND ${postingIdentityOverlapSql("j", "prior_job")}
-      )
-      AND NOT EXISTS (
-        SELECT 1 FROM notification_identity_history history
-        WHERE history.profile_id = mp.id
-          AND ${postingIdentityHistoryMatchSql("j", "history")}
-      )
-      AND NOT EXISTS (
-        SELECT 1
-        FROM job_matches better_match
-        JOIN jobs better_job ON better_job.id = better_match.job_id
-        WHERE better_match.keyword_id = jm.keyword_id
-          AND better_match.is_active = 1 AND better_match.notification_eligible = 0
-          AND better_match.open_generation = better_job.open_generation
-          AND better_job.status = 'open' AND better_job.alert_discovered_after_baseline = 1
-          AND ${internshipOrCoopSql("better_job")}
-          AND ${postingIdentityOverlapSql("j", "better_job")}
-          AND NOT EXISTS (
-            SELECT 1 FROM codex_reviews better_review
-            WHERE better_review.job_match_id = better_match.id
-          )
-          AND (
-            better_match.score > jm.score
-            OR (better_match.score = jm.score
-              AND COALESCE(better_job.published_at, better_job.first_seen_at)
-                > COALESCE(j.published_at, j.first_seen_at))
-            OR (better_match.score = jm.score
-              AND COALESCE(better_job.published_at, better_job.first_seen_at)
-                = COALESCE(j.published_at, j.first_seen_at)
-              AND better_match.id < jm.id)
-          )
-      )
-    -- The feed remains a student-program candidate set; Codex still makes
-    -- every region/year/fit decision. Prioritize records whose extracted
-    -- signals indicate the user's target, then use the coarse resume score
-    -- before freshness. Otherwise a 100-row low-fit company launch can starve
-    -- an older, strongly matched US 2027 internship from Codex review.
-    ORDER BY CASE
-      WHEN j.location_region = 'us' AND EXISTS (
-        SELECT 1 FROM job_topics priority_year
-        WHERE priority_year.job_id = j.id AND priority_year.topic_key = 'year:2027'
-      ) THEN 0
-      WHEN EXISTS (
-        SELECT 1 FROM job_topics priority_year
-        WHERE priority_year.job_id = j.id AND priority_year.topic_key = 'year:2027'
-      ) THEN 1
-      WHEN j.location_region = 'us' THEN 2
-      ELSE 3
-    END,
-    jm.score DESC, COALESCE(j.published_at, j.first_seen_at) DESC, jm.id
-    LIMIT ?
-  `).bind(boundedLimit(limit)).all<Row>();
+    ORDER BY CAST(selected.key AS INTEGER)
+  `).bind(JSON.stringify(matchIds)).all<Row>();
+  return result.results;
+};
 
-  return result.results.map((row) => ({
+/**
+ * Returns current internship/co-op resume matches that still need Codex
+ * adjudication. The server deliberately does not decide region, recruiting
+ * year, or profile fit; it only supplies the bounded candidate set.
+ */
+export const listResumeReviewCandidates = async (
+  database: D1Database,
+  limit?: number,
+): Promise<ResumeReviewCandidate[]> => {
+  const requestedLimit = boundedLimit(limit);
+  const selected: CandidateIndexRow[] = [];
+  const claimedIdentityKeys = new Set<string>();
+  let offset = 0;
+
+  // The previous single statement repeatedly joined the full jobs catalog for
+  // every candidate and could exhaust D1's per-query CPU budget. Read only a
+  // lightweight, globally ranked candidate page, compare its small identity
+  // set with prior reviews/deliveries, and hydrate at most 100 final records.
+  // Every earlier candidate claims all of its identities even when excluded;
+  // this preserves transitive duplicate suppression across URL/ATS variants.
+  while (selected.length < requestedLimit && offset < MAX_CANDIDATES_SCANNED) {
+    const page = await candidateIndexPage(database, offset);
+    if (page.length === 0) break;
+    const pageKeys = [...new Set(page.flatMap(identityKeys))];
+    const excluded = await excludedIdentityKeys(database, pageKeys);
+
+    for (const candidate of page) {
+      const keys = identityKeys(candidate);
+      const duplicate = keys.some((key) => claimedIdentityKeys.has(key));
+      for (const key of keys) claimedIdentityKeys.add(key);
+      if (duplicate || keys.some((key) => excluded.has(key))) continue;
+      selected.push(candidate);
+      if (selected.length >= requestedLimit) break;
+    }
+    offset += page.length;
+    if (page.length < CANDIDATE_PAGE_SIZE) break;
+  }
+
+  const rows = await hydrateCandidates(database, selected.map((candidate) => candidate.match_id));
+
+  return rows.map((row) => ({
     matchId: row.match_id,
     jobId: row.job_id,
     company: row.company,

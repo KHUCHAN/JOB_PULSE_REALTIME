@@ -160,4 +160,91 @@ describe("resume review feed", () => {
     const candidates = await listResumeReviewCandidates(createD1ForSqlite(sqlite), 1);
     expect(candidates.map((candidate) => candidate.jobId)).toEqual(["job-new"]);
   });
+
+  it("suppresses a new URL variant when the same posting identity was already reviewed", async () => {
+    const sqlite = databaseWithCandidates();
+    sqlite.exec(`
+      UPDATE jobs SET requisition_identity_key = 'req:acme:shared-42' WHERE id = 'job-new';
+      INSERT INTO jobs VALUES
+        ('job-prior-variant', 'Acme', 'Data Science Intern', 'Los Angeles, CA', 'us',
+         'https://careers.acme.example/jobs/prior-variant', NULL, NULL, NULL, NULL, NULL,
+         '[]', NULL, NULL, NULL, NULL, 'Internship', NULL, NULL, NULL,
+         '2026-08-13T19:00:00.000Z', '2026-08-13T19:00:00.000Z', '2026-08-13T19:00:00.000Z', 'closed', 1,
+         NULL, 'req:acme:shared-42', NULL, 'url:https://careers.acme.example/jobs/prior-variant', 1);
+      INSERT INTO job_matches VALUES
+        ('match-prior-variant', 'job-prior-variant', 'resume-keyword', 70, '[]', 1, 0, 0);
+      INSERT INTO codex_reviews (job_match_id) VALUES ('match-prior-variant');
+    `);
+
+    const candidates = await listResumeReviewCandidates(createD1ForSqlite(sqlite), 100);
+    expect(candidates.map((candidate) => candidate.jobId)).toEqual(["job-coop-pending"]);
+  });
+
+  it("propagates duplicate suppression across linked posting identities", async () => {
+    const sqlite = databaseWithCandidates();
+    sqlite.exec(`
+      UPDATE jobs
+      SET requisition_identity_key = 'req:acme:chain-a',
+          url_identity_key = 'url:https://careers.acme.example/jobs/chain-a'
+      WHERE id = 'job-new';
+      UPDATE job_matches SET score = 100 WHERE id = 'match-new';
+      INSERT INTO jobs VALUES
+        ('job-chain-middle', 'Acme', 'Data Science Intern mirror', 'Los Angeles, CA', 'us',
+         'https://careers.acme.example/jobs/chain-middle', NULL, NULL, NULL, NULL, NULL,
+         '[]', NULL, NULL, NULL, NULL, 'Internship', NULL, NULL, NULL,
+         '2026-08-13T19:30:00.000Z', '2026-08-13T19:30:00.000Z', '2026-08-13T19:30:00.000Z', 'open', 1,
+         NULL, 'req:acme:chain-a', NULL, 'url:https://careers.acme.example/jobs/chain-b', 1),
+        ('job-chain-tail', 'Acme', 'Data Science Intern copy', 'Los Angeles, CA', 'us',
+         'https://careers.acme.example/jobs/chain-tail', NULL, NULL, NULL, NULL, NULL,
+         '[]', NULL, NULL, NULL, NULL, 'Internship', NULL, NULL, NULL,
+         '2026-08-13T19:15:00.000Z', '2026-08-13T19:15:00.000Z', '2026-08-13T19:15:00.000Z', 'open', 1,
+         NULL, 'req:acme:chain-c', NULL, 'url:https://careers.acme.example/jobs/chain-b', 1);
+      INSERT INTO job_matches VALUES
+        ('match-chain-middle', 'job-chain-middle', 'resume-keyword', 90, '[]', 1, 1, 0),
+        ('match-chain-tail', 'job-chain-tail', 'resume-keyword', 80, '[]', 1, 1, 0);
+      INSERT INTO job_topics VALUES
+        ('job-chain-middle', 'program:internship'), ('job-chain-middle', 'year:2027'),
+        ('job-chain-tail', 'program:internship'), ('job-chain-tail', 'year:2027');
+    `);
+
+    const candidates = await listResumeReviewCandidates(createD1ForSqlite(sqlite), 100);
+    expect(candidates.map((candidate) => candidate.jobId)).toEqual(["job-new", "job-coop-pending"]);
+  });
+
+  it("continues to the next lightweight page when earlier identities were delivered", async () => {
+    const sqlite = databaseWithCandidates();
+    const insertJob = sqlite.prepare(`
+      INSERT INTO jobs (
+        id, company, title, location, location_region, official_url, skills,
+        employment_type, published_at, first_seen_at, last_seen_at, status,
+        open_generation, url_identity_key, alert_discovered_after_baseline
+      ) VALUES (?, 'Bulk Co', ?, 'New York, NY', 'us', ?, '[]', 'Internship',
+                '2026-08-14T23:00:00.000Z', '2026-08-14T23:00:00.000Z',
+                '2026-08-14T23:00:00.000Z', 'open', 1, ?, 1)
+    `);
+    const insertMatch = sqlite.prepare(`
+      INSERT INTO job_matches VALUES (?, ?, 'resume-keyword', 100, '[]', 1, 1, 0)
+    `);
+    const insertHistory = sqlite.prepare(`
+      INSERT INTO notification_identity_history
+      VALUES ('chanyoung-resume', 'kimchany@usc.edu', ?,
+              '2026-08-15T00:00:00.000Z', NULL, NULL)
+    `);
+    sqlite.exec("BEGIN");
+    for (let index = 0; index < 250; index += 1) {
+      const jobId = `job-delivered-${index.toString().padStart(3, "0")}`;
+      const matchId = `match-delivered-${index.toString().padStart(3, "0")}`;
+      const url = `https://careers.bulk.example/jobs/${index}`;
+      const identity = `url:${url}`;
+      insertJob.run(jobId, `Data Intern 2027 ${index}`, url, identity);
+      insertMatch.run(matchId, jobId);
+      sqlite.prepare("INSERT INTO job_topics VALUES (?, 'program:internship'), (?, 'year:2027')")
+        .run(jobId, jobId);
+      insertHistory.run(identity);
+    }
+    sqlite.exec("COMMIT");
+
+    const candidates = await listResumeReviewCandidates(createD1ForSqlite(sqlite), 1);
+    expect(candidates.map((candidate) => candidate.jobId)).toEqual(["job-new"]);
+  });
 });
