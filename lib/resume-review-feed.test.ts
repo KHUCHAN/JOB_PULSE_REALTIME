@@ -22,6 +22,7 @@ const databaseWithCandidates = (): DatabaseSync => {
       notification_eligible INTEGER NOT NULL
     );
     CREATE TABLE job_topics (job_id TEXT NOT NULL, topic_key TEXT NOT NULL);
+    CREATE INDEX job_topics_topic_job_idx ON job_topics(topic_key, job_id);
     CREATE TABLE codex_reviews (
       job_match_id TEXT PRIMARY KEY,
       profile_id TEXT NOT NULL DEFAULT 'chanyoung-resume'

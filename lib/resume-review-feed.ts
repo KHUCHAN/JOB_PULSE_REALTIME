@@ -68,13 +68,14 @@ type CandidateIndexRow = {
   job_id: string;
   score: number;
   ranking_time: string;
-  priority_bucket: number;
   requisition_identity_key: string | null;
   external_identity_key: string | null;
   url_identity_key: string | null;
 };
 
 type IdentityRow = { identity_key: string };
+type ReviewProfileRow = { keyword_id: string; activation_watermark: string | null };
+type CandidatePriorityBucket = 0 | 1 | 2 | 3;
 
 const parseStringArray = (value: string | null): string[] => {
   if (!value) return [];
@@ -96,6 +97,7 @@ const boundedLimit = (value: number | undefined): number => Math.max(1, Math.min
 // even when an ATS emits unusually long application URLs.
 const CANDIDATE_PAGE_SIZE = 250;
 const MAX_CANDIDATES_SCANNED = 50_000;
+const CANDIDATE_PRIORITY_BUCKETS: readonly CandidatePriorityBucket[] = [0, 1, 2, 3];
 
 const identityKeys = (row: CandidateIndexRow): string[] => [
   row.requisition_identity_key,
@@ -145,41 +147,52 @@ const excludedIdentityKeys = async (
 
 const candidateIndexPage = async (
   database: D1Database,
+  profile: ReviewProfileRow,
+  priorityBucket: CandidatePriorityBucket,
   offset: number,
 ): Promise<CandidateIndexRow[]> => {
+  const requires2027 = priorityBucket <= 1;
+  const locationPredicate = priorityBucket === 0 || priorityBucket === 2
+    ? "j.location_region = 'us'"
+    : "COALESCE(j.location_region, 'unknown') <> 'us'";
+  const candidateFrom = requires2027
+    ? `FROM job_topics priority_year INDEXED BY job_topics_topic_job_idx
+       JOIN jobs j ON j.id = priority_year.job_id
+      AND priority_year.topic_key = 'year:2027'`
+    : "FROM jobs j";
+  const yearExclusion = requires2027
+    ? ""
+    : `AND NOT EXISTS (
+        SELECT 1 FROM job_topics priority_year
+        WHERE priority_year.job_id = j.id AND priority_year.topic_key = 'year:2027'
+      )`;
   const result = await database.prepare(`
     SELECT jm.id AS match_id, j.id AS job_id, jm.score,
            COALESCE(j.published_at, j.first_seen_at) AS ranking_time,
-           CASE
-             WHEN j.location_region = 'us' AND EXISTS (
-               SELECT 1 FROM job_topics priority_year
-               WHERE priority_year.job_id = j.id AND priority_year.topic_key = 'year:2027'
-             ) THEN 0
-             WHEN EXISTS (
-               SELECT 1 FROM job_topics priority_year
-               WHERE priority_year.job_id = j.id AND priority_year.topic_key = 'year:2027'
-             ) THEN 1
-             WHEN j.location_region = 'us' THEN 2
-             ELSE 3
-           END AS priority_bucket,
            j.requisition_identity_key, j.external_identity_key, j.url_identity_key
-    FROM job_matches jm
-    JOIN match_profiles mp ON mp.keyword_id = jm.keyword_id
-    JOIN jobs j ON j.id = jm.job_id
-    WHERE mp.id = 'chanyoung-resume'
+    ${candidateFrom}
+    JOIN job_matches jm ON jm.job_id = j.id AND jm.keyword_id = ?
+    WHERE ${locationPredicate}
+      ${yearExclusion}
       AND jm.is_active = 1 AND jm.notification_eligible = 0
       AND jm.open_generation = j.open_generation AND j.status = 'open'
       AND j.alert_discovered_after_baseline = 1
       AND ${canonicalOpenJobNotExists("j")}
       AND ${internshipOrCoopSql("j")}
-      AND (mp.activation_watermark IS NULL OR j.first_seen_at > mp.activation_watermark)
+      AND (? IS NULL OR j.first_seen_at > ?)
       AND NOT EXISTS (
         SELECT 1 FROM codex_reviews reviewed
         WHERE reviewed.job_match_id = jm.id
       )
-    ORDER BY priority_bucket, jm.score DESC, ranking_time DESC, jm.id
+    ORDER BY jm.score DESC, ranking_time DESC, jm.id
     LIMIT ? OFFSET ?
-  `).bind(CANDIDATE_PAGE_SIZE, offset).all<CandidateIndexRow>();
+  `).bind(
+    profile.keyword_id,
+    profile.activation_watermark,
+    profile.activation_watermark,
+    CANDIDATE_PAGE_SIZE,
+    offset,
+  ).all<CandidateIndexRow>();
   return result.results;
 };
 
@@ -221,32 +234,44 @@ export const listResumeReviewCandidates = async (
   limit?: number,
 ): Promise<ResumeReviewCandidate[]> => {
   const requestedLimit = boundedLimit(limit);
+  const profile = await database.prepare(`
+    SELECT keyword_id, activation_watermark
+    FROM match_profiles
+    WHERE id = 'chanyoung-resume'
+  `).first<ReviewProfileRow>();
+  if (!profile) return [];
   const selected: CandidateIndexRow[] = [];
   const claimedIdentityKeys = new Set<string>();
-  let offset = 0;
+  let scanned = 0;
 
-  // The previous single statement repeatedly joined the full jobs catalog for
-  // every candidate and could exhaust D1's per-query CPU budget. Read only a
-  // lightweight, globally ranked candidate page, compare its small identity
-  // set with prior reviews/deliveries, and hydrate at most 100 final records.
+  // Never sort the full pending-match catalog by a CASE expression. D1 must
+  // materialize that global sort before applying LIMIT, which becomes
+  // prohibitively expensive as the baseline grows. Read each priority bucket
+  // independently so the 2027 topic index constrains the highest-value bucket
+  // before ranking, then fall through only when a bucket cannot fill the feed.
   // Every earlier candidate claims all of its identities even when excluded;
   // this preserves transitive duplicate suppression across URL/ATS variants.
-  while (selected.length < requestedLimit && offset < MAX_CANDIDATES_SCANNED) {
-    const page = await candidateIndexPage(database, offset);
-    if (page.length === 0) break;
-    const pageKeys = [...new Set(page.flatMap(identityKeys))];
-    const excluded = await excludedIdentityKeys(database, pageKeys);
+  for (const priorityBucket of CANDIDATE_PRIORITY_BUCKETS) {
+    let offset = 0;
+    while (selected.length < requestedLimit && scanned < MAX_CANDIDATES_SCANNED) {
+      const page = await candidateIndexPage(database, profile, priorityBucket, offset);
+      if (page.length === 0) break;
+      const pageKeys = [...new Set(page.flatMap(identityKeys))];
+      const excluded = await excludedIdentityKeys(database, pageKeys);
 
-    for (const candidate of page) {
-      const keys = identityKeys(candidate);
-      const duplicate = keys.some((key) => claimedIdentityKeys.has(key));
-      for (const key of keys) claimedIdentityKeys.add(key);
-      if (duplicate || keys.some((key) => excluded.has(key))) continue;
-      selected.push(candidate);
-      if (selected.length >= requestedLimit) break;
+      for (const candidate of page) {
+        const keys = identityKeys(candidate);
+        const duplicate = keys.some((key) => claimedIdentityKeys.has(key));
+        for (const key of keys) claimedIdentityKeys.add(key);
+        if (duplicate || keys.some((key) => excluded.has(key))) continue;
+        selected.push(candidate);
+        if (selected.length >= requestedLimit) break;
+      }
+      scanned += page.length;
+      offset += page.length;
+      if (page.length < CANDIDATE_PAGE_SIZE) break;
     }
-    offset += page.length;
-    if (page.length < CANDIDATE_PAGE_SIZE) break;
+    if (selected.length >= requestedLimit || scanned >= MAX_CANDIDATES_SCANNED) break;
   }
 
   const rows = await hydrateCandidates(database, selected.map((candidate) => candidate.match_id));
