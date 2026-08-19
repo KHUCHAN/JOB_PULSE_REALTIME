@@ -26,8 +26,8 @@ WHERE `source_id` = 'p2-0024-american-express'
   AND `official_url` LIKE 'https://careers.americanexpress.com/hcmUI/CandidateExperience/en/sites/%';--> statement-breakpoint
 
 -- Discover's source was redirected after the acquisition to Capital One's
--- complete catalog. Stop the duplicate source and correct already collected
--- first-party Capital One postings without deleting their history.
+-- complete catalog. Stop the duplicate source and close its duplicate rows;
+-- the dedicated Capital One source remains authoritative and open.
 UPDATE `sources`
 SET `enabled` = 0,
     `next_crawl_at` = NULL,
@@ -36,9 +36,19 @@ WHERE `id` = 'p2-0098-discover';--> statement-breakpoint
 
 UPDATE `jobs`
 SET `company` = 'Capital One',
+    `status` = 'closed',
+    `closed_at` = COALESCE(`closed_at`, CURRENT_TIMESTAMP),
     `updated_at` = CURRENT_TIMESTAMP
 WHERE `source_id` = 'p2-0098-discover'
   AND lower(`official_url`) LIKE 'https://www.capitalonecareers.com/%';--> statement-breakpoint
+
+UPDATE `job_matches`
+SET `is_active` = 0
+WHERE `job_id` IN (
+  SELECT `id`
+  FROM `jobs`
+  WHERE `source_id` = 'p2-0098-discover'
+);--> statement-breakpoint
 
 -- These two NOMAD requisitions no longer appear in Sandia's authoritative
 -- catalog, and their old PeopleSoft deep links now resolve to the login-error

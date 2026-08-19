@@ -15,6 +15,7 @@ describe("verified posting link repairs migration", () => {
         company TEXT NOT NULL, official_url TEXT NOT NULL, apply_url TEXT,
         url_identity_key TEXT, status TEXT NOT NULL, closed_at TEXT, updated_at TEXT
       );
+      CREATE TABLE job_matches (job_id TEXT PRIMARY KEY, is_active INTEGER NOT NULL);
       INSERT INTO sources VALUES
         ('p2-0098-discover', 1, '2099-01-01', NULL),
         ('p2-0024-american-express', 1, '2099-01-01', NULL),
@@ -35,6 +36,7 @@ describe("verified posting link repairs migration", () => {
           'https://cg.sandia.gov/job?JobOpeningId=698616', NULL, NULL, 'open', NULL, NULL);
       ALTER TABLE jobs ADD COLUMN published_at TEXT;
       ALTER TABLE jobs ADD COLUMN source_updated_at TEXT;
+      INSERT INTO job_matches VALUES ('capital-one', 1);
     `);
 
     sqlite.exec(readFileSync(resolve("drizzle/0114_verified_posting_link_repairs.sql"), "utf8"));
@@ -48,7 +50,12 @@ describe("verified posting link repairs migration", () => {
       enabled: 0,
       next_crawl_at: null,
     });
-    expect(sqlite.prepare(`SELECT company FROM jobs WHERE id='capital-one'`).get()).toEqual({ company: "Capital One" });
+    expect(sqlite.prepare(`SELECT company, status, closed_at IS NOT NULL AS closed FROM jobs WHERE id='capital-one'`).get()).toEqual({
+      company: "Capital One",
+      status: "closed",
+      closed: 1,
+    });
+    expect(sqlite.prepare(`SELECT is_active FROM job_matches WHERE job_id='capital-one'`).get()).toEqual({ is_active: 0 });
     expect(sqlite.prepare(`SELECT published_at, source_updated_at FROM jobs WHERE id='databricks'`).get()).toEqual({
       published_at: "2023-08-17T21:27:27.000Z",
       source_updated_at: "2026-08-18T17:17:06.000Z",
