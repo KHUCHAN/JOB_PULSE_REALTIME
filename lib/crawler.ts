@@ -2397,6 +2397,13 @@ export const oracleCareerSite = (html: string, postingUrl: string): { apiOrigin:
 
 const oracleJobUrl = (sourceUrl: string, site: string, job: OracleJob): string => {
   const source = new URL(sourceUrl);
+  // American Express' branded Oracle host exposes public job details directly
+  // under /en/sites. The generic CandidateExperience path is accepted by the
+  // reverse proxy but lands on its HTTP-200 error page, so preserve the
+  // verified vanity route for links shown to users.
+  if (source.hostname.toLocaleLowerCase() === "careers.americanexpress.com") {
+    return `${source.origin}/en/sites/${encodeURIComponent(site)}/job/${encodeURIComponent(String(job.Id))}`;
+  }
   return `${source.origin}/hcmUI/CandidateExperience/en/sites/${encodeURIComponent(site)}/job/${encodeURIComponent(String(job.Id))}`;
 };
 

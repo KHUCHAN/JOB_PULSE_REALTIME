@@ -657,13 +657,18 @@ export class D1CrawlStore implements CrawlStore {
         for (const mirror of [...identityMatches, ...listingMatches]) {
           if (mirror.id !== existing.id && mirror.status === "open") duplicateJobIds.add(mirror.id);
         }
-        return [{ id: existing.id, officialUrl }];
+        return [{ id: existing.id, officialUrl, urlIdentityKey: record.urlIdentityKey }];
       });
       for (const repairChunk of chunksByJsonBytes(urlRepairs, 1_500_000)) {
         await this.db.prepare(`
           UPDATE jobs
           SET official_url = (
                 SELECT json_extract(value, '$.officialUrl')
+                FROM json_each(?1)
+                WHERE json_extract(value, '$.id') = jobs.id
+              ),
+              url_identity_key = (
+                SELECT json_extract(value, '$.urlIdentityKey')
                 FROM json_each(?1)
                 WHERE json_extract(value, '$.id') = jobs.id
               ),

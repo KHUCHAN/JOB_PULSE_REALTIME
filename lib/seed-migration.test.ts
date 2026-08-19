@@ -198,6 +198,7 @@ describe("large catalog US scope migration", () => {
     const jobsynFoxJobviteRefresh = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0111_snapshot.json"), "utf8"));
     const dardenSolarEdgeRefresh = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0112_snapshot.json"), "utf8"));
     const durableAlertIdentity = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0113_snapshot.json"), "utf8"));
+    const verifiedPostingLinkRepairs = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0114_snapshot.json"), "utf8"));
     const currentJournal = JSON.parse(readFileSync(resolve(drizzlePath, "meta/_journal.json"), "utf8"));
 
     expect(current.prevId).toBe(previous.id);
@@ -214,6 +215,7 @@ describe("large catalog US scope migration", () => {
     expect(jobsynFoxJobviteRefresh.prevId).toBe(officialCatalogRefresh.id);
     expect(dardenSolarEdgeRefresh.prevId).toBe(jobsynFoxJobviteRefresh.id);
     expect(durableAlertIdentity.prevId).toBe(dardenSolarEdgeRefresh.id);
+    expect(verifiedPostingLinkRepairs.prevId).toBe(durableAlertIdentity.id);
     expect(durableAlertIdentity.tables).toHaveProperty("notification_identity_history");
     expect(durableAlertIdentity.tables.jobs.columns).toHaveProperty("alert_discovered_after_baseline");
     expect(currentJournal.entries.find((entry: { tag: string }) => entry.tag === "0100_large_catalog_us_scope")).toMatchObject({
@@ -221,8 +223,8 @@ describe("large catalog US scope migration", () => {
       tag: "0100_large_catalog_us_scope",
     });
     expect(currentJournal.entries.at(-1)).toMatchObject({
-      idx: 113,
-      tag: "0113_durable_posting_alert_identity",
+      idx: 114,
+      tag: "0114_verified_posting_link_repairs",
     });
   });
 

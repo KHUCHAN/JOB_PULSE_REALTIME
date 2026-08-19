@@ -212,9 +212,11 @@ describe("D1CrawlStore enriched job persistence", () => {
 
     const repair = calls.find((call) => call.sql.includes("UPDATE jobs") && call.sql.includes("officialUrl") && call.sql.includes("json_each"));
     expect(repair).toBeDefined();
+    expect(repair?.sql).toContain("url_identity_key");
     expect(JSON.parse(String(repair?.values[0]))).toEqual([{
       id: "job-42",
       officialUrl: "https://acme.wd5.myworkdayjobs.com/Careers/job/Role_REQ-42",
+      urlIdentityKey: "url:https://acme.wd5.myworkdayjobs.com/careers/job/role_req-42",
     }]);
   });
 
@@ -255,6 +257,7 @@ describe("D1CrawlStore enriched job persistence", () => {
     expect(JSON.parse(String(repair?.values[0]))).toEqual([{
       id: "legacy-listing",
       officialUrl: enrichedUrl,
+      urlIdentityKey: `url:${legacyUrl}`,
     }]);
     const inserted = calls.find((call) => call.sql.includes("INSERT INTO jobs"));
     expect(JSON.parse(String(inserted?.values[0]))).toEqual([

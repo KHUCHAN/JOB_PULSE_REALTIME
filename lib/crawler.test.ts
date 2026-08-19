@@ -6610,6 +6610,28 @@ We are an equal opportunity employer.`;
     }));
   });
 
+  it("uses American Express' verified vanity detail route", async () => {
+    const responses = [
+      new Response('<script src="https://egug.fa.us2.oraclecloud.com/hcmUI/app.js"></script>', { status: 200 }),
+      Response.json({ items: [{ TotalJobsCount: 1, requisitionList: [{
+        Id: 26011991,
+        Title: "Campus Graduate Masters Summer Internship Program - 2027 AI Engineer",
+        PrimaryLocation: "New York, NY, United States",
+      }] }] }),
+    ];
+
+    const result = await crawlSource({
+      id: "p2-0024-american-express",
+      company: "American Express",
+      postingUrl: "https://careers.americanexpress.com/en/sites/CX_1/jobs",
+      adapter: "custom",
+    }, async () => responses.shift()!, new Date());
+
+    expect(result.jobs[0]?.officialUrl).toBe(
+      "https://careers.americanexpress.com/en/sites/CX_1/job/26011991",
+    );
+  });
+
   it("does not truncate Oracle Recruiting catalogs above 500 jobs", async () => {
     const offsets: number[] = [];
     const fetcher: typeof fetch = async (input) => {

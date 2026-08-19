@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:3867b1f52caafbfd982f5f89c89f5a7bf504e1fc10f5a8364a226d7b9165c564",
+  "version": "v2:sha256:6f3e5f6fc040c5df05fb5c1a5783ea7354ee60e0491fc2ec4adc8ccd7c5e2e3e",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -18825,7 +18825,7 @@
       "resumeUpload": "unknown",
       "jobAlerts": "available",
       "checkedAt": "2026-08-05",
-      "enabled": true
+      "enabled": false
     },
     {
       "id": "p2-0102-experian",
