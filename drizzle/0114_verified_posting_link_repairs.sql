@@ -55,4 +55,16 @@ WHERE `source_id` = 'p5-1051-sandia-national-labs'
     OR `official_url` LIKE '%JobOpeningId=698617%'
   );--> statement-breakpoint
 
+-- Databricks reuses a long-lived Greenhouse requisition for successive intern
+-- cohorts. Its 2027 content was updated on 2026-08-18, but the authoritative
+-- Greenhouse first_published value remains 2023-08-17. Keep "recent posting"
+-- filters anchored to the original publication instead of the content update.
+UPDATE `jobs`
+SET `published_at` = '2023-08-17T21:27:27.000Z',
+    `source_updated_at` = '2026-08-18T17:17:06.000Z',
+    `updated_at` = CURRENT_TIMESTAMP
+WHERE `source_id` = 'p4-0256-databricks'
+  AND `external_id` = '6883068002'
+  AND `official_url` LIKE 'https://databricks.com/%';--> statement-breakpoint
+
 PRAGMA optimize;

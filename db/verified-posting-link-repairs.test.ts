@@ -28,8 +28,13 @@ describe("verified posting link repairs migration", () => {
         ('capital-one', 'p2-0098-discover', '99343885232', NULL, 'Discover',
           'https://www.capitalonecareers.com/job/mclean/strategy-consulting-intern-summer-2027/31238/99343885232',
           NULL, NULL, 'open', NULL, NULL),
+        ('databricks', 'p4-0256-databricks', '6883068002', 'P-982', 'Databricks',
+          'https://databricks.com/company/careers/open-positions/job?gh_jid=6883068002',
+          NULL, NULL, 'open', NULL, NULL),
         ('sandia', 'p5-1051-sandia-national-labs', '698616', '698616', 'Sandia National Labs',
           'https://cg.sandia.gov/job?JobOpeningId=698616', NULL, NULL, 'open', NULL, NULL);
+      ALTER TABLE jobs ADD COLUMN published_at TEXT;
+      ALTER TABLE jobs ADD COLUMN source_updated_at TEXT;
     `);
 
     sqlite.exec(readFileSync(resolve("drizzle/0114_verified_posting_link_repairs.sql"), "utf8"));
@@ -44,6 +49,10 @@ describe("verified posting link repairs migration", () => {
       next_crawl_at: null,
     });
     expect(sqlite.prepare(`SELECT company FROM jobs WHERE id='capital-one'`).get()).toEqual({ company: "Capital One" });
+    expect(sqlite.prepare(`SELECT published_at, source_updated_at FROM jobs WHERE id='databricks'`).get()).toEqual({
+      published_at: "2023-08-17T21:27:27.000Z",
+      source_updated_at: "2026-08-18T17:17:06.000Z",
+    });
     expect(sqlite.prepare(`SELECT status, closed_at IS NOT NULL AS closed FROM jobs WHERE id='sandia'`).get()).toEqual({
       status: "closed",
       closed: 1,
