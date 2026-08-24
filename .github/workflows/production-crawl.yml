@@ -63,12 +63,16 @@ jobs:
           REQUEST_FALLBACK_INGEST_URL: https://job-pulse-realtime.autodev61.chatgpt.site/api/pulse
           # Penn Medicine's official Talemetry map feed is available from the
           # independent runner but its edge rejects Sites Worker egress.
+          # SAIC's 1,000+ row reader catalog now crosses enough pages that a
+          # single transient reader miss can fail the request-only job. Route
+          # it through the browser recovery priority queue below, where the
+          # native adapter gets a fresh independent attempt before Chrome.
           # Revolut now returns HTTP 403 to the request-only runner and is
           # recovered successfully by the browser job below. Keeping it here
           # made every otherwise-successful workflow conclude as failed.
           # Delta's Avature shell is likewise browser-only and already has a
           # dedicated priority slot in browser-recovery.
-          REQUEST_FALLBACK_SOURCE_IDS: p5-0722-saic,p4-0241-cgi,p5-1018-penn-medicine,legacy-row-826,p2-0075-american-family-insurance
+          REQUEST_FALLBACK_SOURCE_IDS: p4-0241-cgi,p5-1018-penn-medicine,legacy-row-826,p2-0075-american-family-insurance
         run: node scripts/request-fallback-crawl.ts
 
   browser-recovery:
@@ -114,5 +118,5 @@ jobs:
           # egress and therefore must not sit behind the generic recovery
           # queue. The script still uses the official listing and verified
           # official job-detail URLs.
-          BROWSER_FALLBACK_PRIORITY_SOURCE_IDS: audit-row-342
+          BROWSER_FALLBACK_PRIORITY_SOURCE_IDS: p5-0722-saic,audit-row-342
         run: npm run crawler:fallback:browser

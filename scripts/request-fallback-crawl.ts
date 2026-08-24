@@ -22,7 +22,7 @@ type RecoverySummary = {
 const siteUrl = (process.env.REQUEST_FALLBACK_LIVE_URL
   ?? "https://job-pulse-realtime.autodev61.chatgpt.site").replace(/\/$/, "");
 const ingestUrl = process.env.REQUEST_FALLBACK_INGEST_URL?.trim() || `${siteUrl}/api/pulse`;
-const sourceIds = [...new Set((process.env.REQUEST_FALLBACK_SOURCE_IDS ?? "p5-0722-saic,legacy-row-826,p2-0075-american-family-insurance")
+const sourceIds = [...new Set((process.env.REQUEST_FALLBACK_SOURCE_IDS ?? "legacy-row-826,p2-0075-american-family-insurance")
   .split(",").map((value) => value.trim()).filter(Boolean))].slice(0, 10);
 const concurrency = 2;
 const checkpointedSourceIds = new Set([
