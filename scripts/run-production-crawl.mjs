@@ -129,8 +129,6 @@ while (Date.now() < deadline) {
   }
 }
 
-const alertDispatch = await postAction("scheduledProcessAlerts", 110_000);
-
 const getJson = async (resource) => {
   const controller = new AbortController();
   // The overview query can briefly exceed 30 seconds while the just-finished
@@ -164,7 +162,6 @@ const result = {
   },
   totalSources: sources.length,
   sourceCounts,
-  alerts: alertDispatch.alerts ?? null,
 };
 console.log(JSON.stringify(result));
 
@@ -180,7 +177,6 @@ if (process.env.GITHUB_STEP_SUMMARY) {
     `- Runtime: ${result.elapsedMinutes} minutes`,
     `- Stop reason: ${result.stopReason || "queue drained or time limit reached"}`,
     `- Current source health: ${JSON.stringify(result.sourceCounts)}`,
-    `- Alert dispatch: ${JSON.stringify(result.alerts)}`,
     "",
   ].join("\n"));
 }

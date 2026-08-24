@@ -150,7 +150,7 @@ const runResumeAlerts = async (database: D1Database) => {
   return alerts;
 };
 
-const runCrawlBatch = async (requested: number | undefined, includeAlerts: boolean) => {
+const runCrawlBatch = async (requested: number | undefined) => {
   const database = db();
   const result = await runDueCrawls(new D1CrawlStore(database), fetch, new Date(), crawlBatchOptions(requested));
   if (result.attempted === 0) {
@@ -160,7 +160,7 @@ const runCrawlBatch = async (requested: number | undefined, includeAlerts: boole
     });
     if (refreshed.refreshed) filterOptionsCache = null;
   }
-  return includeAlerts ? { ...result, alerts: await runResumeAlerts(database) } : result;
+  return result;
 };
 
 const parseJsonArray = (value: string | null): string[] => {
@@ -699,19 +699,13 @@ export async function POST(request: Request): Promise<Response> {
     }
     if (body.action === "crawlBatch") {
       const requested = typeof body.limit === "number" ? body.limit : 4;
-      return json(await runCrawlBatch(requested, true));
+      return json(await runCrawlBatch(requested));
     }
     if (body.action === "scheduledCrawlBatch") {
       const authorized = await verifyGithubActionsOidc(request.headers.get("authorization"));
       if (!authorized) return json({ error: "Scheduled crawl authorization is required." }, 401);
       const requested = typeof body.limit === "number" ? body.limit : 1;
-      return json(await runCrawlBatch(requested, false));
-    }
-    if (body.action === "scheduledProcessAlerts") {
-      const authorized = await verifyGithubActionsOidc(request.headers.get("authorization"));
-      if (!authorized) return json({ error: "Scheduled alert authorization is required." }, 401);
-      const alerts = await runResumeAlerts(db());
-      return json({ alerts }, resumeAlertHttpStatus(alerts));
+      return json(await runCrawlBatch(requested));
     }
     if (body.action === "backfillResumeMatches") {
       const requested = typeof body.limit === "number" ? body.limit : 500;
@@ -736,8 +730,7 @@ export async function POST(request: Request): Promise<Response> {
       }));
       if (reviews.length === 0) return json({ error: "At least one Codex review is required." }, 400);
       const result = await applyCodexReviews(db(), reviews);
-      const alerts = body.dispatch === true ? await runResumeAlerts(db()) : null;
-      return json({ ...result, alerts });
+      return json({ ...result, alerts: null });
     }
     if (body.action === "dispatchCodexReviewBatch") {
       if (!codexReviewAuthorized(request)) return json({ error: "Codex review authorization is required." }, 401);
