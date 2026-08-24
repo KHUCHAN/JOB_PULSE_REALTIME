@@ -133,14 +133,12 @@ while (Date.now() < deadline) {
 const staleRunRepair = await postAction("finalizeStaleCrawlRuns", 15_000);
 summary.staleRunsFinalized = number(staleRunRepair.finalized);
 
-const getJson = async (resource) => {
+const getJson = async (resource, timeoutMs) => {
   const controller = new AbortController();
-  // The overview query can briefly exceed 30 seconds while the just-finished
-  // crawl is flushing a large source into D1. Keep final health verification
-  // authoritative instead of turning a successful 20-minute drain into a
-  // false workflow failure. The workflow's 25-minute cap still bounds this.
-  const verificationTimeoutMs = 90_000;
-  const timeout = setTimeout(() => controller.abort(new Error(`${resource} verification exceeded 90 seconds.`)), verificationTimeoutMs);
+  const timeout = setTimeout(
+    () => controller.abort(new Error(`${resource} verification exceeded ${Math.round(timeoutMs / 1_000)} seconds.`)),
+    timeoutMs,
+  );
   try {
     const response = await fetch(`${apiUrl}?resource=${encodeURIComponent(resource)}`, {
       headers: { accept: "application/json" },
@@ -152,7 +150,22 @@ const getJson = async (resource) => {
     clearTimeout(timeout);
   }
 };
-const [overview, sources] = await Promise.all([getJson("overview"), getJson("sources")]);
+
+// The full source view includes per-source correlated job/run counts and can
+// temporarily exceed the remaining workflow budget immediately after a large
+// drain. It is useful telemetry, but it must not convert an otherwise healthy
+// crawl into a hard schedule failure. Keep the compact overview authoritative
+// and bound the optional detailed health snapshot to the time left in the
+// 25-minute job.
+const overview = await getJson("overview", 60_000);
+let sources = [];
+let sourceHealthAvailable = true;
+try {
+  sources = await getJson("sources", 15_000);
+} catch (error) {
+  sourceHealthAvailable = false;
+  console.warn(`Detailed source health unavailable: ${error instanceof Error ? error.message : String(error)}`);
+}
 const sourceCounts = {};
 for (const source of sources) sourceCounts[source.health] = (sourceCounts[source.health] || 0) + 1;
 const result = {
@@ -166,6 +179,7 @@ const result = {
   },
   totalSources: sources.length,
   sourceCounts,
+  sourceHealthAvailable,
 };
 console.log(JSON.stringify(result));
 
@@ -181,7 +195,7 @@ if (process.env.GITHUB_STEP_SUMMARY) {
     `- Runtime: ${result.elapsedMinutes} minutes`,
     `- Stop reason: ${result.stopReason || "queue drained or time limit reached"}`,
     `- Stale crawl rows finalized: ${result.staleRunsFinalized}`,
-    `- Current source health: ${JSON.stringify(result.sourceCounts)}`,
+    `- Current source health: ${result.sourceHealthAvailable ? JSON.stringify(result.sourceCounts) : "detailed view timed out; overview remained healthy"}`,
     "",
   ].join("\n"));
 }
