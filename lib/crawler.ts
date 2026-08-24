@@ -15490,6 +15490,8 @@ const GENERIC_CLASSIC_TALEO_BOARDS: Record<string, GenericClassicTaleoConfig> = 
 const AMERICAN_FAMILY_LISTING_URL = "https://careers.amfam.com/jobs/";
 const AMERICAN_FAMILY_READER_ORIGIN = "https://r.jina.ai";
 const AMERICAN_FAMILY_PAGE_SIZE = 50;
+const AMERICAN_FAMILY_WORKDAY_LISTING_URL = "https://amfam.wd1.myworkdayjobs.com/Careers";
+const AMERICAN_FAMILY_WORKDAY_ENDPOINT = "https://amfam.wd1.myworkdayjobs.com/wday/cxs/amfam/Careers/jobs";
 const ENTERPRISE_PRODUCTS_CORPORATE_JOB_OPENINGS_URL = "https://www.enterpriseproducts.com/careers/job-openings/";
 const ENTERPRISE_PRODUCTS_TALEO_LISTING_URL = "https://epco.taleo.net/careersection/alljobs/jobsearch.ftl?lang=en&location=101372523&radius=1&radiusType=K&searchExpanded=false&dropListSize=1000";
 const PCA_CAREER_SEARCH_URL = "https://careers.packagingcorp.com/career-search/";
@@ -17650,6 +17652,21 @@ const crawlAmericanFamilyCareers = async (
       error: null,
     };
   } catch (error) {
+    const workdayFallback = await crawlWorkday({
+      ...source,
+      postingUrl: AMERICAN_FAMILY_WORKDAY_LISTING_URL,
+      adapter: "workday",
+    }, AMERICAN_FAMILY_WORKDAY_ENDPOINT, fetcher, now);
+    if (workdayFallback.status === "succeeded" && workdayFallback.jobs.length > 0) {
+      return {
+        ...workdayFallback,
+        // The employer-branded catalog can include roles outside the public
+        // Workday board. Use the ATS result as an addition-only recovery so a
+        // reader outage can never close a role that remains live elsewhere.
+        completeListing: false,
+        resolvedListingUrl: AMERICAN_FAMILY_LISTING_URL,
+      };
+    }
     return {
       status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
       responseStatus,
@@ -19390,11 +19407,13 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
       // suffix such as `R-30036-1`. Prefer the requisition printed in the
       // official Workday card so a source migration repairs the existing row
       // instead of creating an ATS mirror for the same posting.
+      const bulletFields = workdayBulletFields(job.bulletFields);
       const workdayRequisitionId = source.id === "p5-0728-siemens-healthineers"
         ? job.bulletFields?.map((value) => value.trim()).find((value) => /^R-\d+$/i.test(value)) ?? null
-        : null;
+        : source.id === "p2-0075-american-family-insurance"
+          ? job.bulletFields?.map((value) => value.trim()).find((value) => /^R\d+$/i.test(value)) ?? null
+          : null;
       const externalId = workdayRequisitionId ?? pathExternalId;
-      const bulletFields = workdayBulletFields(job.bulletFields);
       const officialUrl = new URL(`${workdaySitePrefix}${job.externalPath}`, endpointUrl.origin).href;
       return [{
         externalId,

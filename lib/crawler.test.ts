@@ -14540,6 +14540,50 @@ We are an equal opportunity employer.`;
     expect(result.jobs).toHaveLength(51);
   });
 
+  it("recovers American Family through its official Workday API when the shared reader is rate limited", async () => {
+    const primaryReader = "https://r.jina.ai/https://careers.amfam.com/jobs/?pagesize=50";
+    const fallbackReader = "https://r.jina.ai/http://careers.amfam.com/jobs/?pagesize=50";
+    const workdayEndpoint = "https://amfam.wd1.myworkdayjobs.com/wday/cxs/amfam/Careers/jobs";
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p2-0075-american-family-insurance", company: "American Family Insurance",
+      postingUrl: "https://www.amfam.com/careers", adapter: "custom",
+    }, async (input, init) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === primaryReader || url === fallbackReader) return new Response("rate limited", { status: 429 });
+      if (url === workdayEndpoint) {
+        expect(init?.method).toBe("POST");
+        return Response.json({
+          total: 1,
+          jobPostings: [{
+            title: "Lead Product Manager, AI Strategy & Execution (Hybrid)",
+            externalPath: "/job/WI-Madison/Lead-Product-Manager--AI-Strategy---Execution--Hybrid-_R41000-1",
+            locationsText: "Madison, Wisconsin",
+            postedOn: "Posted Today",
+            bulletFields: ["R41000", "AFMIC American Family Mutual Insurance Company, S.I."],
+          }],
+          facets: [],
+        });
+      }
+      return new Response("missing", { status: 404 });
+    }, new Date("2026-08-24T07:00:00Z"));
+
+    expect(requests).toEqual([primaryReader, fallbackReader, workdayEndpoint]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      responseStatus: 200,
+      completeListing: false,
+      resolvedListingUrl: "https://careers.amfam.com/jobs/",
+      error: null,
+    }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "R41000",
+      requisitionId: "R41000",
+      officialUrl: "https://amfam.wd1.myworkdayjobs.com/Careers/job/WI-Madison/Lead-Product-Manager--AI-Strategy---Execution--Hybrid-_R41000-1",
+    })]);
+  });
+
   it("collects Wayfair's complete US catalog from its first-party job search API", async () => {
     const requests: Array<{ url: string; body: Record<string, unknown>; headers: Headers }> = [];
     const job = (id: number, requisitionId: string, title: string, city: string, state: string) => ({
