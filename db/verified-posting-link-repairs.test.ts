@@ -39,7 +39,9 @@ describe("verified posting link repairs migration", () => {
       INSERT INTO job_matches VALUES ('capital-one', 1);
     `);
 
-    sqlite.exec(readFileSync(resolve("drizzle/0114_verified_posting_link_repairs.sql"), "utf8"));
+    const migration = readFileSync(resolve("drizzle/0114_verified_posting_link_repairs.sql"), "utf8");
+    expect(migration).not.toMatch(/\b(?:LIKE|GLOB)\b/i);
+    sqlite.exec(migration);
 
     expect(sqlite.prepare(`SELECT official_url, apply_url, url_identity_key FROM jobs WHERE id='amex'`).get()).toEqual({
       official_url: "https://careers.americanexpress.com/en/sites/CX_1/job/26011991",

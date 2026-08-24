@@ -8,7 +8,10 @@ SET `official_url` = replace(
       'https://careers.americanexpress.com/en/sites/'
     ),
     `apply_url` = CASE
-      WHEN `apply_url` LIKE 'https://careers.americanexpress.com/hcmUI/CandidateExperience/en/sites/%'
+      WHEN instr(
+        `apply_url`,
+        'https://careers.americanexpress.com/hcmUI/CandidateExperience/en/sites/'
+      ) = 1
       THEN replace(
         `apply_url`,
         'https://careers.americanexpress.com/hcmUI/CandidateExperience/en/sites/',
@@ -23,7 +26,10 @@ SET `official_url` = replace(
     ), '/')),
     `updated_at` = CURRENT_TIMESTAMP
 WHERE `source_id` = 'p2-0024-american-express'
-  AND `official_url` LIKE 'https://careers.americanexpress.com/hcmUI/CandidateExperience/en/sites/%';--> statement-breakpoint
+  AND instr(
+    `official_url`,
+    'https://careers.americanexpress.com/hcmUI/CandidateExperience/en/sites/'
+  ) = 1;--> statement-breakpoint
 
 -- Discover's source was redirected after the acquisition to Capital One's
 -- complete catalog. Stop the duplicate source and close its duplicate rows;
@@ -40,7 +46,7 @@ SET `company` = 'Capital One',
     `closed_at` = COALESCE(`closed_at`, CURRENT_TIMESTAMP),
     `updated_at` = CURRENT_TIMESTAMP
 WHERE `source_id` = 'p2-0098-discover'
-  AND lower(`official_url`) LIKE 'https://www.capitalonecareers.com/%';--> statement-breakpoint
+  AND instr(lower(`official_url`), 'https://www.capitalonecareers.com/') = 1;--> statement-breakpoint
 
 UPDATE `job_matches`
 SET `is_active` = 0
@@ -61,8 +67,8 @@ WHERE `source_id` = 'p5-1051-sandia-national-labs'
   AND (
     `external_id` IN ('698616', '698617')
     OR `requisition_id` IN ('698616', '698617')
-    OR `official_url` LIKE '%JobOpeningId=698616%'
-    OR `official_url` LIKE '%JobOpeningId=698617%'
+    OR instr(`official_url`, 'JobOpeningId=698616') > 0
+    OR instr(`official_url`, 'JobOpeningId=698617') > 0
   );--> statement-breakpoint
 
 -- Databricks reuses a long-lived Greenhouse requisition for successive intern
@@ -75,6 +81,6 @@ SET `published_at` = '2023-08-17T21:27:27.000Z',
     `updated_at` = CURRENT_TIMESTAMP
 WHERE `source_id` = 'p4-0256-databricks'
   AND `external_id` = '6883068002'
-  AND `official_url` LIKE 'https://databricks.com/%';--> statement-breakpoint
+  AND instr(`official_url`, 'https://databricks.com/') = 1;--> statement-breakpoint
 
 PRAGMA optimize;
