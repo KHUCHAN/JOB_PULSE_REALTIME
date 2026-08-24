@@ -60,6 +60,7 @@ const summary = {
   requestErrors: 0,
   drained: false,
   stopReason: null,
+  staleRunsFinalized: 0,
 };
 
 const number = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
@@ -129,6 +130,9 @@ while (Date.now() < deadline) {
   }
 }
 
+const staleRunRepair = await postAction("finalizeStaleCrawlRuns", 15_000);
+summary.staleRunsFinalized = number(staleRunRepair.finalized);
+
 const getJson = async (resource) => {
   const controller = new AbortController();
   // The overview query can briefly exceed 30 seconds while the just-finished
@@ -176,6 +180,7 @@ if (process.env.GITHUB_STEP_SUMMARY) {
     `- Jobs created / updated / closed: ${result.created} / ${result.updated} / ${result.closed}`,
     `- Runtime: ${result.elapsedMinutes} minutes`,
     `- Stop reason: ${result.stopReason || "queue drained or time limit reached"}`,
+    `- Stale crawl rows finalized: ${result.staleRunsFinalized}`,
     `- Current source health: ${JSON.stringify(result.sourceCounts)}`,
     "",
   ].join("\n"));

@@ -24,6 +24,7 @@ import { normalizeBrowserJobSnapshot } from "../../../lib/browser-crawl-ingest";
 import { browserResultError, shouldRecordBrowserResult } from "../../../lib/browser-fallback-selection";
 import { ensureCatalogSeeded, type CatalogSeed } from "../../../lib/catalog-bootstrap";
 import { crawlBatchOptions, jobAreaRegionBackfillLimit, jobProgramBackfillLimit, jobTopicBackfillLimit, recrawlSourceIds } from "../../../lib/crawl-batch-options";
+import { finalizeStaleCrawlRuns } from "../../../lib/crawl-run-repair";
 import { backfillJobAreasAndRegions } from "../../../lib/job-area-region-backfill";
 import { parseJobFilterParams } from "../../../lib/job-filter-query";
 import {
@@ -706,6 +707,13 @@ export async function POST(request: Request): Promise<Response> {
       if (!authorized) return json({ error: "Scheduled crawl authorization is required." }, 401);
       const requested = typeof body.limit === "number" ? body.limit : 1;
       return json(await runCrawlBatch(requested));
+    }
+    if (body.action === "finalizeStaleCrawlRuns") {
+      const authorized = codexReviewAuthorized(request) ||
+        await verifyGithubActionsOidc(request.headers.get("authorization"));
+      if (!authorized) return json({ error: "Crawler maintenance authorization is required." }, 401);
+      const requested = typeof body.maximumAgeSeconds === "number" ? body.maximumAgeSeconds : 60;
+      return json(await finalizeStaleCrawlRuns(db(), new Date().toISOString(), requested));
     }
     if (body.action === "backfillResumeMatches") {
       const requested = typeof body.limit === "number" ? body.limit : 500;
