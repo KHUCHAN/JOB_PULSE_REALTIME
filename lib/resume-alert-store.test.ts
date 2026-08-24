@@ -117,6 +117,21 @@ describe("resume digest reservation", () => {
     expect(status.queuedJobs).toBe(1);
   });
 
+  it("plans a Codex-approved row even when crawler baseline metadata is false", async () => {
+    const sqlite = alertDatabaseWithMatches(1);
+    sqlite.prepare("UPDATE jobs SET alert_discovered_after_baseline = 0").run();
+    const db = createD1ForSqlite(sqlite);
+
+    const status = await getResumeAlertStatus(db, "chanyoung-resume", true, "kimchany@usc.edu");
+    const planned = await planResumeDigests(
+      db, "chanyoung-resume", "2026-08-10T12:00:00.000Z", 500, 1,
+    );
+
+    expect(status.queuedJobs).toBe(1);
+    expect(planned).toHaveLength(1);
+    expect(planned[0]?.jobCount).toBe(1);
+  });
+
   it("clears unsent backlog before switching to insert-only notifications", async () => {
     const sqlite = alertDatabaseWithMatches(1);
     const db = createD1ForSqlite(sqlite);

@@ -105,7 +105,6 @@ export const planResumeDigests = async (
         ON ni.job_match_id = jm.id AND ni.recipient = pr.recipient
       WHERE jm.keyword_id = ? AND jm.is_active = 1 AND jm.notification_eligible = 1
         AND jm.open_generation = j.open_generation AND j.status = 'open'
-        AND j.alert_discovered_after_baseline = 1
         AND ${canonicalOpenJobNotExists("j")}
         AND ni.id IS NULL
         AND NOT EXISTS (
@@ -120,7 +119,7 @@ export const planResumeDigests = async (
           WHERE better_match.keyword_id = jm.keyword_id
             AND better_match.is_active = 1 AND better_match.notification_eligible = 1
             AND better_match.open_generation = better_job.open_generation
-            AND better_job.status = 'open' AND better_job.alert_discovered_after_baseline = 1
+            AND better_job.status = 'open'
             AND ${postingIdentityOverlapSql("j", "better_job")}
             AND (
               better_match.score > jm.score
@@ -415,7 +414,6 @@ export const getResumeAlertStatus = async (
     JOIN jobs j ON j.id = jm.job_id
     WHERE mp.id = ? AND jm.is_active = 1 AND jm.notification_eligible = 1
       AND jm.open_generation = j.open_generation AND j.status = 'open'
-      AND j.alert_discovered_after_baseline = 1
       AND ${canonicalOpenJobNotExists("j")}
       AND EXISTS (
         SELECT 1 FROM profile_recipients pr WHERE pr.profile_id = mp.id AND pr.enabled = 1
