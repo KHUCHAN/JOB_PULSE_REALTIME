@@ -333,6 +333,104 @@ describe("resume match persistence migration", () => {
     ).get()).toEqual({ open_generation: 2, notification_eligible: 0 });
   });
 
+  it("preserves an explicit Codex approval across a crawler reopen generation", async () => {
+    const sqlite = migratedSqlite();
+    sqlite.exec(`
+      INSERT INTO sources (id) VALUES ('source');
+      UPDATE match_profiles SET enabled = 1, activation_watermark = '2026-08-10T12:00:00.000Z';
+      INSERT INTO jobs (
+        id, source_id, title, company, location_region, official_url, status, first_seen_at,
+        last_seen_at, open_generation, reopened_at
+      ) VALUES (
+        'approved-reopen', 'source', 'Software Engineering Intern', 'Acme', 'us',
+        'https://example.com/approved-reopen', 'open', '2026-08-01T00:00:00.000Z',
+        '2026-08-10T13:00:00.000Z', 2, '2026-08-10T13:00:00.000Z'
+      );
+      INSERT INTO job_matches (
+        id, job_id, keyword_id, score, matched_terms, open_generation,
+        is_active, notification_eligible
+      ) VALUES (
+        'approved-generation-1', 'approved-reopen', 'resume-keyword-chanyoung', 60, '[]', 1, 0, 1
+      );
+      INSERT INTO codex_reviews (
+        id, job_match_id, profile_id, decision, rationale, verified_url, reviewed_at
+      ) VALUES (
+        'approved-review', 'approved-generation-1', 'chanyoung-resume', 'approve',
+        'Codex verified this exact official posting.',
+        'https://example.com/approved-reopen', '2026-08-10T12:30:00.000Z'
+      );
+    `);
+    const candidate: ResumeMatchCandidate = {
+      id: "approved-reopen", title: "Software Engineering Intern", company: "Acme", locationRegion: "us",
+      programKeys: ["internship"], summary: null, description: null, responsibilities: null,
+      qualifications: null, skills: ["JavaScript"], jobFamily: null, jobFunction: null,
+      educationRequirements: null, experienceRequirements: null, securityClearance: null,
+      recruitingYears: [2027], publishedAt: null, firstSeenAt: "2026-08-01T00:00:00.000Z",
+      reopenedAt: "2026-08-10T13:00:00.000Z", openGeneration: 2,
+    };
+
+    await syncResumeMatches(createD1(sqlite), [candidate], "2026-08-10T13:00:00.000Z");
+
+    expect(sqlite.prepare(`
+      SELECT open_generation, notification_eligible
+      FROM job_matches
+      WHERE job_id = 'approved-reopen'
+      ORDER BY open_generation
+    `).all()).toEqual([
+      { open_generation: 1, notification_eligible: 1 },
+      { open_generation: 2, notification_eligible: 1 },
+    ]);
+  });
+
+  it("preserves an explicit Codex rejection across a crawler reopen generation", async () => {
+    const sqlite = migratedSqlite();
+    sqlite.exec(`
+      INSERT INTO sources (id) VALUES ('source');
+      UPDATE match_profiles SET enabled = 1, activation_watermark = '2026-08-10T12:00:00.000Z';
+      INSERT INTO jobs (
+        id, source_id, title, company, location_region, official_url, status, first_seen_at,
+        last_seen_at, open_generation, reopened_at
+      ) VALUES (
+        'rejected-reopen', 'source', 'Software Engineering Intern', 'Acme', 'us',
+        'https://example.com/rejected-reopen', 'open', '2026-08-01T00:00:00.000Z',
+        '2026-08-10T13:00:00.000Z', 2, '2026-08-10T13:00:00.000Z'
+      );
+      INSERT INTO job_matches (
+        id, job_id, keyword_id, score, matched_terms, open_generation,
+        is_active, notification_eligible
+      ) VALUES (
+        'rejected-generation-1', 'rejected-reopen', 'resume-keyword-chanyoung', 60, '[]', 1, 0, 0
+      );
+      INSERT INTO codex_reviews (
+        id, job_match_id, profile_id, decision, rationale, verified_url, reviewed_at
+      ) VALUES (
+        'rejected-review', 'rejected-generation-1', 'chanyoung-resume', 'reject',
+        'Codex rejected this exact official posting.',
+        'https://example.com/rejected-reopen', '2026-08-10T12:30:00.000Z'
+      );
+    `);
+    const candidate: ResumeMatchCandidate = {
+      id: "rejected-reopen", title: "Software Engineering Intern", company: "Acme", locationRegion: "us",
+      programKeys: ["internship"], summary: null, description: null, responsibilities: null,
+      qualifications: null, skills: ["JavaScript"], jobFamily: null, jobFunction: null,
+      educationRequirements: null, experienceRequirements: null, securityClearance: null,
+      recruitingYears: [2027], publishedAt: null, firstSeenAt: "2026-08-10T12:30:00.000Z",
+      reopenedAt: "2026-08-10T13:00:00.000Z", openGeneration: 2,
+    };
+
+    await syncResumeMatches(createD1(sqlite), [candidate], "2026-08-10T13:00:00.000Z");
+
+    expect(sqlite.prepare(`
+      SELECT open_generation, notification_eligible
+      FROM job_matches
+      WHERE job_id = 'rejected-reopen'
+      ORDER BY open_generation
+    `).all()).toEqual([
+      { open_generation: 1, notification_eligible: 0 },
+      { open_generation: 2, notification_eligible: 0 },
+    ]);
+  });
+
   it("does not notify a reopen that happened before activation", async () => {
     const sqlite = migratedSqlite();
     sqlite.exec(`

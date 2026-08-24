@@ -158,7 +158,21 @@ const persistDecisions = async (
         json_extract(value, '$.id'), json_extract(value, '$.jobId'),
         json_extract(value, '$.keywordId'), json_extract(value, '$.score'),
         json_extract(value, '$.matchedTerms'), json_extract(value, '$.openGeneration'),
-        1, json_extract(value, '$.notificationEligible'), ?
+        1,
+        CASE (
+          SELECT reviewed.decision
+          FROM codex_reviews reviewed
+          JOIN job_matches reviewed_match ON reviewed_match.id = reviewed.job_match_id
+          WHERE reviewed.profile_id = ?
+            AND reviewed_match.job_id = json_extract(value, '$.jobId')
+          ORDER BY reviewed.reviewed_at DESC, reviewed.updated_at DESC
+          LIMIT 1
+        )
+          WHEN 'approve' THEN 1
+          WHEN 'reject' THEN 0
+          ELSE json_extract(value, '$.notificationEligible')
+        END,
+        ?
       FROM json_each(?)
       WHERE true
       ON CONFLICT(job_id, keyword_id, open_generation) DO UPDATE SET
@@ -166,7 +180,7 @@ const persistDecisions = async (
         matched_terms = excluded.matched_terms,
         is_active = 1,
         notification_eligible = max(job_matches.notification_eligible, excluded.notification_eligible)
-    `).bind(now, JSON.stringify(chunk)).run();
+    `).bind(profileRow.id, now, JSON.stringify(chunk)).run();
   }
 
   const inactive = values
