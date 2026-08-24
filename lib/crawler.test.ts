@@ -14498,6 +14498,48 @@ We are an equal opportunity employer.`;
     }));
   });
 
+  it("retries American Family listing pages through the redirect-safe reader URL", async () => {
+    const rows = Array.from({ length: 51 }, (_, index) => ({
+      id: `R${40_000 + index}`,
+      title: `Insurance Analyst ${index + 1}`,
+    }));
+    const card = (row: typeof rows[number]) => `<div class="card card-job" data-id="${row.id.toLocaleLowerCase()}">
+      <h2 class="card-title"><a href="/jobs/${row.id.toLocaleLowerCase()}/insurance-analyst-${row.id.slice(1)}/">${row.title}</a></h2>
+      <ul><li class="list-inline-item">Madison, Wisconsin</li>
+      <li class="list-inline-item">American Family Insurance</li></ul></div>`;
+    const listing = (page: number) => {
+      const pageRows = page === 1 ? rows.slice(0, 50) : rows.slice(50);
+      const start = (page - 1) * 50 + 1;
+      const end = start + pageRows.length - 1;
+      return `<p>Displaying <strong>${start}</strong> to <strong>${end}</strong> of <strong>51</strong> matching jobs</p>
+        <div id="js-job-search-results" data-results="51">${pageRows.map(card).join("")}</div>`;
+    };
+    const primaryFirst = "https://r.jina.ai/https://careers.amfam.com/jobs/?pagesize=50";
+    const primarySecond = "https://r.jina.ai/https://careers.amfam.com/jobs/?pagesize=50%26page=2";
+    const fallbackSecond = "https://r.jina.ai/http://careers.amfam.com/jobs/?pagesize=50%26page=2";
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p2-0075-american-family-insurance", company: "American Family Insurance",
+      postingUrl: "https://www.amfam.com/careers", adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === primaryFirst) return new Response(listing(1));
+      // The HTTPS reader cache can occasionally return the last catalog page
+      // for page 2. The redirect-safe URL reaches the same official HTTPS page
+      // through a distinct cache key and must be fully validated before use.
+      if (url === primarySecond) return new Response(listing(1));
+      if (url === fallbackSecond) return new Response(listing(2));
+      return new Response("missing", { status: 404 });
+    }, new Date("2026-08-24T07:00:00Z"));
+
+    expect(requests.slice(0, 3)).toEqual([primaryFirst, primarySecond, fallbackSecond]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: false, error: null,
+    }));
+    expect(result.jobs).toHaveLength(51);
+  });
+
   it("collects Wayfair's complete US catalog from its first-party job search API", async () => {
     const requests: Array<{ url: string; body: Record<string, unknown>; headers: Headers }> = [];
     const job = (id: number, requisitionId: string, title: string, city: string, state: string) => ({

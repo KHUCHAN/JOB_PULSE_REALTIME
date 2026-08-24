@@ -17396,6 +17396,12 @@ const crawlGenericClassicTaleo = async (
 const americanFamilyReaderUrl = (officialUrl: string): string =>
   `${AMERICAN_FAMILY_READER_ORIGIN}/${officialUrl.replaceAll("&", "%26")}`;
 
+const americanFamilyListingReaderUrls = (officialUrl: string): string[] => {
+  const redirectSafeUrl = new URL(officialUrl);
+  redirectSafeUrl.protocol = "http:";
+  return [officialUrl, redirectSafeUrl.href].map(americanFamilyReaderUrl);
+};
+
 const americanFamilyListingUrl = (page: number): string => {
   const url = new URL(AMERICAN_FAMILY_LISTING_URL);
   url.searchParams.set("pagesize", String(AMERICAN_FAMILY_PAGE_SIZE));
@@ -17557,14 +17563,23 @@ const crawlAmericanFamilyCareers = async (
   let responseStatus: number | null = null;
   const fetchListingPage = async (page: number, expectedTotal?: number): Promise<{ total: number; jobs: CrawledJob[] }> => {
     const official = americanFamilyListingUrl(page);
-    const response = await fetchWithTimeout(fetcher, americanFamilyReaderUrl(official), {
-      headers: { accept: "text/html,application/xhtml+xml", "x-respond-with": "html" },
-    }, false, { attempts: 1, timeoutMs: 12_000 });
-    responseStatus = response.status;
-    if (!response.ok) throw new Error(`American Family careers reader returned HTTP ${response.status}.`);
-    const parsed = americanFamilyListingPage(await response.text(), page, source, expectedTotal);
-    if (!parsed) throw new Error("American Family careers reader returned an incomplete or invalid listing page.");
-    return parsed;
+    let invalidResponse = false;
+    let lastStatus: number | null = null;
+    for (const readerUrl of americanFamilyListingReaderUrls(official)) {
+      const response = await fetchWithTimeout(fetcher, readerUrl, {
+        headers: { accept: "text/html,application/xhtml+xml", "x-respond-with": "html" },
+      }, false, { attempts: 1, timeoutMs: 12_000 });
+      responseStatus = response.status;
+      lastStatus = response.status;
+      if (!response.ok) continue;
+      const parsed = americanFamilyListingPage(await response.text(), page, source, expectedTotal);
+      if (parsed) return parsed;
+      invalidResponse = true;
+    }
+    if (invalidResponse) {
+      throw new Error("American Family careers reader returned an incomplete or invalid listing page.");
+    }
+    throw new Error(`American Family careers reader returned HTTP ${lastStatus ?? "unknown"}.`);
   };
   try {
     const first = await fetchListingPage(1);
