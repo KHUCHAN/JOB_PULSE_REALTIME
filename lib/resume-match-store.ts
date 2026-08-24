@@ -163,8 +163,13 @@ const persistDecisions = async (
           SELECT reviewed.decision
           FROM codex_reviews reviewed
           JOIN job_matches reviewed_match ON reviewed_match.id = reviewed.job_match_id
+          JOIN jobs reviewed_job ON reviewed_job.id = reviewed_match.job_id
+          JOIN jobs current_job ON current_job.id = json_extract(value, '$.jobId')
           WHERE reviewed.profile_id = ?
-            AND reviewed_match.job_id = json_extract(value, '$.jobId')
+            AND (
+              reviewed_match.job_id = current_job.id
+              OR reviewed_job.official_url = current_job.official_url
+            )
           ORDER BY reviewed.reviewed_at DESC, reviewed.updated_at DESC
           LIMIT 1
         )

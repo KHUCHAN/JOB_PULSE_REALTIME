@@ -382,6 +382,57 @@ describe("resume match persistence migration", () => {
     ]);
   });
 
+  it("preserves an explicit Codex approval across a canonical duplicate job id", async () => {
+    const sqlite = migratedSqlite();
+    sqlite.exec(`
+      INSERT INTO sources (id) VALUES ('reviewed-source'), ('current-source');
+      UPDATE match_profiles SET enabled = 1, activation_watermark = '2026-08-10T12:00:00.000Z';
+      INSERT INTO jobs (
+        id, source_id, title, company, location_region, official_url, status,
+        first_seen_at, last_seen_at, open_generation
+      ) VALUES
+        (
+          'reviewed-duplicate', 'reviewed-source', 'Strategic Sourcing Intern', 'Disney', 'us',
+          'https://example.com/jobs/123', 'open', '2026-08-10T12:00:00.000Z',
+          '2026-08-10T12:00:00.000Z', 1
+        ),
+        (
+          'current-duplicate', 'current-source', 'Strategic Sourcing Intern', 'Hulu', 'us',
+          'https://example.com/jobs/123', 'open', '2026-08-10T13:00:00.000Z',
+          '2026-08-10T13:00:00.000Z', 1
+        );
+      INSERT INTO job_matches (
+        id, job_id, keyword_id, score, matched_terms, open_generation,
+        is_active, notification_eligible
+      ) VALUES (
+        'reviewed-duplicate-match', 'reviewed-duplicate', 'resume-keyword-chanyoung', 60, '[]', 1, 0, 1
+      );
+      INSERT INTO codex_reviews (
+        id, job_match_id, profile_id, decision, rationale, verified_url, reviewed_at
+      ) VALUES (
+        'reviewed-duplicate-review', 'reviewed-duplicate-match', 'chanyoung-resume', 'approve',
+        'Codex verified this exact official posting.',
+        'https://example.com/jobs/123', '2026-08-10T12:30:00.000Z'
+      );
+    `);
+    const candidate: ResumeMatchCandidate = {
+      id: "current-duplicate", title: "Strategic Sourcing Intern", company: "Hulu", locationRegion: "us",
+      programKeys: ["internship"], summary: null, description: null, responsibilities: null,
+      qualifications: null, skills: ["SQL"], jobFamily: null, jobFunction: null,
+      educationRequirements: null, experienceRequirements: null, securityClearance: null,
+      recruitingYears: [2027], publishedAt: null, firstSeenAt: "2026-08-10T13:00:00.000Z",
+      reopenedAt: null, openGeneration: 1,
+    };
+
+    await syncResumeMatches(createD1(sqlite), [candidate], "2026-08-10T13:00:00.000Z");
+
+    expect(sqlite.prepare(`
+      SELECT notification_eligible
+      FROM job_matches
+      WHERE job_id = 'current-duplicate'
+    `).get()).toEqual({ notification_eligible: 1 });
+  });
+
   it("preserves an explicit Codex rejection across a crawler reopen generation", async () => {
     const sqlite = migratedSqlite();
     sqlite.exec(`
