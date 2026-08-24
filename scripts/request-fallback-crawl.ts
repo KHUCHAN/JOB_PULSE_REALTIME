@@ -1,4 +1,5 @@
 import { crawlSource, type CrawlSource } from "../lib/crawler.ts";
+import { ingestJobSnapshotInChunks } from "../lib/job-snapshot-transport.ts";
 import { recoverCheckpointedCatalog } from "../lib/request-fallback-recovery.ts";
 import { isSafeCareerListingUrl } from "../lib/url-remediation.ts";
 
@@ -21,7 +22,7 @@ type RecoverySummary = {
 const siteUrl = (process.env.REQUEST_FALLBACK_LIVE_URL
   ?? "https://job-pulse-realtime.autodev61.chatgpt.site").replace(/\/$/, "");
 const ingestUrl = process.env.REQUEST_FALLBACK_INGEST_URL?.trim() || `${siteUrl}/api/pulse`;
-const sourceIds = [...new Set((process.env.REQUEST_FALLBACK_SOURCE_IDS ?? "p5-0722-saic,p5-1039-revolut,audit-row-342,legacy-row-826,p2-0075-american-family-insurance")
+const sourceIds = [...new Set((process.env.REQUEST_FALLBACK_SOURCE_IDS ?? "p5-0722-saic,audit-row-342,legacy-row-826,p2-0075-american-family-insurance")
   .split(",").map((value) => value.trim()).filter(Boolean))].slice(0, 10);
 const concurrency = 2;
 const checkpointedSourceIds = new Set([
@@ -54,7 +55,10 @@ const githubOidcToken = async (): Promise<string> => {
 
 const liveSources = async (): Promise<CrawlSource[]> => {
   if (sourceIds.length === 0) throw new Error("At least one request-fallback source ID is required.");
-  const response = await fetch(`${siteUrl}/api/pulse?resource=sources&limit=2000`, {
+  // The full source-health view joins every historical crawl run. Request
+  // recovery needs only this small explicit set, so keep startup independent
+  // of the size of production history.
+  const response = await fetch(`${siteUrl}/api/pulse?resource=sources&ids=${encodeURIComponent(sourceIds.join(","))}`, {
     headers: { accept: "application/json" },
     signal: AbortSignal.timeout(30_000),
   });
@@ -94,30 +98,22 @@ const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
           return [];
         }
       });
-    const bearer = await githubOidcToken();
-    const response = await fetch(ingestUrl, {
-      method: "POST",
-      headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
-      body: JSON.stringify({
-        action: "ingestBrowserJobs",
-        sourceId: source.id,
-        listingUrl,
-        jobs: result.jobs,
-        allowedOrigins: [...new Set(allowedOrigins)].slice(0, 5),
-        completeListing: result.completeListing,
-      }),
-      signal: AbortSignal.timeout(120_000),
+    const payload = await ingestJobSnapshotInChunks({
+      allowedOrigins: [...new Set(allowedOrigins)].slice(0, 5),
+      authorization: githubOidcToken,
+      completeListing: result.completeListing,
+      endpoint: ingestUrl,
+      jobs: result.jobs,
+      listingUrl,
+      sourceId: source.id,
+      timeoutMs: 120_000,
     });
-    const payload = await response.json().catch(() => null) as {
-      jobs?: number; created?: number; updated?: number; error?: string;
-    } | null;
-    if (!response.ok) throw new Error(`Production ingest returned HTTP ${response.status}${payload?.error ? `: ${payload.error}` : "."}`);
     return {
       sourceId: source.id,
       status: "succeeded",
-      jobs: payload?.jobs ?? result.jobs.length,
-      created: payload?.created ?? 0,
-      updated: payload?.updated ?? 0,
+      jobs: payload.jobs,
+      created: payload.created,
+      updated: payload.updated,
       error: null,
     };
   } catch (error) {

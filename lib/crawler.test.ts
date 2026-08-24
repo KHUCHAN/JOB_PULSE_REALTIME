@@ -3638,7 +3638,7 @@ HUMAN RESOURCES Posted Date
       adapter: "custom",
     }, fetcher, new Date());
 
-    expect(requests[0]).toEqual({ url: "https://careers.walmart.com/api/ai/search-ai/api/v1/combined/hybrid-search?page=0&size=1000&locale=en_US", body: {
+    expect(requests[0]).toEqual({ url: "https://careers.walmart.com/api/ai/search-ai/api/v1/combined/hybrid-search?page=0&size=200&locale=en_US", body: {
       query: "*", basicSearch: true, filter: "", locale: "en_US",
     } });
     expect(requests.map(({ body }) => (body as { query: string }).query)).toEqual(["*", "intern", "co-op", "coop", "co op"]);
@@ -3658,6 +3658,46 @@ HUMAN RESOURCES Posted Date
         officialUrl: "https://careers.walmart.com/us/en/jobs/R-100",
         publishedAt: "2026-08-05T00:00:00.000Z",
       }), expect.objectContaining({ externalId: "R-101", title: "Data Analyst" })],
+    }));
+  });
+
+  it("checkpoints Walmart's description-heavy catalog in bounded overlapping windows", async () => {
+    const pages: number[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = new URL(String(input));
+      const body = JSON.parse(String(init?.body ?? "null")) as { query?: string };
+      if (body.query !== "*") return Response.json({ totalJobs: 0, jobSearchSucceeded: true, jobs: [] });
+      const page = Number(url.searchParams.get("page"));
+      pages.push(page);
+      return Response.json({
+        totalJobs: 1_000,
+        jobSearchSucceeded: true,
+        jobs: [{
+          id: `R-${page}-External`,
+          text: `Job Posting Description: Page ${page}`,
+          metadata: { jobId: `R-${page}`, title: `Role ${page}`, primaryLocationCountry: "US" },
+        }],
+      });
+    };
+
+    const result = await crawlSource({
+      id: "p5-0763-walmart",
+      company: "Walmart (Global Tech)",
+      postingUrl: "https://careers.walmart.com/us/en/home",
+      adapter: "custom",
+      crawlPageCursor: 2,
+    }, fetcher, new Date());
+
+    expect(pages).toEqual([1, 2, 3]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      jobs: expect.arrayContaining([
+        expect.objectContaining({ externalId: "R-1" }),
+        expect.objectContaining({ externalId: "R-2" }),
+        expect.objectContaining({ externalId: "R-3" }),
+      ]),
+      pagination: { nextPage: 4, cycleComplete: false, totalPages: 5 },
     }));
   });
 

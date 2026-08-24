@@ -615,9 +615,14 @@ export class D1CrawlStore implements CrawlStore {
       return record;
     };
 
-    // Bound JSON parameters below D1's 2 MB row/string limit while packing enough
-    // jobs per query to stay inside the free-tier 50-query invocation budget.
-    for (const jobsChunk of chunksOf(jobs, 2_500)) {
+    // Bound the classification/hash working set as well as each D1 JSON
+    // parameter. A multi-thousand-row source previously created every rich
+    // persistence record at once, retaining descriptions and raw payloads long
+    // enough to cross the Worker memory limit before the first D1 write.
+    // 1,250 keeps the worst-case working set at half its former size while a
+    // 10k catalog still fits inside D1's 50-query invocation budget. External
+    // browser/request recovery is bounded more tightly at 100 jobs per POST.
+    for (const jobsChunk of chunksOf(jobs, 1_250)) {
       const records = await Promise.all(jobsChunk.map(recordFor));
       const urlRepairs = records.flatMap((record) => {
         const externalId = typeof record.externalId === "string" ? record.externalId : null;

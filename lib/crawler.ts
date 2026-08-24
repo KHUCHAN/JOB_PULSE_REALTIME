@@ -18330,12 +18330,18 @@ const walmartJob = (source: CrawlSource, value: WalmartSearchJob): CrawledJob | 
 };
 
 const crawlWalmart = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
-  const pageSize = 1_000;
+  // Walmart includes full job descriptions in every search row. A 1,000-row
+  // response plus persistence records can exceed the Sites Worker memory
+  // limit. Walk a bounded overlapping window and persist its checkpoint just
+  // like the other large catalogs.
+  const pageSize = 200;
+  const pagesPerPass = 3;
+  const programPageSize = 100;
   const maximumJobs = 10_000;
-  const endpointFor = (page: number) => {
+  const endpointFor = (page: number, size = pageSize) => {
     const endpoint = new URL("/api/ai/search-ai/api/v1/combined/hybrid-search", "https://careers.walmart.com");
     endpoint.searchParams.set("page", String(page));
-    endpoint.searchParams.set("size", String(pageSize));
+    endpoint.searchParams.set("size", String(size));
     endpoint.searchParams.set("locale", "en_US");
     return endpoint;
   };
@@ -18343,9 +18349,10 @@ const crawlWalmart = async (source: CrawlSource, fetcher: typeof fetch): Promise
     page: number,
     query = "*",
     basicSearch = true,
+    size = pageSize,
   ): Promise<{ status: number; payload: WalmartSearchPayload } | null> => {
     try {
-      const response = await fetchWithTimeout(fetcher, endpointFor(page), {
+      const response = await fetchWithTimeout(fetcher, endpointFor(page, size), {
         method: "POST",
         headers: { accept: "application/json", "content-type": "application/json" },
         body: JSON.stringify({ query, basicSearch, filter: "", locale: "en_US" }),
@@ -18357,34 +18364,56 @@ const crawlWalmart = async (source: CrawlSource, fetcher: typeof fetch): Promise
       return null;
     }
   };
-  const first = await fetchPage(0);
+  const requestedStart = Math.max(1, Math.trunc(source.crawlPageCursor ?? 1));
+  let first = await fetchPage(requestedStart - 1);
   if (!first) return { status: "failed", responseStatus: null, completeListing: false, jobs: [], error: "Walmart search endpoint did not return a usable first page." };
   const total = Math.max(0, Number(first.payload.totalJobs ?? first.payload.jobs?.length ?? 0));
   const boundedTotal = Math.min(total, maximumJobs);
   const pageCount = Math.max(1, Math.ceil(boundedTotal / pageSize));
+  const startPage = Math.min(requestedStart, pageCount);
+  if (startPage !== requestedStart) {
+    const restarted = await fetchPage(startPage - 1);
+    if (!restarted) return { status: "failed", responseStatus: null, completeListing: false, jobs: [], error: "Walmart search endpoint did not return a usable checkpoint page." };
+    first = restarted;
+  }
+  const endPage = Math.min(startPage + pagesPerPass - 1, pageCount);
   const jobs = (first.payload.jobs ?? []).flatMap((job) => walmartJob(source, job) ?? []);
   let successfulPages = 1;
+  let firstFailedPage: number | null = null;
   // Keep page responses out of memory; normalized records are substantially smaller than the API payload.
-  for (let page = 1; page < pageCount; page += 1) {
-    const result = await fetchPage(page);
-    if (!result) continue;
+  for (let page = startPage + 1; page <= endPage; page += 1) {
+    const result = await fetchPage(page - 1);
+    if (!result) {
+      firstFailedPage = page;
+      break;
+    }
     successfulPages += 1;
     jobs.push(...(result.payload.jobs ?? []).flatMap((job) => walmartJob(source, job) ?? []));
   }
   // The all-jobs result is relevance-ranked and may bury student programs beyond the safe
   // Worker cap. Add focused official searches so internship/coop postings are not omitted.
-  const programPages = await Promise.all(["intern", "co-op", "coop", "co op"]
-    .map((query) => fetchPage(0, query, false)));
-  for (const result of programPages) {
+  for (const query of ["intern", "co-op", "coop", "co op"]) {
+    const result = await fetchPage(0, query, false, programPageSize);
     if (!result) continue;
     jobs.push(...(result.payload.jobs ?? []).flatMap((job) => walmartJob(source, job) ?? []));
   }
   const unique = uniqueJobs(jobs);
+  const checkpointed = pageCount > pagesPerPass || source.crawlPageCursor != null;
   return {
     status: "succeeded",
     responseStatus: first.status,
-    completeListing: total <= maximumJobs && successfulPages === pageCount && unique.length >= total,
+    completeListing: !checkpointed && firstFailedPage === null
+      && total <= maximumJobs && successfulPages === pageCount && unique.length >= total,
     jobs: unique,
+    ...(checkpointed ? {
+      pagination: {
+        // Re-read the final successful page at the next pass. Catalog order
+        // can shift between runs, and this one-page overlap prevents gaps.
+        nextPage: firstFailedPage ?? (endPage === pageCount ? 1 : endPage),
+        cycleComplete: firstFailedPage === null && endPage === pageCount && total <= maximumJobs,
+        totalPages: pageCount,
+      },
+    } : {}),
     error: null,
   };
 };

@@ -276,12 +276,31 @@ async function persistBrowserSnapshot(
   facets?: CrawledFacet[],
   completeListing = false,
   listingUrl?: string,
+  snapshotStartedAt?: string | null,
 ): Promise<{ sourceId: string; jobs: number; created: number; updated: number; closed: number }> {
   const store = new D1CrawlStore(database);
   const now = new Date();
   const runId = await store.startRun(source, now.toISOString());
   try {
-    const changes = await store.syncJobs(source.id, jobs, completeListing, facets);
+    // Chunked transports persist every part non-authoritatively, then close
+    // only rows not touched since the shared snapshot watermark. If an early
+    // chunk fails, the final close never runs and existing open jobs remain.
+    const watermarkFinalization = completeListing && Boolean(snapshotStartedAt);
+    const changes = await store.syncJobs(
+      source.id,
+      jobs,
+      watermarkFinalization ? false : completeListing,
+      facets,
+    );
+    if (watermarkFinalization) {
+      const closed = await database.prepare(`
+        UPDATE jobs
+        SET status = 'closed', closed_at = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE source_id = ? AND status = 'open'
+          AND julianday(last_seen_at) < julianday(?)
+      `).bind(new Date().toISOString(), source.id, snapshotStartedAt).run();
+      changes.closed += Number(closed.meta?.changes ?? 0);
+    }
     if (listingUrl && listingUrl !== source.postingUrl && isSafeCareerListingUrl(source.company, source.postingUrl, listingUrl)) {
       const original = await database.prepare("SELECT posting_url FROM sources WHERE id = ?").bind(source.id).first<{ posting_url: string | null }>();
       if (original?.posting_url === null) {
@@ -430,34 +449,41 @@ async function runStatusFor(): Promise<{
   };
 }
 
-async function listSources(): Promise<SourceRecord[]> {
+async function listSources(sourceIds: string[] = []): Promise<SourceRecord[]> {
   type Row = {
     id: string; company: string; posting_url: string | null; talent_url: string | null;
     adapter: SourceRecord["adapter"]; enabled: number; checked_at: string; last_crawled_at: string | null;
     next_crawl_at: string | null; latest_status: string | null; response_status: number | null;
     latest_error: string | null; current_jobs: number; last_changed_at: string | null;
   };
-  const result = await db().prepare(`
-    WITH latest AS (
-      SELECT *, row_number() OVER (PARTITION BY source_id ORDER BY coalesce(finished_at, started_at) DESC) AS rn
-      FROM crawl_runs
-    ), counts AS (
-      SELECT source_id, count(*) AS current_jobs FROM jobs WHERE status = 'open' GROUP BY source_id
-    ), changed AS (
-      SELECT source_id, max(finished_at) AS last_changed_at FROM crawl_runs
-      WHERE jobs_created > 0 OR jobs_updated > 0 OR jobs_closed > 0 GROUP BY source_id
+  const selectedFilter = sourceIds.length > 0
+    ? "WHERE id IN (SELECT value FROM json_each(?))"
+    : "";
+  const statement = db().prepare(`
+    WITH selected_sources AS (
+      SELECT * FROM sources ${selectedFilter}
     )
     SELECT s.id, s.company, s.posting_url, s.talent_url, s.adapter, s.enabled,
            s.checked_at, s.last_crawled_at, s.next_crawl_at,
            l.status AS latest_status, l.response_status, l.error AS latest_error,
-           coalesce(c.current_jobs, 0) AS current_jobs, ch.last_changed_at
-    FROM sources s
-    LEFT JOIN latest l ON l.source_id = s.id AND l.rn = 1
-    LEFT JOIN counts c ON c.source_id = s.id
-    LEFT JOIN changed ch ON ch.source_id = s.id
+           (SELECT count(*) FROM jobs j
+            WHERE j.source_id = s.id AND j.status = 'open') AS current_jobs,
+           (SELECT max(ch.finished_at) FROM crawl_runs ch
+            WHERE ch.source_id = s.id
+              AND (ch.jobs_created > 0 OR ch.jobs_updated > 0 OR ch.jobs_closed > 0)) AS last_changed_at
+    FROM selected_sources s
+    LEFT JOIN crawl_runs l ON l.id = (
+      SELECT latest.id FROM crawl_runs latest
+      WHERE latest.source_id = s.id
+      ORDER BY latest.scheduled_for DESC, latest.id DESC
+      LIMIT 1
+    )
     ORDER BY s.company ASC
     LIMIT 2000
-  `).all<Row>();
+  `);
+  const result = sourceIds.length > 0
+    ? await statement.bind(JSON.stringify(sourceIds)).all<Row>()
+    : await statement.all<Row>();
   return result.results.map((row) => ({
     id: row.id,
     company: row.company,
@@ -536,7 +562,12 @@ export async function GET(request: Request): Promise<Response> {
     }
     if (resource === "sources") {
       const health = url.searchParams.get("health");
-      const sources = await listSources();
+      const sourceIds = [...new Set((url.searchParams.get("ids") ?? "")
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean))]
+        .slice(0, 20);
+      const sources = await listSources(sourceIds);
       return json(health ? sources.filter((source) => source.health === health) : sources);
     }
     if (resource === "keywords") return json(await listKeywords());
@@ -607,7 +638,28 @@ export async function POST(request: Request): Promise<Response> {
         : [];
       const snapshot = normalizeBrowserJobSnapshot(source, body.jobs, allowedOrigins);
       if (snapshot.jobs.length === 0) return json({ error: "Browser snapshot contained no valid jobs." }, 400);
-      return json(await persistBrowserSnapshot(database, source, snapshot.jobs, snapshot.facets, body.completeListing === true, listingUrl));
+      const requestedWatermark = typeof body.snapshotStartedAt === "string"
+        ? body.snapshotStartedAt.trim()
+        : "";
+      const watermarkTime = Date.parse(requestedWatermark);
+      const snapshotStartedAt = Number.isFinite(watermarkTime)
+        && watermarkTime >= Date.now() - 2 * 60 * 60 * 1_000
+        && watermarkTime <= Date.now() + 5 * 60 * 1_000
+        ? new Date(watermarkTime).toISOString()
+        : null;
+      const finalizeSnapshot = body.finalizeSnapshot === true;
+      if (finalizeSnapshot && !snapshotStartedAt) {
+        return json({ error: "Snapshot watermark is outside the bounded ingest window." }, 400);
+      }
+      return json(await persistBrowserSnapshot(
+        database,
+        source,
+        snapshot.jobs,
+        body.replaceFacets === false ? undefined : snapshot.facets,
+        body.completeListing === true || finalizeSnapshot,
+        listingUrl,
+        snapshotStartedAt,
+      ));
     }
     if (body.action === "ingestTeslaState") {
       const sourceId = typeof body.sourceId === "string" ? body.sourceId : "";

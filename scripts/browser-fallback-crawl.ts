@@ -11,6 +11,7 @@ import { classifyJobRegion } from "../lib/job-region-classifier.ts";
 import { jobsFromBrowserAnchors, type BrowserAnchor } from "../lib/browser-job-extractor.ts";
 import { browserRecoveryDue, needsBrowserFallback, type LatestCrawlSummary } from "../lib/browser-fallback-selection.ts";
 import { numericPaginationTargets } from "../lib/browser-pagination.ts";
+import { ingestJobSnapshotInChunks } from "../lib/job-snapshot-transport.ts";
 import { jobPostingIdentityKeys } from "../lib/job-posting-identity.ts";
 import { anchorsFromHtml, crawlSource, deltaInternshipListingUrl, extractJobsFromHtml, jobsFromTeslaState, type CrawledFacet, type CrawledJob, type CrawlSource, type TeslaState } from "../lib/crawler.ts";
 import { careerCandidates, isSafeCareerListingUrl } from "../lib/url-remediation.ts";
@@ -101,7 +102,7 @@ const problemSources = async (): Promise<BrowserRecoverySource[]> => {
     // snapshot. Source repairs can update posting_url (Delta's keyword route
     // is one example), and replaying the stale seed would recover the wrong
     // page and re-ingest navigation links.
-    const response = await fetch(`${liveUrl}/api/pulse?resource=sources`, { headers: { accept: "application/json" } });
+    const response = await fetch(`${liveUrl}/api/pulse?resource=sources&ids=${encodeURIComponent([...targetSourceIds].join(","))}`, { headers: { accept: "application/json" } });
     if (!response.ok) throw new Error(`Live source inventory returned HTTP ${response.status}.`);
     const sources = await response.json() as Array<{
       id: string; company: string; postingUrl: string | null; adapter: CrawlSource["adapter"];
@@ -493,6 +494,7 @@ async function main(): Promise<void> {
     if (!safe) result.error = `Rejected unsafe browser listing candidate: ${result.finalUrl}`;
     return safe;
   });
+  let persistenceFailures = 0;
   if (!dryRun && productionIngestUrl) {
     for (const result of results) {
       const bearer = await githubOidcToken();
@@ -511,35 +513,48 @@ async function main(): Promise<void> {
             code: classification.code,
           }),
         });
-        if (!response.ok) result.error = `Production browser result returned HTTP ${response.status}.`;
+        if (!response.ok) {
+          persistenceFailures += 1;
+          result.error = `Production browser result returned HTTP ${response.status}.`;
+        }
         continue;
       }
-      const allowedOrigins = [result.finalUrl, ...result.jobs.map((job) => job.officialUrl)]
+      const listingUrl = result.finalUrl;
+      if (!listingUrl) {
+        result.error = "Production browser ingest was missing the verified listing URL.";
+        continue;
+      }
+      const allowedOrigins = [listingUrl, ...result.jobs.map((job) => job.officialUrl)]
         .flatMap((value) => {
           try { return value ? [new URL(value).origin] : []; } catch { return []; }
         });
-      const response = await fetch(productionIngestUrl, {
-        method: "POST",
-        headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
-        body: JSON.stringify({
-          action: "ingestBrowserJobs",
-          sourceId: result.source.id,
-          listingUrl: result.finalUrl,
-          jobs: result.jobs,
+      try {
+        await ingestJobSnapshotInChunks({
           allowedOrigins: [...new Set(allowedOrigins)].slice(0, 5),
+          authorization: async () => {
+            const token = await githubOidcToken();
+            if (!token) throw new Error("Production browser ingest authorization is unavailable.");
+            return token;
+          },
           completeListing: false,
-        }),
-      });
-      if (!response.ok) {
-        result.error = `Production browser ingest returned HTTP ${response.status}.`;
+          endpoint: productionIngestUrl,
+          jobs: result.jobs,
+          listingUrl,
+          sourceId: result.source.id,
+        });
+      } catch (error) {
+        persistenceFailures += 1;
+        result.error = error instanceof Error ? error.message : "Production browser ingest failed.";
+        const failureBearer = await githubOidcToken();
+        if (!failureBearer) throw new Error("Production browser result authorization is unavailable.");
         const retry = await fetch(productionIngestUrl, {
           method: "POST",
-          headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
+          headers: { authorization: `Bearer ${failureBearer}`, "content-type": "application/json" },
           body: JSON.stringify({
             action: "recordBrowserCrawlResult",
             sourceId: result.source.id,
             status: "failed",
-            responseStatus: response.status,
+            responseStatus: null,
             jobsSeen: 0,
             code: "ingest_error",
           }),
@@ -551,7 +566,13 @@ async function main(): Promise<void> {
     await writeFile(sqlPath, persistenceSql(successful));
     await d1(["--file", sqlPath]);
   }
-  process.stdout.write(`${JSON.stringify({ attempted: results.length, recovered: successful.length, jobs: successful.reduce((sum, result) => sum + result.jobs.length, 0) })}\n`);
+  process.stdout.write(`${JSON.stringify({
+    attempted: results.length,
+    recovered: successful.length,
+    jobs: successful.reduce((sum, result) => sum + result.jobs.length, 0),
+    persistenceFailures,
+  })}\n`);
+  if (persistenceFailures > 0) process.exitCode = 1;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();
