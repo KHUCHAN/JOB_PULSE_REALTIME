@@ -151,20 +151,26 @@ const getJson = async (resource, timeoutMs) => {
   }
 };
 
-// The full source view includes per-source correlated job/run counts and can
+// The full source and overview views include correlated job/run counts and can
 // temporarily exceed the remaining workflow budget immediately after a large
-// drain. It is useful telemetry, but it must not convert an otherwise healthy
-// crawl into a hard schedule failure. Keep the compact overview authoritative
-// and bound the optional detailed health snapshot to the time left in the
-// 25-minute job.
-const overview = await getJson("overview", 60_000);
-let sources = [];
-let sourceHealthAvailable = true;
-try {
-  sources = await getJson("sources", 15_000);
-} catch (error) {
-  sourceHealthAvailable = false;
-  console.warn(`Detailed source health unavailable: ${error instanceof Error ? error.message : String(error)}`);
+// drain. They are useful telemetry, but they must not convert an otherwise
+// healthy crawl into a hard schedule failure. The compact run-status query is
+// the required postcondition; collect the heavier snapshots concurrently and
+// treat a timeout as degraded observability only.
+const runStatus = await getJson("runStatus", 15_000);
+const [overviewResult, sourcesResult] = await Promise.allSettled([
+  getJson("overview", 15_000),
+  getJson("sources", 15_000),
+]);
+const overview = overviewResult.status === "fulfilled" ? overviewResult.value : null;
+const sources = sourcesResult.status === "fulfilled" ? sourcesResult.value : [];
+const overviewAvailable = overviewResult.status === "fulfilled";
+const sourceHealthAvailable = sourcesResult.status === "fulfilled";
+if (!overviewAvailable) {
+  console.warn(`Overview unavailable: ${overviewResult.reason instanceof Error ? overviewResult.reason.message : String(overviewResult.reason)}`);
+}
+if (!sourceHealthAvailable) {
+  console.warn(`Detailed source health unavailable: ${sourcesResult.reason instanceof Error ? sourcesResult.reason.message : String(sourcesResult.reason)}`);
 }
 const sourceCounts = {};
 for (const source of sources) sourceCounts[source.health] = (sourceCounts[source.health] || 0) + 1;
@@ -172,13 +178,18 @@ const result = {
   ...summary,
   elapsedMinutes: Math.round((Date.now() - startedAt) / 600) / 100,
   overview: {
-    openJobs: overview.newMatches,
-    activeSources: overview.activeSources,
-    sourceErrors: overview.sourceErrors,
-    unsentAlerts: overview.unsentAlerts,
+    openJobs: overview?.newMatches ?? null,
+    activeSources: overview?.activeSources ?? null,
+    sourceErrors: overview?.sourceErrors ?? null,
+    unsentAlerts: overview?.unsentAlerts ?? null,
+  },
+  runStatus: {
+    running: number(runStatus.running),
+    staleRunning: number(runStatus.staleRunning),
   },
   totalSources: sources.length,
   sourceCounts,
+  overviewAvailable,
   sourceHealthAvailable,
 };
 console.log(JSON.stringify(result));
