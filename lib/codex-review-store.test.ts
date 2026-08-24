@@ -144,7 +144,7 @@ describe("Codex review persistence", () => {
     expect(sqlite.prepare("SELECT decision FROM codex_reviews").get()).toEqual({ decision: "reject" });
   });
 
-  it("fails closed for URL mismatches and pre-activation jobs", async () => {
+  it("fails closed for URL mismatches but leaves baseline adjudication to Codex", async () => {
     const sqlite = database();
     const result = await applyCodexReviews(createD1(sqlite), [{
       officialUrl: "https://careers.example.com/job-new",
@@ -158,11 +158,13 @@ describe("Codex review persistence", () => {
     sqlite.prepare("UPDATE jobs SET first_seen_at = '2026-08-13T09:00:00.000Z'").run();
     const old = await applyCodexReviews(createD1(sqlite), [{
       officialUrl: "https://careers.example.com/job-new",
-      decision: "approve",
-      rationale: "Looks relevant.",
+      decision: "reject",
+      rationale: "Codex verified this is baseline inventory and rejected it.",
       verifiedUrl: "https://careers.example.com/job-new",
     }]);
-    expect(old.missing[0]?.reason).toBe("job_is_not_new_after_source_baseline");
+    expect(old).toMatchObject({ accepted: 1, approved: 0, rejected: 1, missing: [] });
+    expect(sqlite.prepare("SELECT decision FROM codex_reviews WHERE job_match_id = 'match-new'").get())
+      .toEqual({ decision: "reject" });
   });
 
   it("rejects a later match when the durable posting identity was already sent", async () => {
