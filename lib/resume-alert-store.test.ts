@@ -54,6 +54,41 @@ describe("resume digest reservation", () => {
     });
   });
 
+  it("reserves only the exact Codex-approved job ids", async () => {
+    const sqlite = alertDatabaseWithMatches(3);
+    const planned = await planResumeDigests(
+      createD1ForSqlite(sqlite),
+      "chanyoung-resume",
+      "2026-08-10T12:00:00.000Z",
+      2,
+      1,
+      ["job-1", "job-3"],
+    );
+
+    expect(planned.map((item) => item.jobCount)).toEqual([2]);
+    expect(sqlite.prepare(`
+      SELECT j.id FROM notification_items ni
+      JOIN job_matches jm ON jm.id = ni.job_match_id
+      JOIN jobs j ON j.id = jm.job_id
+      GROUP BY j.id ORDER BY j.id
+    `).all()).toEqual([{ id: "job-1" }, { id: "job-3" }]);
+  });
+
+  it("does not create a partial exact Codex digest", async () => {
+    const sqlite = alertDatabaseWithMatches(2);
+
+    await expect(planResumeDigests(
+      createD1ForSqlite(sqlite),
+      "chanyoung-resume",
+      "2026-08-10T12:00:00.000Z",
+      2,
+      1,
+      ["job-1", "missing-job"],
+    )).rejects.toThrow("Exact Codex dispatch target mismatch");
+    expect(sqlite.prepare("SELECT count(*) AS total FROM notifications").get()).toEqual({ total: 0 });
+    expect(sqlite.prepare("SELECT count(*) AS total FROM notification_items").get()).toEqual({ total: 0 });
+  });
+
   it("does not claim notifications when the resume profile is disabled or Gmail blocked", async () => {
     const sqlite = alertDatabaseWithMatches(1);
     const db = createD1ForSqlite(sqlite);

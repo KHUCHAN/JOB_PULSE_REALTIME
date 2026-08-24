@@ -53,6 +53,7 @@ export const processDueResumeAlerts = async (
   config: GmailRuntimeConfig | null,
   now: Date,
   fetcher: typeof fetch = fetch,
+  exactJobIds: string[] | null = null,
 ): Promise<ResumeDispatchResult> => {
   if (!config) {
     await database.prepare(`
@@ -65,8 +66,26 @@ export const processDueResumeAlerts = async (
   // One Codex review pass produces one digest envelope. The review feed is
   // bounded to 100 rows per page and five pages, so 500 keeps a whole monitor
   // batch together while remaining far below Gmail's message-size limit.
-  const planned = await planResumeDigests(database, "chanyoung-resume", nowIso, 500, 1);
-  const claimed = await claimDueNotifications(database, "chanyoung-resume", nowIso, 4);
+  const exactTargets = exactJobIds === null ? null : [...new Set(exactJobIds)].slice(0, 100);
+  if (exactTargets !== null && exactTargets.length === 0) {
+    throw new Error("Exact Codex dispatch requires at least one job ID.");
+  }
+  const planned = await planResumeDigests(
+    database,
+    "chanyoung-resume",
+    nowIso,
+    exactTargets?.length ?? 500,
+    1,
+    exactTargets,
+  );
+  const plannedIds = planned.map((item) => item.id);
+  const claimed = await claimDueNotifications(
+    database,
+    "chanyoung-resume",
+    nowIso,
+    4,
+    exactTargets === null ? null : plannedIds,
+  );
   const result = { ...emptyResult(), planned: planned.length };
   for (const [index, notification] of claimed.entries()) {
     try {

@@ -64,6 +64,7 @@ export const planResumeDigests = async (
   now: string,
   pageSize = 500,
   maxMessages = 1,
+  exactJobIds: string[] | null = null,
 ): Promise<PlannedNotification[]> => {
   const owner = crypto.randomUUID();
   const leaseUntil = plusMinutes(now, 5);
@@ -95,6 +96,7 @@ export const planResumeDigests = async (
     `).bind(profileId).all<RecipientRow>();
     const boundedPageSize = Math.max(1, Math.min(500, Math.trunc(pageSize)));
     const boundedMessageLimit = Math.max(1, Math.min(1, Math.trunc(maxMessages)));
+    const exactTargets = exactJobIds === null ? null : [...new Set(exactJobIds)].slice(0, 100);
     const enabledRecipients = recipients.results.map((row) => row.recipient);
     const matches = await database.prepare(`
       SELECT jm.id, json_group_array(pr.recipient) AS pending_recipients
@@ -105,6 +107,7 @@ export const planResumeDigests = async (
         ON ni.job_match_id = jm.id AND ni.recipient = pr.recipient
       WHERE jm.keyword_id = ? AND jm.is_active = 1 AND jm.notification_eligible = 1
         AND jm.open_generation = j.open_generation AND j.status = 'open'
+        AND (? IS NULL OR j.id IN (SELECT CAST(value AS TEXT) FROM json_each(?)))
         AND ${canonicalOpenJobNotExists("j")}
         AND ni.id IS NULL
         AND NOT EXISTS (
@@ -135,7 +138,21 @@ export const planResumeDigests = async (
       GROUP BY jm.id, jm.score, j.published_at, j.first_seen_at
       ORDER BY jm.score DESC, COALESCE(j.published_at, j.first_seen_at) DESC, jm.id
       LIMIT ?
-    `).bind(profileId, keywordId, profileId, boundedPageSize * boundedMessageLimit + 1).all<PendingMatchRow>();
+    `).bind(
+      profileId,
+      keywordId,
+      exactTargets === null ? null : JSON.stringify(exactTargets),
+      exactTargets === null ? null : JSON.stringify(exactTargets),
+      profileId,
+      boundedPageSize * boundedMessageLimit + 1,
+    ).all<PendingMatchRow>();
+
+    // Exact Codex dispatches are all-or-nothing. A missing, already reserved,
+    // superseded, or previously delivered identity must fail before an email
+    // envelope is created rather than silently sending a partial batch.
+    if (exactTargets !== null && matches.results.length !== exactTargets.length) {
+      throw new Error(`Exact Codex dispatch target mismatch: requested ${exactTargets.length}, eligible ${matches.results.length}.`);
+    }
 
     // A normal digest has the exact same pending recipient set for every job,
     // so all recipients share one MIME message. If a prior partial delivery
@@ -213,8 +230,10 @@ export const claimDueNotifications = async (
   profileId: string,
   now: string,
   limit = 4,
+  exactNotificationIds: string[] | null = null,
 ): Promise<ClaimedNotification[]> => {
   const owner = crypto.randomUUID();
+  const exactIds = exactNotificationIds === null ? null : [...new Set(exactNotificationIds)].slice(0, 4);
   const claimed = await database.prepare(`
     UPDATE notifications
     SET status = 'sending', lease_owner = ?, lease_expires_at = ?,
@@ -223,13 +242,23 @@ export const claimDueNotifications = async (
       SELECT n.id FROM notifications n
       JOIN match_profiles mp ON mp.keyword_id = n.keyword_id
       WHERE n.channel = 'email' AND mp.id = ? AND mp.enabled = 1 AND mp.gmail_state = 'connected'
+        AND (? IS NULL OR n.id IN (SELECT CAST(value AS TEXT) FROM json_each(?)))
         AND (status = 'queued' OR (status = 'retryable' AND next_retry_at <= ?)
           OR (status = 'sending' AND lease_expires_at <= ?))
       ORDER BY scheduled_at, n.id
       LIMIT ?
     )
     RETURNING id, recipient, job_count, attempt_count
-  `).bind(owner, plusMinutes(now, 5), profileId, now, now, Math.max(1, Math.min(4, limit))).all<ClaimedRow>();
+  `).bind(
+    owner,
+    plusMinutes(now, 5),
+    profileId,
+    exactIds === null ? null : JSON.stringify(exactIds),
+    exactIds === null ? null : JSON.stringify(exactIds),
+    now,
+    now,
+    Math.max(1, Math.min(4, limit)),
+  ).all<ClaimedRow>();
   if (claimed.results.length === 0) return [];
   const ids = claimed.results.map((row) => row.id);
   const jobs = await database.prepare(`

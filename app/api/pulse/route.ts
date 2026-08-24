@@ -141,10 +141,10 @@ const resumeStatus = async () => {
   return getResumeAlertStatus(db(), "chanyoung-resume", Boolean(config), config?.sender ?? "");
 };
 
-const runResumeAlerts = async (database: D1Database) => {
+const runResumeAlerts = async (database: D1Database, exactJobIds: string[] | null = null) => {
   let alerts: Awaited<ReturnType<typeof processDueResumeAlerts>> | { error: string };
   try {
-    alerts = await processDueResumeAlerts(database, gmailRuntimeConfig(), new Date());
+    alerts = await processDueResumeAlerts(database, gmailRuntimeConfig(), new Date(), fetch, exactJobIds);
   } catch {
     alerts = { error: "Resume alert processing failed independently of the crawl." };
   }
@@ -742,7 +742,14 @@ export async function POST(request: Request): Promise<Response> {
     }
     if (body.action === "dispatchCodexReviewBatch") {
       if (!codexReviewAuthorized(request)) return json({ error: "Codex review authorization is required." }, 401);
-      const alerts = await runResumeAlerts(db());
+      const exactJobIds = Array.isArray(body.jobIds)
+        ? [...new Set(body.jobIds.filter((value): value is string => typeof value === "string")
+          .map((value) => value.trim()).filter(Boolean))].slice(0, 100)
+        : [];
+      if (exactJobIds.length === 0) {
+        return json({ error: "dispatchCodexReviewBatch requires the exact approved job IDs." }, 400);
+      }
+      const alerts = await runResumeAlerts(db(), exactJobIds);
       return json({ alerts }, resumeAlertHttpStatus(alerts));
     }
     if (body.action === "repairBarclaysJobIdentity") {

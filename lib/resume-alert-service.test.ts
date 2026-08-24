@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { alertDatabaseWithMatches, createD1ForSqlite } from "./resume-alert-test-helper";
+import { planResumeDigests } from "./resume-alert-store";
 import { processDueResumeAlerts, resumeAlertHttpStatus, sendResumeTestEmail } from "./resume-alert-service";
 
 const config = {
@@ -38,6 +39,47 @@ describe("resume alert delivery service", () => {
       { recipient: "kimchany@usc.edu, lupeter@usc.edu", status: "sent" },
     ]);
     expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("sends only the exact Codex batch and leaves older approvals pending", async () => {
+    const sqlite = alertDatabaseWithMatches(3);
+    const database = createD1ForSqlite(sqlite);
+    await planResumeDigests(
+      database,
+      "chanyoung-resume",
+      "2026-08-10T11:59:00.000Z",
+      1,
+      1,
+      ["job-1"],
+    );
+    sqlite.prepare("UPDATE match_profiles SET next_digest_at = '2026-08-10T12:00:00.000Z'").run();
+    const responses = [
+      new Response(JSON.stringify({ access_token: "access-exact" }), { status: 200 }),
+      new Response(JSON.stringify({ id: "message-exact" }), { status: 200 }),
+    ];
+    const fetcher = vi.fn(async () => responses.shift()!);
+
+    const result = await processDueResumeAlerts(
+      database,
+      config,
+      new Date("2026-08-10T12:00:00.000Z"),
+      fetcher,
+      ["job-2"],
+    );
+
+    expect(result).toMatchObject({ planned: 1, sent: 1, failed: 0 });
+    expect(sqlite.prepare(`
+      SELECT j.id, n.status FROM notification_items ni
+      JOIN notifications n ON n.id = ni.notification_id
+      JOIN job_matches jm ON jm.id = ni.job_match_id
+      JOIN jobs j ON j.id = jm.job_id
+      GROUP BY j.id, n.status ORDER BY j.id
+    `).all()).toEqual([
+      { id: "job-1", status: "queued" },
+      { id: "job-2", status: "sent" },
+    ]);
+    expect(sqlite.prepare("SELECT count(*) AS total FROM job_matches WHERE notification_eligible = 1 AND notified_at IS NULL").get())
+      .toEqual({ total: 2 });
   });
 
   it("marks Gmail blocked when authorization is revoked", async () => {
