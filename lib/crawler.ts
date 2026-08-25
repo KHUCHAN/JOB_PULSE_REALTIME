@@ -2327,11 +2327,13 @@ async function crawlDiscoveredFeed(source: CrawlSource, discovered: DiscoveredAt
         if (firstFailedPage === null && failedIndex !== -1) firstFailedPage = batchNumbers[failedIndex];
       }
       const unique = uniqueJobs(jobs);
-      if (unique.length !== jobs.length && total <= 10_000) {
-        throw new Error("Jibe repeated job identities across catalog pages.");
-      }
+      // A newest-first live board can insert a posting while later pages are
+      // in flight, repeating one boundary identity. Keep the deduplicated
+      // snapshot but do not call it complete; the cursor restarts at page 1
+      // next cycle and the store therefore never closes unseen jobs from a
+      // shifting catalog.
       const boundedCycleComplete = firstFailedPage === null && lastSuccessfulPage === totalPages;
-      const cycleComplete = boundedCycleComplete && total <= 10_000;
+      const cycleComplete = boundedCycleComplete && total <= 10_000 && unique.length === jobs.length;
       const completeListing = startPage === 1 && cycleComplete && totalPages <= maxPagesPerPass && unique.length === total;
       const facets: CrawledFacet[] = [
         ...(firstPayload.filter?.categories?.all?.length ? [{

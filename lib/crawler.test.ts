@@ -3539,6 +3539,29 @@ HUMAN RESOURCES Posted Date
     expect(maxActive).toBeGreaterThan(1);
   });
 
+  it("quarantines a shifting Jibe boundary without failing or closing unseen jobs", async () => {
+    const result = await crawlSource({
+      id: "audit-row-434",
+      company: "Universal Health Services",
+      postingUrl: "https://jobs.uhsinc.com/careers/",
+      adapter: "custom",
+    }, async (input) => {
+      const page = Number(new URL(String(input)).searchParams.get("page"));
+      const ids = page === 1 ? ["1", "2"] : ["2", "3"];
+      return Response.json({
+        totalCount: 4,
+        jobs: ids.map((id) => ({ data: { slug: id, req_id: id, title: `Role ${id}` } })),
+      });
+    }, new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: { nextPage: 1, cycleComplete: false, totalPages: 2 },
+    }));
+    expect(result.jobs.map((job) => job.externalId)).toEqual(["1", "2", "3"]);
+  });
+
   it("caps oversized Jibe catalogs without claiming the partial listing is complete", async () => {
     let maxPage = 0;
     const fetcher: typeof fetch = async (input) => {
