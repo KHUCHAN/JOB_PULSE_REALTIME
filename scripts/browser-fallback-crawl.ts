@@ -51,14 +51,25 @@ const liveUrl = process.env.BROWSER_FALLBACK_LIVE_URL?.trim().replace(/\/$/, "")
 const dryRun = process.env.BROWSER_FALLBACK_DRY_RUN === "1";
 
 let cachedOidc = { value: "", expiresAt: 0 };
+const catalogPinnedBrowserSourceIds = new Set([
+  // The corporate careers page exposes only a partial rendered search and can
+  // overwrite the complete first-party Workday board during URL remediation.
+  "p5-0588-edwards-lifesciences",
+]);
 
 export const browserListingSource = <T extends CrawlSource>(source: T): T => {
-  if (source.id !== "audit-row-342") return source;
+  const pinned = catalogPinnedBrowserSourceIds.has(source.id)
+    ? catalogSeed.sources.find((candidate) => candidate.id === source.id && candidate.postingUrl)
+    : null;
+  const normalized = pinned
+    ? { ...source, postingUrl: pinned.postingUrl!, adapter: pinned.adapter as CrawlSource["adapter"] } as T
+    : source;
+  if (normalized.id !== "audit-row-342") return normalized;
   // Delta's persisted catalog URL can carry a native pagination cursor from
   // the request crawler. A browser recovery must instead start at the first
   // page of Delta's exact university-program category or it can repeatedly
   // ingest an arbitrary page from the unfiltered company catalog.
-  return { ...source, postingUrl: deltaInternshipListingUrl(source.postingUrl) };
+  return { ...normalized, postingUrl: deltaInternshipListingUrl(normalized.postingUrl) };
 };
 
 export const nativeRunnerRecoveryEligible = (source: {

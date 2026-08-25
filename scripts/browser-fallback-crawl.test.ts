@@ -174,6 +174,18 @@ describe("browser fallback source normalization", () => {
     }).postingUrl).toBe("https://delta.avature.net/en_US/careers/SearchJobs/?2884=75201&2884_format=3665&listFilterMode=1&jobOffset=0");
   });
 
+  it("keeps Edwards recovery on the complete official Workday catalog", () => {
+    expect(browserListingSource({
+      id: "p5-0588-edwards-lifesciences",
+      company: "Edwards Lifesciences",
+      postingUrl: "https://www.edwards.com/careers/jobsearch",
+      adapter: "custom",
+    })).toMatchObject({
+      postingUrl: "https://edwards.wd5.myworkdayjobs.com/EdwardsCareers",
+      adapter: "workday",
+    });
+  });
+
   it("leaves unrelated sources unchanged", () => {
     const source: CrawlSource = {
       id: "source-1",
