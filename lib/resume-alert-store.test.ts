@@ -109,6 +109,25 @@ describe("resume digest reservation", () => {
     expect(sqlite.prepare("SELECT count(*) AS total FROM notification_items").get()).toEqual({ total: 0 });
   });
 
+  it("rejects duplicate posting identities inside an exact Codex digest", async () => {
+    const sqlite = alertDatabaseWithMatches(2);
+    sqlite.prepare(`
+      UPDATE jobs SET requisition_identity_key = 'req:acme:shared-42'
+      WHERE id IN ('job-1', 'job-2')
+    `).run();
+
+    await expect(planResumeDigests(
+      createD1ForSqlite(sqlite),
+      "chanyoung-resume",
+      "2026-08-10T12:00:00.000Z",
+      2,
+      1,
+      ["job-1", "job-2"],
+    )).rejects.toThrow("Exact Codex dispatch target mismatch");
+    expect(sqlite.prepare("SELECT count(*) AS total FROM notifications").get()).toEqual({ total: 0 });
+    expect(sqlite.prepare("SELECT count(*) AS total FROM notification_items").get()).toEqual({ total: 0 });
+  });
+
   it("does not claim notifications when the resume profile is disabled or Gmail blocked", async () => {
     const sqlite = alertDatabaseWithMatches(1);
     const db = createD1ForSqlite(sqlite);

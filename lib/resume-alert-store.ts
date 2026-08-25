@@ -136,7 +136,13 @@ export const planResumeDigests = async (
         `),
       ]);
     }
-    const matches = await database.prepare(`
+    // Normal planning must compare every pending match against the full open
+    // catalog. An exact Codex dispatch already supplies a bounded, deduplicated
+    // identity set, so compare contenders only inside that set. Re-running the
+    // full better-match scan once per exact target can exceed D1's CPU limit
+    // before Gmail is reached on a large production catalog.
+    const matches = exactTargets === null
+      ? await database.prepare(`
       SELECT jm.id, json_group_array(pr.recipient) AS pending_recipients
       FROM job_matches jm
       JOIN jobs j ON j.id = jm.job_id
@@ -145,7 +151,6 @@ export const planResumeDigests = async (
         ON ni.job_match_id = jm.id AND ni.recipient = pr.recipient
       WHERE jm.keyword_id = ? AND jm.is_active = 1 AND jm.notification_eligible = 1
         AND jm.open_generation = j.open_generation AND j.status = 'open'
-        AND (? IS NULL OR j.id IN (SELECT CAST(value AS TEXT) FROM json_each(?)))
         AND ${canonicalOpenJobNotExists("j")}
         AND ni.id IS NULL
         AND NOT EXISTS (
@@ -179,8 +184,58 @@ export const planResumeDigests = async (
     `).bind(
       profileId,
       keywordId,
-      exactTargets === null ? null : JSON.stringify(exactTargets),
-      exactTargets === null ? null : JSON.stringify(exactTargets),
+      profileId,
+      boundedPageSize * boundedMessageLimit + 1,
+    ).all<PendingMatchRow>()
+      : await database.prepare(`
+      WITH exact_jobs(id) AS MATERIALIZED (
+        SELECT CAST(value AS TEXT) FROM json_each(?)
+      )
+      SELECT jm.id, json_group_array(pr.recipient) AS pending_recipients
+      FROM exact_jobs target
+      JOIN jobs j ON j.id = target.id
+      JOIN job_matches jm ON jm.job_id = j.id AND jm.keyword_id = ?
+      JOIN profile_recipients pr ON pr.profile_id = ? AND pr.enabled = 1
+      LEFT JOIN notification_items ni
+        ON ni.job_match_id = jm.id AND ni.recipient = pr.recipient
+      WHERE jm.is_active = 1 AND jm.notification_eligible = 1
+        AND jm.open_generation = j.open_generation AND j.status = 'open'
+        AND ${canonicalOpenJobNotExists("j")}
+        AND ni.id IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM notification_identity_history history
+          WHERE history.profile_id = ? AND history.recipient = pr.recipient
+            AND ${postingIdentityHistoryMatchSql("j", "history")}
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM exact_jobs other_target
+          JOIN jobs other_job ON other_job.id = other_target.id
+          JOIN job_matches other_match
+            ON other_match.job_id = other_job.id AND other_match.keyword_id = jm.keyword_id
+          WHERE other_job.id <> j.id
+            AND other_match.is_active = 1 AND other_match.notification_eligible = 1
+            AND other_match.open_generation = other_job.open_generation
+            AND other_job.status = 'open'
+            AND ${postingIdentityOverlapSql("j", "other_job")}
+            AND (
+              other_match.score > jm.score
+              OR (other_match.score = jm.score
+                AND COALESCE(other_job.published_at, other_job.first_seen_at)
+                  > COALESCE(j.published_at, j.first_seen_at))
+              OR (other_match.score = jm.score
+                AND COALESCE(other_job.published_at, other_job.first_seen_at)
+                  = COALESCE(j.published_at, j.first_seen_at)
+                AND other_match.id < jm.id)
+            )
+        )
+      GROUP BY jm.id, jm.score, j.published_at, j.first_seen_at
+      ORDER BY jm.score DESC, COALESCE(j.published_at, j.first_seen_at) DESC, jm.id
+      LIMIT ?
+    `).bind(
+      JSON.stringify(exactTargets),
+      keywordId,
+      profileId,
       profileId,
       boundedPageSize * boundedMessageLimit + 1,
     ).all<PendingMatchRow>();
