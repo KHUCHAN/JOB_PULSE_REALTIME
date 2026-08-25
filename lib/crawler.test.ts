@@ -20,6 +20,77 @@ describe("source crawl budget", () => {
 });
 
 describe("repaired source adapters", () => {
+  it("loads Core & Main's server-rendered cards without closing its hidden inventory", async () => {
+    const requests: Array<{ url: string; userAgent: string | null }> = [];
+    const result = await crawlSource({
+      id: "legacy-row-87",
+      company: "Core & Main",
+      postingUrl: "https://jobs.coreandmain.com/p/coreandmain/home",
+      adapter: "custom",
+    }, async (input, init) => {
+      requests.push({
+        url: String(input),
+        userAgent: new Headers(init?.headers).get("user-agent"),
+      });
+      return new Response(`<main>
+        <div class="result-count">284 jobs</div>
+        <a class="MuiButtonBase-root JobBoardCard" href="https://jobs.coreandmain.com/job/Core-Main-2027-Data-Intern---abc-123">
+          <div class="job-title">2027 Data &amp; Analytics Intern</div>
+          <div><svg data-testid="LocationOnIcon"></svg> St. Louis, MO, USA</div>
+          <div>Posted <time datetime="2026-08-25T15:00:00.000Z">today</time></div>
+        </a>
+        <a class="JobBoardCard" href="https://jobs.coreandmain.com/job/Core-Main-Operations-Associate---def-456">
+          <div class="job-title">Operations Associate</div>
+          <div><svg data-testid="LocationOnIcon"></svg> Remote, USA</div>
+          <div>Posted <time datetime="2026-08-24T14:30:00.000Z">yesterday</time></div>
+        </a>
+        <button>Load 10 More</button>
+      </main>`);
+    }, new Date());
+
+    expect(requests).toEqual([{
+      url: "https://jobs.coreandmain.com/p/coreandmain/jobs",
+      userAgent: expect.stringContaining("JobPulseBot/1.0"),
+    }]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      resolvedListingUrl: "https://jobs.coreandmain.com/p/coreandmain/jobs",
+      error: "Core & Main exposed 2 of 284 official jobs; retained prior inventory.",
+    }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        externalId: "Core-Main-2027-Data-Intern---abc-123",
+        title: "2027 Data & Analytics Intern",
+        location: "St. Louis, MO, USA",
+        locationCity: "St. Louis",
+        locationState: "MO",
+        locationCountry: "United States",
+        publishedAt: "2026-08-25T15:00:00.000Z",
+      }),
+      expect.objectContaining({
+        externalId: "Core-Main-Operations-Associate---def-456",
+        arrangement: "remote",
+      }),
+    ]);
+  });
+
+  it("rejects Core & Main's client-only shell instead of treating it as an empty catalog", async () => {
+    const result = await crawlSource({
+      id: "legacy-row-87",
+      company: "Core & Main",
+      postingUrl: "https://jobs.coreandmain.com/p/coreandmain/jobs",
+      adapter: "custom",
+    }, async () => new Response('<html id="Largely-root-html"><div id="root"></div></html>'), new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed",
+      completeListing: false,
+      jobs: [],
+      error: "Core & Main official job board returned no verifiable server-rendered job cards.",
+    }));
+  });
+
   it("loads Tookitaki's complete Recruiterbox catalog with direct Trakstar job URLs", async () => {
     const source = { id: "p4-0370-tookitaki", company: "Tookitaki", postingUrl: "https://www.tookitaki.com/careers", adapter: "custom" as const };
     const requests: string[] = [];

@@ -1371,6 +1371,16 @@ const BROWSER_REQUEST_HEADERS = {
   "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
 };
 
+const CORE_AND_MAIN_LISTING_URL = "https://jobs.coreandmain.com/p/coreandmain/jobs";
+const CORE_AND_MAIN_SERVER_HEADERS = {
+  accept: "text/html,application/xhtml+xml",
+  "accept-language": "en-US,en;q=0.9",
+  // Largely serves a 6 KB client-only shell to normal browser user agents,
+  // but returns its server-rendered official job cards to crawler/server UAs.
+  // Identifying this request explicitly is both stable and honest.
+  "user-agent": "Mozilla/5.0 (compatible; JobPulseBot/1.0; +https://job-pulse-realtime.autodev61.chatgpt.site)",
+};
+
 const isBlockedHttpStatus = (status: number | null): boolean => status != null && BLOCKED_HTTP_STATUSES.has(status);
 
 const fetchWithTimeout = async (
@@ -1465,6 +1475,52 @@ const decodeHtmlAttribute = (value: string): string => value
   .replaceAll("&#39;", "'")
   .replaceAll("&lt;", "<")
   .replaceAll("&gt;", ">");
+
+const coreAndMainJobs = (html: string, source: CrawlSource): { jobs: CrawledJob[]; total: number | null } => {
+  const totalText = html.match(/class=["'][^"']*\bresult-count\b[^"']*["'][^>]*>\s*([\d,]+)\s+jobs?\s*</i)?.[1];
+  const total = totalText ? Number(totalText.replaceAll(",", "")) : null;
+  const jobs: CrawledJob[] = [];
+  for (const anchor of html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)) {
+    const attributes = anchor[1];
+    if (!/\bclass=["'][^"']*\bJobBoardCard\b[^"']*["']/i.test(attributes)) continue;
+    const href = attributes.match(/\bhref=["']([^"']+)["']/i)?.[1];
+    const title = plainText(anchor[2].match(/<[^>]*\bclass=["'][^"']*\bjob-title\b[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/i)?.[1]);
+    const rawLocation = plainText(anchor[2].match(/data-testid=["']LocationOnIcon["'][\s\S]*?<\/svg>\s*([^<]+)/i)?.[1]);
+    const sourcePostedText = decodeHtmlAttribute(anchor[2].match(/<time\b[^>]*\bdatetime=["']([^"']+)["']/i)?.[1] ?? "").trim() || null;
+    if (!href || !title) continue;
+    let official: URL;
+    try {
+      official = new URL(decodeHtmlAttribute(href), CORE_AND_MAIN_LISTING_URL);
+    } catch {
+      continue;
+    }
+    const slug = official.pathname.match(/^\/job\/(Core-Main-[^/?#]+)\/?$/i)?.[1] ?? null;
+    if (official.protocol !== "https:" || official.hostname !== "jobs.coreandmain.com" || !slug) continue;
+    const location = rawLocation ? decodeHtmlAttribute(rawLocation) : null;
+    const parts = location?.split(",").map((part) => part.trim()).filter(Boolean) ?? [];
+    const country = parts.at(-1);
+    const state = parts.length >= 2 && /^[A-Z]{2}$/.test(parts.at(-2) ?? "") ? parts.at(-2)! : null;
+    const city = state ? parts.slice(0, -2).join(", ") || null : null;
+    const publishedAt = normalizedDate(sourcePostedText);
+    jobs.push({
+      externalId: slug,
+      title: decodeHtmlAttribute(title),
+      company: source.company,
+      location,
+      ...(city ? { locationCity: city } : {}),
+      ...(state ? { locationState: state } : {}),
+      ...(/^(?:US|USA|United States|United States of America)$/i.test(country ?? "") ? { locationCountry: "United States" } : {}),
+      arrangement: /\bremote\b/i.test(`${title} ${location ?? ""}`) ? "remote" : "unknown",
+      employmentType: null,
+      summary: null,
+      officialUrl: official.href,
+      sourcePostedText,
+      publishedAt,
+      rawPayload: { provider: "largely-server-rendered-job-board" },
+    });
+  }
+  return { jobs: uniqueJobs(jobs), total: Number.isInteger(total) && total! >= 0 ? total : null };
+};
 
 export const anchorsFromHtml = (html: string): BrowserAnchor[] => [...html.matchAll(
   /<a\b[^>]*?href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>([\s\S]*?)<\/a>/gi,
@@ -23407,6 +23463,51 @@ const crawlVentureGlobalCareers = async (source: CrawlSource, fetcher: typeof fe
   }
 };
 
+const crawlCoreAndMainCareers = async (
+  source: CrawlSource,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  try {
+    const response = await fetchWithTimeout(fetcher, CORE_AND_MAIN_LISTING_URL, {
+      headers: CORE_AND_MAIN_SERVER_HEADERS,
+    }, false, { attempts: 2, timeoutMs: 12_000 });
+    responseStatus = response.status;
+    if (!response.ok) throw Object.assign(
+      new Error(`Core & Main official job board returned HTTP ${response.status}.`),
+      { responseStatus: response.status },
+    );
+    const html = await response.text();
+    const parsed = coreAndMainJobs(html, source);
+    if (parsed.jobs.length === 0 || parsed.total == null || parsed.total < parsed.jobs.length) {
+      throw new Error("Core & Main official job board returned no verifiable server-rendered job cards.");
+    }
+    const completeListing = parsed.jobs.length === parsed.total;
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing,
+      jobs: parsed.jobs,
+      resolvedListingUrl: CORE_AND_MAIN_LISTING_URL,
+      error: completeListing
+        ? null
+        : `Core & Main exposed ${parsed.jobs.length} of ${parsed.total} official jobs; retained prior inventory.`,
+    };
+  } catch (error) {
+    const status = typeof error === "object" && error && "responseStatus" in error
+      ? Number((error as { responseStatus: unknown }).responseStatus)
+      : responseStatus;
+    return {
+      status: isBlockedHttpStatus(status) ? "blocked" : "failed",
+      responseStatus: status,
+      completeListing: false,
+      jobs: [],
+      resolvedListingUrl: CORE_AND_MAIN_LISTING_URL,
+      error: error instanceof Error ? error.message : "Unknown Core & Main careers crawler error.",
+    };
+  }
+};
+
 async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
   if ((source.discoveryDepth ?? 0) === 0) {
     try {
@@ -23435,6 +23536,9 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-84") {
     return crawlCommunityHealthSystems(source, fetcher, now);
+  }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-87") {
+    return crawlCoreAndMainCareers(source, fetcher);
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-846") {
     return crawlPcaCareerSearch(source, fetcher);
