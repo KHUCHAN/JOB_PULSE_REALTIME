@@ -239,6 +239,13 @@ describe("browser fallback result classification", () => {
       jobs: [],
       error: "Tesla browser state returned HTTP 403.",
     })).toEqual({ status: "blocked", code: "blocked_challenge" });
+    expect(browserResultClassification({
+      source: { id: "p5-1077-tesla", company: "Tesla", postingUrl: "https://www.tesla.com/careers/search", adapter: "custom" },
+      status: null,
+      finalUrl: null,
+      jobs: [],
+      error: "Browser fallback exceeded 60 seconds.",
+    })).toEqual({ status: "blocked", code: "blocked_challenge" });
   });
 
   it("keeps a 2xx page with no verified jobs retryable instead of healthy", () => {

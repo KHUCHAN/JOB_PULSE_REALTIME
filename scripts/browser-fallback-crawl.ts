@@ -509,6 +509,14 @@ export const browserResultClassification = (result: BrowserFallbackResult): {
     return { status: "blocked", code: "blocked_challenge" };
   }
   if (result.status !== null && result.status >= 400) return { status: "failed", code: "http_error" };
+  // Tesla's official Akamai edge currently returns Access Denied from a
+  // directly observed Chrome session, while some runner routes stall before
+  // the same denial response commits. Both outcomes are upstream access
+  // blocking, not a broken or empty catalog parser.
+  if ((result.source.id === "p5-1077-tesla" || result.source.company === "Tesla")
+    && /exceeded 60 seconds|timeout/i.test(result.error ?? "")) {
+    return { status: "blocked", code: "blocked_challenge" };
+  }
   if (/exceeded 60 seconds|timeout/i.test(result.error ?? "")) return { status: "failed", code: "navigation_timeout" };
   if (result.error) return { status: "failed", code: "navigation_error" };
   // A 2xx page with no verified job identity is not an authoritative empty
