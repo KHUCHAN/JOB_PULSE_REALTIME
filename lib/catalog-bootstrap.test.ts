@@ -18,6 +18,15 @@ const seed: CatalogSeed = {
 
 function fakeDb(existing: number, version: string | null = null) {
   const writes: Array<{ kind: "sources" | "talent" | "state"; values: string[] }> = [];
+  let currentVersion = version;
+  let currentPolicyVersion: string | null = null;
+  let lockOwner: string | null = null;
+  const status = () => ({
+    count: existing,
+    version: currentVersion,
+    crawl_policy_version: currentPolicyVersion,
+    lock_owner: lockOwner,
+  });
   return {
     writes,
     db: {
@@ -25,20 +34,26 @@ function fakeDb(existing: number, version: string | null = null) {
         return {
           bind(...values: unknown[]) {
             return {
-              first: async () => ({ count: existing, version }),
+              first: async () => status(),
               run: async () => {
-                if (sql.includes("INSERT INTO sources")) {
+                if (sql.includes("datetime(catalog_state.updated_at)")) {
+                  lockOwner ??= String(values[1]);
+                } else if (sql.includes("DELETE FROM catalog_state WHERE key = ? AND value = ?")) {
+                  if (lockOwner === String(values[1])) lockOwner = null;
+                } else if (sql.includes("INSERT INTO sources")) {
                   writes.push({ kind: "sources", values: JSON.parse(String(values[0])).map((row: { id: string }) => row.id) });
                 } else if (sql.includes("INSERT INTO talent_targets")) {
                   writes.push({ kind: "talent", values: JSON.parse(String(values[0])).map((row: { id: string }) => row.id) });
                 } else if (sql.includes("INSERT INTO catalog_state")) {
                   writes.push({ kind: "state", values: values.map(String) });
+                  if (values[0] === "sources") currentVersion = String(values[1]);
+                  if (values[0] === "crawler_scope_policy") currentPolicyVersion = String(values[1]);
                 }
                 return { success: true };
               },
             };
           },
-          first: async () => ({ count: existing, version }),
+          first: async () => status(),
         };
       },
     },
@@ -70,6 +85,25 @@ describe("runtime catalog bootstrap", () => {
     expect(writes[1]).toEqual({ kind: "sources", values: ["source-500"] });
     expect(writes[2]).toEqual({ kind: "talent", values: ["talent-1"] });
     expect(writes[3]).toEqual({ kind: "state", values: ["sources", seed.version] });
+  });
+
+  it("coalesces concurrent catalog synchronization in the same worker", async () => {
+    const { db, writes } = fakeDb(0);
+    const results = await Promise.all([
+      ensureCatalogSeeded(db, seed),
+      ensureCatalogSeeded(db, seed),
+      ensureCatalogSeeded(db, seed),
+    ]);
+    expect(results).toEqual(Array.from({ length: 3 }, () => ({
+      seeded: true,
+      sources: 501,
+      talentTargets: 1,
+    })));
+    expect(writes.filter((write) => write.kind === "sources")).toHaveLength(2);
+    expect(writes.filter((write) => write.kind === "talent")).toHaveLength(1);
+    expect(writes.filter((write) => write.kind === "state")).toEqual([
+      { kind: "state", values: ["sources", seed.version] },
+    ]);
   });
 
   it("executes the bootstrap statements against SQLite", async () => {
@@ -122,6 +156,7 @@ describe("runtime catalog bootstrap", () => {
 
     expect(sqlite.prepare("SELECT count(*) AS count FROM sources").get()).toEqual({ count: 1 });
     expect(sqlite.prepare("SELECT count(*) AS count FROM talent_targets").get()).toEqual({ count: 1 });
+    expect(sqlite.prepare("SELECT value FROM catalog_state WHERE key = 'sources_sync_lock_v1'").get()).toBeUndefined();
 
     sqlite.prepare("UPDATE sources SET next_crawl_at = '2099-01-01 00:00:00' WHERE id = ?").run(seed.sources[0].id);
     sqlite.prepare("INSERT INTO jobs (id, source_id, status, location_region) VALUES (?, ?, ?, ?), (?, ?, ?, ?), (?, ?, ?, ?)").run(

@@ -39,6 +39,15 @@ interface CatalogDb {
   prepare(sql: string): CatalogStatement;
 }
 
+type CatalogSeedResult = { seeded: boolean; sources: number; talentTargets: number };
+
+type CatalogStatus = {
+  count: number;
+  version: string | null;
+  crawl_policy_version: string | null;
+  lock_owner: string | null;
+};
+
 export interface CatalogCrawlPolicy {
   version: string;
   sourceIds: readonly string[];
@@ -50,18 +59,54 @@ const chunks = <T>(items: T[], size: number): T[][] => {
   return result;
 };
 
-export async function ensureCatalogSeeded(
-  database: CatalogDb,
-  seed: CatalogSeed,
-  crawlPolicy?: CatalogCrawlPolicy,
-): Promise<{ seeded: boolean; sources: number; talentTargets: number }> {
-  const existing = await database.prepare(`
+const CATALOG_SYNC_LOCK_KEY = "sources_sync_lock_v1";
+const catalogSyncs = new WeakMap<object, Promise<CatalogSeedResult>>();
+const delay = (milliseconds: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+const catalogStatus = async (database: CatalogDb): Promise<CatalogStatus> => (
+  await database.prepare(`
     SELECT
       (SELECT count(*) FROM sources) AS count,
       (SELECT value FROM catalog_state WHERE key = 'sources') AS version,
-      (SELECT value FROM catalog_state WHERE key = 'crawler_scope_policy') AS crawl_policy_version
-  `).first() as { count: number; version: string | null; crawl_policy_version: string | null } | null;
-  const seedIsCurrent = existing?.version === seed.version;
+      (SELECT value FROM catalog_state WHERE key = 'crawler_scope_policy') AS crawl_policy_version,
+      (SELECT value FROM catalog_state WHERE key = '${CATALOG_SYNC_LOCK_KEY}') AS lock_owner
+  `).first() as CatalogStatus | null
+) ?? { count: 0, version: null, crawl_policy_version: null, lock_owner: null };
+
+async function ensureCatalogSeededOnce(
+  database: CatalogDb,
+  seed: CatalogSeed,
+  crawlPolicy?: CatalogCrawlPolicy,
+): Promise<CatalogSeedResult> {
+  let existing = await catalogStatus(database);
+  const alreadyCurrent = (): boolean => existing.version === seed.version
+    && (!crawlPolicy || existing.crawl_policy_version === crawlPolicy.version);
+  if (alreadyCurrent()) return { seeded: false, sources: existing.count, talentTargets: 0 };
+
+  // A Sites deployment can receive several public reads and crawler POSTs at
+  // the same instant. Without a database-visible lock, every isolate sees the
+  // old catalog marker and rewrites the full 1,400+ source seed concurrently,
+  // which can overload D1 before any request publishes the new marker.
+  const lockOwner = crypto.randomUUID();
+  const lockDeadline = Date.now() + 45_000;
+  while (true) {
+    await database.prepare(`
+      INSERT INTO catalog_state (key, value, updated_at)
+      VALUES (?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(key) DO UPDATE SET
+        value=excluded.value,
+        updated_at=CURRENT_TIMESTAMP
+      WHERE datetime(catalog_state.updated_at) < datetime('now', '-2 minutes')
+    `).bind(CATALOG_SYNC_LOCK_KEY, lockOwner).run();
+    existing = await catalogStatus(database);
+    if (alreadyCurrent()) return { seeded: false, sources: existing.count, talentTargets: 0 };
+    if (existing.lock_owner === lockOwner) break;
+    if (Date.now() >= lockDeadline) throw new Error("Catalog synchronization is still in progress.");
+    await delay(500);
+  }
+
+  const seedIsCurrent = existing.version === seed.version;
+  try {
 
   for (const batch of seedIsCurrent ? [] : chunks(seed.sources, 500)) {
     // A persisted page cursor belongs to one exact listing URL and adapter.
@@ -196,7 +241,7 @@ export async function ensureCatalogSeeded(
     `).bind("sources", seed.version).run();
   }
 
-  if (crawlPolicy && existing?.crawl_policy_version !== crawlPolicy.version) {
+  if (crawlPolicy && existing.crawl_policy_version !== crawlPolicy.version) {
     for (const batch of chunks([...new Set(crawlPolicy.sourceIds)], 400)) {
       // A policy change is a listing-identity change even when the public URL
       // stays the same. Restart each affected catalog at page one so a global
@@ -236,7 +281,27 @@ export async function ensureCatalogSeeded(
     `).bind("crawler_scope_policy", crawlPolicy.version).run();
   }
 
-  return seedIsCurrent
-    ? { seeded: false, sources: existing?.count ?? 0, talentTargets: 0 }
-    : { seeded: true, sources: seed.sources.length, talentTargets: seed.talentTargets.length };
+    return seedIsCurrent
+      ? { seeded: false, sources: existing.count, talentTargets: 0 }
+      : { seeded: true, sources: seed.sources.length, talentTargets: seed.talentTargets.length };
+  } finally {
+    await database.prepare(`
+      DELETE FROM catalog_state WHERE key = ? AND value = ?
+    `).bind(CATALOG_SYNC_LOCK_KEY, lockOwner).run();
+  }
+}
+
+export function ensureCatalogSeeded(
+  database: CatalogDb,
+  seed: CatalogSeed,
+  crawlPolicy?: CatalogCrawlPolicy,
+): Promise<CatalogSeedResult> {
+  const key = database as object;
+  const active = catalogSyncs.get(key);
+  if (active) return active;
+  const sync = ensureCatalogSeededOnce(database, seed, crawlPolicy).finally(() => {
+    if (catalogSyncs.get(key) === sync) catalogSyncs.delete(key);
+  });
+  catalogSyncs.set(key, sync);
+  return sync;
 }
