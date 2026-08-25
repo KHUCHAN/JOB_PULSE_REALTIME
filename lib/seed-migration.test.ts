@@ -298,6 +298,14 @@ describe("large catalog US scope migration", () => {
     expect(sql).toContain("'https://jobs.jobvite.com/enphase-energy/'");
   });
 
+  it("publishes the bundled catalog version before production requests arrive", () => {
+    const seed = JSON.parse(readFileSync(resolve(process.cwd(), "db/seed/sources.json"), "utf8")) as { version: string };
+    const sql = readFileSync(resolve(drizzlePath, "0126_publish_catalog_version.sql"), "utf8");
+
+    expect(sql).toContain(`VALUES ('sources', '${seed.version}', CURRENT_TIMESTAMP)`);
+    expect(sql).toContain("WHERE key = 'sources_sync_lock_v1'");
+  });
+
   it("requeues every repaired source for the server-owned batch", () => {
     const sql = readFileSync(resolve(drizzlePath, "0102_requeue_recovered_sources.sql"), "utf8");
     const sourceIds = [...sql.matchAll(/'(p\d-[^']+|audit-row-\d+)'/g)].map((match) => match[1]);
