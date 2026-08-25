@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { catalogSeedVersion } from "./catalog-seed-version";
 import { advanceSeedSnapshot, catalogDeltaSql, planSeedMigration, versionedCatalogSql } from "./seed-migration";
 
 const journal = {
@@ -299,9 +300,14 @@ describe("large catalog US scope migration", () => {
   });
 
   it("publishes the bundled catalog version before production requests arrive", () => {
-    const seed = JSON.parse(readFileSync(resolve(process.cwd(), "db/seed/sources.json"), "utf8")) as { version: string };
+    const seed = JSON.parse(readFileSync(resolve(process.cwd(), "db/seed/sources.json"), "utf8")) as {
+      version: string;
+      sources: unknown[];
+      talentTargets: unknown[];
+    };
     const sql = readFileSync(resolve(drizzlePath, "0126_publish_catalog_version.sql"), "utf8");
 
+    expect(seed.version).toBe(catalogSeedVersion(seed.sources, seed.talentTargets));
     expect(sql).toContain(`VALUES ('sources', '${seed.version}', CURRENT_TIMESTAMP)`);
     expect(sql).toContain("WHERE key = 'sources_sync_lock_v1'");
   });
