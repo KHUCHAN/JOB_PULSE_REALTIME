@@ -18810,9 +18810,23 @@ const crawlWalmart = async (source: CrawlSource, fetcher: typeof fetch): Promise
   const jobs = (first.payload.jobs ?? []).flatMap((job) => walmartJob(source, job) ?? []);
   let successfulPages = 1;
   let firstFailedPage: number | null = null;
-  // Keep page responses out of memory; normalized records are substantially smaller than the API payload.
-  for (let page = startPage + 1; page <= endPage; page += 1) {
-    const result = await fetchPage(page - 1);
+  const remainingPages = Array.from(
+    { length: Math.max(0, endPage - startPage) },
+    (_, index) => startPage + index + 1,
+  );
+  const programQueries = ["intern", "co-op", "coop", "co op"];
+  // Walmart's 200-row payload is several megabytes. The old sequential walk
+  // made a healthy catalog exceed the production source deadline even though
+  // each official request succeeded. Start the independent requests together,
+  // then normalize them in deterministic page/query order. The bounded window
+  // keeps peak memory below the Worker limit while removing that false failure.
+  const [pageResults, programResults] = await Promise.all([
+    Promise.all(remainingPages.map((page) => fetchPage(page - 1))),
+    Promise.all(programQueries.map((query) => fetchPage(0, query, false, programPageSize))),
+  ]);
+  for (let index = 0; index < remainingPages.length; index += 1) {
+    const page = remainingPages[index];
+    const result = pageResults[index];
     if (!result) {
       firstFailedPage = page;
       break;
@@ -18822,8 +18836,7 @@ const crawlWalmart = async (source: CrawlSource, fetcher: typeof fetch): Promise
   }
   // The all-jobs result is relevance-ranked and may bury student programs beyond the safe
   // Worker cap. Add focused official searches so internship/coop postings are not omitted.
-  for (const query of ["intern", "co-op", "coop", "co op"]) {
-    const result = await fetchPage(0, query, false, programPageSize);
+  for (const result of programResults) {
     if (!result) continue;
     jobs.push(...(result.payload.jobs ?? []).flatMap((job) => walmartJob(source, job) ?? []));
   }
