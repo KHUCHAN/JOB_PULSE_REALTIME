@@ -17,6 +17,7 @@ export interface CodexReviewResult {
   accepted: number;
   approved: number;
   rejected: number;
+  suppressedAlreadyNotified: Array<{ jobId: string; officialUrl: string }>;
   missing: Array<{ jobId?: string; officialUrl?: string; reason: string }>;
 }
 
@@ -45,6 +46,33 @@ const safeUrl = (value: string): string | null => {
   } catch {
     return null;
   }
+};
+
+const trackingParameters = new Set([
+  "fbclid", "gclid", "msclkid", "ref", "source", "trk", "trackingid",
+]);
+
+export const canonicalReviewUrl = (value: string): string | null => {
+  const safe = safeUrl(value);
+  if (!safe) return null;
+  const url = new URL(safe);
+  url.hash = "";
+  for (const key of [...url.searchParams.keys()]) {
+    const normalized = key.toLocaleLowerCase();
+    if (normalized.startsWith("utm_") || trackingParameters.has(normalized)) {
+      url.searchParams.delete(key);
+    }
+  }
+  url.searchParams.sort();
+  if (url.pathname.length > 1) url.pathname = url.pathname.replace(/\/+$/, "");
+  return url.toString();
+};
+
+const urlsMatch = (verified: string, ...targets: Array<string | null>): boolean => {
+  const canonicalVerified = canonicalReviewUrl(verified);
+  return canonicalVerified !== null && targets.some((target) => (
+    target !== null && canonicalReviewUrl(target) === canonicalVerified
+  ));
 };
 
 const targetFor = async (
@@ -85,9 +113,15 @@ export const applyCodexReviews = async (
   values: CodexReviewInput[],
   now = new Date().toISOString(),
 ): Promise<CodexReviewResult> => {
-  const result: CodexReviewResult = { accepted: 0, approved: 0, rejected: 0, missing: [] };
-  const boundedValues = values.slice(0, 100);
-  for (const raw of boundedValues) {
+  if (values.length > 100) throw new Error("Codex review batches are limited to 100 rows; submit additional chunks separately.");
+  const result: CodexReviewResult = {
+    accepted: 0,
+    approved: 0,
+    rejected: 0,
+    suppressedAlreadyNotified: [],
+    missing: [],
+  };
+  for (const raw of values) {
     const decision = normalizedDecision(raw.decision);
     const rationale = boundedText(raw.rationale, 2_000);
     const verifiedUrl = safeUrl(boundedText(raw.verifiedUrl, 2_000));
@@ -101,14 +135,11 @@ export const applyCodexReviews = async (
       result.missing.push({ jobId: boundedText(raw.jobId, 200) || undefined, officialUrl: boundedText(raw.officialUrl, 2_000) || undefined, reason: "job_match_not_found" });
       continue;
     }
-    if (target.already_notified === 1) {
-      result.missing.push({ jobId: target.job_id, officialUrl: target.official_url, reason: "posting_identity_already_notified" });
-      continue;
-    }
-    if (verifiedUrl !== target.official_url && verifiedUrl !== target.apply_url) {
+    if (!urlsMatch(verifiedUrl, target.official_url, target.apply_url)) {
       result.missing.push({ jobId: target.job_id, officialUrl: target.official_url, reason: "verified_url_does_not_match_official_url" });
       continue;
     }
+    const alreadyNotified = target.already_notified === 1;
     const reviewId = crypto.randomUUID();
     await database.batch([
       database.prepare(`
@@ -129,13 +160,13 @@ export const applyCodexReviews = async (
         UPDATE job_matches
         SET notification_eligible = ?, is_active = 1
         WHERE id = ? AND is_active = 1
-      `).bind(decision === "approve" ? 1 : 0, target.job_match_id),
+      `).bind(decision === "approve" && !alreadyNotified ? 1 : 0, target.job_match_id),
       database.prepare(`
         DELETE FROM notification_items
         WHERE job_match_id = ? AND notification_id IN (
           SELECT id FROM notifications WHERE status <> 'sent'
         ) AND ? <> 'approve'
-      `).bind(target.job_match_id, decision),
+      `).bind(target.job_match_id, decision === "approve" && !alreadyNotified ? "approve" : "reject"),
       database.prepare(`
         DELETE FROM notifications
         WHERE status <> 'sent' AND NOT EXISTS (
@@ -150,10 +181,12 @@ export const applyCodexReviews = async (
         END,
         updated_at = CURRENT_TIMESTAMP
         WHERE id = 'chanyoung-resume'
-      `).bind(decision, now, now),
+      `).bind(decision === "approve" && !alreadyNotified ? "approve" : "reject", now, now),
     ]);
     result.accepted += 1;
-    if (decision === "approve") result.approved += 1;
+    if (alreadyNotified) {
+      result.suppressedAlreadyNotified.push({ jobId: target.job_id, officialUrl: target.official_url });
+    } else if (decision === "approve") result.approved += 1;
     else result.rejected += 1;
   }
   return result;

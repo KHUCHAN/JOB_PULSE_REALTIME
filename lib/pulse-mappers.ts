@@ -53,6 +53,9 @@ export interface JobViewRow {
   published_at?: string | null;
   resume_match_score?: number | null;
   resume_match_evidence?: string | null;
+  resume_notified_at?: string | null;
+  resume_review_decision?: string | null;
+  resume_identity_already_notified?: number | null;
 }
 
 export interface RichJobPosting extends JobPosting {
@@ -97,6 +100,9 @@ export interface RichJobPosting extends JobPosting {
   publishedAt: string | null;
   resumeMatchScore: number | null;
   resumeMatchEvidence: string[];
+  resumeNotifiedAt: string | null;
+  resumeReviewDecision: "approve" | "reject" | null;
+  resumeIdentityAlreadyNotified: boolean;
 }
 
 const nullableText = (value: string | null | undefined): string | null => value?.trim() || null;
@@ -199,6 +205,11 @@ export function mapJob(row: JobViewRow): RichJobPosting {
     publishedAt: nullableText(row.published_at),
     resumeMatchScore,
     resumeMatchEvidence,
+    resumeNotifiedAt: nullableText(row.resume_notified_at),
+    resumeReviewDecision: row.resume_review_decision === "approve" || row.resume_review_decision === "reject"
+      ? row.resume_review_decision
+      : null,
+    resumeIdentityAlreadyNotified: row.resume_identity_already_notified === 1,
   };
 }
 

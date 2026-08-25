@@ -58,6 +58,9 @@ const job: RichJobPosting = {
   publishedAt: null,
   resumeMatchScore: null,
   resumeMatchEvidence: [],
+  resumeNotifiedAt: null,
+  resumeReviewDecision: null,
+  resumeIdentityAlreadyNotified: false,
 };
 
 it("opens the stable official posting URL when an ATS apply URL is also present", () => {

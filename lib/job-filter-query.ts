@@ -26,6 +26,7 @@ export const defaultJobFilters: JobFilters = {
   seasons: [],
   postedAfter: "",
   postedBefore: "",
+  snapshotAt: "",
   departments: [],
   teams: [],
   businessUnits: [],
@@ -129,6 +130,12 @@ const parseDate = (value: string | null): string => {
   return Number.isNaN(parsed.valueOf()) || parsed.toISOString().slice(0, 10) !== value ? "" : value;
 };
 
+const parseTimestamp = (value: string | null): string => {
+  if (!value) return "";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.valueOf()) ? "" : parsed.toISOString();
+};
+
 const appendValues = (params: URLSearchParams, key: string, values: string[] | undefined) => {
   for (const value of normalizeAtomicValues(values ?? [])) params.append(key, value);
 };
@@ -164,6 +171,7 @@ export function parseJobFilterParams(input: URLSearchParams): JobFilters {
   filters.regions = normalizeEnumValues(input.getAll("region"), regionKeys);
   filters.postedAfter = parseDate(input.get("postedAfter"));
   filters.postedBefore = parseDate(input.get("postedBefore"));
+  filters.snapshotAt = parseTimestamp(input.get("snapshotAt"));
   filters.salaryMin = parseNonNegativeNumber(input.get("salaryMin"));
   filters.salaryMax = parseNonNegativeNumber(input.get("salaryMax"));
   filters.resumeMatchProfile = input.get("resumeMatch") === "chanyoung-resume"
@@ -208,6 +216,9 @@ export function serializeJobFilters(filters: JobFilters): URLSearchParams {
   for (const season of normalizeEnumValues(normalized.seasons, seasons)) params.append("season", season);
   if (parseDate(normalized.postedAfter ?? "")) params.append("postedAfter", normalized.postedAfter!);
   if (parseDate(normalized.postedBefore ?? "")) params.append("postedBefore", normalized.postedBefore!);
+  if (parseTimestamp(normalized.snapshotAt ?? "")) {
+    params.append("snapshotAt", parseTimestamp(normalized.snapshotAt!));
+  }
   if (isNonNegativeNumber(normalized.salaryMin)) {
     params.append("salaryMin", String(normalized.salaryMin));
   }

@@ -14958,6 +14958,160 @@ const crawlAstronicsRss = async (source: CrawlSource, fetcher: typeof fetch): Pr
   }
 };
 
+const crawlOleeoAtom = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const listing = new URL(source.postingUrl);
+  listing.search = "";
+  listing.hash = "";
+  listing.pathname = `${listing.pathname.replace(/\/(?:adv)?\/?$/i, "")}/feed`;
+  try {
+    const response = await fetchWithTimeout(fetcher, listing.href, {
+      headers: { accept: "application/atom+xml,application/xml,text/xml" },
+    }, false, { attempts: 1, timeoutMs: 10_000 });
+    if (!response.ok) {
+      return {
+        status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
+        responseStatus: response.status,
+        completeListing: false,
+        jobs: [],
+        error: `Oleeo Atom feed returned HTTP ${response.status}.`,
+      };
+    }
+    const xml = await response.text();
+    const entries = [...xml.matchAll(/<entry\b([^>]*)>([\s\S]*?)<\/entry>/gi)];
+    const jobs = uniqueJobs(entries.flatMap((entry): CrawledJob[] => {
+      const officialText = entry[1].match(/\bxml:base=["']([^"']+)["']/i)?.[1]
+        ?? entry[2].match(/<id>\s*([\s\S]*?)\s*<\/id>/i)?.[1];
+      const title = plainText(entry[2].match(/<title>\s*([\s\S]*?)\s*<\/title>/i)?.[1]);
+      if (!officialText || !title) return [];
+      const officialUrl = new URL(decodeHtmlAttribute(officialText.trim()));
+      if (officialUrl.hostname !== new URL(source.postingUrl).hostname
+        || !/\/candidate\/so\//i.test(officialUrl.pathname)) return [];
+      const externalId = officialUrl.pathname.match(/\/opp\/(\d+)-/i)?.[1];
+      if (!externalId) return [];
+      const rawContent = entry[2].match(/<content\b[^>]*>([\s\S]*?)<\/content>/i)?.[1] ?? "";
+      const location = plainText(rawContent.match(/Location:\s*([\s\S]*?)<br\s*\/?\s*>/i)?.[1]);
+      const published = plainText(entry[2].match(/<published>\s*([\s\S]*?)\s*<\/published>/i)?.[1]);
+      const updated = plainText(entry[2].match(/<updated>\s*([\s\S]*?)\s*<\/updated>/i)?.[1]);
+      const programs = classifyJobPrograms(title).keys;
+      const employmentType = programs.includes("coop")
+        ? "Co-op"
+        : programs.includes("internship") ? "Internship" : null;
+      return [{
+        externalId,
+        requisitionId: externalId,
+        title,
+        company: source.company,
+        location,
+        arrangement: /remote/i.test(location ?? "") ? "remote" : "unknown",
+        employmentType,
+        summary: plainText(rawContent),
+        officialUrl: officialUrl.href,
+        publishedAt: normalizedDate(published),
+        sourceUpdatedAt: normalizedDate(updated),
+      }];
+    }));
+    return {
+      status: jobs.length > 0 ? "succeeded" : "failed",
+      responseStatus: response.status,
+      completeListing: jobs.length > 0 && jobs.length === entries.length,
+      jobs,
+      resolvedListingUrl: source.postingUrl,
+      error: jobs.length > 0 ? null : "Oleeo Atom feed contained no usable jobs.",
+    };
+  } catch (error) {
+    return {
+      status: "failed",
+      responseStatus: null,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Oleeo Atom feed error.",
+    };
+  }
+};
+
+const crawlCoinbaseReader = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const endpoint = `https://r.jina.ai/${source.postingUrl}`;
+  try {
+    const response = await fetchWithTimeout(fetcher, endpoint, {
+      headers: { accept: "text/plain" },
+    }, false, { attempts: 1, timeoutMs: 20_000 });
+    if (!response.ok) {
+      return {
+        status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
+        responseStatus: response.status,
+        completeListing: false,
+        jobs: [],
+        error: `Coinbase official listing reader returned HTTP ${response.status}.`,
+      };
+    }
+    const markdown = await response.text();
+    const lines = markdown.split(/\r?\n/);
+    let department: string | null = null;
+    let advertised = 0;
+    const jobs: CrawledJob[] = [];
+    for (let index = 0; index < lines.length; index += 1) {
+      const heading = lines[index].match(/^##\s+(.+?)\s*$/);
+      if (heading) {
+        department = heading[1].trim();
+        const count = lines.slice(index + 1, index + 5).join("\n").match(/\b(\d+)\s+openings?\b/i);
+        if (count) advertised += Number(count[1]);
+        continue;
+      }
+      const link = lines[index].match(/^\[(.+)\]\((https:\/\/www\.coinbase\.com\/careers\/positions\/(\d+))\)\s*$/);
+      if (!link) continue;
+      const location = lines.slice(index + 1).find((line) => line.trim())?.trim() ?? null;
+      const arrangement = /^remote\b/i.test(location ?? "")
+        ? "remote"
+        : /^hybrid\b/i.test(location ?? "") ? "hybrid" : "unknown";
+      const programs = classifyJobPrograms(link[1]).keys;
+      jobs.push({
+        externalId: link[3],
+        requisitionId: link[3],
+        title: decodeHtmlAttribute(link[1]),
+        company: source.company,
+        location,
+        arrangement,
+        employmentType: programs.includes("coop")
+          ? "Co-op"
+          : programs.includes("internship") ? "Internship" : null,
+        department,
+        summary: null,
+        officialUrl: link[2],
+        publishedAt: null,
+      });
+    }
+    const unique = uniqueJobs(jobs);
+    if (advertised < 1 || unique.length !== advertised || jobs.length !== unique.length) {
+      return {
+        status: "failed",
+        responseStatus: response.status,
+        completeListing: false,
+        jobs: [],
+        error: `Coinbase official listing reader was inconsistent (${unique.length} jobs, ${advertised} advertised).`,
+      };
+    }
+    // The reader is a complete, cardinality-checked discovery surface, but it
+    // cannot authorize closing an older row when Coinbase's origin returns
+    // 403 to the crawler. Keep ingestion addition-safe.
+    return {
+      status: "succeeded",
+      responseStatus: response.status,
+      completeListing: false,
+      jobs: unique,
+      resolvedListingUrl: source.postingUrl,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: "failed",
+      responseStatus: null,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Coinbase listing reader error.",
+    };
+  }
+};
+
 type GraphicPackagingJob = {
   requisitionId?: string;
   title?: string;
@@ -23786,6 +23940,10 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   if (source.id === "p4-0455-logrhythm") return crawlJobviteBoard(source, "https://jobs.jobvite.com/exabeam/", "exabeam", fetcher);
   if (source.id === "legacy-row-777") return crawlAceJobs(source, fetcher);
   if (source.id === "p5-0808-astronics") return crawlAstronicsRss(source, fetcher);
+  if (source.id === "p2-0035-coinbase") return crawlCoinbaseReader(source, fetcher);
+  if (sourcePage.hostname.endsWith(".tal.net") && /\/candidate\/jobboard\/vacancy\/\d+/i.test(sourcePage.pathname)) {
+    return crawlOleeoAtom(source, fetcher);
+  }
   if (source.id === "legacy-row-820") return crawlGraphicPackaging(source, fetcher);
   if (source.id === "legacy-row-803"
     || (sourcePage.hostname === "corporate.dow.com" && sourcePage.pathname.includes("/careers/jobs"))) {

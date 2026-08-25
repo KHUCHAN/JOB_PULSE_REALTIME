@@ -6,6 +6,11 @@ const validDate = (value: string): boolean => {
   return !Number.isNaN(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value;
 };
 
+const validTimestamp = (value: string): boolean => {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value)) return false;
+  return !Number.isNaN(new Date(value).valueOf());
+};
+
 const rejectInvalidValues = (
   params: URLSearchParams,
   name: string,
@@ -39,4 +44,5 @@ export const validateExplicitJobFilterValues = (params: URLSearchParams) => {
   for (const name of ["postedAfter", "postedBefore"]) {
     rejectInvalidValues(params, name, validDate);
   }
+  rejectInvalidValues(params, "snapshotAt", validTimestamp);
 };

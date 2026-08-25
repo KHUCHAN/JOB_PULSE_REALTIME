@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { applyCodexReviews } from "./codex-review-store";
+import { applyCodexReviews, canonicalReviewUrl } from "./codex-review-store";
 
 const createD1 = (sqlite: DatabaseSync): D1Database => ({
   prepare(sql: string) {
@@ -167,7 +167,7 @@ describe("Codex review persistence", () => {
       .toEqual({ decision: "reject" });
   });
 
-  it("rejects a later match when the durable posting identity was already sent", async () => {
+  it("persists but suppresses a later review when the durable posting identity was already sent", async () => {
     const sqlite = database();
     sqlite.prepare(`INSERT INTO notification_identity_history
       VALUES ('chanyoung-resume', 'kimchany@usc.edu', 'url:https://careers.example.com/job-new',
@@ -180,8 +180,36 @@ describe("Codex review persistence", () => {
       verifiedUrl: "https://careers.example.com/job-new",
     }]);
 
-    expect(result.missing[0]?.reason).toBe("posting_identity_already_notified");
-    expect(sqlite.prepare("SELECT count(*) AS total FROM codex_reviews").get()).toEqual({ total: 0 });
+    expect(result).toMatchObject({ accepted: 1, approved: 0, rejected: 0, missing: [] });
+    expect(result.suppressedAlreadyNotified).toEqual([{
+      jobId: "job-new", officialUrl: "https://careers.example.com/job-new",
+    }]);
+    expect(sqlite.prepare("SELECT decision FROM codex_reviews").get()).toEqual({ decision: "approve" });
+    expect(sqlite.prepare("SELECT notification_eligible FROM job_matches").get())
+      .toEqual({ notification_eligible: 0 });
+  });
+
+  it("accepts harmless tracking and trailing-slash variants of the verified official URL", async () => {
+    const sqlite = database();
+    const result = await applyCodexReviews(createD1(sqlite), [{
+      jobId: "job-new",
+      decision: "reject",
+      rationale: "Official posting date could not be verified.",
+      verifiedUrl: "https://careers.example.com/job-new/?utm_source=handshake&gclid=123#apply",
+    }]);
+
+    expect(result).toMatchObject({ accepted: 1, rejected: 1, missing: [] });
+    expect(canonicalReviewUrl("https://e.example/job/?b=2&utm_medium=x&a=1#top"))
+      .toBe("https://e.example/job?a=1&b=2");
+  });
+
+  it("rejects an oversized review batch instead of silently truncating it", async () => {
+    await expect(applyCodexReviews(createD1(database()), Array.from({ length: 101 }, () => ({
+      jobId: "job-new",
+      decision: "reject" as const,
+      rationale: "Not eligible.",
+      verifiedUrl: "https://careers.example.com/job-new",
+    })))).rejects.toThrow("limited to 100 rows");
   });
 
   it("rejects non-approve/reject decisions and leaves the match pending", async () => {

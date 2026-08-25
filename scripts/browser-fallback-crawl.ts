@@ -379,17 +379,23 @@ export const recoverNativeOutsideWorker = async (
 
 const inspect = async (page: Page, source: CrawlSource): Promise<BrowserFallbackResult> => {
   try {
+    const isTesla = source.id === "p5-1077-tesla" || source.company === "Tesla";
     // Re-run the full native adapter only for failures shown to differ by
     // egress (Workday, blocked pages, previously populated feeds, and browser
     // false-empty results). Other sources keep the short HTTP probe so a slow
     // upstream cannot consume the browser's 60-second recovery window.
-    const native = await recoverNativeOutsideWorker(source);
-    if (native) return native;
-    const http1Jobs = await jobsViaHttp1(source);
-    if (http1Jobs.length > 0) {
-      return { source, status: 200, finalUrl: source.postingUrl, jobs: http1Jobs, error: null };
+    // Tesla's Worker-native API is the failure that selected this recovery
+    // path. Retrying it twice plus curl used most of the 60-second browser
+    // budget before the known-good same-origin browser call could begin.
+    if (!isTesla) {
+      const native = await recoverNativeOutsideWorker(source);
+      if (native) return native;
+      const http1Jobs = await jobsViaHttp1(source);
+      if (http1Jobs.length > 0) {
+        return { source, status: 200, finalUrl: source.postingUrl, jobs: http1Jobs, error: null };
+      }
     }
-    if (source.id === "p5-1077-tesla" || source.company === "Tesla") {
+    if (isTesla) {
       // Tesla's careers shell can keep loading nonessential assets long after
       // navigation commits. Fetch the same-origin official state endpoint
       // explicitly from the browser context: the shell does not request it on

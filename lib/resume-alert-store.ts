@@ -66,6 +66,10 @@ export const planResumeDigests = async (
   maxMessages = 1,
   exactJobIds: string[] | null = null,
 ): Promise<PlannedNotification[]> => {
+  const exactTargetsInput = exactJobIds === null ? null : [...new Set(exactJobIds)];
+  if (exactTargetsInput !== null && exactTargetsInput.length > 500) {
+    throw new Error("Exact Codex dispatch is limited to 500 job IDs.");
+  }
   const owner = crypto.randomUUID();
   const leaseUntil = plusMinutes(now, 5);
   // The scheduled crawl performs alert planning immediately after persistence.
@@ -96,8 +100,42 @@ export const planResumeDigests = async (
     `).bind(profileId).all<RecipientRow>();
     const boundedPageSize = Math.max(1, Math.min(500, Math.trunc(pageSize)));
     const boundedMessageLimit = Math.max(1, Math.min(1, Math.trunc(maxMessages)));
-    const exactTargets = exactJobIds === null ? null : [...new Set(exactJobIds)].slice(0, 100);
+    const exactTargets = exactTargetsInput;
     const enabledRecipients = recipients.results.map((row) => row.recipient);
+    if (exactTargets !== null) {
+      const encodedTargets = JSON.stringify(exactTargets);
+      // An interrupted or failed prior attempt may have reserved some of this
+      // exact Codex batch in an unsent envelope. Rebuild only those items so
+      // retrying the batch is safe and cannot be blocked by stale reservations.
+      await database.batch([
+        database.prepare(`
+          DELETE FROM notification_items
+          WHERE job_match_id IN (
+            SELECT jm.id FROM job_matches jm
+            JOIN jobs j ON j.id = jm.job_id
+            WHERE j.id IN (SELECT CAST(value AS TEXT) FROM json_each(?))
+          ) AND notification_id IN (
+            SELECT n.id FROM notifications n
+            WHERE n.status <> 'sent'
+              AND (n.status <> 'sending' OR n.lease_expires_at IS NULL OR n.lease_expires_at <= ?)
+          )
+        `).bind(encodedTargets, now),
+        database.prepare(`
+          UPDATE notifications
+          SET job_count = (
+            SELECT count(DISTINCT ni.job_match_id)
+            FROM notification_items ni WHERE ni.notification_id = notifications.id
+          )
+          WHERE status <> 'sent'
+        `),
+        database.prepare(`
+          DELETE FROM notifications
+          WHERE status <> 'sent' AND NOT EXISTS (
+            SELECT 1 FROM notification_items ni WHERE ni.notification_id = notifications.id
+          )
+        `),
+      ]);
+    }
     const matches = await database.prepare(`
       SELECT jm.id, json_group_array(pr.recipient) AS pending_recipients
       FROM job_matches jm

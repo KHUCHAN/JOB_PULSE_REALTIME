@@ -1,5 +1,6 @@
 import type { JobFilters } from "./domain";
 import { canonicalOpenJobNotExists } from "./job-canonical";
+import { postingIdentityHistoryMatchSql } from "./job-posting-identity";
 import { ftsQuery } from "./job-search";
 import { titleTokensSql } from "./job-title-tokens";
 import { jobHasCoopSql } from "./job-program-policy";
@@ -98,6 +99,28 @@ export const jobDetailProjection = (alias = "j"): string => [
       AND detail_match.open_generation = ${alias}.open_generation
       AND detail_match.is_active = 1
     LIMIT 1) AS resume_match_evidence`,
+  `(SELECT detail_match.notified_at
+    FROM job_matches detail_match
+    JOIN match_profiles detail_profile ON detail_profile.keyword_id = detail_match.keyword_id
+    WHERE detail_profile.id = 'chanyoung-resume'
+      AND detail_match.job_id = ${alias}.id
+      AND detail_match.open_generation = ${alias}.open_generation
+      AND detail_match.is_active = 1
+    LIMIT 1) AS resume_notified_at`,
+  `(SELECT detail_review.decision
+    FROM codex_reviews detail_review
+    JOIN job_matches detail_match ON detail_match.id = detail_review.job_match_id
+    JOIN match_profiles detail_profile ON detail_profile.keyword_id = detail_match.keyword_id
+    WHERE detail_profile.id = 'chanyoung-resume'
+      AND detail_match.job_id = ${alias}.id
+      AND detail_match.open_generation = ${alias}.open_generation
+      AND detail_match.is_active = 1
+    LIMIT 1) AS resume_review_decision`,
+  `EXISTS (
+    SELECT 1 FROM notification_identity_history history
+    WHERE history.profile_id = 'chanyoung-resume'
+      AND ${postingIdentityHistoryMatchSql(alias, "history")}
+  ) AS resume_identity_already_notified`,
 ].join(",\n       ");
 
 const jobListProjection = (withResumeMatch: boolean): string => [
@@ -110,6 +133,18 @@ const jobListProjection = (withResumeMatch: boolean): string => [
   "j.location_region AS location_region", areaKeysProjection("j"),
   withResumeMatch ? "resume_match.score AS resume_match_score" : "NULL AS resume_match_score",
   withResumeMatch ? "resume_match.matched_terms AS resume_match_evidence" : "NULL AS resume_match_evidence",
+  withResumeMatch ? "resume_match.notified_at AS resume_notified_at" : "NULL AS resume_notified_at",
+  withResumeMatch
+    ? `(SELECT list_review.decision FROM codex_reviews list_review
+        WHERE list_review.job_match_id = resume_match.id LIMIT 1) AS resume_review_decision`
+    : "NULL AS resume_review_decision",
+  withResumeMatch
+    ? `EXISTS (
+        SELECT 1 FROM notification_identity_history history
+        WHERE history.profile_id = 'chanyoung-resume'
+          AND ${postingIdentityHistoryMatchSql("j", "history")}
+      ) AS resume_identity_already_notified`
+    : "0 AS resume_identity_already_notified",
 ].join(",\n       ");
 
 export function buildJobSearchPlan(filters: JobFilters): JobSearchPlan {
@@ -173,6 +208,8 @@ JOIN job_matches resume_match
     )`, areas);
   }
   addAnyEquals("j.location_region", filters.regions);
+
+  if (filters.snapshotAt) add("j.first_seen_at <= ?", [filters.snapshotAt]);
 
   if (filters.status && filters.status !== "all") add("j.review_state = ?", [filters.status]);
   addAnyEquals("j.company", companyFilterValues(filters.companies));

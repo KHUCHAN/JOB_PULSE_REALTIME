@@ -107,6 +107,9 @@ const toRichFixtureJob = (job: JobPosting): RichJobPosting => {
     publishedAt: null,
     resumeMatchScore: job.matchScore,
     resumeMatchEvidence: [...job.matchedTerms],
+    resumeNotifiedAt: null,
+    resumeReviewDecision: null,
+    resumeIdentityAlreadyNotified: false,
   };
 };
 
@@ -276,6 +279,7 @@ export function createFixtureRepository(): JobPulseRepository {
       total: matchingJobs.length,
       page,
       pageSize,
+      snapshotAt: filters.snapshotAt || new Date().toISOString(),
     });
   };
 

@@ -74,6 +74,26 @@ describe("resume digest reservation", () => {
     `).all()).toEqual([{ id: "job-1" }, { id: "job-3" }]);
   });
 
+  it("rebuilds an exact Codex batch from a stale unsent reservation", async () => {
+    const sqlite = alertDatabaseWithMatches(2);
+    const db = createD1ForSqlite(sqlite);
+    await planResumeDigests(db, "chanyoung-resume", "2026-08-10T11:59:00.000Z", 2, 1, ["job-1", "job-2"]);
+    sqlite.exec(`
+      UPDATE notifications
+      SET status = 'retryable', next_retry_at = '2026-08-10T13:00:00.000Z', error = 'temporary';
+      UPDATE match_profiles SET next_digest_at = '2026-08-10T12:00:00.000Z';
+    `);
+
+    const planned = await planResumeDigests(
+      db, "chanyoung-resume", "2026-08-10T12:00:00.000Z", 2, 1, ["job-1", "job-2"],
+    );
+
+    expect(planned).toHaveLength(1);
+    expect(planned[0]?.jobCount).toBe(2);
+    expect(sqlite.prepare("SELECT status, count(*) AS total FROM notifications GROUP BY status").all())
+      .toEqual([{ status: "queued", total: 1 }]);
+  });
+
   it("does not create a partial exact Codex digest", async () => {
     const sqlite = alertDatabaseWithMatches(2);
 

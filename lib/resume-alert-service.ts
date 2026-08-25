@@ -66,9 +66,12 @@ export const processDueResumeAlerts = async (
   // One Codex review pass produces one digest envelope. The review feed is
   // bounded to 100 rows per page and five pages, so 500 keeps a whole monitor
   // batch together while remaining far below Gmail's message-size limit.
-  const exactTargets = exactJobIds === null ? null : [...new Set(exactJobIds)].slice(0, 100);
+  const exactTargets = exactJobIds === null ? null : [...new Set(exactJobIds)];
   if (exactTargets !== null && exactTargets.length === 0) {
     throw new Error("Exact Codex dispatch requires at least one job ID.");
+  }
+  if (exactTargets !== null && exactTargets.length > 500) {
+    throw new Error("Exact Codex dispatch is limited to 500 job IDs.");
   }
   const planned = await planResumeDigests(
     database,
@@ -86,6 +89,9 @@ export const processDueResumeAlerts = async (
     4,
     exactTargets === null ? null : plannedIds,
   );
+  if (planned.length > 0 && claimed.length === 0) {
+    throw new Error("Exact Codex dispatch planned an email but could not claim its notification envelope.");
+  }
   const result = { ...emptyResult(), planned: planned.length };
   for (const [index, notification] of claimed.entries()) {
     try {

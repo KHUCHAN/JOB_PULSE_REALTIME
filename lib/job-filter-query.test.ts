@@ -156,4 +156,13 @@ describe("job filter query codec", () => {
     expect(serializeJobFilters(filters).get("resumeMatch")).toBe("chanyoung-resume");
     expect(activeFilterCount(filters)).toBe(3);
   });
+
+  it("round-trips a stable pagination snapshot timestamp", () => {
+    const filters = parseJobFilterParams(new URLSearchParams(
+      "page=2&snapshotAt=2026-08-25T19%3A20%3A30.123Z",
+    ));
+
+    expect(filters.snapshotAt).toBe("2026-08-25T19:20:30.123Z");
+    expect(serializeJobFilters(filters).get("snapshotAt")).toBe("2026-08-25T19:20:30.123Z");
+  });
 });

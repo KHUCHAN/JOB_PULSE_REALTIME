@@ -58,6 +58,7 @@ export interface JobFilters {
   seasons?: JobSeason[];
   postedAfter?: string;
   postedBefore?: string;
+  snapshotAt?: string;
   departments?: string[];
   teams?: string[];
   businessUnits?: string[];
@@ -127,6 +128,7 @@ export interface JobSearchResult {
   total: number;
   page: number;
   pageSize: number;
+  snapshotAt: string;
 }
 
 export interface SourceRecord {

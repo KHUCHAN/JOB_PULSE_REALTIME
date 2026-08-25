@@ -193,6 +193,18 @@ describe("parameterized job search SQL", () => {
     expect(plan.offset).toBe(50);
   });
 
+  it("freezes a multi-page result set at its first-page snapshot", () => {
+    const plan = buildJobSearchPlan({
+      ...defaultJobFilters,
+      snapshotAt: "2026-08-25T19:20:30.123Z",
+      page: 3,
+    });
+
+    expect(plan.pageSql).toContain("j.first_seen_at <= ?");
+    expect(plan.countSql).toContain("j.first_seen_at <= ?");
+    expect(plan.bindings).toEqual(["2026-08-25T19:20:30.123Z"]);
+  });
+
   it("uses the same search predicates for page and total queries", () => {
     const plan = buildJobSearchPlan({
       ...defaultJobFilters,

@@ -15920,6 +15920,74 @@ We are an equal opportunity employer.`;
     })]);
   });
 
+  it("reads complete Oleeo/TAL boards from their official Atom feed despite a protected HTML page", async () => {
+    const xml = `<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">
+      <entry xml:base="https://lek.tal.net/vx/mobile-0/appcentre-2/brand-2/candidate/so/pm/1/pl/6/opp/4058-IT-Fall-Intern/en-GB">
+        <id>https://lek.tal.net/vx/mobile-0/appcentre-2/brand-2/candidate/so/pm/1/pl/6/opp/4058-IT-Fall-Intern/en-GB</id>
+        <title>IT Fall Intern</title><updated>2026-08-05T17:15:00Z</updated><published>2026-08-05T17:15:00Z</published>
+        <content type="xhtml"><div>Title:IT Fall Intern<br/>Location:Boston<br/>Closing Date:30 Sep 2026</div></content>
+      </entry>
+    </feed>`;
+    const requested: string[] = [];
+    const result = await crawlSource({
+      id: "p4-0302-l-e-k-consulting",
+      company: "L.E.K. Consulting",
+      postingUrl: "https://lek.tal.net/vx/mobile-0/appcentre-2/brand-2/candidate/jobboard/vacancy/3",
+      adapter: "custom",
+    }, async (input) => {
+      requested.push(String(input));
+      return new Response(xml, { headers: { "content-type": "application/atom+xml" } });
+    }, new Date());
+
+    expect(requested).toEqual([
+      "https://lek.tal.net/vx/mobile-0/appcentre-2/brand-2/candidate/jobboard/vacancy/3/feed",
+    ]);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "4058",
+      requisitionId: "4058",
+      title: "IT Fall Intern",
+      location: "Boston",
+      employmentType: "Internship",
+      publishedAt: "2026-08-05T17:15:00.000Z",
+    })]);
+  });
+
+  it("recovers Coinbase's cardinality-checked official listing through the reader", async () => {
+    const markdown = `# Open positions
+## Data Engineering
+1 openings
+[Analytics Engineer Intern](https://www.coinbase.com/careers/positions/7736521)
+Remote - USA
+## Engineering
+1 openings
+[Software Engineer](https://www.coinbase.com/careers/positions/8113286)
+Hybrid - New York, NY`;
+    const result = await crawlSource({
+      id: "p2-0035-coinbase",
+      company: "Coinbase",
+      postingUrl: "https://www.coinbase.com/careers/positions",
+      adapter: "custom",
+    }, async (input) => {
+      expect(String(input)).toBe("https://r.jina.ai/https://www.coinbase.com/careers/positions");
+      return new Response(markdown);
+    }, new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: false, resolvedListingUrl: "https://www.coinbase.com/careers/positions",
+    }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        externalId: "7736521", department: "Data Engineering", employmentType: "Internship",
+        location: "Remote - USA", arrangement: "remote",
+      }),
+      expect.objectContaining({
+        externalId: "8113286", department: "Engineering", location: "Hybrid - New York, NY",
+        arrangement: "hybrid",
+      }),
+    ]);
+  });
+
   it("persists CGI page-one progress without advancing past a blocked checkpoint page", async () => {
     const source = {
       id: "p4-0241-cgi",

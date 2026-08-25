@@ -70,6 +70,7 @@ import {
 import { verifyGithubActionsOidc } from "../../../lib/github-actions-oidc";
 import { detectUrlAdapter, isSafeCareerListingUrl } from "../../../lib/url-remediation";
 import { normalizeBarclaysJobIdentityRepair } from "../../../lib/verified-job-identity";
+import { normalizeVerifiedJobMetadataRepair } from "../../../lib/verified-job-metadata";
 
 export const dynamic = "force-dynamic";
 
@@ -145,8 +146,9 @@ const runResumeAlerts = async (database: D1Database, exactJobIds: string[] | nul
   let alerts: Awaited<ReturnType<typeof processDueResumeAlerts>> | { error: string };
   try {
     alerts = await processDueResumeAlerts(database, gmailRuntimeConfig(), new Date(), fetch, exactJobIds);
-  } catch {
-    alerts = { error: "Resume alert processing failed independently of the crawl." };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message.slice(0, 500) : "Unknown resume alert failure.";
+    alerts = { error: `Resume alert processing failed: ${detail}` };
   }
   return alerts;
 };
@@ -352,6 +354,8 @@ async function availableFilterOptions(): Promise<Awaited<ReturnType<typeof query
 async function jobsFor(url: URL): Promise<JobSearchResult> {
   validateExplicitJobFilterValues(url.searchParams);
   const filters: JobFilters = parseJobFilterParams(url.searchParams);
+  const snapshotAt = filters.snapshotAt || new Date().toISOString();
+  filters.snapshotAt = snapshotAt;
   const plan = buildJobSearchPlan(filters);
   const database = db();
   const statements = bindJobSearchStatements(database.prepare.bind(database), plan);
@@ -364,6 +368,7 @@ async function jobsFor(url: URL): Promise<JobSearchResult> {
     total: countResult?.total ?? 0,
     page: filters.page ?? 1,
     pageSize: filters.pageSize ?? 50,
+    snapshotAt,
   };
 }
 
@@ -750,7 +755,10 @@ export async function POST(request: Request): Promise<Response> {
     if (body.action === "submitCodexReview") {
       if (!codexReviewAuthorized(request)) return json({ error: "Codex review authorization is required." }, 401);
       const rawReviews = Array.isArray(body.reviews) ? body.reviews : [body];
-      const reviews = rawReviews.slice(0, 100).filter((value): value is CodexReviewInput => (
+      if (rawReviews.length > 100) {
+        return json({ error: "Codex review batches are limited to 100 rows; submit additional chunks separately." }, 413);
+      }
+      const reviews = rawReviews.filter((value): value is CodexReviewInput => (
         Boolean(value && typeof value === "object")
       )).map((value) => ({
         jobId: typeof value.jobId === "string" ? value.jobId : undefined,
@@ -768,8 +776,11 @@ export async function POST(request: Request): Promise<Response> {
       if (!codexReviewAuthorized(request)) return json({ error: "Codex review authorization is required." }, 401);
       const exactJobIds = Array.isArray(body.jobIds)
         ? [...new Set(body.jobIds.filter((value): value is string => typeof value === "string")
-          .map((value) => value.trim()).filter(Boolean))].slice(0, 100)
+          .map((value) => value.trim()).filter(Boolean))]
         : [];
+      if (exactJobIds.length > 500) {
+        return json({ error: "A single Codex Gmail batch is limited to 500 exact job IDs." }, 413);
+      }
       if (exactJobIds.length === 0) {
         return json({ error: "dispatchCodexReviewBatch requires the exact approved job IDs." }, 400);
       }
@@ -795,6 +806,48 @@ export async function POST(request: Request): Promise<Response> {
         FROM jobs j WHERE j.id = ?
       `).bind(updated.id).first<JobViewRow>();
       return json(row ? mapJob(row) : null, row ? 200 : 404);
+    }
+    if (body.action === "repairVerifiedJobMetadata") {
+      if (!codexReviewAuthorized(request)) return json({ error: "Codex review authorization is required." }, 401);
+      const repair = normalizeVerifiedJobMetadataRepair(body);
+      if (!repair) return json({ error: "A guarded verified job metadata repair is required." }, 400);
+      const updated = await db().prepare(`
+        UPDATE jobs
+        SET title = ?,
+            requisition_id = COALESCE(?, requisition_id),
+            requisition_identity_key = CASE
+              WHEN ? IS NOT NULL THEN 'req:' || source_id || ':' || lower(trim(?))
+              ELSE requisition_identity_key
+            END,
+            source_updated_at = COALESCE(?, source_updated_at),
+            published_at = COALESCE(?, published_at),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND official_url = ? AND title = ? AND status = 'open'
+        RETURNING id
+      `).bind(
+        repair.verifiedTitle,
+        repair.requisitionId,
+        repair.requisitionId,
+        repair.requisitionId,
+        repair.sourceUpdatedAt,
+        repair.publishedAt,
+        repair.jobId,
+        repair.officialUrl,
+        repair.currentTitle,
+      ).first<{ id: string }>();
+      if (!updated) return json({ error: "The guarded current posting metadata no longer matches." }, 409);
+      if (repair.season) {
+        await db().batch([
+          db().prepare("DELETE FROM job_topics WHERE job_id = ? AND topic_key LIKE 'season:%'").bind(repair.jobId),
+          db().prepare("INSERT OR IGNORE INTO job_topics (job_id, topic_key) VALUES (?, ?)")
+            .bind(repair.jobId, `season:${repair.season}`),
+        ]);
+      }
+      const row = await db().prepare(`
+        SELECT ${jobDetailProjection("j")}
+        FROM jobs j WHERE j.id = ?
+      `).bind(repair.jobId).first<JobViewRow>();
+      return json({ repaired: true, job: row ? mapJob(row) : null });
     }
     if (body.action === "setResumeAlertEnabled") {
       const config = gmailRuntimeConfig();
