@@ -20,6 +20,99 @@ describe("source crawl budget", () => {
 });
 
 describe("repaired source adapters", () => {
+  it("loads Tookitaki's complete Recruiterbox catalog with direct Trakstar job URLs", async () => {
+    const source = { id: "p4-0370-tookitaki", company: "Tookitaki", postingUrl: "https://www.tookitaki.com/careers", adapter: "custom" as const };
+    const requests: string[] = [];
+    const result = await crawlSource(source, async (input) => {
+      requests.push(String(input));
+      return Response.json([{
+        id: 702914,
+        hash_id: "fk0zdup",
+        title: "Senior Data Platform Engineer",
+        allows_remote: false,
+        remote_options: "does_not_allow_remote",
+        position_type: "Full-time",
+        location: { city: "Manila", state: "Metro Manila", country: "Philippines" },
+        company_name: "Tookitaki Holding PTE LTD",
+        job_code: "tktk0219",
+        team: "Engineering",
+        description: "<p>Build resilient data platforms.</p>",
+      }]);
+    }, new Date());
+
+    expect(requests).toEqual(["https://app.recruiterbox.com/widget/78808/openings/"]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://tookitaki78808.hire.trakstar.com/jobs",
+    }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "702914",
+      title: "Senior Data Platform Engineer",
+      location: "Manila, Metro Manila, Philippines",
+      arrangement: "onsite",
+      employmentType: "Full-time",
+      description: "Build resilient data platforms.",
+      department: "Engineering",
+      requisitionId: "tktk0219",
+      officialUrl: "https://tookitaki78808.hire.trakstar.com/jobs/fk0zdup",
+      publishedAt: null,
+    })]);
+  });
+
+  it("rejects malformed Tookitaki catalog rows instead of silently under-collecting", async () => {
+    const result = await crawlSource({
+      id: "p4-0370-tookitaki",
+      company: "Tookitaki",
+      postingUrl: "https://www.tookitaki.com/careers",
+      adapter: "custom",
+    }, async () => Response.json([{ id: 702914, hash_id: "fk0zdup" }]), new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed",
+      completeListing: false,
+      jobs: [],
+      error: "Tookitaki Recruiterbox catalog failed integrity validation (0/1 valid unique openings).",
+    }));
+  });
+
+  it("pins US Metro Bank to its populated ADP Workforce Now cloud tenant", async () => {
+    const requests: string[] = [];
+    const listJob = {
+      itemID: "19000101_000001",
+      requisitionTitle: "Operations Specialist",
+      clientRequisitionID: "USB-101",
+      postDate: "2026-08-24T09:00:00-07:00",
+      requisitionLocations: [{
+        nameCode: { shortName: "Garden Grove, CA" },
+        address: { cityName: "Garden Grove", countrySubdivisionLevel1: { codeValue: "CA" }, countryCode: "US" },
+      }],
+    };
+    const result = await crawlSource({
+      id: "p2-0065-us-metro-bank",
+      company: "US Metro Bank",
+      postingUrl: "https://www.usmetrobank.com/about-us/careers",
+      adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      requests.push(url);
+      expect(new URL(url).hostname).toBe("workforcenow.cloud.adp.com");
+      if (/job-requisitions\/19000101_000001/.test(url)) {
+        return Response.json({ ...listJob, requisitionDescription: "<p>Support bank operations.</p>" });
+      }
+      return Response.json({ jobRequisitions: [listJob], meta: { totalNumber: 1 } });
+    }, new Date());
+
+    expect(requests).toHaveLength(2);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.resolvedListingUrl).toContain("workforcenow.cloud.adp.com");
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "USB-101",
+      description: "Support bank operations.",
+      officialUrl: expect.stringContaining("workforcenow.cloud.adp.com"),
+    })]);
+  });
+
   it("loads Murphy USA's complete official catalog with source update dates", async () => {
     const source = { id: "audit-row-399", company: "Murphy USA", postingUrl: "https://jobs.murphyusa.com/murphyusa/job-opportunities", adapter: "custom" as const };
     const result = await crawlSource(source, async () => Response.json([{

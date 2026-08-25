@@ -1130,6 +1130,20 @@ type WorkforceNowJob = {
   customFieldGroup?: { stringFields?: Array<{ stringValue?: string; nameCode?: { codeValue?: string } }> };
 };
 
+type RecruiterboxOpening = {
+  id?: string | number;
+  hash_id?: string;
+  title?: string;
+  allows_remote?: boolean;
+  remote_options?: string;
+  position_type?: string;
+  location?: { city?: string | null; state?: string | null; country?: string | null };
+  company_name?: string;
+  job_code?: string;
+  team?: string;
+  description?: string;
+};
+
 type PhenomJob = {
   title?: string;
   jobId?: string;
@@ -18906,6 +18920,92 @@ async function crawlAdpWorkforceNow(source: CrawlSource, fetcher: typeof fetch):
   }
 }
 
+const TOOKITAKI_RECRUITERBOX_API = "https://app.recruiterbox.com/widget/78808/openings/";
+const TOOKITAKI_RECRUITERBOX_LISTING = "https://tookitaki78808.hire.trakstar.com/jobs";
+
+async function crawlTookitakiRecruiterbox(source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> {
+  let responseStatus: number | null = null;
+  try {
+    const response = await fetchWithTimeout(fetcher, TOOKITAKI_RECRUITERBOX_API, {
+      headers: {
+        accept: "application/json",
+        referer: "https://www.tookitaki.com/careers",
+      },
+    });
+    responseStatus = response.status;
+    if (!response.ok) return {
+      status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: `Tookitaki Recruiterbox API returned HTTP ${response.status}.`,
+    };
+
+    const payload = await response.json() as unknown;
+    if (!Array.isArray(payload)) throw new Error("Tookitaki Recruiterbox API did not return an opening array.");
+    const openings = payload as RecruiterboxOpening[];
+    const jobs = openings.flatMap((opening): CrawledJob[] => {
+      const externalId = opening.id === undefined || opening.id === null ? "" : String(opening.id).trim();
+      const hashId = opening.hash_id?.trim() ?? "";
+      const title = opening.title?.trim() ?? "";
+      if (!externalId || !hashId || !title) return [];
+      const city = opening.location?.city?.trim() || null;
+      const state = opening.location?.state?.trim() || null;
+      const country = opening.location?.country?.trim() || null;
+      const location = [...new Set([city, state, country].filter((value): value is string => Boolean(value)))].join(", ") || null;
+      const remoteOption = opening.remote_options?.trim().toLowerCase() ?? "";
+      const arrangement = opening.allows_remote === true || (remoteOption.includes("remote") && !remoteOption.includes("does_not"))
+        ? "remote" as const
+        : remoteOption.includes("does_not_allow_remote")
+          ? "onsite" as const
+          : "unknown" as const;
+      const description = plainText(opening.description);
+      return [{
+        externalId,
+        title,
+        company: source.company,
+        location,
+        arrangement,
+        employmentType: opening.position_type?.trim() || null,
+        summary: description,
+        description,
+        department: opening.team?.trim() || null,
+        team: opening.team?.trim() || null,
+        requisitionId: opening.job_code?.trim() || externalId,
+        ...(city ? { locationCity: city } : {}),
+        ...(state ? { locationState: state } : {}),
+        ...(country ? { locationCountry: country } : {}),
+        officialUrl: `${TOOKITAKI_RECRUITERBOX_LISTING}/${encodeURIComponent(hashId)}`,
+        publishedAt: null,
+        rawPayload: opening as Record<string, unknown>,
+      }];
+    });
+    const uniqueExternalIds = new Set(jobs.map((job) => job.externalId));
+    const uniqueOfficialUrls = new Set(jobs.map((job) => job.officialUrl));
+    if (jobs.length !== openings.length
+      || uniqueExternalIds.size !== jobs.length
+      || uniqueOfficialUrls.size !== jobs.length) {
+      throw new Error(`Tookitaki Recruiterbox catalog failed integrity validation (${jobs.length}/${openings.length} valid unique openings).`);
+    }
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: true,
+      jobs,
+      resolvedListingUrl: TOOKITAKI_RECRUITERBOX_LISTING,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Tookitaki Recruiterbox crawler error.",
+    };
+  }
+}
+
 const metaFacet = (key: string, label: string, jobs: MetaCareerJob[], select: (job: MetaCareerJob) => string[] | undefined): CrawledFacet | null => {
   const counts = new Map<string, number>();
   for (const job of jobs) {
@@ -23375,6 +23475,14 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-1059-solaredge") {
     return crawlSolarEdgeUs(source, fetcher);
   }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p4-0370-tookitaki") {
+    return crawlTookitakiRecruiterbox(source, fetcher);
+  }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p2-0065-us-metro-bank") {
+    const listingUrl = "https://workforcenow.cloud.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=6940d835-3361-4741-a6ee-8e0c8afc1b8a&ccId=19000101_000001&type=JS&lang=en_US&selectedMenuKey=CareerCenter";
+    const result = await crawlAdpWorkforceNow({ ...source, postingUrl: listingUrl }, fetcher);
+    return result.status === "succeeded" ? { ...result, resolvedListingUrl: listingUrl } : result;
+  }
   // Apply an ID-pinned feed only at the root. Redirect/candidate recursion
   // keeps the same source ID, so reapplying it at discovery depth 1 would
   // loop back to the root feed until the request/deadline budget is spent.
@@ -23582,7 +23690,9 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
     return crawlEightfold(source, fetcher);
   }
   if (new URL(source.postingUrl).hostname === "myjobs.adp.com") return crawlAdpMyJobs(source, fetcher);
-  if (new URL(source.postingUrl).hostname === "workforcenow.adp.com") return crawlAdpWorkforceNow(source, fetcher);
+  if (["workforcenow.adp.com", "workforcenow.cloud.adp.com"].includes(new URL(source.postingUrl).hostname)) {
+    return crawlAdpWorkforceNow(source, fetcher);
+  }
   if (sourcePage.hostname.endsWith(".icims.com")) return crawlIcims(source, fetcher);
   if (sourcePage.hostname === "jobs.lever.co" || sourcePage.hostname === "jobs.eu.lever.co") {
     const slug = sourcePage.pathname.split("/").filter(Boolean).at(0);
