@@ -10292,6 +10292,13 @@ We are an equal opportunity employer.`;
       endpoint: "https://westernalliancebank.wd5.myworkdayjobs.com/wday/cxs/westernalliancebank/WAB/jobs",
       listingUrl: "https://westernalliancebank.wd5.myworkdayjobs.com/WAB",
     },
+    {
+      id: "p4-0354-stout",
+      company: "Stout",
+      postingUrl: "https://www.stout.com/en/careers",
+      endpoint: "https://stout.wd5.myworkdayjobs.com/wday/cxs/stout/Stout-Careers/jobs",
+      listingUrl: "https://stout.wd5.myworkdayjobs.com/Stout-Careers",
+    },
   ])("uses the verified Workday feed for $company without probing its landing page", async ({
     id, company, postingUrl, endpoint, listingUrl,
   }) => {

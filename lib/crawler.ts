@@ -412,6 +412,17 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
     listingUrl: "https://jobs.standardchartered.com/search/?locale=en_GB",
     adapter: "custom",
   },
+  "p4-0354-stout": {
+    // Stout exposes separate student and experienced Workday boards. Generic
+    // discovery can select the empty student board, so pin the populated
+    // all-careers catalog advertised by the official careers page.
+    discovered: {
+      kind: "workday",
+      endpoint: "https://stout.wd5.myworkdayjobs.com/wday/cxs/stout/Stout-Careers/jobs",
+    },
+    listingUrl: "https://stout.wd5.myworkdayjobs.com/Stout-Careers",
+    adapter: "workday",
+  },
   "p4-0209-aci-worldwide": {
     listingUrl: "https://ebwg.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/jobs",
     adapter: "custom",
