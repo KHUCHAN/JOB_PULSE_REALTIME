@@ -464,12 +464,10 @@ async function listSources(sourceIds: string[] = []): Promise<SourceRecord[]> {
            (SELECT count(*)
               FROM jobs source_job INDEXED BY jobs_source_url_unique
              WHERE source_job.source_id = s.id AND source_job.status = 'open') AS current_jobs,
-           (SELECT changed.finished_at
-              FROM crawl_runs changed INDEXED BY crawl_runs_source_scheduled_idx
-             WHERE changed.source_id = s.id
-               AND (changed.jobs_created > 0 OR changed.jobs_updated > 0 OR changed.jobs_closed > 0)
-             ORDER BY changed.scheduled_for DESC
-             LIMIT 1) AS last_changed_at
+           CASE WHEN coalesce(l.jobs_created, 0) > 0
+                  OR coalesce(l.jobs_updated, 0) > 0
+                  OR coalesce(l.jobs_closed, 0) > 0
+                THEN l.finished_at ELSE NULL END AS last_changed_at
     FROM selected_sources s
     LEFT JOIN crawl_runs l ON l.id = (
       SELECT latest.id
