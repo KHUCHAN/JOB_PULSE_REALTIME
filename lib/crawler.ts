@@ -19745,6 +19745,21 @@ const workdayPublishedAt = (value: string | undefined, now: Date): string | null
   return normalizedDate(value);
 };
 
+const workdayCatalogIdentity = (job: WorkdayJob): string | null => {
+  if (job.title && job.externalPath) return job.externalPath;
+  // Workday can retain an unavailable posting as a requisition-only tombstone
+  // in an otherwise complete page. It is still an authoritative catalog slot:
+  // recognizing it lets a full snapshot close the corresponding stale job,
+  // while partially malformed cards remain non-authoritative.
+  if (!job.title && !job.externalPath) {
+    const requisitionId = job.bulletFields
+      ?.map((value) => value.trim())
+      .find((value) => /^Req-\d+(?:-\d+)?$/i.test(value));
+    if (requisitionId) return `unavailable:${requisitionId.toLocaleLowerCase()}`;
+  }
+  return null;
+};
+
 async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
   try {
     const isCisco = source.id === "p4-0245-cisco";
@@ -19854,11 +19869,13 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
     };
     const totalPages = Math.max(1, Math.ceil(Math.min(total, 2_000) / 20));
     const isIntel = source.id === "p5-0947-intel" || source.company === "Intel";
-    // Resolving a country facet costs one global discovery request. Reduce the
-    // checkpoint window by the same amount so even a scoped catalog remains
-    // within the existing twenty-request source budget.
+    // Resolving a country facet costs one global discovery request. General
+    // Workday tenants can use thirty listing requests while retaining ample
+    // headroom under the source-wide request budget. Cisco keeps its smaller
+    // checkpoint window because it deliberately rotates through a very large
+    // catalog across scheduled runs.
     const scopedDiscoveryRequests = Object.keys(activeFacets).length > 0 ? 1 : 0;
-    const maximumCatalogPages = 20 - scopedDiscoveryRequests;
+    const maximumCatalogPages = (isCisco ? 20 : 30) - scopedDiscoveryRequests;
     const isCheckpointed = isCisco || (totalPages > maximumCatalogPages && !isIntel);
     const startPage = isCheckpointed ? Math.min(Math.max(source.crawlPageCursor ?? 1, 1), totalPages) : 1;
     const endPage = isCheckpointed
@@ -19879,7 +19896,7 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
     const rawJobs = pagePayloads.flatMap((payload) => payload.jobPostings ?? []);
     const seenPageIdentities = new Set<string>();
     let firstFailedPage: number | null = claimPageIdentities(
-      usableFirstJobs.map((job) => job.externalPath),
+      (first.payload.jobPostings ?? []).map(workdayCatalogIdentity),
       Math.min(20, total),
       seenPageIdentities,
     ) ? null : 1;
@@ -19887,9 +19904,7 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
       const pageNumber = pageNumbers[index - 1];
       const expected = Math.min(20, Math.max(0, total - (pageNumber - 1) * 20));
       if (!claimPageIdentities(
-        (pagePayloads[index].jobPostings ?? [])
-          .filter((job) => Boolean(job.title && job.externalPath))
-          .map((job) => job.externalPath),
+        (pagePayloads[index].jobPostings ?? []).map(workdayCatalogIdentity),
         expected,
         seenPageIdentities,
       )) firstFailedPage = pageNumber;
@@ -20003,7 +20018,7 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
     return {
       status: "succeeded",
       responseStatus: first.status,
-      completeListing: !isCheckpointed && firstFailedPage === null && total <= 2_000 && jobs.length === total,
+      completeListing: !isCheckpointed && firstFailedPage === null && total <= 2_000 && rawJobs.length === total,
       jobs,
       ...(facets.length > 0 ? { facets } : {}),
       ...(isCheckpointed ? {

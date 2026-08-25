@@ -8132,7 +8132,7 @@ We are an equal opportunity employer.`;
     expect(result.jobs).toHaveLength(1);
   });
 
-  it("checkpoints any large Workday catalog within twenty public API requests", async () => {
+  it("checkpoints any large Workday catalog within thirty public API requests", async () => {
     const offsets: number[] = [];
     const fetcher: typeof fetch = async (_input, init) => {
       const { offset, appliedFacets } = JSON.parse(String(init?.body)) as {
@@ -8171,13 +8171,40 @@ We are an equal opportunity employer.`;
       adapter: "workday",
     }, fetcher, new Date("2026-08-12T00:00:00Z"));
 
-    expect(offsets).toEqual([0, 0, ...Array.from({ length: 18 }, (_, index) => (index + 1) * 20)]);
+    expect(offsets).toEqual([0, 0, ...Array.from({ length: 28 }, (_, index) => (index + 1) * 20)]);
     expect(result).toEqual(expect.objectContaining({
       status: "succeeded",
       completeListing: false,
-      pagination: { nextPage: 19, cycleComplete: false, totalPages: 56 },
+      pagination: { nextPage: 29, cycleComplete: false, totalPages: 56 },
     }));
-    expect(result.jobs).toHaveLength(380);
+    expect(result.jobs).toHaveLength(580);
+  });
+
+  it("completes a Workday catalog containing an authoritative requisition-only tombstone", async () => {
+    const result = await crawlSource({
+      id: "p5-0588-edwards-lifesciences",
+      company: "Edwards Lifesciences",
+      postingUrl: "https://edwards.wd5.myworkdayjobs.com/EdwardsCareers",
+      adapter: "workday",
+    }, async () => Response.json({
+      total: 2,
+      jobPostings: [{
+        title: "Quality Engineer",
+        externalPath: "/job/Irvine/Quality-Engineer_Req-10001",
+        bulletFields: ["Req-10001"],
+      }, {
+        bulletFields: ["Req-10002"],
+      }],
+    }), new Date("2026-08-25T00:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+    }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "Req-10001",
+      title: "Quality Engineer",
+    })]);
   });
 
   it("uses Cisco's official Workday catalog and checkpoints it within the request budget", async () => {
