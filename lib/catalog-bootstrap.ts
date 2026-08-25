@@ -140,7 +140,7 @@ export async function ensureCatalogSeeded(
     `).bind(JSON.stringify(batch)).run();
     await database.prepare(`
       UPDATE job_matches
-      SET is_active = 0, updated_at = CURRENT_TIMESTAMP
+      SET is_active = 0
       WHERE is_active = 1 AND job_id IN (
         SELECT jobs.id
         FROM jobs
