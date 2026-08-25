@@ -32,14 +32,16 @@ export const browserRecoveryDue = (
 
 /**
  * Browser recovery is a weaker, best-effort observation than a completed
- * native crawl. Only a positive browser recovery may supersede a native
- * result; a challenge, timeout, or unrendered shell must not erase either a
- * successful result or the native adapter's more actionable failure reason.
+ * native crawl. A positive recovery may supersede a native result, and a
+ * verified browser challenge may refine a generic native failure to blocked.
+ * A challenge, timeout, or unrendered shell must never erase a success.
  */
 export const shouldRecordBrowserResult = (
   previousStatus: LatestCrawlSummary["status"],
   browserStatus: Exclude<LatestCrawlSummary["status"], "running" | null>,
-): boolean => browserStatus === "succeeded" || previousStatus === null;
+): boolean => browserStatus === "succeeded"
+  || (browserStatus === "blocked" && previousStatus === "failed")
+  || previousStatus === null;
 
 export const browserResultError = (
   status: Exclude<LatestCrawlSummary["status"], "running" | null>,

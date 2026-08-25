@@ -32,6 +32,10 @@ describe("browser fallback result precedence", () => {
     expect(shouldRecordBrowserResult("failed", "succeeded")).toBe(true);
   });
 
+  it("refines a generic native failure when the browser verifies an upstream challenge", () => {
+    expect(shouldRecordBrowserResult("failed", "blocked")).toBe(true);
+  });
+
   it.each(["failed", "blocked"] as const)("preserves a native %s reason when browser recovery also fails", (previous) => {
     expect(shouldRecordBrowserResult(previous, "failed")).toBe(false);
   });
