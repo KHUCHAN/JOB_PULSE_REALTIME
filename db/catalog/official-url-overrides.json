@@ -282,7 +282,7 @@
     "p2-0141-northern-trust": { "url": "https://ntrs.wd1.myworkdayjobs.com/northerntrust", "adapter": "workday" },
     "p5-0586-eaton": { "url": "https://eaton.eightfold.ai/careers", "adapter": "custom" },
     "p2-0037-farmers-insurance": { "url": "https://jobs.farmersinsurance.com/", "adapter": "custom" },
-    "p4-0405-bumble": { "url": "https://team.bumble.com/en-us", "adapter": "custom" },
+    "p4-0405-bumble": { "url": "https://jobs.lever.co/bumbleinc", "adapter": "lever" },
     "p4-0438-glassdoor": { "url": null, "adapter": "custom", "verification": "NO_ACTIVE_CAREERS" },
     "p5-0668-microchip-technology": { "url": "https://careers.smartrecruiters.com/Microchip", "adapter": "smartrecruiters" },
     "p4-0307-mckinsey-company-quantumblack": { "url": "https://www.mckinsey.com/careers/search-jobs?query=QuantumBlack", "adapter": "custom" },

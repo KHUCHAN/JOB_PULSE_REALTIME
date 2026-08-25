@@ -80,6 +80,17 @@ describe("verified official source catalog", () => {
     }));
   });
 
+  it("pins Bumble to its populated Lever board instead of the retired locale route", () => {
+    const seed = JSON.parse(readFileSync(join(process.cwd(), "db/seed/sources.json"), "utf8")) as { sources: SeedSource[] };
+    const bumble = seed.sources.find((source) => source.id === "p4-0405-bumble");
+
+    expect(bumble).toEqual(expect.objectContaining({
+      postingUrl: "https://jobs.lever.co/bumbleinc",
+      adapter: "lever",
+      enabled: true,
+    }));
+  });
+
   it("requeues every repaired source in the immutable catalog migration", () => {
     const previousMigration = readFileSync(join(process.cwd(), "drizzle/0087_refresh_sources_20260814215641.sql"), "utf8");
     for (const id of Object.keys(previousOfficialBoards)) expect(previousMigration).toContain(`'${id}'`);

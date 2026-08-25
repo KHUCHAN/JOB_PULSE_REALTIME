@@ -232,6 +232,7 @@ describe("large catalog US scope migration", () => {
     const futureTimestampRepair = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0122_snapshot.json"), "utf8"));
     const duplicateSourceRetirement = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0123_snapshot.json"), "utf8"));
     const canonicalCrawlerBoards = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0124_snapshot.json"), "utf8"));
+    const bumbleLeverRefresh = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0125_snapshot.json"), "utf8"));
     const currentJournal = JSON.parse(readFileSync(resolve(drizzlePath, "meta/_journal.json"), "utf8"));
 
     expect(current.prevId).toBe(previous.id);
@@ -259,6 +260,7 @@ describe("large catalog US scope migration", () => {
     expect(futureTimestampRepair.prevId).toBe(catalogRefresh121.id);
     expect(duplicateSourceRetirement.prevId).toBe(futureTimestampRepair.id);
     expect(canonicalCrawlerBoards.prevId).toBe(duplicateSourceRetirement.id);
+    expect(bumbleLeverRefresh.prevId).toBe(canonicalCrawlerBoards.id);
     expect(durableAlertIdentity.tables).toHaveProperty("notification_identity_history");
     expect(durableAlertIdentity.tables.jobs.columns).toHaveProperty("alert_discovered_after_baseline");
     expect(currentJournal.entries.find((entry: { tag: string }) => entry.tag === "0100_large_catalog_us_scope")).toMatchObject({
@@ -266,8 +268,8 @@ describe("large catalog US scope migration", () => {
       tag: "0100_large_catalog_us_scope",
     });
     expect(currentJournal.entries.at(-1)).toMatchObject({
-      idx: 124,
-      tag: "0124_refresh_sources_20260825133813",
+      idx: 125,
+      tag: "0125_refresh_sources_20260825160849",
     });
   });
 

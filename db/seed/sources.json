@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:65970f2feb1c82cfc5e4e286ad6e953c075b12d00fb7ac296094a3a32b921998",
+  "version": "v2:sha256:7976ec71ac7cdce3e601c6fc14f0444ee847fbc51b73ad64bf25ab460838b58c",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -501,10 +501,10 @@
       "id": "p4-0405-bumble",
       "masterRow": 234,
       "company": "Bumble",
-      "postingUrl": "https://team.bumble.com/en-us",
+      "postingUrl": "https://jobs.lever.co/bumbleinc",
       "talentUrl": null,
       "channel": "공식 채용공고 검색·지원",
-      "adapter": "custom",
+      "adapter": "lever",
       "verification": "career_only",
       "confidence": "medium",
       "resumeUpload": "job_only",
