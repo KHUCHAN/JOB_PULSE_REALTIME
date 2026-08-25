@@ -74,6 +74,23 @@ describe("resume digest reservation", () => {
     `).all()).toEqual([{ id: "job-1" }, { id: "job-3" }]);
   });
 
+  it("uses the persisted Codex approval when a derived eligibility flag drifted off", async () => {
+    const sqlite = alertDatabaseWithMatches(1);
+    sqlite.prepare("UPDATE job_matches SET notification_eligible = 0 WHERE id = 'match-1'").run();
+
+    const planned = await planResumeDigests(
+      createD1ForSqlite(sqlite),
+      "chanyoung-resume",
+      "2026-08-10T12:00:00.000Z",
+      1,
+      1,
+      ["job-1"],
+    );
+
+    expect(planned).toHaveLength(1);
+    expect(planned[0]?.jobCount).toBe(1);
+  });
+
   it("rebuilds an exact Codex batch from a stale unsent reservation", async () => {
     const sqlite = alertDatabaseWithMatches(2);
     const db = createD1ForSqlite(sqlite);

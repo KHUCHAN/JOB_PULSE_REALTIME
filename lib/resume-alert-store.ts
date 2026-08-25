@@ -223,11 +223,16 @@ export const planResumeDigests = async (
       FROM exact_jobs target
       JOIN jobs j ON j.id = target.id
       JOIN job_matches jm ON jm.job_id = j.id AND jm.keyword_id = ?
+      JOIN codex_reviews review
+        ON review.job_match_id = jm.id
+       AND review.profile_id = ?
+       AND review.decision = 'approve'
       JOIN profile_recipients pr ON pr.profile_id = ? AND pr.enabled = 1
       LEFT JOIN notification_items ni
         ON ni.job_match_id = jm.id AND ni.recipient = pr.recipient
-      WHERE jm.is_active = 1 AND jm.notification_eligible = 1
+      WHERE jm.is_active = 1
         AND jm.open_generation = j.open_generation AND j.status = 'open'
+        AND ${canonicalOpenJobNotExists("j")}
         AND ni.id IS NULL
         AND NOT EXISTS (
           SELECT 1 FROM notification_identity_history history
@@ -240,6 +245,7 @@ export const planResumeDigests = async (
     `).bind(
       JSON.stringify(exactTargets),
       keywordId,
+      profileId,
       profileId,
       profileId,
       boundedPageSize * boundedMessageLimit + 1,

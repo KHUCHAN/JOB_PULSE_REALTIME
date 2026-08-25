@@ -53,6 +53,11 @@ export const alertDatabaseWithMatches = (matchCount = 2): DatabaseSync => {
       matched_terms TEXT NOT NULL, open_generation INTEGER NOT NULL, is_active INTEGER NOT NULL,
       notification_eligible INTEGER NOT NULL, notified_at TEXT
     );
+    CREATE TABLE codex_reviews (
+      id TEXT PRIMARY KEY, job_match_id TEXT NOT NULL, profile_id TEXT NOT NULL,
+      decision TEXT NOT NULL, rationale TEXT, verified_url TEXT,
+      reviewed_at TEXT, updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
     CREATE TABLE notifications (
       id TEXT PRIMARY KEY, keyword_id TEXT, channel TEXT NOT NULL, recipient TEXT NOT NULL,
       status TEXT NOT NULL, job_count INTEGER NOT NULL, provider_message_id TEXT,
@@ -83,6 +88,11 @@ export const alertDatabaseWithMatches = (matchCount = 2): DatabaseSync => {
     );
     sqlite.prepare(`INSERT INTO job_matches VALUES (?, ?, 'resume-keyword-chanyoung', 92, ?, 1, 1, 1, NULL)`).run(
       `match-${index}`, `job-${index}`, '["role:ai-ml|AI or machine learning role|35"]',
+    );
+    sqlite.prepare(`INSERT INTO codex_reviews (
+      id, job_match_id, profile_id, decision, rationale, verified_url, reviewed_at
+    ) VALUES (?, ?, 'chanyoung-resume', 'approve', 'Codex approved this exact job.', ?, '2026-08-10T12:01:00.000Z')`).run(
+      `review-${index}`, `match-${index}`, `https://example.com/${index}`,
     );
   }
   return sqlite;
