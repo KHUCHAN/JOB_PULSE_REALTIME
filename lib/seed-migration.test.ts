@@ -231,6 +231,7 @@ describe("large catalog US scope migration", () => {
     const catalogRefresh121 = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0121_snapshot.json"), "utf8"));
     const futureTimestampRepair = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0122_snapshot.json"), "utf8"));
     const duplicateSourceRetirement = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0123_snapshot.json"), "utf8"));
+    const canonicalCrawlerBoards = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0124_snapshot.json"), "utf8"));
     const currentJournal = JSON.parse(readFileSync(resolve(drizzlePath, "meta/_journal.json"), "utf8"));
 
     expect(current.prevId).toBe(previous.id);
@@ -257,6 +258,7 @@ describe("large catalog US scope migration", () => {
     expect(catalogRefresh121.prevId).toBe(catalogRefresh120.id);
     expect(futureTimestampRepair.prevId).toBe(catalogRefresh121.id);
     expect(duplicateSourceRetirement.prevId).toBe(futureTimestampRepair.id);
+    expect(canonicalCrawlerBoards.prevId).toBe(duplicateSourceRetirement.id);
     expect(durableAlertIdentity.tables).toHaveProperty("notification_identity_history");
     expect(durableAlertIdentity.tables.jobs.columns).toHaveProperty("alert_discovered_after_baseline");
     expect(currentJournal.entries.find((entry: { tag: string }) => entry.tag === "0100_large_catalog_us_scope")).toMatchObject({
@@ -264,8 +266,8 @@ describe("large catalog US scope migration", () => {
       tag: "0100_large_catalog_us_scope",
     });
     expect(currentJournal.entries.at(-1)).toMatchObject({
-      idx: 123,
-      tag: "0123_refresh_sources_20260825131831",
+      idx: 124,
+      tag: "0124_refresh_sources_20260825133813",
     });
   });
 
@@ -283,6 +285,15 @@ describe("large catalog US scope migration", () => {
     expect(sql).not.toContain("'p5-0896-exact-sciences'");
     expect(sql).not.toContain("'p5-0715-replicate'");
     expect(sql).not.toContain("'p2-0098-discover'");
+  });
+
+  it("persists the canonical Enphase and Jacobs boards for immediate runtime re-crawl", () => {
+    const sql = readFileSync(resolve(drizzlePath, "0124_refresh_sources_20260825133813.sql"), "utf8");
+    const sourceIds = [...sql.matchAll(/VALUES \('([^']+)'/g)].map((match) => match[1]);
+
+    expect(sourceIds).toEqual(["legacy-row-102", "p5-0891-enphase-energy"]);
+    expect(sql).toContain("'https://jacobs.jobs/jobs/'");
+    expect(sql).toContain("'https://jobs.jobvite.com/enphase-energy/'");
   });
 
   it("requeues every repaired source for the server-owned batch", () => {

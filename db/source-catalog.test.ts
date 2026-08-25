@@ -64,6 +64,22 @@ describe("verified official source catalog", () => {
     }
   });
 
+  it("pins Enphase and Jacobs to the canonical boards used by their native crawlers", () => {
+    const seed = JSON.parse(readFileSync(join(process.cwd(), "db/seed/sources.json"), "utf8")) as { sources: SeedSource[] };
+    const byId = new Map(seed.sources.map((source) => [source.id, source]));
+
+    expect(byId.get("legacy-row-102")).toEqual(expect.objectContaining({
+      postingUrl: "https://jacobs.jobs/jobs/",
+      adapter: "custom",
+      enabled: true,
+    }));
+    expect(byId.get("p5-0891-enphase-energy")).toEqual(expect.objectContaining({
+      postingUrl: "https://jobs.jobvite.com/enphase-energy/",
+      adapter: "custom",
+      enabled: true,
+    }));
+  });
+
   it("requeues every repaired source in the immutable catalog migration", () => {
     const previousMigration = readFileSync(join(process.cwd(), "drizzle/0087_refresh_sources_20260814215641.sql"), "utf8");
     for (const id of Object.keys(previousOfficialBoards)) expect(previousMigration).toContain(`'${id}'`);
