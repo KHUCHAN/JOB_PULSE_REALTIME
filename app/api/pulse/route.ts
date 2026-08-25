@@ -41,7 +41,7 @@ import {
 } from "../../../lib/job-filter-options";
 import { buildJobSearchPlan, jobDetailProjection } from "../../../lib/job-search-sql";
 import { normalizeDeadJobUrls, normalizeJobUrlRepairs } from "../../../lib/job-url-repair";
-import { overviewCountsSql } from "../../../lib/overview-sql";
+import { overviewActivitySql, overviewCountsSql } from "../../../lib/overview-sql";
 import { backfillJobTopics } from "../../../lib/job-topic-backfill";
 import { backfillJobPrograms } from "../../../lib/job-program-backfill";
 import {
@@ -543,18 +543,26 @@ async function listTalent(): Promise<TalentTarget[]> {
 
 async function overview(): Promise<OverviewSnapshot> {
   type Counts = { open_jobs: number; active_sources: number; source_errors: number; unsent_alerts: number };
-  const countRow = await db().prepare(overviewCountsSql).first<Counts>();
-  const latest = await jobsFor(new URL("https://job-pulse.local/api/pulse?resource=jobs&pageSize=5"));
-  const activity = await activityFor(5);
-  const talentCount = await db().prepare("SELECT count(*) AS count FROM talent_targets").first<{ count: number }>();
+  const database = db();
+  const latestPlan = buildJobSearchPlan(parseJobFilterParams(
+    new URL("https://job-pulse.local/api/pulse?resource=jobs&pageSize=5").searchParams,
+  ));
+  const [countRow, latestResult, activityResult, talentCount] = await Promise.all([
+    database.prepare(overviewCountsSql).first<Counts>(),
+    database.prepare(latestPlan.pageSql)
+      .bind(...latestPlan.bindings, latestPlan.limit, latestPlan.offset)
+      .all<JobViewRow>(),
+    database.prepare(overviewActivitySql).bind(5).all<CrawlActivityRow>(),
+    database.prepare("SELECT count(*) AS count FROM talent_targets").first<{ count: number }>(),
+  ]);
   return {
     newMatches: countRow?.open_jobs ?? 0,
     activeSources: countRow?.active_sources ?? 0,
     sourceErrors: countRow?.source_errors ?? 0,
     unsentAlerts: countRow?.unsent_alerts ?? 0,
     openTalentTasks: talentCount?.count ?? 0,
-    latestJobs: latest.items,
-    recentActivity: activity,
+    latestJobs: latestResult.results.map(mapJob),
+    recentActivity: activityResult.results.map(mapCrawlActivity),
   };
 }
 
