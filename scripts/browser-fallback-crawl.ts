@@ -592,7 +592,7 @@ async function main(): Promise<void> {
         result.error = "Production browser ingest was missing the verified listing URL.";
         continue;
       }
-      const allowedOrigins = [listingUrl, ...result.jobs.map((job) => job.officialUrl)]
+      const allowedOrigins = [listingUrl, ...result.jobs.flatMap((job) => [job.officialUrl, job.applyUrl ?? ""])]
         .flatMap((value) => {
           try { return value ? [new URL(value).origin] : []; } catch { return []; }
         });

@@ -373,7 +373,7 @@ async function activityFor(limit = 200): Promise<ActivityEvent[]> {
            cr.jobs_seen, cr.jobs_created, cr.jobs_updated, cr.jobs_closed, cr.error
     FROM crawl_runs cr JOIN sources s ON s.id = cr.source_id
     WHERE cr.status <> 'running'
-    ORDER BY coalesce(cr.finished_at, cr.started_at) DESC
+    ORDER BY cr.rowid DESC
     LIMIT ?
   `).bind(limit).all<CrawlActivityRow>();
   return result.results.map(mapCrawlActivity);
@@ -418,7 +418,7 @@ async function runStatusFor(): Promise<{
            cr.jobs_updated, cr.jobs_closed, cr.error
     FROM crawl_runs cr
     JOIN sources s ON s.id = cr.source_id
-    ORDER BY COALESCE(cr.finished_at, cr.started_at, cr.scheduled_for) DESC
+    ORDER BY cr.rowid DESC
     LIMIT 100
   `).all<Row>();
   const now = Date.now();
@@ -457,39 +457,27 @@ async function listSources(sourceIds: string[] = []): Promise<SourceRecord[]> {
   const statement = db().prepare(`
     WITH selected_sources AS (
       SELECT * FROM sources ${selectedFilter}
-    ), ranked_runs AS (
-      SELECT cr.id, cr.source_id, cr.status, cr.response_status, cr.error,
-             row_number() OVER (
-               PARTITION BY cr.source_id
-               ORDER BY cr.scheduled_for DESC, cr.id DESC
-             ) AS rank
-      FROM crawl_runs cr
-      JOIN selected_sources selected ON selected.id = cr.source_id
-    ), latest_runs AS (
-      SELECT id, source_id, status, response_status, error
-      FROM ranked_runs WHERE rank = 1
-    ), job_counts AS (
-      SELECT j.source_id, count(*) AS current_jobs
-      FROM jobs j
-      JOIN selected_sources selected ON selected.id = j.source_id
-      WHERE j.status = 'open'
-      GROUP BY j.source_id
-    ), changed_runs AS (
-      SELECT cr.source_id, max(cr.finished_at) AS last_changed_at
-      FROM crawl_runs cr
-      JOIN selected_sources selected ON selected.id = cr.source_id
-      WHERE cr.jobs_created > 0 OR cr.jobs_updated > 0 OR cr.jobs_closed > 0
-      GROUP BY cr.source_id
     )
     SELECT s.id, s.company, s.posting_url, s.talent_url, s.adapter, s.enabled,
            s.checked_at, s.last_crawled_at, s.next_crawl_at,
            l.status AS latest_status, l.response_status, l.error AS latest_error,
-           coalesce(j.current_jobs, 0) AS current_jobs,
-           ch.last_changed_at
+           (SELECT count(*)
+              FROM jobs source_job INDEXED BY jobs_source_url_unique
+             WHERE source_job.source_id = s.id AND source_job.status = 'open') AS current_jobs,
+           (SELECT changed.finished_at
+              FROM crawl_runs changed INDEXED BY crawl_runs_source_scheduled_idx
+             WHERE changed.source_id = s.id
+               AND (changed.jobs_created > 0 OR changed.jobs_updated > 0 OR changed.jobs_closed > 0)
+             ORDER BY changed.scheduled_for DESC
+             LIMIT 1) AS last_changed_at
     FROM selected_sources s
-    LEFT JOIN latest_runs l ON l.source_id = s.id
-    LEFT JOIN job_counts j ON j.source_id = s.id
-    LEFT JOIN changed_runs ch ON ch.source_id = s.id
+    LEFT JOIN crawl_runs l ON l.id = (
+      SELECT latest.id
+      FROM crawl_runs latest INDEXED BY crawl_runs_source_scheduled_idx
+      WHERE latest.source_id = s.id
+      ORDER BY latest.scheduled_for DESC
+      LIMIT 1
+    )
     ORDER BY s.company ASC
     LIMIT 2000
   `);

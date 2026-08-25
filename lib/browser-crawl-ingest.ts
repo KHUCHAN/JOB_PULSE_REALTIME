@@ -141,10 +141,16 @@ export function normalizeBrowserJobSnapshot(
     const applyUrlText = textValue(raw.applyUrl, 2_000);
     let applyUrl: string | null = null;
     if (applyUrlText) {
-      const candidate = new URL(applyUrlText);
-      if (candidate.protocol !== "https:" || candidate.username || candidate.password
-        || !officialOrigins.has(candidate.origin)) throw new Error("Browser apply URL is outside the official careers origin.");
-      applyUrl = candidate.href;
+      try {
+        const candidate = new URL(applyUrlText);
+        // The official detail URL remains the required identity. A malformed
+        // or unverified auxiliary apply link must not reject every otherwise
+        // valid job in the transport chunk.
+        if (candidate.protocol === "https:" && !candidate.username && !candidate.password
+          && officialOrigins.has(candidate.origin)) applyUrl = candidate.href;
+      } catch {
+        applyUrl = null;
+      }
     }
     const sourcePostedText = textValue(raw.sourcePostedText, 500) ?? textValue(raw.publishedText, 500);
     jobs.set(officialUrl.href, {

@@ -55,6 +55,20 @@ describe("browser crawl ingestion", () => {
     expect(result.jobs[0]).toEqual(expect.objectContaining({ externalId: "REQ-101" }));
   });
 
+  it("drops an unverified auxiliary apply URL without rejecting the official job", () => {
+    const result = normalizeBrowserJobSnapshot(source, [{
+      officialUrl: "https://careers.alvarezandmarsal.com/jobs/18099685-data-intern",
+      applyUrl: "https://tracking.example/apply/18099685",
+      title: "Data Intern",
+    }]);
+
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "18099685",
+      officialUrl: "https://careers.alvarezandmarsal.com/jobs/18099685-data-intern",
+    })]);
+    expect(result.jobs[0]).not.toHaveProperty("applyUrl");
+  });
+
   it("strips the visible card labels emitted by the browser fallback", () => {
     const result = normalizeBrowserJobSnapshot(source, [{
       officialUrl: "https://careers.alvarezandmarsal.com/jobs/18109880-microsoft-365-engineer",
