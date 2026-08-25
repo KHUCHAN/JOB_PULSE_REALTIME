@@ -97,6 +97,10 @@ describe("runtime catalog bootstrap", () => {
         id TEXT PRIMARY KEY, source_id TEXT NOT NULL, status TEXT NOT NULL,
         location_region TEXT, closed_at TEXT, updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       );
+      CREATE TABLE job_matches (
+        job_id TEXT PRIMARY KEY, is_active INTEGER NOT NULL,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
     `);
     const database = {
       prepare(sql: string) {
@@ -181,6 +185,32 @@ describe("runtime catalog bootstrap", () => {
       sourceIds: [seed.sources[0].id],
     });
     expect(sqlite.prepare("SELECT status FROM jobs WHERE id = 'later-non-us'").get()).toEqual({ status: "open" });
+
+    sqlite.prepare("UPDATE sources SET next_crawl_at = '2099-01-01 00:00:00' WHERE id = ?").run(seed.sources[0].id);
+    sqlite.prepare("INSERT INTO jobs (id, source_id, status, location_region) VALUES (?, ?, ?, ?)").run(
+      "retired-job", seed.sources[0].id, "open", "unknown",
+    );
+    sqlite.prepare("INSERT INTO job_matches (job_id, is_active) VALUES (?, ?)").run("retired-job", 1);
+    sqlite.prepare("INSERT INTO catalog_state (key, value) VALUES (?, ?)").run(
+      `crawl_page_checkpoint:${seed.sources[0].id}`, JSON.stringify({ nextPage: 27 }),
+    );
+    await ensureCatalogSeeded(database, {
+      ...seed,
+      version: "catalog-v3",
+      sources: [{ ...seed.sources[0], postingUrl: null, talentUrl: null, enabled: false }],
+      talentTargets: [],
+    });
+    expect(sqlite.prepare("SELECT enabled, next_crawl_at AS nextCrawlAt FROM sources WHERE id = ?").get(seed.sources[0].id))
+      .toEqual({ enabled: 0, nextCrawlAt: null });
+    expect(sqlite.prepare("SELECT value FROM catalog_state WHERE key = ?").get(
+      `crawl_page_checkpoint:${seed.sources[0].id}`,
+    )).toBeUndefined();
+    expect(sqlite.prepare("SELECT count(*) AS count FROM talent_targets WHERE source_id = ?").get(seed.sources[0].id))
+      .toEqual({ count: 0 });
+    expect(sqlite.prepare("SELECT status, closed_at IS NOT NULL AS closed FROM jobs WHERE id = 'retired-job'").get())
+      .toEqual({ status: "closed", closed: 1 });
+    expect(sqlite.prepare("SELECT is_active AS active FROM job_matches WHERE job_id = 'retired-job'").get())
+      .toEqual({ active: 0 });
     sqlite.close();
   });
 });

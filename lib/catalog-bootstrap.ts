@@ -96,6 +96,7 @@ export async function ensureCatalogSeeded(
       ON CONFLICT(id) DO UPDATE SET
         master_row=excluded.master_row, company=excluded.company,
         next_crawl_at=CASE
+          WHEN excluded.enabled = 0 THEN NULL
           WHEN sources.posting_url IS NOT excluded.posting_url OR sources.adapter IS NOT excluded.adapter
           THEN CURRENT_TIMESTAMP
           ELSE sources.next_crawl_at
@@ -106,6 +107,49 @@ export async function ensureCatalogSeeded(
         resume_upload=excluded.resume_upload, job_alerts=excluded.job_alerts,
         enabled=excluded.enabled, checked_at=excluded.checked_at,
         updated_at=CURRENT_TIMESTAMP
+    `).bind(JSON.stringify(batch)).run();
+    // The bundled catalog is authoritative for retirement state. A source
+    // that becomes inactive must not retain a runnable schedule, stale page
+    // cursor, open jobs, active matches, or a removed Talent target. Doing
+    // this in runtime synchronization is required on Sites, where the large
+    // catalog migrations are intentionally replaced by bounded seed sync.
+    await database.prepare(`
+      DELETE FROM catalog_state
+      WHERE key IN (
+        SELECT 'crawl_page_checkpoint:' || json_extract(value, '$.id')
+        FROM json_each(?)
+        WHERE json_extract(value, '$.enabled') = 0
+      )
+    `).bind(JSON.stringify(batch)).run();
+    await database.prepare(`
+      DELETE FROM talent_targets
+      WHERE source_id IN (
+        SELECT json_extract(value, '$.id')
+        FROM json_each(?)
+        WHERE json_extract(value, '$.talentUrl') IS NULL
+      )
+    `).bind(JSON.stringify(batch)).run();
+    await database.prepare(`
+      UPDATE jobs
+      SET status = 'closed', closed_at = COALESCE(closed_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP
+      WHERE status = 'open' AND source_id IN (
+        SELECT json_extract(value, '$.id')
+        FROM json_each(?)
+        WHERE json_extract(value, '$.enabled') = 0
+      )
+    `).bind(JSON.stringify(batch)).run();
+    await database.prepare(`
+      UPDATE job_matches
+      SET is_active = 0, updated_at = CURRENT_TIMESTAMP
+      WHERE is_active = 1 AND job_id IN (
+        SELECT jobs.id
+        FROM jobs
+        WHERE jobs.source_id IN (
+          SELECT json_extract(value, '$.id')
+          FROM json_each(?)
+          WHERE json_extract(value, '$.enabled') = 0
+        )
+      )
     `).bind(JSON.stringify(batch)).run();
   }
 
