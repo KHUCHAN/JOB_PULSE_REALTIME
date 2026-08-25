@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:710f77334f1953e0c2498a8ad86893a44f9aaa19499e06de1376963fdb2f3838",
+  "version": "v2:sha256:8e3b645a5aac7d2932b782fa83cde2714e868c1764e58dd48c1914ff06e49881",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -3824,7 +3824,7 @@
       "confidence": "medium",
       "resumeUpload": "job_only",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-08",
+      "checkedAt": "2026-08-25",
       "enabled": true
     },
     {
@@ -18816,16 +18816,16 @@
       "id": "p2-0098-discover",
       "masterRow": 3131,
       "company": "Discover",
-      "postingUrl": "https://www.capitalonecareers.com/discover",
-      "talentUrl": "https://www.capitalonecareers.com/discover",
-      "channel": "내장형 Job Alerts",
+      "postingUrl": null,
+      "talentUrl": null,
+      "channel": "Capital One 인수 후 Discover 독립 채용 목록이 종료되어 Capital One 소스와 중복됨",
       "adapter": "custom",
-      "verification": "valid_job_alert_form",
+      "verification": "merged_parent_careers",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05",
-      "enabled": true
+      "checkedAt": "2026-08-25",
+      "enabled": false
     },
     {
       "id": "p2-0102-experian",
@@ -29116,14 +29116,6 @@
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
       "checkedAt": "2026-08-08"
-    },
-    {
-      "id": "talent-p2-0098-discover",
-      "sourceId": "p2-0098-discover",
-      "officialUrl": "https://www.capitalonecareers.com/discover",
-      "resumeUpload": "unknown",
-      "jobAlerts": "available",
-      "checkedAt": "2026-08-05"
     },
     {
       "id": "talent-p2-0102-experian",

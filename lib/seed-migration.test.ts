@@ -239,8 +239,8 @@ describe("large catalog US scope migration", () => {
       tag: "0100_large_catalog_us_scope",
     });
     expect(currentJournal.entries.at(-1)).toMatchObject({
-      idx: 120,
-      tag: "0120_refresh_sources_20260825110254",
+      idx: 121,
+      tag: "0121_refresh_sources_20260825114841",
     });
   });
 

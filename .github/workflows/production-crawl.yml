@@ -124,5 +124,5 @@ jobs:
           # and HTTP/1.1 clients. Validate them every recovery run so a stale
           # healthy partial snapshot or a long failure backoff cannot hide a
           # data regression.
-          BROWSER_FALLBACK_FORCE_NATIVE_SOURCE_IDS: legacy-row-876,p5-0699-pepsico,p2-0196-graphistry,p2-0058-royal-business-bank,p5-0810-atrium-health,p4-0236-cathay-bank,p2-0035-coinbase,audit-row-350,p2-0036-evercore,p5-0931-henry-ford-health,p4-0290-honor,p5-0644-kratos-defense,p4-0302-l-e-k-consulting,p2-0044-loandepot,p4-0458-mclagan,p5-1039-revolut,p5-0722-saic,p2-0167-state-attorneys-general,legacy-row-867,p5-1077-tesla,p2-0179-us-attorney-s-office,p2-0180-valley-national-bancorp,p4-0386-whatnot,p5-0623-ibis-ai
+          BROWSER_FALLBACK_FORCE_NATIVE_SOURCE_IDS: legacy-row-876,p5-0699-pepsico,p2-0196-graphistry,p2-0058-royal-business-bank,p5-0810-atrium-health,p4-0236-cathay-bank,p2-0035-coinbase,audit-row-350,p2-0036-evercore,p5-0931-henry-ford-health,p4-0290-honor,p5-0644-kratos-defense,p4-0302-l-e-k-consulting,p2-0044-loandepot,p4-0458-mclagan,p4-0463-nardello-co,p5-1052-sarcos-robotics,p5-1039-revolut,p5-0722-saic,p2-0167-state-attorneys-general,legacy-row-867,p5-1077-tesla,p2-0179-us-attorney-s-office,p2-0180-valley-national-bancorp,p5-1104-wayfair,p4-0386-whatnot,audit-row-440,p5-0623-ibis-ai
         run: npm run crawler:fallback:browser

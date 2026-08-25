@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-type SeedSource = { id: string; postingUrl: string | null; adapter: string };
+type SeedSource = { id: string; postingUrl: string | null; adapter: string; enabled: boolean };
 
 const previousOfficialBoards: Record<string, [string, string]> = {
   "audit-row-369": ["https://fa-evlf-saasfaprod1.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/jobs", "custom"],
@@ -40,6 +40,16 @@ describe("verified official source catalog", () => {
     for (const [id, [postingUrl, adapter]] of Object.entries(expectedOfficialBoards)) {
       expect(byId.get(id)).toEqual(expect.objectContaining({ postingUrl, adapter }));
     }
+  });
+
+  it("keeps the acquired Discover catalog inactive instead of duplicating Capital One jobs", () => {
+    const seed = JSON.parse(readFileSync(join(process.cwd(), "db/seed/sources.json"), "utf8")) as { sources: SeedSource[] };
+    const discover = seed.sources.find((source) => source.id === "p2-0098-discover");
+
+    expect(discover).toEqual(expect.objectContaining({
+      postingUrl: null,
+      enabled: false,
+    }));
   });
 
   it("requeues every repaired source in the immutable catalog migration", () => {

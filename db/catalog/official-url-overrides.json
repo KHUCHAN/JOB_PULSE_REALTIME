@@ -1,6 +1,7 @@
 {
   "overrides": {
     "p1-0008-protiviti": { "url": "https://roberthalf.wd1.myworkdayjobs.com/ProtivitiNA", "adapter": "workday", "checkedAt": "2026-08-25" },
+    "p2-0098-discover": { "url": null, "talentUrl": null, "adapter": "custom", "verification": "MERGED_PARENT_CAREERS", "channel": "Capital One 인수 후 Discover 독립 채용 목록이 종료되어 Capital One 소스와 중복됨", "checkedAt": "2026-08-25" },
     "p2-0036-evercore": { "url": "https://evercore.tal.net/vx/mobile-0/appcentre-1/brand-6/candidate/jobboard/vacancy/2", "adapter": "custom", "checkedAt": "2026-08-25" },
     "p2-0180-valley-national-bancorp": { "url": "https://myjobs.adp.com/vnbcareers/cx?__tx_annotation=false&c=2169307&d=ExternalCareerSite&sor=adprm", "adapter": "custom", "checkedAt": "2026-08-25" },
     "p4-0302-l-e-k-consulting": { "url": "https://lek.tal.net/vx/lang-en-GB/mobile-0/appcentre-2/brand-2/xf-f9ee24524658/candidate/jobboard/vacancy/3/adv/", "adapter": "custom", "checkedAt": "2026-08-25" },
@@ -554,7 +555,7 @@
     "audit-row-424": { "url": "https://jobs.sonicautomotive.com/search", "adapter": "custom" },
     "p4-0500-sprinklr": { "url": "https://sprinklr.wd1.myworkdayjobs.com/careers", "adapter": "workday" },
     "legacy-row-869": { "url": "https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=a4c08bd3-eedf-419a-9fb6-5d2ac8a3bafa&ccId=19000101_000001&lang=en_US", "adapter": "custom" },
-    "p2-0180-valley-national-bancorp": { "url": "https://recruiting.adp.com/srccar/public/RTI.home?c=2169307&d=ExternalCareerSite", "adapter": "custom" },
+    "p2-0180-valley-national-bancorp": { "url": "https://myjobs.adp.com/vnbcareers/cx?__tx_annotation=false&c=2169307&d=ExternalCareerSite&sor=adprm", "adapter": "custom", "checkedAt": "2026-08-25" },
     "p4-0279-floqast": { "url": "https://jobs.lever.co/floqast", "adapter": "lever" },
     "p4-0454-lightmatter": { "url": "https://job-boards.greenhouse.io/lightmatter", "adapter": "greenhouse" },
     "p4-0326-paxos": { "url": "https://jobs.ashbyhq.com/paxos", "adapter": "ashby" },
