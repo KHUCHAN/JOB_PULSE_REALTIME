@@ -141,7 +141,7 @@ export interface SourceRecord {
   currentJobs: number;
   lastCheckedAt: string;
   lastChangedAt: string | null;
-  nextRunAt: string;
+  nextRunAt: string | null;
 }
 
 export interface KeywordRule {

@@ -517,7 +517,7 @@ async function listSources(sourceIds: string[] = []): Promise<SourceRecord[]> {
       || Number(latest.jobs_updated ?? 0) > 0
       || Number(latest.jobs_closed ?? 0) > 0)
       ? latest.finished_at : null,
-    nextRunAt: row.next_crawl_at || row.checked_at,
+    nextRunAt: row.enabled ? row.next_crawl_at || row.checked_at : null,
     });
   });
 }
