@@ -9984,7 +9984,8 @@ We are an equal opportunity employer.`;
             id: 101,
             name: "Manufacturing Engineer",
             location: "Benton Harbor,Michigan,USA",
-            ats_job_id: "REQ-101",
+            atsJobId: 101,
+            displayJobId: 101,
             canonicalPositionUrl: "https://jobs.whirlpool.com/careers/job/101",
           }],
         },
@@ -9998,6 +9999,8 @@ We are an equal opportunity employer.`;
       resolvedListingUrl: "https://jobs.whirlpool.com/careers?domain=whirlpool.com",
     }));
     expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "101",
+      requisitionId: "101",
       title: "Manufacturing Engineer",
       location: "Benton Harbor,Michigan,USA",
       officialUrl: "https://jobs.whirlpool.com/careers/job/101",

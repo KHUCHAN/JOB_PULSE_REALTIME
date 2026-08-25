@@ -1075,9 +1075,9 @@ type EightfoldPosition = {
   location?: string;
   locations?: string[];
   standardizedLocations?: string[];
-  ats_job_id?: string;
-  atsJobId?: string;
-  displayJobId?: string;
+  ats_job_id?: string | number;
+  atsJobId?: string | number;
+  displayJobId?: string | number;
   department?: string;
   work_location_option?: string | null;
   workLocationOption?: string | null;
@@ -18645,7 +18645,14 @@ async function crawlEightfold(source: CrawlSource, fetcher: typeof fetch): Promi
     const normalizedJobs = uniquePositions.flatMap((position) => position.id != null && position.name ? (() => {
       const location = position.location ?? position.locations?.join("; ") ?? null;
       const workLocation = position.work_location_option ?? position.workLocationOption ?? "";
-      const externalId = position.ats_job_id ?? position.atsJobId ?? position.displayJobId ?? String(position.id);
+      // Eightfold does not keep identifier types stable across every record in
+      // a tenant. Whirlpool, for example, returns string ATS IDs for current
+      // jobs but a numeric `atsJobId`/`displayJobId` on an older final page.
+      // Normalize the identifier before it reaches persistence identity logic,
+      // which intentionally operates on canonical strings.
+      const externalId = String(
+        position.ats_job_id ?? position.atsJobId ?? position.displayJobId ?? position.id,
+      ).trim();
       const description = position.job_description ?? position.jobDescription;
       const publishedTimestamp = position.postedTs || position.creationTs || position.t_create;
       return [{
