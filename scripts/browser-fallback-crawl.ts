@@ -65,7 +65,8 @@ export const nativeRunnerRecoveryEligible = (source: {
   health?: string | null;
   currentJobs?: number | null;
   lastError?: string | null;
-}): boolean => source.id === "p5-1077-tesla"
+}, forced = false): boolean => forced
+  || source.id === "p5-1077-tesla"
   || source.adapter === "workday"
   || source.health === "blocked"
   || source.lastError === "empty_board"
@@ -116,7 +117,7 @@ const problemSources = async (): Promise<BrowserRecoverySource[]> => {
           company: source.company,
           postingUrl: source.postingUrl,
           adapter: source.adapter,
-          attemptNativeRecovery: nativeRunnerRecoveryEligible(source),
+          attemptNativeRecovery: nativeRunnerRecoveryEligible(source, prioritySourceIds.has(source.id)),
         })]
       : []);
   }
@@ -126,7 +127,10 @@ const problemSources = async (): Promise<BrowserRecoverySource[]> => {
         company: source.company,
         postingUrl: source.postingUrl,
         adapter: source.adapter as CrawlSource["adapter"],
-        attemptNativeRecovery: source.adapter === "workday",
+        attemptNativeRecovery: nativeRunnerRecoveryEligible({
+          ...source,
+          adapter: source.adapter as CrawlSource["adapter"],
+        }, prioritySourceIds.has(source.id)),
       })]
     : []);
   if (liveUrl) {
@@ -164,7 +168,7 @@ const problemSources = async (): Promise<BrowserRecoverySource[]> => {
       .map((source) => ({
         ...source,
         candidateUrl: candidateUrl(source),
-        attemptNativeRecovery: nativeRunnerRecoveryEligible(source),
+        attemptNativeRecovery: nativeRunnerRecoveryEligible(source, prioritySourceIds.has(source.id)),
       }))
       .filter((source) => source.candidateUrl && browserRecoveryDue(source))
       .sort((left, right) => Number(prioritySourceIds.has(right.id)) - Number(prioritySourceIds.has(left.id))

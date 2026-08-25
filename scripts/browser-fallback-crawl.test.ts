@@ -77,6 +77,12 @@ describe("browser fallback Workday recovery", () => {
       adapter: "custom",
       health: "failed",
       currentJobs: 0,
+      lastError: "No supported public job feed or job listings were discovered.",
+    }, true)).toBe(true);
+    expect(nativeRunnerRecoveryEligible({
+      adapter: "custom",
+      health: "failed",
+      currentJobs: 0,
       lastError: "empty_board",
     })).toBe(true);
   });
