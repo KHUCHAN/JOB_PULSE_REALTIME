@@ -49,6 +49,19 @@ type PagedCrawlState = {
 const pagedCrawlStateKey = (sourceId: string): string => `crawl_page_checkpoint:${sourceId}`;
 const catalogVolumeQuarantineKey = (sourceId: string): string => `catalog_volume_quarantine:${sourceId}`;
 
+const observedTimestamp = (value: string | null | undefined, now: string): string | null => {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  const crawlTimestamp = Date.parse(now);
+  if (!Number.isFinite(timestamp) || !Number.isFinite(crawlTimestamp)) return null;
+  // A source can be a few minutes ahead because of clock skew, but a future
+  // publication/update time must never make a job look newly posted. Keep the
+  // source's raw date text and accept the timestamp on a later crawl once it
+  // has actually occurred.
+  if (timestamp > crawlTimestamp + 5 * 60 * 1_000) return null;
+  return new Date(timestamp).toISOString();
+};
+
 const mirrorIdentity = (value: unknown): string | null => {
   if (typeof value !== "string") return null;
   const normalized = value.normalize("NFKC").trim().toLocaleLowerCase();
@@ -599,6 +612,8 @@ export class D1CrawlStore implements CrawlStore {
     // also lets a previously empty company alert on its first later opening.
     const allowNewJobNotifications = !options.suppressNotifications && source.alert_baseline_at !== null;
     const recordFor = async (job: CrawledJob): Promise<Record<string, unknown>> => {
+      const publishedAt = observedTimestamp(job.publishedAt, now);
+      const sourceUpdatedAt = observedTimestamp(job.sourceUpdatedAt, now);
       const aiData = classifyAiDataJob(job);
       const areaMemberships = classifyJobAreas(job).map((area) => ({
         topicKey: `area:${area.areaKey}`,
@@ -633,7 +648,7 @@ export class D1CrawlStore implements CrawlStore {
         description: job.description,
         location: job.location,
         locationCountry: job.locationCountry,
-        publishedAt: job.publishedAt,
+        publishedAt,
         programKeys,
       });
       const identityKeys = jobPostingIdentityKeys({
@@ -661,9 +676,9 @@ export class D1CrawlStore implements CrawlStore {
         shiftSchedule: job.shiftSchedule ?? null, travelRequirements: job.travelRequirements ?? null,
         securityClearance: job.securityClearance ?? null, languages: job.languages ?? [],
         requisitionId: job.requisitionId ?? null, ...identityKeys, applyUrl: job.applyUrl ?? null,
-        sourcePostedText: job.sourcePostedText ?? null, sourceUpdatedAt: job.sourceUpdatedAt ?? null,
+        sourcePostedText: job.sourcePostedText ?? null, sourceUpdatedAt,
         validThrough: job.validThrough ?? null, rawPayload: job.rawPayload ?? null,
-        officialUrl: job.officialUrl, publishedAt: job.publishedAt, firstSeenAt: now, lastSeenAt: now,
+        officialUrl: job.officialUrl, publishedAt, firstSeenAt: now, lastSeenAt: now,
         topicClassifiedAt: now, aiDataMatched: aiData.matched, aiDataScore: aiData.score,
         aiDataEvidence: aiData.evidence,
         areaClassifiedAt: jobAreaClassificationMarker(now), areaMemberships,

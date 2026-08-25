@@ -35,6 +35,7 @@ export const overviewLatestJobsSql = `
   FROM jobs j INDEXED BY jobs_status_published_at_idx
   WHERE j.status = 'open'
     AND j.published_at IS NOT NULL
+    AND j.published_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 minutes')
     AND (j.valid_through IS NULL OR j.valid_through >= date('now'))
   ORDER BY j.published_at DESC
   LIMIT ?

@@ -225,6 +225,9 @@ JOIN job_matches resume_match
     add(`(${seasons.map((season) => `${titleTokens} LIKE '% ${escapeLike(season)} %'`).join(" OR ")})`);
   }
 
+  if (filters.postedAfter || filters.postedBefore) {
+    add("j.published_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 minutes')");
+  }
   if (filters.postedAfter) add("j.published_at >= ?", [filters.postedAfter]);
   if (filters.postedBefore) add("j.published_at < ?", [dayAfter(filters.postedBefore)]);
 

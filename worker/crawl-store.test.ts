@@ -144,6 +144,24 @@ describe("D1CrawlStore enriched job persistence", () => {
     expect(record.alertDiscoveredAfterBaseline).toBe(0);
   });
 
+  it("does not persist future publication or source-update timestamps", async () => {
+    const { db, calls } = fakeDb();
+    const store = new D1CrawlStore(db);
+
+    await store.syncJobs("source-1", [{
+      externalId: "FUTURE-1", title: "Scheduled role", company: "Acme", location: "New York, NY",
+      arrangement: "onsite", employmentType: "Full-time", summary: "Scheduled early by the ATS.",
+      officialUrl: "https://jobs.example/future-1", sourcePostedText: "Jan 1, 2099",
+      sourceUpdatedAt: "2099-01-01T00:00:00.000Z", publishedAt: "2099-01-01T00:00:00.000Z",
+    }], false);
+
+    const insert = calls.find((call) => call.sql.includes("INSERT INTO jobs"));
+    const record = JSON.parse(String(insert?.values[0]))[0];
+    expect(record.sourcePostedText).toBe("Jan 1, 2099");
+    expect(record).not.toHaveProperty("sourceUpdatedAt");
+    expect(record).not.toHaveProperty("publishedAt");
+  });
+
   it("marks only a fresh insert after an established source baseline as alertable", async () => {
     const baseline = "2026-08-16T10:00:00.000Z";
     const { db, calls } = fakeDb({

@@ -55,6 +55,7 @@ describe("overview counts SQL", () => {
       INSERT INTO jobs VALUES
         ('older', 'source', 'One', 'Older', NULL, 'onsite', NULL, NULL, 'https://example.com/1', '2026-08-01', '2026-08-01', NULL, NULL, '2026-08-01', 'us', 'open', NULL),
         ('latest', 'source', 'Two', 'Latest', NULL, 'remote', NULL, NULL, 'https://example.com/2', '2026-08-02', '2026-08-02', NULL, NULL, '2026-08-02', 'us', 'open', NULL),
+        ('future', 'source', 'Future', 'Future', NULL, 'remote', NULL, NULL, 'https://example.com/future', '2099-01-01', '2099-01-01', NULL, NULL, '2099-01-01', 'us', 'open', NULL),
         ('closed', 'source', 'Three', 'Closed', NULL, 'onsite', NULL, NULL, 'https://example.com/3', '2026-08-03', '2026-08-03', NULL, NULL, '2026-08-03', 'us', 'closed', NULL);
     `);
 

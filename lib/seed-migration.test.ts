@@ -155,6 +155,23 @@ describe("tech job area and region migration", () => {
 describe("large catalog US scope migration", () => {
   const drizzlePath = resolve(process.cwd(), "drizzle");
 
+  it("clears future ATS timestamps without changing observed dates", async () => {
+    const { DatabaseSync } = await import("node:sqlite");
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec(`
+      CREATE TABLE jobs (id TEXT PRIMARY KEY, published_at TEXT, source_updated_at TEXT, updated_at TEXT);
+      INSERT INTO jobs VALUES
+        ('future', '2099-01-01T00:00:00.000Z', '2099-01-02T00:00:00.000Z', NULL),
+        ('past', '2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z', NULL);
+    `);
+    sqlite.exec(readFileSync(resolve(drizzlePath, "0122_reject_future_job_timestamps.sql"), "utf8"));
+
+    expect(sqlite.prepare("SELECT published_at, source_updated_at FROM jobs WHERE id = 'future'").get())
+      .toEqual({ published_at: null, source_updated_at: null });
+    expect(sqlite.prepare("SELECT published_at, source_updated_at FROM jobs WHERE id = 'past'").get())
+      .toEqual({ published_at: "2026-01-01T00:00:00.000Z", source_updated_at: "2026-01-02T00:00:00.000Z" });
+  });
+
   it("resets old page cursors and schedules every newly scoped source", () => {
     const sql = readFileSync(resolve(drizzlePath, "0100_large_catalog_us_scope.sql"), "utf8");
     const sourceIds = JSON.parse(sql.match(/json_each\('(\[[^']+\])'\)/)?.[1] ?? "[]") as string[];
@@ -239,8 +256,8 @@ describe("large catalog US scope migration", () => {
       tag: "0100_large_catalog_us_scope",
     });
     expect(currentJournal.entries.at(-1)).toMatchObject({
-      idx: 121,
-      tag: "0121_refresh_sources_20260825114841",
+      idx: 122,
+      tag: "0122_reject_future_job_timestamps",
     });
   });
 

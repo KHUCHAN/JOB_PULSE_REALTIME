@@ -257,6 +257,7 @@ describe("parameterized job search SQL", () => {
     expect(plan.pageSql).not.toContain("lower(j.company)");
     expect(plan.pageSql).toContain("j.published_at >= ?");
     expect(plan.pageSql).toContain("j.published_at < ?");
+    expect(plan.pageSql).toContain("j.published_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 minutes')");
     expect(plan.pageSql).not.toContain("date(j.published_at)");
     expect(plan.bindings).toEqual(expect.arrayContaining([
       "Acme, Inc.", "2026-08-01", "2026-08-10",
