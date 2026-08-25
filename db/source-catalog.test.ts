@@ -52,6 +52,18 @@ describe("verified official source catalog", () => {
     }));
   });
 
+  it("disables duplicate acquired feeds while retaining each authoritative catalog", () => {
+    const seed = JSON.parse(readFileSync(join(process.cwd(), "db/seed/sources.json"), "utf8")) as { sources: SeedSource[] };
+    const byId = new Map(seed.sources.map((source) => [source.id, source]));
+
+    for (const id of ["p4-0331-progressive", "p4-0455-logrhythm", "p5-0601-galileo-ai"]) {
+      expect(byId.get(id)).toEqual(expect.objectContaining({ enabled: false }));
+    }
+    for (const id of ["p5-1028-progressive-insurance", "p4-0426-exabeam", "p4-0285-google"]) {
+      expect(byId.get(id)).toEqual(expect.objectContaining({ enabled: true }));
+    }
+  });
+
   it("requeues every repaired source in the immutable catalog migration", () => {
     const previousMigration = readFileSync(join(process.cwd(), "drizzle/0087_refresh_sources_20260814215641.sql"), "utf8");
     for (const id of Object.keys(previousOfficialBoards)) expect(previousMigration).toContain(`'${id}'`);

@@ -12479,6 +12479,33 @@ const crawlJobsynWithSitemapFallback = async (
   return await crawlJobsynSitemap(canonical, fetcher) ?? direct;
 };
 
+const crawlJacobsJobs = async (
+  source: CrawlSource,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult> => {
+  const listingUrl = "https://jacobs.jobs/jobs/";
+  const canonical = { ...source, postingUrl: listingUrl, adapter: "custom" as const };
+  // Jacobs exposes more than six thousand jobs. Bootstrap every canonical
+  // identity from its official sitemap while the bounded Jobsyn cursor adds
+  // rich descriptions and eventually performs a stable closing cycle.
+  const [direct, sitemap] = await Promise.all([
+    crawlJobsyn(canonical, fetcher),
+    crawlJobsynSitemap(canonical, fetcher),
+  ]);
+  if (direct.status === "succeeded" && sitemap?.status === "succeeded") {
+    const jobs = new Map(sitemap.jobs.map((job) => [job.officialUrl, job]));
+    for (const job of direct.jobs) jobs.set(job.officialUrl, job);
+    return {
+      ...direct,
+      completeListing: false,
+      jobs: [...jobs.values()],
+      resolvedListingUrl: listingUrl,
+    };
+  }
+  if (direct.status === "succeeded") return direct;
+  return sitemap ?? direct;
+};
+
 const YUM_SITEMAP_URL = "https://jobs.yum.com/sitemap.xml";
 
 const yumSitemapLocation = (slug: string): {
@@ -23463,6 +23490,9 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-1054-siemens-eda") {
     return crawlJobsynWithSitemapFallback(source, "https://jobs.sw.siemens.com/jobs/", fetcher);
   }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-102") {
+    return crawlJacobsJobs(source, fetcher);
+  }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-886") {
     return crawlYumCareers(source, fetcher);
   }
@@ -23535,6 +23565,9 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   const sourcePage = new URL(source.postingUrl);
   if (source.id === "p5-0992-neogenomics") {
     return crawlJobviteBoard(source, "https://jobs.jobvite.com/neogenomics/search", "neogenomics", fetcher);
+  }
+  if (source.id === "p5-0891-enphase-energy") {
+    return crawlJobviteBoard(source, "https://jobs.jobvite.com/enphase-energy/", "enphase-energy", fetcher);
   }
   // These official boards currently need the reader fallback when their edge
   // blocks Worker egress. Keep them at discovery depth zero so that fallback

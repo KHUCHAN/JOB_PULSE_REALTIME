@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:bbc15edab9b9c89958df85b84b0320316824abbc9cb5563e67e79b7f9b9d410f",
+  "version": "v2:sha256:c33bb6929b7cbbba5193708187b3de3e9eb69f6d65178cdff69bcb5a18c36d3c",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -5425,12 +5425,12 @@
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
       "adapter": "custom",
-      "verification": "career_only",
+      "verification": "no_active_careers",
       "confidence": "medium",
       "resumeUpload": "job_only",
       "jobAlerts": "unknown",
       "checkedAt": "2026-08-08",
-      "enabled": true
+      "enabled": false
     },
     {
       "id": "p4-0335-raymond-james",
@@ -5680,12 +5680,12 @@
       "talentUrl": null,
       "channel": "공식 채용 공고/ATS",
       "adapter": "custom",
-      "verification": "career_only",
+      "verification": "no_active_careers",
       "confidence": "medium",
       "resumeUpload": "job_only",
       "jobAlerts": "unknown",
       "checkedAt": "2026-08-12",
-      "enabled": true
+      "enabled": false
     },
     {
       "id": "p4-0470-oliver-wyman",
@@ -6100,12 +6100,12 @@
       "talentUrl": null,
       "channel": "합병/모회사 공식 채용 포털",
       "adapter": "custom",
-      "verification": "merged_parent_careers",
+      "verification": "no_active_careers",
       "confidence": "high",
       "resumeUpload": "job_only",
       "jobAlerts": "unknown",
       "checkedAt": "2026-08-08",
-      "enabled": true
+      "enabled": false
     },
     {
       "id": "p5-0605-github",

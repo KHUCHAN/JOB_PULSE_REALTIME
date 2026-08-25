@@ -227,6 +227,10 @@ describe("large catalog US scope migration", () => {
     const catalogRefresh117 = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0117_snapshot.json"), "utf8"));
     const catalogRefresh118 = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0118_snapshot.json"), "utf8"));
     const catalogRefresh119 = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0119_snapshot.json"), "utf8"));
+    const catalogRefresh120 = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0120_snapshot.json"), "utf8"));
+    const catalogRefresh121 = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0121_snapshot.json"), "utf8"));
+    const futureTimestampRepair = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0122_snapshot.json"), "utf8"));
+    const duplicateSourceRetirement = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0123_snapshot.json"), "utf8"));
     const currentJournal = JSON.parse(readFileSync(resolve(drizzlePath, "meta/_journal.json"), "utf8"));
 
     expect(current.prevId).toBe(previous.id);
@@ -249,6 +253,10 @@ describe("large catalog US scope migration", () => {
     expect(catalogRefresh117.prevId).toBe(catalogRefresh116.id);
     expect(catalogRefresh118.prevId).toBe(catalogRefresh117.id);
     expect(catalogRefresh119.prevId).toBe(catalogRefresh118.id);
+    expect(catalogRefresh120.prevId).toBe(catalogRefresh119.id);
+    expect(catalogRefresh121.prevId).toBe(catalogRefresh120.id);
+    expect(futureTimestampRepair.prevId).toBe(catalogRefresh121.id);
+    expect(duplicateSourceRetirement.prevId).toBe(futureTimestampRepair.id);
     expect(durableAlertIdentity.tables).toHaveProperty("notification_identity_history");
     expect(durableAlertIdentity.tables.jobs.columns).toHaveProperty("alert_discovered_after_baseline");
     expect(currentJournal.entries.find((entry: { tag: string }) => entry.tag === "0100_large_catalog_us_scope")).toMatchObject({
@@ -256,9 +264,25 @@ describe("large catalog US scope migration", () => {
       tag: "0100_large_catalog_us_scope",
     });
     expect(currentJournal.entries.at(-1)).toMatchObject({
-      idx: 122,
-      tag: "0122_reject_future_job_timestamps",
+      idx: 123,
+      tag: "0123_refresh_sources_20260825131831",
     });
+  });
+
+  it("retires only the duplicate or acquired source identities and their stale matches", () => {
+    const sql = readFileSync(resolve(drizzlePath, "0123_refresh_sources_20260825131831.sql"), "utf8");
+    const retiredIds = [...sql.matchAll(/VALUES \('([^']+)'/g)].map((match) => match[1]);
+
+    expect(retiredIds).toEqual([
+      "p4-0331-progressive",
+      "p4-0455-logrhythm",
+      "p5-0601-galileo-ai",
+    ]);
+    expect(sql).toContain("UPDATE jobs SET status = 'closed'");
+    expect(sql).toContain("UPDATE job_matches SET is_active = 0");
+    expect(sql).not.toContain("'p5-0896-exact-sciences'");
+    expect(sql).not.toContain("'p5-0715-replicate'");
+    expect(sql).not.toContain("'p2-0098-discover'");
   });
 
   it("requeues every repaired source for the server-owned batch", () => {

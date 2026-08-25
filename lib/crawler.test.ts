@@ -113,6 +113,93 @@ describe("repaired source adapters", () => {
     })]);
   });
 
+  it("pins Enphase Energy to its complete official Jobvite catalog", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p5-0891-enphase-energy",
+      company: "Enphase Energy",
+      postingUrl: "https://enphase.com/careers/results",
+      adapter: "custom",
+    }, async (input) => {
+      requests.push(String(input));
+      return new Response(`<main><ul>
+        <li class="row"><a href="/enphase-energy/job/oU2AAfwQ">
+          <div class="jv-job-list-name">SST Sr Sales Manager</div>
+          <div class="jv-job-list-location">United States</div>
+        </a></li>
+      </ul></main>`);
+    }, new Date());
+
+    expect(requests).toEqual(["https://jobs.jobvite.com/enphase-energy/"]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://jobs.jobvite.com/enphase-energy",
+    }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "oU2AAfwQ",
+      title: "SST Sr Sales Manager",
+      officialUrl: "https://jobs.jobvite.com/enphase-energy/job/oU2AAfwQ",
+    })]);
+  });
+
+  it("pins Jacobs to its live official Jobsyn catalog instead of its empty edge shell", async () => {
+    const requests: URL[] = [];
+    const result = await crawlSource({
+      id: "legacy-row-102",
+      company: "Jacobs Solutions",
+      postingUrl: "https://careers.jacobs.com/",
+      adapter: "custom",
+    }, async (input, init) => {
+      const url = new URL(String(input));
+      requests.push(url);
+      if (url.href === "https://jacobs.jobs/sitemaps/jobs_1.xml") {
+        return new Response(`<urlset>
+          <url><loc>https://jacobs.jobs/virginia-beach-va/environmental-permitting-professional/724B900A173940BA87C8F6B94DC38210/job/</loc><lastmod>2026-08-25</lastmod></url>
+          <url><loc>https://jacobs.jobs/dallas-tx/data-engineering-intern/14F60F9E4CD24F3383DDF6961CA19A11/job/</loc><lastmod>2026-08-24</lastmod></url>
+        </urlset>`);
+      }
+      expect(url.origin + url.pathname).toBe("https://prod-search-api.jobsyn.org/api/v1/solr/search");
+      expect(new Headers(init?.headers).get("x-origin")).toBe("jacobs.jobs");
+      return Response.json({
+        jobs: [{
+          guid: "724B900A173940BA87C8F6B94DC38210",
+          reqid: "44177",
+          title_exact: "Environmental Permitting Professional",
+          title_slug: "environmental-permitting-professional",
+          location_exact: "Virginia Beach, VA",
+          city_exact: "Virginia Beach",
+          state_short: "VA",
+          country_exact: "United States",
+          date_new: "2026-08-25T06:33:36Z",
+          description: "Support environmental permitting.",
+        }],
+        pagination: { page: 1, page_size: 1, total: 1, total_pages: 1, has_more_pages: false },
+      });
+    }, new Date());
+
+    expect(requests).toHaveLength(2);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 1 },
+      resolvedListingUrl: "https://jacobs.jobs/jobs/",
+    }));
+    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs).toEqual(expect.arrayContaining([expect.objectContaining({
+      externalId: "724B900A173940BA87C8F6B94DC38210",
+      requisitionId: "44177",
+      locationCountry: "United States",
+      officialUrl: "https://jacobs.jobs/virginia-beach-va/environmental-permitting-professional/724B900A173940BA87C8F6B94DC38210/job/",
+      description: "Support environmental permitting.",
+    }), expect.objectContaining({
+      externalId: "14F60F9E4CD24F3383DDF6961CA19A11",
+      title: "Data Engineering Intern",
+      locationCountry: "United States",
+      publishedAt: "2026-08-24T00:00:00.000Z",
+    })]));
+  });
+
   it("loads Murphy USA's complete official catalog with source update dates", async () => {
     const source = { id: "audit-row-399", company: "Murphy USA", postingUrl: "https://jobs.murphyusa.com/murphyusa/job-opportunities", adapter: "custom" as const };
     const result = await crawlSource(source, async () => Response.json([{
