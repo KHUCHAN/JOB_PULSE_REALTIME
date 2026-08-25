@@ -22982,6 +22982,144 @@ const crawlTowerSemiconductorCareers = async (source: CrawlSource, fetcher: type
 const VENTURE_GLOBAL_LISTING_URL = "https://ventureglobal.com/careers/";
 const VENTURE_GLOBAL_API_URL = "https://ventureglobal.com/wp-json/vg-careers/v1/jobs";
 
+const BEST_BUY_LISTING_URL = "https://jobs.bestbuy.com/bby?id=all_jobs&spa=1";
+const BEST_BUY_PORTAL_ID = "c5f6902e1b91b850b4c011f18c4bcbf5";
+const BEST_BUY_MAP_WIDGET_ID = "dd786d721b71b010b4c011f18c4bcb87";
+
+type BestBuyFeature = {
+  properties?: Record<string, unknown>;
+};
+
+const bestBuyPublishedDate = (value: string | null): string | null => {
+  const match = value?.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4})$/);
+  if (!match) return normalizedDate(value);
+  const month = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+    .indexOf(match[2].toLocaleLowerCase());
+  if (month < 0) return null;
+  const timestamp = Date.UTC(Number(match[3]), month, Number(match[1]));
+  const date = new Date(timestamp);
+  return date.getUTCFullYear() === Number(match[3]) && date.getUTCMonth() === month && date.getUTCDate() === Number(match[1])
+    ? date.toISOString()
+    : null;
+};
+
+/**
+ * Best Buy's careers site is a public ServiceNow portal. Its listing HTML no
+ * longer contains job anchors; the browser loads the authoritative US catalog
+ * from the portal's public map widget. Bootstrap the guest session exactly as
+ * the first-party page does, then request the complete bounded catalog in one
+ * response so D1 receives an authoritative snapshot.
+ */
+const crawlBestBuyCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const cookies = new Map<string, string>();
+  let responseStatus: number | null = null;
+  try {
+    const listingResponse = await fetchWithTimeout(fetcher, BEST_BUY_LISTING_URL, {
+      headers: { accept: "text/html" },
+    }, true, { attempts: 2, timeoutMs: 15_000 });
+    responseStatus = listingResponse.status;
+    if (!listingResponse.ok) throw new Error(`Best Buy careers portal returned HTTP ${listingResponse.status}.`);
+    mergeCookies(cookies, listingResponse);
+    const html = await listingResponse.text();
+    const userToken = html.match(/\bg_ck\s*=\s*['"]([a-f0-9]{32,})['"]/i)?.[1] ?? null;
+    if (!userToken) throw new Error("Best Buy careers portal did not expose a guest widget token.");
+
+    const endpoint = new URL(`/api/now/sp/widget/${BEST_BUY_MAP_WIDGET_ID}`, BEST_BUY_LISTING_URL);
+    endpoint.searchParams.set("country", "US");
+    endpoint.searchParams.set("id", "all_jobs");
+    endpoint.searchParams.set("s", "req_id_num");
+    endpoint.searchParams.set("spa", "1");
+    const response = await fetchWithTimeout(fetcher, endpoint, {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json;charset=UTF-8",
+        cookie: [...cookies.values()].join("; "),
+        referer: BEST_BUY_LISTING_URL,
+        "x-portal": BEST_BUY_PORTAL_ID,
+        "x-usertoken": userToken,
+      },
+      body: JSON.stringify({
+        action: "update_data",
+        options: {
+          sort: "req_id_num",
+          items_per_page: 5_000,
+          sort_val: "req_id_num",
+          lastLimit: 0,
+          initial_page: 0,
+          currentPage: 0,
+          filters: { country: "countrySTARTSWITHUS" },
+          limitResults: "limitResults",
+        },
+      }),
+    }, true, { attempts: 2, timeoutMs: 20_000 });
+    responseStatus = response.status;
+    if (!response.ok) throw new Error(`Best Buy careers widget returned HTTP ${response.status}.`);
+    const payload = await response.json() as {
+      result?: { data?: { total_count?: unknown; items?: { features?: BestBuyFeature[] } } };
+    };
+    const total = Number(payload.result?.data?.total_count);
+    const features = payload.result?.data?.items?.features;
+    if (!Number.isInteger(total) || total < 0 || total > 5_000 || !Array.isArray(features)) {
+      throw new Error("Best Buy careers widget returned invalid catalog metadata.");
+    }
+    const jobs = features.flatMap((feature): CrawledJob[] => {
+      const row = feature.properties ?? {};
+      const externalId = asText(row.auto_req_id);
+      const title = asText(row.title);
+      const country = asText(row.country);
+      const city = asText(row.city);
+      const state = asText(row.state);
+      if (!externalId || !title || country !== "United States") return [];
+      const location = [city, state, country].filter(Boolean).join(", ");
+      const employmentType = normalizeEmploymentType(row.type) ?? normalizeEmploymentType(row.worker_type);
+      const sourcePostedText = asText(row.last_updated);
+      return [{
+        externalId,
+        requisitionId: externalId,
+        title,
+        company: source.company,
+        location,
+        locationCity: city,
+        locationState: state,
+        locationCountry: country,
+        locationPostalCode: asText(row.zip),
+        arrangement: /\bremote\b/i.test(`${location} ${asText(row.sites) ?? ""}`) ? "remote" : "onsite",
+        employmentType,
+        summary: [asText(row.category), asText(row.sites)].filter(Boolean).join("; ") || null,
+        ...(asText(row.category) ? { department: asText(row.category) } : {}),
+        ...(asText(row.sites) ? { businessUnit: asText(row.sites) } : {}),
+        ...(asText(row.experience) ? { experienceLevel: asText(row.experience) } : {}),
+        officialUrl: `https://jobs.bestbuy.com/bby?id=job_details&req_id=${encodeURIComponent(externalId)}`,
+        sourcePostedText,
+        publishedAt: bestBuyPublishedDate(sourcePostedText),
+        rawPayload: { provider: "best-buy-servicenow", sysId: asText(row.sys_id) },
+      }];
+    });
+    const unique = uniqueJobs(jobs);
+    if (features.length !== total || jobs.length !== total || unique.length !== total) {
+      throw new Error(`Best Buy careers widget returned an incomplete or duplicate US catalog (${unique.length}/${total}).`);
+    }
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: true,
+      jobs: unique,
+      resolvedListingUrl: BEST_BUY_LISTING_URL,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      resolvedListingUrl: BEST_BUY_LISTING_URL,
+      error: error instanceof Error ? error.message : "Unknown Best Buy careers crawler error.",
+    };
+  }
+};
+
 const ventureGlobalDate = (value: unknown): string | null => {
   const text = asText(value);
   if (!text) return null;
@@ -23149,6 +23287,7 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-0644-kratos-defense") return crawlKratosCareers(source, fetcher);
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-0755-tower-semiconductor") return crawlTowerSemiconductorCareers(source, fetcher);
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-876") return crawlVentureGlobalCareers(source, fetcher);
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-0824-best-buy") return crawlBestBuyCareers(source, fetcher);
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p4-0423-dynatrace") {
     return crawlDynatraceCoveo(source, fetcher);
   }

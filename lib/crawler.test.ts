@@ -10007,6 +10007,74 @@ We are an equal opportunity employer.`;
     })]);
   });
 
+  it("loads Best Buy's complete US catalog from its public ServiceNow widget", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p5-0824-best-buy",
+      company: "Best Buy",
+      postingUrl: "https://jobs.bestbuy.com/bby?id=all_jobs&spa=1",
+      adapter: "custom",
+    }, async (input, init) => {
+      const url = String(input);
+      requests.push(url);
+      if (requests.length === 1) {
+        expect(url).toBe("https://jobs.bestbuy.com/bby?id=all_jobs&spa=1");
+        return new Response("<script>var g_ck = '0123456789abcdef0123456789abcdef';</script>", {
+          headers: { "set-cookie": "JSESSIONID=guest-session; Path=/; Secure" },
+        });
+      }
+      expect(url).toBe("https://jobs.bestbuy.com/api/now/sp/widget/dd786d721b71b010b4c011f18c4bcb87?country=US&id=all_jobs&s=req_id_num&spa=1");
+      expect(init?.method).toBe("POST");
+      expect(new Headers(init?.headers).get("x-usertoken")).toBe("0123456789abcdef0123456789abcdef");
+      expect(new Headers(init?.headers).get("cookie")).toContain("JSESSIONID=guest-session");
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        action: "update_data",
+        options: { items_per_page: 5_000, filters: { country: "countrySTARTSWITHUS" } },
+      });
+      return Response.json({
+        result: { data: { total_count: 2, items: { features: [{ properties: {
+          auto_req_id: "1041845BR",
+          title: "Retail Sales Specialist - Meta",
+          country: "United States",
+          city: "Colma",
+          state: "California",
+          zip: "94014-3233",
+          last_updated: "25-Aug-2026",
+          type: "Full time",
+          worker_type: "Regular",
+          sites: "Retail",
+          category: "Retail Group",
+          experience: "Individual Contributor",
+          sys_id: "cecb902bebfa4f1057ecf896fcd0cdf6",
+        } }, { properties: {
+          auto_req_id: "1041844BR",
+          title: "Geek Squad Agent",
+          country: "United States",
+          city: "Dublin",
+          state: "California",
+          last_updated: "24-Aug-2026",
+          type: "Part time",
+        } }] } } },
+      }, { status: 201 });
+    }, new Date("2026-08-25T12:00:00Z"));
+
+    expect(requests).toHaveLength(2);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://jobs.bestbuy.com/bby?id=all_jobs&spa=1",
+    }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        externalId: "1041845BR",
+        location: "Colma, California, United States",
+        officialUrl: "https://jobs.bestbuy.com/bby?id=job_details&req_id=1041845BR",
+        publishedAt: "2026-08-25T00:00:00.000Z",
+      }),
+      expect.objectContaining({ externalId: "1041844BR", employmentType: "Part-time" }),
+    ]);
+  });
+
   it("uses the final redirected locale path before deriving a Phenom search URL", async () => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input) => {
