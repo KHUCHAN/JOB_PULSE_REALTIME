@@ -72,7 +72,9 @@ jobs:
           # made every otherwise-successful workflow conclude as failed.
           # Delta's Avature shell is likewise browser-only and already has a
           # dedicated priority slot in browser-recovery.
-          REQUEST_FALLBACK_SOURCE_IDS: p4-0241-cgi,p5-1018-penn-medicine,legacy-row-826,p2-0075-american-family-insurance
+          # Jacobs Jobsyn rejects Sites Worker egress intermittently. Its
+          # bounded catalog pass rotates by production slot on this runner.
+          REQUEST_FALLBACK_SOURCE_IDS: p4-0241-cgi,p5-1018-penn-medicine,legacy-row-826,p2-0075-american-family-insurance,legacy-row-102
         run: node scripts/request-fallback-crawl.ts
 
   browser-recovery:

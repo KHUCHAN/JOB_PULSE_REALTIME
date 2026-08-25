@@ -12486,13 +12486,21 @@ const crawlJobsynWithSitemapFallback = async (
 const JACOBS_SITEMAP_SEGMENT_SIZE = 800;
 const JOBSYN_PASS_PAGE_STRIDE = 19;
 
-export const jacobsSitemapSegment = <T>(jobs: T[], crawlPageCursor = 1): T[] => {
+export const jacobsSitemapSegment = <T>(
+  jobs: T[],
+  crawlPageCursor?: number,
+  now = new Date(),
+): T[] => {
   if (jobs.length <= JACOBS_SITEMAP_SEGMENT_SIZE) return jobs;
   const segmentCount = Math.ceil(jobs.length / JACOBS_SITEMAP_SEGMENT_SIZE);
   // Jobsyn repeats the last page of each 20-page pass, so successive cursors
   // advance by 19. Reuse that durable cursor to rotate through the sitemap
-  // without adding a second checkpoint namespace for the same source.
-  const pass = Math.floor((Math.max(1, crawlPageCursor) - 1) / JOBSYN_PASS_PAGE_STRIDE);
+  // without adding a second checkpoint namespace for the same source. The
+  // independent request-recovery runner cannot lease the D1 cursor, so rotate
+  // deterministically by the two-hour production slot when no cursor exists.
+  const pass = crawlPageCursor == null
+    ? Math.floor(now.getTime() / (2 * 60 * 60 * 1_000))
+    : Math.floor((Math.max(1, crawlPageCursor) - 1) / JOBSYN_PASS_PAGE_STRIDE);
   const segment = pass % segmentCount;
   const start = segment * JACOBS_SITEMAP_SEGMENT_SIZE;
   return jobs.slice(start, start + JACOBS_SITEMAP_SEGMENT_SIZE);
@@ -12501,6 +12509,7 @@ export const jacobsSitemapSegment = <T>(jobs: T[], crawlPageCursor = 1): T[] => 
 const crawlJacobsJobs = async (
   source: CrawlSource,
   fetcher: typeof fetch,
+  now: Date,
 ): Promise<SourceCrawlResult> => {
   const listingUrl = "https://jacobs.jobs/jobs/";
   const canonical = { ...source, postingUrl: listingUrl, adapter: "custom" as const };
@@ -12513,7 +12522,7 @@ const crawlJacobsJobs = async (
     crawlJobsynSitemap(canonical, fetcher),
   ]);
   if (direct.status === "succeeded" && sitemap?.status === "succeeded") {
-    const sitemapSegment = jacobsSitemapSegment(sitemap.jobs, source.crawlPageCursor);
+    const sitemapSegment = jacobsSitemapSegment(sitemap.jobs, source.crawlPageCursor, now);
     const jobs = new Map(sitemapSegment.map((job) => [job.officialUrl, job]));
     for (const job of direct.jobs) jobs.set(job.officialUrl, job);
     return {
@@ -23512,7 +23521,7 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
     return crawlJobsynWithSitemapFallback(source, "https://jobs.sw.siemens.com/jobs/", fetcher);
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-102") {
-    return crawlJacobsJobs(source, fetcher);
+    return crawlJacobsJobs(source, fetcher, now);
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-886") {
     return crawlYumCareers(source, fetcher);

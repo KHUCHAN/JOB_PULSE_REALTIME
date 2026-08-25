@@ -206,6 +206,8 @@ describe("repaired source adapters", () => {
     expect(crawlerModule.jacobsSitemapSegment(jobs, 20)).toEqual(jobs.slice(800, 1_600));
     expect(crawlerModule.jacobsSitemapSegment(jobs, 39)).toEqual(jobs.slice(1_600));
     expect(crawlerModule.jacobsSitemapSegment(jobs, 58)).toEqual(jobs.slice(0, 800));
+    expect(crawlerModule.jacobsSitemapSegment(jobs, undefined, new Date(0))).toEqual(jobs.slice(0, 800));
+    expect(crawlerModule.jacobsSitemapSegment(jobs, undefined, new Date(2 * 60 * 60 * 1_000))).toEqual(jobs.slice(800, 1_600));
   });
 
   it("loads Murphy USA's complete official catalog with source update dates", async () => {
