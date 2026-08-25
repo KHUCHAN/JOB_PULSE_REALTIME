@@ -1334,8 +1334,8 @@ const SOURCE_REQUEST_BUDGET = 50;
 // checkpointed adapters resume the remaining pages on the next pass.
 const SOURCE_DEADLINE_MS = 32_000;
 const WORKDAY_DETAIL_BATCH_SIZE = 8;
-const BLOCKED_HTTP_STATUSES = new Set([401, 403, 429, 520, 521, 522, 523, 524]);
-const RETRYABLE_HTTP_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524]);
+const BLOCKED_HTTP_STATUSES = new Set([401, 403, 429, 520, 521, 522, 523, 524, 525]);
+const RETRYABLE_HTTP_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 525]);
 const BROWSER_REQUEST_HEADERS = {
   accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.7",
   "accept-language": "en-US,en;q=0.9",
@@ -2372,11 +2372,13 @@ const workdayFeed = (postingUrl: string): string | null => {
   const url = new URL(postingUrl);
   const segments = url.pathname.split("/").filter(Boolean);
   const isWorkdayJobs = url.hostname.includes(".myworkdayjobs.com");
-  const isWorkdaySite = url.hostname.endsWith(".myworkdaysite.com") && segments[0]?.toLocaleLowerCase() === "recruiting";
+  const recruitingIndex = segments.findIndex((segment) => segment.toLocaleLowerCase() === "recruiting");
+  const isWorkdaySite = url.hostname.endsWith(".myworkdaysite.com")
+    && (recruitingIndex === 0 || (recruitingIndex === 1 && /^[a-z]{2}-[A-Z]{2}$/i.test(segments[0] ?? "")));
   if (!isWorkdayJobs && !isWorkdaySite) return null;
-  const tenant = isWorkdaySite ? segments[1] : url.hostname.split(".")[0];
+  const tenant = isWorkdaySite ? segments[recruitingIndex + 1] : url.hostname.split(".")[0];
   const site = isWorkdaySite
-    ? segments[2]
+    ? segments[recruitingIndex + 2]
     : segments.find((segment) => !/^[a-z]{2}-[A-Z]{2}$/i.test(segment));
   if (!tenant || !site) return null;
   return `${url.origin}/wday/cxs/${tenant}/${site}/jobs`;
@@ -6857,6 +6859,16 @@ const TALEMETRY_MAP_READER_SOURCES = new Set([
   "p5-1018-penn-medicine",
 ]);
 
+// r.jina.ai throttles sustained page bursts for these large Talemetry
+// tenants. Their cursor is persisted after every successful page, so one page
+// per scheduled pass is both complete over time and materially more reliable
+// than retrying the remaining catalog in a single Worker invocation.
+const TALEMETRY_THROTTLED_SOURCES = new Set([
+  "legacy-row-794", // CDW
+  "p4-0214-alvarez-marsal",
+  "p5-0810-atrium-health",
+]);
+
 const crawlTalemetryJson = async (
   source: CrawlSource,
   fetcher: typeof fetch,
@@ -7041,7 +7053,7 @@ const crawlTalemetryJson = async (
   // resumed passes begin directly at their cursor instead of spending another
   // request on page-one metadata. Other Talemetry tenants retain the wider
   // bounded window.
-  const maxTargetPages = source.id === "p4-0214-alvarez-marsal"
+  const maxTargetPages = TALEMETRY_THROTTLED_SOURCES.has(source.id)
     ? 1
     : startPage === 1 ? 46 : 44;
   const endPage = Math.min(totalPages, startPage + maxTargetPages - 1);
@@ -11256,6 +11268,23 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
       .slice(0, 8)
       .join("; ") || undefined;
     const html = await response.text();
+    // Some career vendors return HTTP 200 for an interstitial instead of the
+    // requested catalog. Treat that as access blocking so the scheduled
+    // browser recovery path runs; an empty parser result would misclassify a
+    // live board as a broken source.
+    if (/<title>\s*(?:Quick Check Needed|Checking your browser[^<]*)\s*<\/title>/i.test(html)
+      || /confirm (?:that )?you(?:'|&#39;)?re a real person/i.test(html)
+      || /(?:javascript|java script) (?:is )?required to (?:continue|view)|\/__challenge(?:[/?"'])/i.test(html)
+      || /cf-chl-(?:widget|challenge)|challenge-platform\/h\/g\/turnstile/i.test(html)) {
+      return {
+        status: "blocked",
+        responseStatus: response.status,
+        completeListing: false,
+        jobs: [],
+        resolvedListingUrl: finalPage.href,
+        error: "Career site returned an access-verification challenge.",
+      };
+    }
     const inactiveCareerPage = verifiedInactiveCareerPage(source, finalPage, html);
     if (inactiveCareerPage) return {
       status: "succeeded",
@@ -14262,7 +14291,7 @@ const crawlFedEx = async (source: CrawlSource, fetcher: typeof fetch): Promise<S
   const fetchPage = async (page: number): Promise<FedExListingPage | null> => {
     try {
       const endpoint = fedexListingUrl(page);
-      const response = await fetchWithTimeout(fetcher, endpoint, undefined, true, { attempts: 1, timeoutMs: 12_000 });
+      const response = await fetchWithTimeout(fetcher, endpoint, undefined, true, { attempts: 2, timeoutMs: 12_000 });
       responseStatus = response.status;
       if (!response.ok) return null;
       if (response.url) {
@@ -16020,11 +16049,34 @@ const crawlPcaCareerSearch = async (source: CrawlSource, fetcher: typeof fetch):
       !== first.jobs.map(({ officialUrl }) => officialUrl).join("|")) {
       throw new Error("Packaging Corporation job search changed during pagination.");
     }
-    const jobs = Array.from({ length: totalPages }, (_, index) => pages.get(index + 1) ?? []).flat();
-    if (jobs.length !== first.total || new Set(jobs.map(({ externalId }) => externalId)).size !== first.total
-      || new Set(jobs.map(({ officialUrl }) => officialUrl)).size !== first.total) {
+    const catalogRows = Array.from({ length: totalPages }, (_, index) => pages.get(index + 1) ?? []).flat();
+    if (catalogRows.length !== first.total) {
       throw new Error("Packaging Corporation job search returned duplicate or missing jobs.");
     }
+    const grouped = new Map<string, CrawledJob[]>();
+    for (const job of catalogRows) {
+      const key = `${job.externalId}\u0000${job.officialUrl}`;
+      grouped.set(key, [...(grouped.get(key) ?? []), job]);
+    }
+    const jobs: CrawledJob[] = [...grouped.values()].map((rows): CrawledJob => {
+      const primary = rows[0]!;
+      const alternates = rows.slice(1);
+      const samePosting = rows.every((job) => job.externalId === primary.externalId
+        && job.officialUrl === primary.officialUrl
+        && jobIdentityText(job.title) === jobIdentityText(primary.title)
+        && job.sourcePostedText === primary.sourcePostedText);
+      const locations = rows.map((job) => job.location).filter((value): value is string => Boolean(value));
+      if (!samePosting || new Set(locations).size !== rows.length) {
+        throw new Error("Packaging Corporation job search returned duplicate or conflicting jobs.");
+      }
+      return {
+        ...primary,
+        secondaryLocations: [...new Set([
+          ...(primary.secondaryLocations ?? []),
+          ...alternates.flatMap((job) => [job.location, ...(job.secondaryLocations ?? [])]),
+        ].filter((value): value is string => Boolean(value) && value !== primary.location))],
+      };
+    });
     const detailBudget = Math.max(0, 50 - (totalPages + 2));
     const detailIndexes = jobs.flatMap((job, index) => classifyJobPrograms(job.title).keys.length > 0 ? [index] : [])
       .slice(0, detailBudget);
@@ -18720,7 +18772,9 @@ async function crawlAdpMyJobs(source: CrawlSource, fetcher: typeof fetch): Promi
 
 async function crawlAdpWorkforceNow(source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> {
   const page = new URL(source.postingUrl);
-  const cid = page.searchParams.get("cid");
+  // Older public posting links use `client`; the staffing API still expects
+  // the same tenant value under its `cid` query parameter.
+  const cid = page.searchParams.get("cid") ?? page.searchParams.get("client");
   const ccId = page.searchParams.get("ccId");
   const locale = page.searchParams.get("lang") ?? "en_US";
   if (!cid || !ccId) return { status: "failed", responseStatus: null, completeListing: false, jobs: [], error: "ADP Workforce Now cid or ccId is missing." };
@@ -19564,30 +19618,217 @@ const crawlHoulihanLokey = async (
   };
 };
 
+const WHATNOT_LISTING_URL = "https://www.whatnot.com/careers/discover";
+
+const crawlWhatnotReader = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult | null> => {
+  try {
+    const response = await fetchWithTimeout(fetcher, `https://r.jina.ai/${WHATNOT_LISTING_URL}`, {
+      headers: { accept: "text/plain", "x-retain-links": "all" },
+    }, false, { attempts: 1, timeoutMs: 20_000 });
+    if (!response.ok) return null;
+    const markdown = await response.text();
+    const sourceUrl = markdown.match(/^URL Source:\s*(\S+)\s*$/mi)?.[1] ?? null;
+    if (sourceUrl !== WHATNOT_LISTING_URL) return null;
+    const content = markdown.split(/^Markdown Content:\s*$/mi)[1] ?? "";
+    const expected = Number(content.match(/Showing\s+([\d,]+)\s+matching jobs/i)?.[1]?.replaceAll(",", ""));
+    if (!Number.isInteger(expected) || expected <= 0 || expected > 500) return null;
+    const matches = [...content.matchAll(/\[([^\]\n]+)\]\((https:\/\/www\.whatnot\.com\/careers\/roles\/([a-f0-9-]{36}))\)([\s\S]*?)\[View Job\]\(\2\)/gi)];
+    const jobs = matches.flatMap((match): CrawledJob[] => {
+      const title = decodeHtmlAttribute(match[1]).replaceAll("\\[", "[").replace(/\\([\\`*{}\]()#+.!_-])/g, "$1").trim();
+      const locationParts = [...match[4].matchAll(/\*\*([^*]+)\*\*/g)]
+        .map((value) => decodeHtmlAttribute(value[1]).replace(/\s*·\s*/g, "; ").trim())
+        .filter(Boolean);
+      const location = locationParts.join("; ") || null;
+      const preceding = content.slice(0, match.index ?? 0);
+      const department = [...preceding.matchAll(/^####\s+(.+?)\s*$/gm)].at(-1)?.[1]?.trim() ?? null;
+      if (!title || !location) return [];
+      return [{
+        externalId: match[3].toLocaleLowerCase(),
+        requisitionId: match[3].toLocaleLowerCase(),
+        title,
+        company: source.company,
+        location,
+        arrangement: /\bremote\b/i.test(location) ? "remote" : "unknown",
+        employmentType: classifyJobPrograms(title).keys.some((key) => key === "internship" || key === "coop") ? "Internship" : null,
+        summary: department,
+        ...(department ? { department } : {}),
+        applyUrl: match[2],
+        officialUrl: match[2],
+        publishedAt: null,
+      }];
+    });
+    if (jobs.length !== expected
+      || new Set(jobs.map((job) => job.externalId)).size !== expected
+      || new Set(jobs.map((job) => job.officialUrl)).size !== expected) return null;
+    return {
+      status: "succeeded",
+      responseStatus: response.status,
+      // The exact visible count validates additions, but a cached reader
+      // snapshot must not authoritatively close jobs on Whatnot's live board.
+      completeListing: false,
+      jobs,
+      resolvedListingUrl: WHATNOT_LISTING_URL,
+      error: null,
+    };
+  } catch {
+    return null;
+  }
+};
+
 const crawlWhatnot = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
   const endpoint = "https://jobs.whatnot.com/api/jobs";
+  let responseStatus: number | null = null;
+  let accessChallenge = false;
   try {
-    const response = await fetchWithTimeout(fetcher, endpoint, { headers: { accept: "application/json" } }, true, { attempts: 2, timeoutMs: 10_000 });
-    if (!response.ok) return { status: isBlockedHttpStatus(response.status) ? "blocked" : "failed", responseStatus: response.status, completeListing: false, jobs: [], error: `Whatnot jobs API returned HTTP ${response.status}.` };
-    const payload = await response.json() as { results?: Array<Record<string, unknown>> };
-    const records = Array.isArray(payload.results) ? payload.results.filter((record) => record.isListed !== false && record.status !== "Archived") : [];
-    const jobs = uniqueJobs(records.flatMap((record): CrawledJob[] => {
-      const id = asText(record.id);
-      const title = asText(record.title);
-      const officialUrl = asText(record.externalLink) ?? asText(record.applyLink);
-      if (!id || !title || !officialUrl) return [];
+    const response = await fetchWithTimeout(fetcher, endpoint, { headers: { accept: "application/json" } }, true, { attempts: 1, timeoutMs: 10_000 });
+    responseStatus = response.status;
+    if (response.ok) {
+      const contentType = response.headers.get("content-type")?.toLocaleLowerCase() ?? "";
+      const responseText = await response.text();
+      if (!contentType.includes("text/html") && !/^\s*</.test(responseText)) {
+        const payload = JSON.parse(responseText) as { results?: Array<Record<string, unknown>> };
+        const records = Array.isArray(payload.results) ? payload.results.filter((record) => record.isListed !== false && record.status !== "Archived") : [];
+        const jobs = uniqueJobs(records.flatMap((record): CrawledJob[] => {
+          const id = asText(record.id);
+          const title = asText(record.title);
+          const officialUrl = asText(record.externalLink) ?? asText(record.applyLink);
+          if (!id || !title || !officialUrl) return [];
+          return [{
+            externalId: id, title, company: source.company, location: asText(record.locationExternalName) ?? asText(record.locationName),
+            arrangement: /remote/i.test(asText(record.workplaceType) ?? "") ? "remote" : /hybrid/i.test(asText(record.workplaceType) ?? "") ? "hybrid" : "onsite",
+            employmentType: normalizeEmploymentType(record.employmentType), summary: asText(record.compensationTierSummary),
+            department: asText(record.departmentName), team: asText(record.teamName),
+            secondaryLocations: Array.isArray(record.secondaryLocationNames) ? record.secondaryLocationNames.flatMap((value) => asText(value) ?? []) : [],
+            applyUrl: asText(record.applyLink), officialUrl, publishedAt: normalizedDate(record.publishedDate), sourceUpdatedAt: normalizedDate(record.updatedAt),
+          }];
+        }));
+        if (jobs.length > 0 && jobs.length === records.length) return { status: "succeeded", responseStatus, completeListing: true, jobs, resolvedListingUrl: WHATNOT_LISTING_URL, error: null };
+      } else accessChallenge = true;
+    }
+  } catch {
+    // The former jobs.whatnot.com API now sits behind an edge challenge. The
+    // verified official-reader recovery below keeps the catalog available.
+  }
+  const reader = await crawlWhatnotReader(source, fetcher);
+  if (reader) return reader;
+  return {
+    status: accessChallenge || (responseStatus != null && isBlockedHttpStatus(responseStatus)) ? "blocked" : "failed",
+    responseStatus,
+    completeListing: false,
+    jobs: [],
+    resolvedListingUrl: WHATNOT_LISTING_URL,
+    error: accessChallenge
+      ? "Whatnot jobs API returned an HTML access challenge and its verified reader catalog was unavailable."
+      : "Whatnot's official API and verified reader catalog were both unavailable.",
+  };
+};
+
+type PepsiCoJobRecord = {
+  data?: Record<string, unknown>;
+};
+
+const crawlPepsiCo = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const pageSize = 100;
+  const endpointFor = (page: number) => {
+    const endpoint = new URL("https://www.pepsicojobs.com/api/jobs");
+    endpoint.searchParams.set("lang", "en-US");
+    endpoint.searchParams.set("country", "United States");
+    endpoint.searchParams.set("limit", String(pageSize));
+    endpoint.searchParams.set("page", String(page));
+    endpoint.searchParams.set("sortBy", "posted_date");
+    return endpoint;
+  };
+  let responseStatus: number | null = null;
+  try {
+    const fetchPage = async (page: number): Promise<{ total: number; records: PepsiCoJobRecord[] }> => {
+      const response = await fetchWithTimeout(fetcher, endpointFor(page), {
+        headers: { accept: "application/json", referer: source.postingUrl },
+      }, true, { attempts: 2, timeoutMs: 12_000 });
+      responseStatus = response.status;
+      if (!response.ok) throw Object.assign(new Error(`PepsiCo jobs API returned HTTP ${response.status}.`), { responseStatus: response.status });
+      const payload = await response.json() as { count?: unknown; totalCount?: unknown; jobs?: unknown };
+      const total = Number(payload.totalCount ?? payload.count);
+      const records = Array.isArray(payload.jobs) ? payload.jobs as PepsiCoJobRecord[] : [];
+      if (!Number.isSafeInteger(total) || total <= 0 || total > 2_000 || records.length > pageSize) {
+        throw new Error(`PepsiCo jobs API page ${page} failed cardinality validation.`);
+      }
+      return { total, records };
+    };
+    // PepsiCo serves this API from eventually consistent replicas: the final
+    // page can briefly report 285 while adjacent pages report 288. Two bounded
+    // sequential passes converge without treating that safe transient as a
+    // failed crawl or silently losing the trailing jobs. Three passes stay
+    // well inside the request budget while tolerating one stale replica read.
+    const recordsByIdentity = new Map<string, PepsiCoJobRecord>();
+    let maxReportedTotal = 0;
+    for (let pass = 0; pass < 3; pass += 1) {
+      let totalPages = Math.max(1, Math.ceil(maxReportedTotal / pageSize));
+      for (let page = 1; page <= totalPages; page += 1) {
+        const payload = await fetchPage(page);
+        maxReportedTotal = Math.max(maxReportedTotal, payload.total);
+        totalPages = Math.max(totalPages, Math.ceil(maxReportedTotal / pageSize));
+        for (const record of payload.records) {
+          const identity = asText(record.data?.req_id) ?? asText(record.data?.slug);
+          if (!identity) throw new Error(`PepsiCo jobs API page ${page} contained a record without an identity.`);
+          recordsByIdentity.set(identity, record);
+        }
+      }
+    }
+    const records = [...recordsByIdentity.values()];
+    const jobs = records.flatMap((record): CrawledJob[] => {
+      const data = record.data;
+      const externalId = asText(data?.req_id) ?? asText(data?.slug);
+      const slug = asText(data?.slug) ?? externalId;
+      const title = asText(data?.title);
+      const country = asText(data?.country);
+      if (!externalId || !slug || !title || country !== "United States") return [];
+      const officialUrl = `https://www.pepsicojobs.com/main/jobs/${encodeURIComponent(slug)}?lang=en-US`;
+      const applyUrl = asText(data?.apply_url);
       return [{
-        externalId: id, title, company: source.company, location: asText(record.locationExternalName) ?? asText(record.locationName),
-        arrangement: /remote/i.test(asText(record.workplaceType) ?? "") ? "remote" : /hybrid/i.test(asText(record.workplaceType) ?? "") ? "hybrid" : "onsite",
-        employmentType: normalizeEmploymentType(record.employmentType), summary: asText(record.compensationTierSummary),
-        department: asText(record.departmentName), team: asText(record.teamName),
-        secondaryLocations: Array.isArray(record.secondaryLocationNames) ? record.secondaryLocationNames.flatMap((value) => asText(value) ?? []) : [],
-        applyUrl: asText(record.applyLink), officialUrl, publishedAt: normalizedDate(record.publishedDate), sourceUpdatedAt: normalizedDate(record.updatedAt),
+        externalId,
+        requisitionId: externalId,
+        title,
+        company: source.company,
+        location: asText(data?.full_location) ?? asText(data?.short_location)
+          ?? [asText(data?.city), asText(data?.state), country].filter(Boolean).join(", "),
+        locationCity: asText(data?.city),
+        locationState: asText(data?.state),
+        locationCountry: country,
+        arrangement: /remote/i.test(`${asText(data?.location_type) ?? ""} ${asText(data?.full_location) ?? ""}`) ? "remote" : "unknown",
+        employmentType: normalizeEmploymentType(data?.employment_type),
+        summary: plainText(asText(data?.description))?.slice(0, 1_200) ?? null,
+        description: plainText(asText(data?.description)),
+        jobFunction: asText(data?.category),
+        ...(applyUrl?.startsWith("https://") ? { applyUrl } : {}),
+        officialUrl,
+        publishedAt: normalizedDate(asText(data?.posted_date)),
+        sourceUpdatedAt: normalizedDate(asText(data?.update_date)),
       }];
-    }));
-    return { status: jobs.length ? "succeeded" : "failed", responseStatus: response.status, completeListing: jobs.length > 0 && jobs.length === records.length, jobs, resolvedListingUrl: "https://jobs.whatnot.com/", error: jobs.length ? null : "Whatnot jobs API contained no usable jobs." };
+    });
+    if (jobs.length !== records.length || new Set(jobs.map((job) => job.externalId)).size !== records.length) {
+      throw new Error("PepsiCo jobs API contained invalid or duplicate US jobs.");
+    }
+    return {
+      status: "succeeded",
+      responseStatus: responseStatus ?? 200,
+      // Only close missing rows when the union exactly matches the largest
+      // total observed across the bounded passes. An upstream mid-crawl mutation is
+      // still ingested, but remains non-authoritative for closures.
+      completeListing: jobs.length === maxReportedTotal,
+      jobs,
+      resolvedListingUrl: "https://www.pepsicojobs.com/main/jobs?country=United%20States&lang=en-US",
+      error: null,
+    };
   } catch (error) {
-    return { status: "failed", responseStatus: null, completeListing: false, jobs: [], error: error instanceof Error ? error.message : "Whatnot jobs API failed." };
+    const status = typeof error === "object" && error && "responseStatus" in error
+      ? Number((error as { responseStatus: unknown }).responseStatus) : responseStatus;
+    return {
+      status: isBlockedHttpStatus(status) ? "blocked" : "failed",
+      responseStatus: status,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown PepsiCo crawler error.",
+    };
   }
 };
 
@@ -19928,6 +20169,7 @@ const crawlUsaJobs = async (source: CrawlSource, fetcher: typeof fetch, now: Dat
   const page = new URL(source.postingUrl);
   const organization = page.searchParams.get("a")?.trim().toUpperCase() ?? "";
   const keyword = page.searchParams.get("k")?.trim() ?? "";
+  const location = page.searchParams.get("l")?.trim() ?? "";
   const hasOrganization = /^[A-Z0-9]{2,12}$/.test(organization);
   const hasKeyword = keyword.length > 0 && keyword.length <= 100
     && Array.from(keyword).every((character) => {
@@ -19952,6 +20194,7 @@ const crawlUsaJobs = async (source: CrawlSource, fetcher: typeof fetch, now: Dat
   const endpoint = new URL("https://data.usajobs.gov/api/search");
   if (hasOrganization) endpoint.searchParams.set("Organization", organization);
   if (hasKeyword) endpoint.searchParams.set("Keyword", keyword);
+  if (location) endpoint.searchParams.set("LocationName", location);
   endpoint.searchParams.set("ResultsPerPage", "500");
   try {
     const response = await fetchWithTimeout(fetcher, endpoint, {
@@ -21871,6 +22114,984 @@ const crawlCommunityHealthSystems = async (
   }
 };
 
+type LithiaCareerRow = {
+  City?: unknown;
+  EE_Categories_lower_level?: unknown;
+  External_Apply_URL?: unknown;
+  Internal_Brand?: unknown;
+  Postal_Code?: unknown;
+  State?: unknown;
+  jobDescription?: unknown;
+  jobRequisitionId?: unknown;
+  locationCountry?: unknown;
+  startDate?: unknown;
+  timeType?: unknown;
+  title?: unknown;
+  url?: unknown;
+};
+
+const LITHIA_API_URL = "https://lad-careers-middleware.lithia.workers.dev/jobs";
+const LITHIA_LISTING_URL = "https://careers.lithiadriveway.com/opportunities";
+
+const crawlLithiaCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  try {
+    const response = await fetchWithTimeout(fetcher, LITHIA_API_URL, {
+      headers: { accept: "application/json", referer: LITHIA_LISTING_URL },
+    }, true, { attempts: 2, timeoutMs: 20_000 });
+    responseStatus = response.status;
+    if (!response.ok) throw new Error(`Lithia official jobs API returned HTTP ${response.status}.`);
+    const payload = await response.json() as { Report_Entry?: unknown };
+    if (!Array.isArray(payload.Report_Entry) || payload.Report_Entry.length === 0 || payload.Report_Entry.length > 2_500) {
+      throw new Error("Lithia official jobs API returned an empty or malformed catalog.");
+    }
+    const eligibleRows = payload.Report_Entry.filter((value) => {
+      if (!value || typeof value !== "object") return false;
+      const country = asText((value as LithiaCareerRow).locationCountry);
+      return !country || /United States/i.test(country);
+    });
+    const parsedJobs = eligibleRows.flatMap((value): CrawledJob[] => {
+      if (!value || typeof value !== "object") return [];
+      const row = value as LithiaCareerRow;
+      const externalId = asText(row.jobRequisitionId);
+      const title = asText(row.title);
+      const description = plainText(asText(row.jobDescription)) ?? title;
+      const city = asText(row.City);
+      const state = asText(row.State);
+      const postalCode = asText(row.Postal_Code);
+      const officialUrl = asText(row.url);
+      const applyUrl = asText(row.External_Apply_URL);
+      if (!externalId || !/^R\d+$/i.test(externalId) || !title || !description || !officialUrl || !applyUrl) return [];
+      try {
+        const detail = new URL(officialUrl);
+        const apply = new URL(applyUrl);
+        if (detail.hostname.toLocaleLowerCase() !== "lithia.wd504.myworkdayjobs.com"
+          || apply.origin !== detail.origin || apply.pathname !== `${detail.pathname.replace(/\/$/, "")}/apply`
+          || detail.search || detail.hash || apply.search || apply.hash) return [];
+      } catch {
+        return [];
+      }
+      const location = [city, state, postalCode, "United States"].filter(Boolean).join(", ");
+      const programs = classifyJobPrograms(`${title} ${description.slice(0, 1_000)}`).keys;
+      return [{
+        externalId,
+        requisitionId: externalId,
+        title,
+        company: source.company,
+        location,
+        arrangement: /\bremote\b/i.test(`${title} ${location} ${description.slice(0, 500)}`) ? "remote" : "onsite",
+        employmentType: programs.includes("coop") ? "Co-op"
+          : programs.includes("internship") ? "Internship" : normalizeEmploymentType(row.timeType),
+        summary: description.slice(0, 1_000),
+        description,
+        ...(asText(row.EE_Categories_lower_level) ? { jobFamily: asText(row.EE_Categories_lower_level) } : {}),
+        ...(asText(row.Internal_Brand) ? { businessUnit: asText(row.Internal_Brand) } : {}),
+        ...(city ? { locationCity: city } : {}),
+        ...(state ? { locationState: state } : {}),
+        locationCountry: "United States",
+        ...(postalCode ? { locationPostalCode: postalCode } : {}),
+        applyUrl,
+        officialUrl,
+        sourcePostedText: asText(row.startDate),
+        publishedAt: normalizedDate(asText(row.startDate)),
+        rawPayload: { source: "lithia-official-careers-api" },
+      }];
+    });
+    if (parsedJobs.length !== eligibleRows.length) {
+      throw new Error(`Lithia official jobs API returned incomplete US rows (${parsedJobs.length}/${eligibleRows.length}).`);
+    }
+    const jobsByRequisition = new Map<string, CrawledJob>();
+    for (const job of parsedJobs) {
+      const requisitionId = job.requisitionId;
+      if (!requisitionId) throw new Error("Lithia official jobs API returned a row without a requisition ID.");
+      const existing = jobsByRequisition.get(requisitionId);
+      if (!existing) {
+        jobsByRequisition.set(requisitionId, job);
+        continue;
+      }
+      if (existing.title !== job.title || existing.location !== job.location) {
+        throw new Error(`Lithia official jobs API reused requisition ${requisitionId} for conflicting postings.`);
+      }
+      // Lithia publishes a small number of identical requisitions in both its
+      // LithiaCareers and Driveway Workday sites. Keep a single canonical row.
+      if (existing.officialUrl.includes("/Driveway/") && job.officialUrl.includes("/LithiaCareers/")) {
+        jobsByRequisition.set(requisitionId, job);
+      }
+    }
+    const jobs = [...jobsByRequisition.values()];
+    if (new Set(jobs.map((job) => job.externalId)).size !== jobs.length
+      || new Set(jobs.map((job) => job.officialUrl)).size !== jobs.length) {
+      throw new Error(`Lithia official jobs API returned duplicate canonical rows (${jobs.length}/${eligibleRows.length}).`);
+    }
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: true,
+      jobs,
+      resolvedListingUrl: LITHIA_LISTING_URL,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      resolvedListingUrl: LITHIA_LISTING_URL,
+      error: error instanceof Error ? error.message : "Unknown Lithia careers crawler error.",
+    };
+  }
+};
+
+type GreyOrangeJob = {
+  _source?: {
+    id?: unknown;
+    jobCode?: unknown;
+    refNum?: unknown;
+    jobTitle?: unknown;
+    jobUrl?: unknown;
+    location?: unknown;
+    locAgg?: unknown;
+    departmentName?: unknown;
+    text1?: unknown;
+    mediumDescriptionWithoutHtml?: unknown;
+    metaDescription?: unknown;
+    employmentType?: unknown;
+    experienceUIField?: unknown;
+    createdDate?: unknown;
+    jobCreatedDate?: unknown;
+    modifiedDate?: unknown;
+    desiredSkillList?: unknown;
+    jobLocationRecord?: unknown;
+  };
+};
+
+type GreyOrangePayload = {
+  code?: unknown;
+  data?: {
+    data?: unknown;
+    totalCount?: unknown;
+    facetedSearchConfig?: { paginationHowMuch?: unknown };
+  };
+};
+
+const GREYORANGE_API_URL = "https://public.zwayam.com/jobs/search";
+const GREYORANGE_LISTING_URL = "https://careers.greyorange.com/greyorange/";
+
+const crawlGreyOrangeCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  try {
+    const fetchPage = async (offset: number): Promise<GreyOrangePayload> => {
+      const body = new FormData();
+      body.set("filterCri", JSON.stringify({
+        paginationStartNo: offset,
+        selectedCall: "sort",
+        sortCriteria: { name: "modifiedDate", isAscending: false },
+        anyOfTheseWords: "",
+      }));
+      body.set("domain", "careers.greyorange.com");
+      body.set("companyId", "MTYwOTA=");
+      const response = await fetchWithTimeout(fetcher, GREYORANGE_API_URL, {
+        method: "POST",
+        body,
+        headers: { accept: "application/json", referer: GREYORANGE_LISTING_URL },
+      }, true, { attempts: 2, timeoutMs: 15_000 });
+      responseStatus = response.status;
+      if (!response.ok) throw new Error(`GreyOrange official jobs API returned HTTP ${response.status}.`);
+      return response.json() as Promise<GreyOrangePayload>;
+    };
+    const first = await fetchPage(0);
+    const total = typeof first.data?.totalCount === "number" ? first.data.totalCount : Number.NaN;
+    const pageSize = Number.parseInt(asText(first.data?.facetedSearchConfig?.paginationHowMuch) ?? "", 10);
+    const firstRows = Array.isArray(first.data?.data) ? first.data.data as GreyOrangeJob[] : [];
+    if (first.code !== 200 || !Number.isInteger(total) || total <= 0 || total > 500
+      || !Number.isInteger(pageSize) || pageSize <= 0 || pageSize > 100 || firstRows.length !== Math.min(pageSize, total)) {
+      throw new Error("GreyOrange official jobs API returned a malformed first page.");
+    }
+    const rows = [...firstRows];
+    for (let offset = pageSize; offset < total; offset += pageSize) {
+      const page = await fetchPage(offset);
+      const values = Array.isArray(page.data?.data) ? page.data.data as GreyOrangeJob[] : [];
+      if (page.code !== 200 || page.data?.totalCount !== total || values.length !== Math.min(pageSize, total - offset)) {
+        throw new Error(`GreyOrange official jobs API returned a changing or incomplete page at offset ${offset}.`);
+      }
+      rows.push(...values);
+    }
+    const jobs = rows.flatMap((row): CrawledJob[] => {
+      const value = row._source;
+      if (!value) return [];
+      const id = typeof value.id === "number" ? String(value.id) : asText(value.id);
+      const requisitionId = asText(value.refNum) ?? asText(value.jobCode);
+      const title = asText(value.jobTitle);
+      const slug = asText(value.jobUrl);
+      const location = asText(value.location) ?? asText(value.locAgg);
+      const description = asText(value.mediumDescriptionWithoutHtml) ?? asText(value.metaDescription);
+      if (!id || !/^\d+$/.test(id) || !requisitionId || !title || !slug || !location || !description
+        || !/^[a-z0-9-]+$/i.test(slug)) return [];
+      const locationRecord = Array.isArray(value.jobLocationRecord)
+        ? value.jobLocationRecord.find((item) => item && typeof item === "object") as Record<string, unknown> | undefined
+        : undefined;
+      const official = new URL(`jobview/${slug}`, GREYORANGE_LISTING_URL);
+      official.searchParams.set("id", id);
+      const createdMs = typeof value.jobCreatedDate === "number" ? value.jobCreatedDate : null;
+      const modifiedMs = typeof value.modifiedDate === "number" ? value.modifiedDate : null;
+      return [{
+        externalId: id,
+        requisitionId,
+        title,
+        company: source.company,
+        location,
+        arrangement: /\bremote\b/i.test(location) ? "remote" : "onsite",
+        employmentType: normalizeEmploymentType(value.employmentType),
+        summary: description.slice(0, 1_000),
+        description,
+        ...(asText(value.departmentName) ?? asText(value.text1)
+          ? { department: asText(value.departmentName) ?? asText(value.text1) }
+          : {}),
+        ...(asText(value.experienceUIField) ? { experienceRequirements: asText(value.experienceUIField) } : {}),
+        ...(Array.isArray(value.desiredSkillList)
+          ? { skills: value.desiredSkillList.flatMap((skill) => asText(skill) ? [asText(skill)!] : []) }
+          : {}),
+        ...(asText(locationRecord?.city) ? { locationCity: asText(locationRecord?.city) } : {}),
+        ...(asText(locationRecord?.state) ? { locationState: asText(locationRecord?.state) } : {}),
+        ...(asText(locationRecord?.country) ? { locationCountry: asText(locationRecord?.country) } : {}),
+        applyUrl: official.href,
+        officialUrl: official.href,
+        sourcePostedText: asText(value.createdDate),
+        publishedAt: normalizedDate(asText(value.createdDate)) ?? (createdMs ? new Date(createdMs).toISOString() : null),
+        sourceUpdatedAt: modifiedMs ? new Date(modifiedMs).toISOString() : null,
+        rawPayload: { zwayamId: id },
+      }];
+    });
+    if (jobs.length !== total || new Set(jobs.map((job) => job.externalId)).size !== total) {
+      throw new Error(`GreyOrange official jobs API returned incomplete or duplicate rows (${jobs.length}/${total}).`);
+    }
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: true,
+      jobs,
+      resolvedListingUrl: GREYORANGE_LISTING_URL,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      resolvedListingUrl: GREYORANGE_LISTING_URL,
+      error: error instanceof Error ? error.message : "Unknown GreyOrange careers crawler error.",
+    };
+  }
+};
+
+const fetchVerifiedStaticCareerHtml = async (
+  source: CrawlSource,
+  fetcher: typeof fetch,
+): Promise<{ html: string; status: number; url: string }> => {
+  const expected = new URL(source.postingUrl);
+  const response = await fetchWithTimeout(fetcher, expected, undefined, true, { attempts: 2, timeoutMs: 12_000 });
+  if (!response.ok) throw Object.assign(new Error(`Official careers page returned HTTP ${response.status}.`), { responseStatus: response.status });
+  const final = new URL(response.url || expected.href);
+  if (final.origin !== expected.origin) throw Object.assign(new Error("Official careers page redirected outside its verified origin."), { responseStatus: response.status });
+  return { html: await response.text(), status: response.status, url: final.href };
+};
+
+const staticCareerJob = (
+  source: CrawlSource,
+  identity: string,
+  title: string,
+  location: string | null,
+  description: string | null,
+  officialUrl: string,
+  applyUrl?: string | null,
+): CrawledJob => {
+  const text = description ?? title;
+  const programs = classifyJobPrograms(`${title} ${text.slice(0, 1_000)}`).keys;
+  return {
+    externalId: identity,
+    requisitionId: identity,
+    title,
+    company: source.company,
+    location,
+    arrangement: /\bremote\b/i.test(`${location ?? ""} ${text.slice(0, 500)}`) ? "remote" : "unknown",
+    employmentType: programs.includes("coop") ? "Co-op" : programs.includes("internship") ? "Internship" : null,
+    summary: text.slice(0, 1_000),
+    description: text,
+    ...(applyUrl ? { applyUrl } : {}),
+    officialUrl,
+    publishedAt: null,
+  };
+};
+
+const crawlReeCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  try {
+    const page = await fetchVerifiedStaticCareerHtml(source, fetcher);
+    responseStatus = page.status;
+    const listingHtml = page.html.replace(/<!--[\s\S]*?-->/g, "");
+    const anchors = [...listingHtml.matchAll(/<a\b(?=[^>]*class=["'][^"']*\bcomeet-position\b[^"']*["'])[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)];
+    const jobs = anchors.flatMap((match): CrawledJob[] => {
+      const title = plainText(match[2].match(/<div\b[^>]*class=["'][^"']*\bcomeet-position-name\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/i)?.[1]);
+      const location = plainText(match[2].match(/<div\b[^>]*class=["'][^"']*\bcomeet-position-meta\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/i)?.[1]);
+      const official = new URL(decodeHtmlAttribute(match[1]), page.url);
+      const identity = official.pathname.match(/\/([A-Z0-9]{2}\.[A-Z0-9]{3})\//i)?.[1] ?? null;
+      if (!title || !location || !identity || official.hostname !== "ree.auto" || !official.pathname.startsWith("/careers-2/co/")) return [];
+      return [staticCareerJob(source, identity, title, location, null, official.href, official.href)];
+    });
+    if (anchors.length === 0 || jobs.length !== anchors.length || new Set(jobs.map((job) => job.externalId)).size !== jobs.length) {
+      throw new Error("REE official Comeet listing was empty, duplicate, or malformed.");
+    }
+    return { status: "succeeded", responseStatus, completeListing: true, jobs, resolvedListingUrl: page.url, error: null };
+  } catch (error) {
+    return { status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed", responseStatus, completeListing: false, jobs: [], error: error instanceof Error ? error.message : "Unknown REE careers crawler error." };
+  }
+};
+
+const crawlSchrodingerCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  try {
+    const page = await fetchVerifiedStaticCareerHtml(source, fetcher);
+    responseStatus = page.status;
+    const cards = [...page.html.matchAll(/<div\b[^>]*class=["'][^"']*\binfo-card\b[^"']*\bjob-(\d+)\b[^"']*\bjob-item\b[^"']*["'][^>]*>([\s\S]*?)<a\b[^>]*class=["'][^"']*\bopen-career-link\b[^"']*["'][^>]*data-position-id=["']\1["'][^>]*data-open-modal=["']([^"']+)["'][^>]*><\/a>/gi)];
+    const expectedCount = (page.html.match(/\bjob-item\b/g) ?? []).length;
+    const jobs = cards.flatMap((match): CrawledJob[] => {
+      const title = plainText(match[2].match(/<h5\b[^>]*>([\s\S]*?)<\/h5>/i)?.[1]);
+      const location = plainText(match[2].match(/<div\b[^>]*class=["'][^"']*\bposition-location\b[^"']*["'][^>]*>[\s\S]*?<span\b[^>]*>([\s\S]*?)<\/span>/i)?.[1]);
+      if (!title || !location || !/^[a-z0-9_-]+$/i.test(match[3])) return [];
+      const official = new URL(page.url);
+      official.hash = match[3];
+      return [staticCareerJob(source, match[1], title, location, null, official.href, official.href)];
+    });
+    if (expectedCount === 0 || jobs.length !== expectedCount || new Set(jobs.map((job) => job.externalId)).size !== jobs.length) {
+      throw new Error(`Schrödinger official careers page returned incomplete position cards (${jobs.length}/${expectedCount}).`);
+    }
+    return { status: "succeeded", responseStatus, completeListing: true, jobs, resolvedListingUrl: page.url, error: null };
+  } catch (error) {
+    return { status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed", responseStatus, completeListing: false, jobs: [], error: error instanceof Error ? error.message : "Unknown Schrödinger careers crawler error." };
+  }
+};
+
+const crawlIbisCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  try {
+    const page = await fetchVerifiedStaticCareerHtml(source, fetcher);
+    responseStatus = page.status;
+    const listing = page.html.split(/<!--\s*end of jobs\s*-->/i)[0] ?? page.html;
+    const cards = [...listing.matchAll(/<div\b[^>]*class=["'][^"']*\btext-container\b[^"']*["'][^>]*>[\s\S]*?<h3\b[^>]*>([\s\S]*?)<\/h3>([\s\S]*?)<a\b[^>]*href=["']#(details-lightbox-\d+)["'][^>]*>\s*Read more\s*<\/a>/gi)];
+    const jobs = cards.flatMap((match): CrawledJob[] => {
+      const title = plainText(match[1]);
+      const description = plainText(match[2]);
+      if (!title || !description) return [];
+      const official = new URL(page.url);
+      official.hash = match[3];
+      return [staticCareerJob(source, match[3], title, "Leuven, Belgium", description, official.href, "mailto:jobs@ibis.ai")];
+    });
+    if (jobs.length === 0 || new Set(jobs.map((job) => job.externalId)).size !== jobs.length) throw new Error("ibis.ai official careers page returned no unique position cards.");
+    return { status: "succeeded", responseStatus, completeListing: true, jobs, resolvedListingUrl: page.url, error: null };
+  } catch (error) {
+    return { status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed", responseStatus, completeListing: false, jobs: [], error: error instanceof Error ? error.message : "Unknown ibis.ai careers crawler error." };
+  }
+};
+
+const crawlPcbBankCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  try {
+    const page = await fetchVerifiedStaticCareerHtml(source, fetcher);
+    responseStatus = page.status;
+    const starts = [...page.html.matchAll(/<div\b[^>]*class=["'][^"']*\bproduct-section\b[^"']*\bcareer\b[^"']*["'][^>]*data-category=["']([^"']+)["'][^>]*data-state=["']([^"']+)["'][^>]*>/gi)];
+    const jobs = starts.flatMap((match, index): CrawledJob[] => {
+      const start = match.index! + match[0].length;
+      const end = starts[index + 1]?.index ?? page.html.length;
+      const block = page.html.slice(start, end);
+      const title = plainText(block.match(/<h3\b[^>]*class=["'][^"']*\bf-h2\b[^"']*["'][^>]*>([\s\S]*?)<\/h3>/i)?.[1]);
+      const description = plainText(block.match(/<div\b[^>]*class=["'][^"']*\bcopy\b[^"']*["'][^>]*>([\s\S]*?)(?=<\/div>\s*<\/div>|<div\b[^>]*class=["'][^"']*\bproduct-section\b)/i)?.[1]);
+      if (!title || !description || !/^[a-f0-9-]{20,}$/i.test(match[1])) return [];
+      const city = title.match(/\(([^)]+)\)\s*$/)?.[1] ?? null;
+      const identity = `${match[1]}-${index + 1}`;
+      const official = new URL(page.url);
+      official.hash = `career-${identity}`;
+      return [staticCareerJob(source, identity, title, [city, match[2]].filter(Boolean).join(", "), description, official.href)];
+    });
+    if (starts.length === 0 || jobs.length !== starts.length || new Set(jobs.map((job) => job.externalId)).size !== jobs.length) {
+      throw new Error(`PCB Bank official careers page returned incomplete position cards (${jobs.length}/${starts.length}).`);
+    }
+    return { status: "succeeded", responseStatus, completeListing: true, jobs, resolvedListingUrl: page.url, error: null };
+  } catch (error) {
+    return { status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed", responseStatus, completeListing: false, jobs: [], error: error instanceof Error ? error.message : "Unknown PCB Bank careers crawler error." };
+  }
+};
+
+const crawlRoyalBusinessBankCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  try {
+    const page = await fetchVerifiedStaticCareerHtml(source, fetcher);
+    responseStatus = page.status;
+    const starts = [...page.html.matchAll(/<div\b[^>]*class=["'][^"']*\bc-accordion__item\b[^"']*\bjs-acc-item\b[^"']*["'][^>]*>/gi)];
+    const jobs = starts.flatMap((match, index): CrawledJob[] => {
+      const start = match.index! + match[0].length;
+      const end = starts[index + 1]?.index ?? page.html.length;
+      const block = page.html.slice(start, end);
+      const title = plainText(block.match(/<button\b[^>]*class=["'][^"']*\bc-accordion__title\b[^"']*["'][^>]*>([\s\S]*?)<\/button>/i)?.[1]);
+      const location = plainText(block.match(/<div\b[^>]*class=["'][^"']*\blocation\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/i)?.[1]);
+      const description = plainText(block.match(/<div\b[^>]*class=["'][^"']*\bis-wysiwyg\b[^"']*["'][^>]*>([\s\S]*?)(?=<div\b[^>]*class=["'][^"']*\bc-block__btn\b)/i)?.[1]);
+      const applyHref = decodeHtmlAttribute(block.match(/<div\b[^>]*class=["'][^"']*\bc-block__btn\b[^"']*["'][^>]*>[\s\S]*?<a\b[^>]*href=["']([^"']+)["']/i)?.[1] ?? "");
+      if (!title || !location || !description || /^No Open Positions$/i.test(title)) return [];
+      const identity = `${index + 1}-${jobIdentityText(`${title} ${location}`).replace(/\s+/g, "-")}`;
+      const official = new URL(page.url);
+      official.hash = `job-${encodeURIComponent(identity)}`;
+      return [staticCareerJob(source, identity, title, location, description, official.href, applyHref || null)];
+    });
+    if (jobs.length === 0 || new Set(jobs.map((job) => job.externalId)).size !== jobs.length) throw new Error("Royal Business Bank official careers page returned no unique position cards.");
+    return { status: "succeeded", responseStatus, completeListing: true, jobs, resolvedListingUrl: page.url, error: null };
+  } catch (error) {
+    return { status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed", responseStatus, completeListing: false, jobs: [], error: error instanceof Error ? error.message : "Unknown Royal Business Bank careers crawler error." };
+  }
+};
+
+const crawlGraphistryCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  try {
+    const page = await fetchVerifiedStaticCareerHtml(source, fetcher);
+    responseStatus = page.status;
+    const headings = [...page.html.matchAll(/<h4\b[^>]*class=["'][^"']*\bui-accordion-header\b[^"']*["'][^>]*>([\s\S]*?)<\/h4>/gi)];
+    const jobs = headings.flatMap((match, index): CrawledJob[] => {
+      const start = match.index! + match[0].length;
+      const end = headings[index + 1]?.index ?? page.html.length;
+      const block = page.html.slice(start, end);
+      const title = plainText(match[1]);
+      const description = plainText(block);
+      const applyHref = decodeHtmlAttribute(block.match(/<a\b[^>]*href=["']([^"']+)["'][^>]*>\s*(?:apply|apply now)\s*<\/a>/i)?.[1] ?? "");
+      if (!title || !description || !applyHref) return [];
+      const identity = `${index + 1}-${jobIdentityText(title).replace(/\s+/g, "-")}`;
+      const official = new URL(page.url);
+      official.hash = `career-${index + 1}`;
+      const location = /\bDC\b|Washington/i.test(description) ? "Washington, DC"
+        : /\bremote\b/i.test(description) ? "Remote" : null;
+      return [staticCareerJob(source, identity, title, location, description, official.href, applyHref)];
+    });
+    if (jobs.length === 0 || new Set(jobs.map((job) => job.externalId)).size !== jobs.length) throw new Error("Graphistry official careers page returned no unique active position cards.");
+    return { status: "succeeded", responseStatus, completeListing: true, jobs, resolvedListingUrl: page.url, error: null };
+  } catch (error) {
+    return { status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed", responseStatus, completeListing: false, jobs: [], error: error instanceof Error ? error.message : "Unknown Graphistry careers crawler error." };
+  }
+};
+
+const crawlPearHealthCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  try {
+    const page = await fetchVerifiedStaticCareerHtml(source, fetcher);
+    responseStatus = page.status;
+    if (!/\bNo current openings\b/i.test(plainText(page.html) ?? "")) {
+      throw new Error("Pear Health Labs no longer exposes its verified authoritative-empty marker.");
+    }
+    return { status: "succeeded", responseStatus, completeListing: true, jobs: [], resolvedListingUrl: page.url, error: null };
+  } catch (error) {
+    return { status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed", responseStatus, completeListing: false, jobs: [], error: error instanceof Error ? error.message : "Unknown Pear Health Labs careers crawler error." };
+  }
+};
+
+const MURPHY_USA_LISTING_URL = "https://jobs.murphyusa.com/murphyusa/job-opportunities";
+const MURPHY_USA_API_URL = "https://service.murphydriverewards.com/proxy/job/filters";
+
+const murphyUsaDate = (value: string | null): string | null => {
+  const match = value?.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4})$/);
+  if (!match) return null;
+  const month = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+    .indexOf(match[2].toLocaleLowerCase());
+  const day = Number(match[1]);
+  const year = Number(match[3]);
+  const date = new Date(Date.UTC(year, month, day));
+  return month >= 0 && date.getUTCFullYear() === year && date.getUTCMonth() === month && date.getUTCDate() === day
+    ? date.toISOString()
+    : null;
+};
+
+const crawlMurphyUsaCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  try {
+    const response = await fetchWithTimeout(fetcher, MURPHY_USA_API_URL, {
+      headers: { accept: "application/json", referer: `${MURPHY_USA_LISTING_URL}/` },
+    }, true, { attempts: 2, timeoutMs: 15_000 });
+    responseStatus = response.status;
+    if (!response.ok) throw new Error(`Murphy USA official jobs API returned HTTP ${response.status}.`);
+    const payload = await response.json() as unknown;
+    if (!Array.isArray(payload) || payload.length === 0 || payload.length > 2_500) {
+      throw new Error("Murphy USA official jobs API returned an implausible catalog size.");
+    }
+    const jobs = payload.flatMap((value): CrawledJob[] => {
+      if (!value || typeof value !== "object") return [];
+      const row = value as Record<string, unknown>;
+      const requisitionId = asText(row["2813"]);
+      const title = asText(row["2789"]);
+      const category = asText(row["65519"]);
+      const city = asText(row["65442"] ?? row.city);
+      const state = asText(row["65510"]);
+      const postalCode = asText(row["65452"]);
+      const street = asText(row["65484"]);
+      const description = plainText(asText(row["65440"]));
+      const sourcePostedText = asText(row.LastUpdated);
+      const rawOfficialUrl = asText(row.JobDetailLink);
+      let officialUrl: string | null = null;
+      try {
+        const page = rawOfficialUrl ? new URL(rawOfficialUrl) : null;
+        if (page?.protocol === "https:" && page.hostname === "sjobs.brassring.com"
+          && /\/TGnewUI\/Search\/home\/HomeWithPreLoad$/i.test(page.pathname)
+          && page.searchParams.get("PageType") === "JobDetails"
+          && /^\d+$/.test(page.searchParams.get("jobid") ?? "")) officialUrl = page.href;
+      } catch {
+        officialUrl = null;
+      }
+      if (!requisitionId || !title || !city || !state || !officialUrl) return [];
+      const location = [city, state, postalCode].filter(Boolean).join(", ");
+      const updatedAt = murphyUsaDate(sourcePostedText);
+      return [{
+        externalId: requisitionId,
+        requisitionId,
+        title,
+        company: source.company,
+        location,
+        locationCity: city,
+        locationState: state,
+        locationCountry: "United States",
+        ...(postalCode ? { locationPostalCode: postalCode } : {}),
+        ...(street ? { office: street } : {}),
+        arrangement: "onsite",
+        employmentType: normalizeEmploymentType(category),
+        summary: description ?? category,
+        description,
+        ...(category ? { department: category } : {}),
+        applyUrl: officialUrl,
+        officialUrl,
+        sourcePostedText,
+        sourceUpdatedAt: updatedAt,
+        publishedAt: updatedAt,
+        rawPayload: { provider: "murphy-usa-jobs-api", jobId: row.JobId ?? null },
+      }];
+    });
+    if (jobs.length !== payload.length
+      || new Set(jobs.map((job) => job.externalId)).size !== payload.length
+      || new Set(jobs.map((job) => job.officialUrl)).size !== payload.length) {
+      throw new Error(`Murphy USA official jobs API returned malformed or duplicate rows (${jobs.length}/${payload.length}).`);
+    }
+    return { status: "succeeded", responseStatus, completeListing: true, jobs, resolvedListingUrl: MURPHY_USA_LISTING_URL, error: null };
+  } catch (error) {
+    return { status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed", responseStatus, completeListing: false, jobs: [], resolvedListingUrl: MURPHY_USA_LISTING_URL, error: error instanceof Error ? error.message : "Unknown Murphy USA careers crawler error." };
+  }
+};
+
+const AMPHENOL_LISTING_URL = "https://amphenol.acquiretm.com/search_clean.aspx";
+
+const crawlAmphenolAcquireTm = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  try {
+    const initial = await fetchWithTimeout(fetcher, AMPHENOL_LISTING_URL, undefined, true, { attempts: 2, timeoutMs: 12_000 });
+    responseStatus = initial.status;
+    if (!initial.ok) throw new Error(`Amphenol AcquireTM returned HTTP ${initial.status}.`);
+    const cookie = responseCookies(initial)
+      .map((value) => value.split(";", 1)[0]?.trim() ?? "")
+      .filter(Boolean)
+      .join("; ");
+    const html = await initial.text();
+    const body = new URLSearchParams();
+    for (const match of html.matchAll(/<input\b[^>]*>/gi)) {
+      const tag = match[0];
+      const type = tag.match(/\btype\s*=\s*(?:"([^"]*)"|'([^']*)')/i)?.slice(1).find(Boolean);
+      if (type?.toLocaleLowerCase() !== "hidden") continue;
+      const name = tag.match(/\bname\s*=\s*(?:"([^"]*)"|'([^']*)')/i)?.slice(1).find(Boolean);
+      const value = tag.match(/\bvalue\s*=\s*(?:"([^"]*)"|'([^']*)')/i)?.slice(1).find((entry) => entry !== undefined) ?? "";
+      if (name) body.set(decodeHtmlAttribute(name), decodeHtmlAttribute(value));
+    }
+    if (!body.has("__VIEWSTATE")) throw new Error("Amphenol AcquireTM form state was missing.");
+    body.set("ctl00$ContentPlaceHolder1$ctl00$bSearch", "Search");
+    const searched = await fetchWithTimeout(fetcher, AMPHENOL_LISTING_URL, {
+      method: "POST",
+      headers: {
+        accept: "text/html,application/xhtml+xml",
+        "content-type": "application/x-www-form-urlencoded",
+        referer: AMPHENOL_LISTING_URL,
+        ...(cookie ? { cookie } : {}),
+      },
+      body,
+    }, true, { attempts: 1, timeoutMs: 15_000 });
+    responseStatus = searched.status;
+    if (!searched.ok) throw new Error(`Amphenol AcquireTM search returned HTTP ${searched.status}.`);
+    const resultHtml = await searched.text();
+    if (!/No records to display\.\s*Please try another search\./i.test(plainText(resultHtml) ?? "")) {
+      throw new Error("Amphenol AcquireTM no longer exposes its verified authoritative-empty marker.");
+    }
+    return { status: "succeeded", responseStatus, completeListing: true, jobs: [], resolvedListingUrl: AMPHENOL_LISTING_URL, error: null };
+  } catch (error) {
+    return { status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed", responseStatus, completeListing: false, jobs: [], resolvedListingUrl: AMPHENOL_LISTING_URL, error: error instanceof Error ? error.message : "Unknown Amphenol careers crawler error." };
+  }
+};
+
+const CREDERA_LISTING_URL = "https://credera.com/en-us/careers/jobs";
+const CREDERA_API_URL = "https://xz5r20ph8i.execute-api.us-east-1.amazonaws.com/api/contact-us";
+
+const crawlCrederaCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  try {
+    const response = await fetchWithTimeout(fetcher, CREDERA_API_URL, {
+      method: "POST",
+      headers: { accept: "application/json", "content-type": "application/json", referer: "https://credera.com/" },
+      body: JSON.stringify({ country: "US" }),
+    }, true, { attempts: 2, timeoutMs: 15_000 });
+    responseStatus = response.status;
+    if (!response.ok) throw new Error(`Credera official jobs API returned HTTP ${response.status}.`);
+    const payload = await response.json() as { Report_Entry?: unknown };
+    const rows = Array.isArray(payload.Report_Entry) ? payload.Report_Entry : null;
+    if (!rows || rows.length === 0 || rows.length > 500) throw new Error("Credera official jobs API returned an implausible catalog.");
+    const jobs = rows.flatMap((value): CrawledJob[] => {
+      if (!value || typeof value !== "object") return [];
+      const row = value as Record<string, unknown>;
+      const requisitionId = asText(row.JobReqID);
+      const title = asText(row.JobPosting_title ?? row.jobPosting);
+      const location = asText(row.PrimaryLocations);
+      const rawUrl = asText(row.url);
+      let officialUrl: string | null = null;
+      let applyUrl: string | null = null;
+      try {
+        const page = rawUrl ? new URL(rawUrl) : null;
+        if (page?.protocol === "https:" && /\.wd\d+\.myworkdayjobs\.com$/i.test(page.hostname)
+          && /\/job\//i.test(page.pathname) && /\/apply\/?$/i.test(page.pathname)) {
+          applyUrl = page.href;
+          page.pathname = page.pathname.replace(/\/apply\/?$/i, "");
+          officialUrl = page.href;
+        }
+      } catch {
+        officialUrl = null;
+      }
+      if (!requisitionId || !title || !location || !officialUrl || !applyUrl || asText(row.Country) !== "US") return [];
+      const description = plainText(asText(row.JobDescription)) ?? plainText(asText(row.JobDesc_Summary));
+      const summary = plainText(asText(row.JobDesc_Summary)) ?? description;
+      const publishedAt = normalizedDate(row.JobPostingDate);
+      return [{
+        externalId: requisitionId,
+        requisitionId,
+        title,
+        company: source.company,
+        location,
+        locationCountry: "United States",
+        arrangement: /\bremote\b/i.test(location) ? "remote" : /\bhybrid\b/i.test(description ?? "") ? "hybrid" : "unknown",
+        employmentType: normalizeEmploymentType(row.TimeType),
+        summary,
+        description,
+        ...(asText(row.BusinessUnits) ? { businessUnit: asText(row.BusinessUnits) } : {}),
+        ...(asText(row.JobFamily) ? { jobFamily: asText(row.JobFamily) } : {}),
+        ...(asText(row.JobFamilyGroup) ? { jobFunction: asText(row.JobFamilyGroup) } : {}),
+        ...(asText(row.SalaryRange) ? { benefits: `Compensation: ${asText(row.SalaryRange)}` } : {}),
+        applyUrl,
+        officialUrl,
+        sourcePostedText: asText(row.JobPostingDate),
+        publishedAt,
+        rawPayload: { provider: "credera-careers-api", status: row.Status ?? null },
+      }];
+    });
+    if (jobs.length !== rows.length || new Set(jobs.map((job) => job.externalId)).size !== rows.length) {
+      throw new Error(`Credera official jobs API returned malformed or duplicate rows (${jobs.length}/${rows.length}).`);
+    }
+    return { status: "succeeded", responseStatus, completeListing: true, jobs, resolvedListingUrl: CREDERA_LISTING_URL, error: null };
+  } catch (error) {
+    return { status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed", responseStatus, completeListing: false, jobs: [], resolvedListingUrl: CREDERA_LISTING_URL, error: error instanceof Error ? error.message : "Unknown Credera careers crawler error." };
+  }
+};
+
+const HONOR_LISTING_URL = "https://www.honorcare.com/honor-careers/";
+const HONOR_API_URL = "https://webmarketingapi-careers.azurewebsites.net/api/v1/honor-careers/departments?board=honor";
+
+const crawlHonorCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  try {
+    const response = await fetchWithTimeout(fetcher, HONOR_API_URL, {
+      headers: { accept: "application/json", referer: HONOR_LISTING_URL },
+    }, true, { attempts: 2, timeoutMs: 15_000 });
+    responseStatus = response.status;
+    if (!response.ok) throw new Error(`Honor official jobs API returned HTTP ${response.status}.`);
+    const payload = await response.json() as unknown;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("Honor official jobs API returned a malformed department catalog.");
+    const records = Object.values(payload as Record<string, unknown>).flatMap((department): Array<{ department: string | null; row: Record<string, unknown> }> => {
+      if (!department || typeof department !== "object") return [];
+      const value = department as Record<string, unknown>;
+      if (!value.jobs || typeof value.jobs !== "object" || Array.isArray(value.jobs)) return [];
+      return Object.values(value.jobs as Record<string, unknown>).flatMap((job) => job && typeof job === "object"
+        ? [{ department: asText(value.name), row: job as Record<string, unknown> }]
+        : []);
+    });
+    if (records.length === 0 || records.length > 500) throw new Error("Honor official jobs API returned an implausible job catalog.");
+    const parsedJobs = records.flatMap(({ department, row }): CrawledJob[] => {
+      const id = typeof row.id === "number" && Number.isSafeInteger(row.id) ? String(row.id) : asText(row.id);
+      const title = asText(row.title);
+      const location = asText(row.locationName);
+      const description = plainText(asText(row.summary));
+      if (!id || !/^\d+$/.test(id) || !title || !location || !description) return [];
+      const official = new URL("honor-careers/career/", "https://www.honorcare.com/");
+      official.searchParams.set("jobID", id);
+      const postedText = asText(row.posted);
+      const publishedAt = postedText && !/^0001-01-01/i.test(postedText) ? normalizedDate(postedText) : null;
+      return [{
+        externalId: id,
+        requisitionId: id,
+        title,
+        company: source.company,
+        location,
+        arrangement: /\bremote\b/i.test(location) ? "remote" : "unknown",
+        employmentType: normalizeEmploymentType(description),
+        summary: description.slice(0, 1_000),
+        description,
+        ...(department ? { department } : {}),
+        applyUrl: official.href,
+        officialUrl: official.href,
+        sourcePostedText: publishedAt ? postedText : null,
+        publishedAt,
+        rawPayload: { provider: "honor-careers-api" },
+      }];
+    });
+    if (parsedJobs.length !== records.length) {
+      throw new Error(`Honor official jobs API returned malformed rows (${parsedJobs.length}/${records.length}).`);
+    }
+    const jobsById = new Map<string, CrawledJob>();
+    for (const job of parsedJobs) {
+      const id = job.externalId!;
+      const existing = jobsById.get(id);
+      if (!existing) {
+        jobsById.set(id, job);
+        continue;
+      }
+      if (existing.title !== job.title || existing.location !== job.location
+        || existing.description !== job.description || existing.officialUrl !== job.officialUrl) {
+        throw new Error(`Honor official jobs API reused job ${id} for conflicting postings.`);
+      }
+    }
+    const jobs = [...jobsById.values()];
+    if (jobs.length === 0) throw new Error("Honor official jobs API returned no unique jobs.");
+    return { status: "succeeded", responseStatus, completeListing: true, jobs, resolvedListingUrl: HONOR_LISTING_URL, error: null };
+  } catch (error) {
+    return { status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed", responseStatus, completeListing: false, jobs: [], resolvedListingUrl: HONOR_LISTING_URL, error: error instanceof Error ? error.message : "Unknown Honor careers crawler error." };
+  }
+};
+
+const KRATOS_LISTING_URL = "https://kratosdefense.submit4jobs.com/";
+const KRATOS_API_URL = "https://apps3.pereless.com/templates/magnetolive/api/?action=getJobs";
+const KRATOS_CID = "85347";
+
+const crawlKratosCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  try {
+    const response = await fetchWithTimeout(fetcher, KRATOS_API_URL, {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        cid: KRATOS_CID,
+        "content-type": "application/json",
+        referer: `https://apps3.pereless.com/templates/magnetolive/?cid=${KRATOS_CID}&int=0`,
+      },
+      body: JSON.stringify({ filters: { buid: "", intranet: "0", city: "", mystate: [], country: "", title: "", zipcode: "", department: "", businessname: "", language: "en", jobtype: "", keyword: "", jobcapability: [], jobcategory: [] } }),
+    }, true, { attempts: 2, timeoutMs: 20_000 });
+    responseStatus = response.status;
+    if (!response.ok) throw new Error(`Kratos official jobs API returned HTTP ${response.status}.`);
+    const payload = await response.json() as unknown;
+    if (!Array.isArray(payload) || payload.length === 0 || payload.length > 1_000) throw new Error("Kratos official jobs API returned an implausible catalog.");
+    const jobs = payload.flatMap((value): CrawledJob[] => {
+      if (!value || typeof value !== "object") return [];
+      const row = value as Record<string, unknown>;
+      const id = typeof row.jid === "number" && Number.isSafeInteger(row.jid) ? String(row.jid) : asText(row.jid);
+      const title = asText(row.job_title);
+      const trackingCode = asText(row.trackingcode);
+      const city = asText(row.city);
+      const state = asText(row.state) ?? asText(row.fullStateName);
+      const country = asText(row.fullCountryName) ?? asText(row.country);
+      if (!id || !/^\d+$/.test(id) || !title || !trackingCode || !country || String(row.cid) !== KRATOS_CID) return [];
+      const official = new URL("https://apps3.pereless.com/templates/magnetolive/");
+      official.searchParams.set("cid", KRATOS_CID);
+      official.searchParams.set("int", "0");
+      official.hash = `/jobDescription/${id}/${encodeURIComponent(title.trim().replace(/\s+/g, "-"))}`;
+      const description = plainText(asText(row.jobdescription)) ?? plainText(asText(row.jobkeyword));
+      const benefits = plainText(asText(row.jobbenefit));
+      const location = [city, state, country].filter(Boolean).join(", ") || null;
+      return [{
+        externalId: id,
+        requisitionId: trackingCode,
+        title: title.trim(),
+        company: source.company,
+        location,
+        ...(city ? { locationCity: city } : {}),
+        ...(state ? { locationState: state } : {}),
+        locationCountry: country,
+        ...(asText(row.zipcode) ? { locationPostalCode: asText(row.zipcode) } : {}),
+        arrangement: /\bremote\b/i.test(location ?? "") ? "remote" : "unknown",
+        employmentType: normalizeEmploymentType(row.jobtype),
+        summary: description ?? asText(row.dname),
+        description,
+        ...(asText(row.dname) ? { department: asText(row.dname) } : {}),
+        ...(asText(row.BusinessUnitName) ? { businessUnit: asText(row.BusinessUnitName) } : {}),
+        benefits,
+        ...(String(row.travel ?? "").match(/^\d+$/) ? { travelRequirements: `${row.travel}%` } : {}),
+        applyUrl: official.href,
+        officialUrl: official.href,
+        sourcePostedText: asText(row.postingdate),
+        sourceUpdatedAt: normalizedDate(row.statusdate),
+        publishedAt: normalizedDate(row.postingdate),
+        rawPayload: { provider: "pereless-magnetolive", trackingCode },
+      }];
+    });
+    if (jobs.length !== payload.length || new Set(jobs.map((job) => job.externalId)).size !== payload.length) {
+      throw new Error(`Kratos official jobs API returned malformed or duplicate rows (${jobs.length}/${payload.length}).`);
+    }
+    return { status: "succeeded", responseStatus, completeListing: true, jobs, resolvedListingUrl: KRATOS_LISTING_URL, error: null };
+  } catch (error) {
+    return { status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed", responseStatus, completeListing: false, jobs: [], resolvedListingUrl: KRATOS_LISTING_URL, error: error instanceof Error ? error.message : "Unknown Kratos careers crawler error." };
+  }
+};
+
+const TOWER_LISTING_URL = "https://secure4.entertimeonline.com/ta/6083095.jobs?JobsSearch=1";
+const TOWER_API_URL = "https://secure4.entertimeonline.com/ta/rest/ui/recruitment/companies/%7C6083095/job-requisitions?offset=1&size=20&sort=desc&ein_id=&lang=null";
+
+const crawlTowerSemiconductorCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  try {
+    const response = await fetchWithTimeout(fetcher, TOWER_API_URL, {
+      headers: { accept: "application/json", referer: TOWER_LISTING_URL },
+    }, true, { attempts: 2, timeoutMs: 12_000 });
+    responseStatus = response.status;
+    if (!response.ok) throw new Error(`Tower Semiconductor official UKG board returned HTTP ${response.status}.`);
+    const payload = await response.json() as { job_requisitions?: unknown; _paging?: { offset?: unknown; size?: unknown; total?: unknown } };
+    if (!Array.isArray(payload.job_requisitions)
+      || payload.job_requisitions.length !== 0
+      || payload._paging?.offset !== 1
+      || payload._paging?.size !== 20
+      || payload._paging?.total !== 0) {
+      throw new Error("Tower Semiconductor official UKG board no longer exposes its verified authoritative-empty catalog.");
+    }
+    return { status: "succeeded", responseStatus, completeListing: true, jobs: [], resolvedListingUrl: TOWER_LISTING_URL, error: null };
+  } catch (error) {
+    return { status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed", responseStatus, completeListing: false, jobs: [], resolvedListingUrl: TOWER_LISTING_URL, error: error instanceof Error ? error.message : "Unknown Tower Semiconductor careers crawler error." };
+  }
+};
+
+const VENTURE_GLOBAL_LISTING_URL = "https://ventureglobal.com/careers/";
+const VENTURE_GLOBAL_API_URL = "https://ventureglobal.com/wp-json/vg-careers/v1/jobs";
+
+const ventureGlobalDate = (value: unknown): string | null => {
+  const text = asText(value);
+  if (!text) return null;
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})-(\d{2}):(\d{2})$/);
+  if (!match) return normalizedDate(text);
+  // The WordPress API emits a calendar date followed by its UTC offset
+  // (`Y-m-dP` with the `P` separator replaced by `-`), not a local clock
+  // time. Preserve that offset while normalizing the posting day to UTC.
+  const date = new Date(`${match[1]}-${match[2]}-${match[3]}T00:00:00-${match[4]}:${match[5]}`);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+};
+
+const crawlVentureGlobalCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const perPage = 20;
+  let responseStatus: number | null = null;
+  type Payload = {
+    jobs?: Array<Record<string, unknown>>;
+    pagination?: { page?: unknown; per_page?: unknown; total?: unknown; total_pages?: unknown };
+  };
+  const fetchPage = async (page: number): Promise<Payload> => {
+    const endpoint = new URL(VENTURE_GLOBAL_API_URL);
+    endpoint.searchParams.set("page", String(page));
+    endpoint.searchParams.set("per_page", String(perPage));
+    const response = await fetchWithTimeout(fetcher, endpoint, {
+      headers: { accept: "application/json", referer: VENTURE_GLOBAL_LISTING_URL },
+    }, true, { attempts: 2, timeoutMs: 15_000 });
+    responseStatus = response.status;
+    if (!response.ok) throw new Error(`Venture Global official jobs API returned HTTP ${response.status}.`);
+    const payload = await response.json() as Payload;
+    const pagination = payload.pagination;
+    if (!Array.isArray(payload.jobs)
+      || !Number.isInteger(pagination?.page) || pagination?.page !== page
+      || pagination?.per_page !== perPage
+      || !Number.isInteger(pagination.total) || Number(pagination.total) <= 0
+      || !Number.isInteger(pagination.total_pages) || Number(pagination.total_pages) !== Math.ceil(Number(pagination.total) / perPage)) {
+      throw new Error("Venture Global official jobs API returned invalid pagination metadata.");
+    }
+    return payload;
+  };
+
+  try {
+    const first = await fetchPage(1);
+    const total = Number(first.pagination!.total);
+    const totalPages = Number(first.pagination!.total_pages);
+    if (total > 1_000 || totalPages > 50) throw new Error("Venture Global official jobs API returned an implausible catalog size.");
+    const pages = new Map<number, Payload>([[1, first]]);
+    for (let page = 2; page <= totalPages; page += 4) {
+      const batch = Array.from({ length: Math.min(4, totalPages - page + 1) }, (_, index) => page + index);
+      const results = await Promise.all(batch.map(async (pageNumber) => ({ pageNumber, payload: await fetchPage(pageNumber) })));
+      for (const result of results) pages.set(result.pageNumber, result.payload);
+    }
+    const records = Array.from({ length: totalPages }, (_, index) => pages.get(index + 1)?.jobs ?? []).flat();
+    const jobs = records.flatMap((row): CrawledJob[] => {
+      const requisitionId = asText(row.id);
+      const title = asText(row.title);
+      const city = asText(row.location);
+      const state = asText(row.location_state);
+      const rawApplyUrl = asText(row.apply_url);
+      let applyUrl: string | null = null;
+      let officialUrl: string | null = null;
+      try {
+        const page = rawApplyUrl ? new URL(rawApplyUrl) : null;
+        if (page?.protocol === "https:"
+          && /^venturegloballng\.wd\d+\.myworkdayjobs\.com$/i.test(page.hostname)
+          && /\/job\//i.test(page.pathname)
+          && /\/apply\/?$/i.test(page.pathname)) {
+          applyUrl = page.href;
+          page.pathname = page.pathname.replace(/\/apply\/?$/i, "");
+          officialUrl = page.href;
+        }
+      } catch {
+        officialUrl = null;
+      }
+      if (!requisitionId || !title || !city || !state || !applyUrl || !officialUrl) return [];
+      const description = plainText(`${asText(row.header) ?? ""}\n${asText(row.description) ?? ""}\n${asText(row.footer) ?? ""}`);
+      const summary = plainText(asText(row.summary)) ?? description?.slice(0, 500) ?? null;
+      const sourceUpdatedAt = ventureGlobalDate(row.updated_at);
+      const publishedAt = ventureGlobalDate(row.posted_at);
+      return [{
+        externalId: requisitionId,
+        requisitionId,
+        title,
+        company: source.company,
+        location: `${city}, ${state}, United States`,
+        locationCity: city,
+        locationState: state,
+        locationCountry: "United States",
+        arrangement: /\bremote\b/i.test(`${city} ${description ?? ""}`) ? "remote" : /\bhybrid\b/i.test(description ?? "") ? "hybrid" : "onsite",
+        employmentType: normalizeEmploymentType(row.employment_type),
+        summary,
+        description,
+        ...(asText(row.department) ? { department: asText(row.department) } : {}),
+        applyUrl,
+        officialUrl,
+        sourcePostedText: asText(row.posted_at),
+        sourceUpdatedAt,
+        publishedAt,
+        rawPayload: { provider: "venture-global-careers-api", jobType: row.job_type ?? null },
+      }];
+    });
+    const unique = uniqueJobs(jobs);
+    const consistentPages = [...pages.values()].every((page) => page.pagination?.total === total
+      && page.pagination?.total_pages === totalPages && page.pagination?.per_page === perPage);
+    if (!consistentPages || records.length !== total || jobs.length !== total || unique.length !== total) {
+      throw new Error(`Venture Global official jobs API returned an incomplete or duplicate catalog (${unique.length}/${total}).`);
+    }
+    return { status: "succeeded", responseStatus, completeListing: true, jobs: unique, resolvedListingUrl: VENTURE_GLOBAL_LISTING_URL, error: null };
+  } catch (error) {
+    return {
+      status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+      responseStatus,
+      completeListing: false,
+      jobs: [],
+      resolvedListingUrl: VENTURE_GLOBAL_LISTING_URL,
+      error: error instanceof Error ? error.message : "Unknown Venture Global careers crawler error.",
+    };
+  }
+};
+
 async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
   if ((source.discoveryDepth ?? 0) === 0) {
     try {
@@ -21903,6 +23124,22 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-846") {
     return crawlPcaCareerSearch(source, fetcher);
   }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "audit-row-388") return crawlLithiaCareers(source, fetcher);
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-0920-greyorange") return crawlGreyOrangeCareers(source, fetcher);
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p4-0336-ree-automotive") return crawlReeCareers(source, fetcher);
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p4-0344-schr-dinger") return crawlSchrodingerCareers(source, fetcher);
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-0623-ibis-ai") return crawlIbisCareers(source, fetcher);
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p2-0053-pcb-bank") return crawlPcbBankCareers(source, fetcher);
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p2-0058-royal-business-bank") return crawlRoyalBusinessBankCareers(source, fetcher);
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p2-0196-graphistry") return crawlGraphistryCareers(source, fetcher);
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-1017-pear-health-labs") return crawlPearHealthCareers(source, fetcher);
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "audit-row-399") return crawlMurphyUsaCareers(source, fetcher);
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-782") return crawlAmphenolAcquireTm(source, fetcher);
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p4-0251-credera") return crawlCrederaCareers(source, fetcher);
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p4-0290-honor") return crawlHonorCareers(source, fetcher);
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-0644-kratos-defense") return crawlKratosCareers(source, fetcher);
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-0755-tower-semiconductor") return crawlTowerSemiconductorCareers(source, fetcher);
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-876") return crawlVentureGlobalCareers(source, fetcher);
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p4-0423-dynatrace") {
     return crawlDynatraceCoveo(source, fetcher);
   }
@@ -22067,7 +23304,8 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
       // page may contain only employer branding. The canonical positions
       // route is the authoritative server-rendered catalog, so go there
       // directly when the source URL was captured from a job-alert channel.
-      const listingUrl = segments.at(-1)?.toLocaleLowerCase() === "jobalerts"
+      const suffix = segments.slice(1).join("/").toLocaleLowerCase();
+      const listingUrl = segments.at(-1)?.toLocaleLowerCase() === "jobalerts" || suffix === "jobs/positions"
         ? `https://jobs.jobvite.com/${tenant}/jobs/positions`
         : `https://jobs.jobvite.com/${tenant}/`;
       return crawlJobviteBoard(source, listingUrl, tenant, fetcher);
@@ -22085,6 +23323,7 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   if (source.id === "p4-0450-jfrog") return crawlJfrog(source, fetcher);
   if (/^[a-z0-9-]+\.careers\.hibob\.com$/i.test(sourcePage.hostname)) return crawlHiBobCareers(source, fetcher);
   if (source.id === "p4-0386-whatnot") return crawlWhatnot(source, fetcher);
+  if (source.id === "p5-0699-pepsico") return crawlPepsiCo(source, fetcher);
   if (source.id === "p5-0812-aurora-innovation") return crawlAurora(source, fetcher);
   if (source.id === "p5-0950-jane-street") return crawlJaneStreet(source, fetcher);
   if (source.id === "p5-0921-guardant-health") return crawlGuardantHealth(source, fetcher);
@@ -22427,7 +23666,7 @@ const verifiedInactiveCareerPage = (
     && /<title[^>]*>\s*Company\s*\|\s*Groq\b/i.test(html)
     && !/\bOpen Positions\b|\bGroq Internships\b|job-boards\.greenhouse\.io\/groq|boards-api\.greenhouse\.io\/v1\/boards\/groq|jobs\.ashbyhq\.com|jobs\.lever\.co/i.test(html)
     && !anchorsFromHtml(html).some(({ href, text }) => /(?:^|\/)careers?(?:[/?#]|$)|(?:^|\/)jobs?(?:[/?#]|$)|\b(?:open positions|view jobs|join our team)\b/i.test(`${href} ${text}`))) {
-    return { resolvedListingUrl: "https://groq.com/careers-at-groq" };
+    return { resolvedListingUrl: "https://groq.com/company" };
   }
 
   return null;

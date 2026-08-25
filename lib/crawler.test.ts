@@ -19,6 +19,186 @@ describe("source crawl budget", () => {
   });
 });
 
+describe("repaired source adapters", () => {
+  it("loads Murphy USA's complete official catalog with source update dates", async () => {
+    const source = { id: "audit-row-399", company: "Murphy USA", postingUrl: "https://jobs.murphyusa.com/murphyusa/job-opportunities", adapter: "custom" as const };
+    const result = await crawlSource(source, async () => Response.json([{
+      "2813": "217421BR",
+      "2789": "Assistant Manager",
+      "65519": "Assistant Store Manager",
+      "65442": "Oxford",
+      "65510": "Mississippi",
+      "65452": "38655",
+      LastUpdated: "24-Aug-2026",
+      JobDetailLink: "https://sjobs.brassring.com/TGnewUI/Search/home/HomeWithPreLoad?PageType=JobDetails&partnerid=25450&siteid=5588&jobid=3729857",
+      JobId: "3729857",
+    }]), new Date());
+
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "217421BR",
+      locationCountry: "United States",
+      sourceUpdatedAt: "2026-08-24T00:00:00.000Z",
+      publishedAt: "2026-08-24T00:00:00.000Z",
+    })]);
+  });
+
+  it("submits the Amphenol WebForms search and accepts only its authoritative empty marker", async () => {
+    const source = { id: "legacy-row-782", company: "Amphenol", postingUrl: "https://amphenol.acquiretm.com/search_clean.aspx", adapter: "custom" as const };
+    const methods: string[] = [];
+    const result = await crawlSource(source, async (_input, init) => {
+      methods.push(init?.method ?? "GET");
+      if (init?.method === "POST") {
+        expect(init.body).toBeInstanceOf(URLSearchParams);
+        expect((init.body as URLSearchParams).get("ctl00$ContentPlaceHolder1$ctl00$bSearch")).toBe("Search");
+        return new Response("<main>No records to display. Please try another search.</main>");
+      }
+      return new Response('<input type="hidden" name="__VIEWSTATE" value="state" />', {
+        headers: { "set-cookie": "ASP.NET_SessionId=test; Path=/; Secure" },
+      });
+    }, new Date());
+    expect(methods).toEqual(["GET", "POST"]);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true, jobs: [] }));
+  });
+
+  it("normalizes Credera Workday apply URLs to direct detail pages", async () => {
+    const source = { id: "p4-0251-credera", company: "Credera", postingUrl: "https://credera.com/en-us/careers/jobs", adapter: "custom" as const };
+    const result = await crawlSource(source, async (_input, init) => {
+      expect(init?.method).toBe("POST");
+      expect(JSON.parse(String(init?.body))).toEqual({ country: "US" });
+      return Response.json({ Report_Entry: [{
+        Country: "US",
+        JobPosting_title: "Data Engineering Intern",
+        JobReqID: "2027-1",
+        PrimaryLocations: "Dallas, Texas, United States of America",
+        JobDescription: "<p>Build data platforms.</p>",
+        JobPostingDate: "2026-08-24",
+        TimeType: "Full time",
+        url: "https://interpublic.wd5.myworkdayjobs.com/OMC/job/Dallas/Data-Engineering-Intern_2027-1/apply",
+      }] });
+    }, new Date());
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "2027-1",
+      officialUrl: "https://interpublic.wd5.myworkdayjobs.com/OMC/job/Dallas/Data-Engineering-Intern_2027-1",
+      applyUrl: "https://interpublic.wd5.myworkdayjobs.com/OMC/job/Dallas/Data-Engineering-Intern_2027-1/apply",
+    })]);
+    expect(result.completeListing).toBe(true);
+  });
+
+  it("deduplicates Honor jobs repeated in parent and child departments", async () => {
+    const source = { id: "p4-0290-honor", company: "Honor", postingUrl: "https://www.honorcare.com/honor-careers/", adapter: "custom" as const };
+    const job = { id: 8544061002, title: "Principal, Corporate Development", summary: "Lead transactions", locationName: "Remote Position", posted: "0001-01-01T00:00:00" };
+    const result = await crawlSource(source, async () => Response.json({
+      one: { name: "Business Development", jobs: { first: job } },
+      two: { name: "Corporate", jobs: { duplicate: job } },
+    }), new Date());
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toEqual([expect.objectContaining({ externalId: "8544061002", publishedAt: null })]);
+  });
+
+  it("loads Kratos from its official Pereless tenant and preserves requisition metadata", async () => {
+    const source = { id: "p5-0644-kratos-defense", company: "Kratos Defense", postingUrl: "https://kratosdefense.submit4jobs.com/", adapter: "custom" as const };
+    const result = await crawlSource(source, async (_input, init) => {
+      expect(new Headers(init?.headers).get("cid")).toBe("85347");
+      return Response.json([{
+        cid: 85347,
+        jid: 368695,
+        trackingcode: "85347-368695KTS",
+        job_title: " Electrical Engineer",
+        city: "Orlando",
+        state: "FL",
+        fullCountryName: "United States",
+        jobtype: "Full-Time/Regular",
+        postingdate: "May, 20 2026 15:22:39",
+        statusdate: "July, 22 2026 13:01:14",
+        jobkeyword: "Power Systems Design",
+      }]);
+    }, new Date());
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "368695",
+      requisitionId: "85347-368695KTS",
+      officialUrl: "https://apps3.pereless.com/templates/magnetolive/?cid=85347&int=0#/jobDescription/368695/Electrical-Engineer",
+    })]);
+  });
+
+  it("distinguishes Tower Semiconductor's verified zero-job UKG catalog from a parser failure", async () => {
+    const source = { id: "p5-0755-tower-semiconductor", company: "Tower Semiconductor", postingUrl: "https://secure4.entertimeonline.com/ta/6083095.jobs?JobsSearch=1", adapter: "custom" as const };
+    const result = await crawlSource(source, async () => Response.json({
+      job_requisitions: [],
+      _paging: { offset: 1, size: 20, total: 0 },
+    }), new Date());
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true, jobs: [], error: null }));
+  });
+
+  it("classifies HTTP-200 TAL access challenges as blocked", async () => {
+    const source = { id: "challenge-board", company: "Challenge Board", postingUrl: "https://example.test/jobs", adapter: "custom" as const };
+    const result = await crawlSource(source, async () => new Response("<title>Quick Check Needed</title><p>Please confirm you're a real person.</p>"), new Date());
+    expect(result).toEqual(expect.objectContaining({
+      status: "blocked",
+      responseStatus: 200,
+      completeListing: false,
+      error: "Career site returned an access-verification challenge.",
+    }));
+  });
+
+  it("classifies browser-verification shells as blocked instead of authoritative zero", async () => {
+    const source = { id: "p4-0317-nubank", company: "Nubank", postingUrl: "https://international.nubank.com.br/careers/", adapter: "custom" as const };
+    const result = await crawlSource(source, async () => new Response('<title>Checking your browser…</title><script src="/__challenge/check.js"></script><p>Javascript required to continue</p>'), new Date());
+    expect(result).toEqual(expect.objectContaining({
+      status: "blocked",
+      responseStatus: 200,
+      completeListing: false,
+      jobs: [],
+    }));
+  });
+
+  it("loads every page from Venture Global's official careers API", async () => {
+    const source = { id: "legacy-row-876", company: "Venture Global", postingUrl: "https://ventureglobal.com/careers/", adapter: "custom" as const };
+    const rows = Array.from({ length: 21 }, (_, index) => ({
+      id: `JR_${1000 + index}`,
+      title: index === 0 ? "2027 Data Engineering Intern" : `Venture Global Role ${index + 1}`,
+      department: "Technology",
+      location: "Arlington",
+      location_state: "Virginia",
+      description: "<p>Build reliable energy systems.</p>",
+      summary: "Build reliable energy systems.",
+      apply_url: `https://venturegloballng.wd108.myworkdayjobs.com/External_Careers/job/Arlington-VA/Role-${index + 1}_JR_${1000 + index}/apply`,
+      employment_type: "Full time",
+      job_type: "Regular",
+      posted_at: "2026-08-24-07:00",
+      updated_at: "2026-08-24-07:00",
+    }));
+    const requestedPages: number[] = [];
+    const result = await crawlSource(source, async (input) => {
+      const url = new URL(String(input));
+      if (url.href.startsWith("https://venturegloballng.wd108.myworkdayjobs.com/")) {
+        return new Response("missing", { status: 404 });
+      }
+      const page = Number(url.searchParams.get("page"));
+      requestedPages.push(page);
+      expect(url.searchParams.get("per_page")).toBe("20");
+      const start = (page - 1) * 20;
+      return Response.json({
+        jobs: rows.slice(start, start + 20),
+        pagination: { page, per_page: 20, total: 21, total_pages: 2 },
+      });
+    }, new Date());
+
+    expect(requestedPages.sort()).toEqual([1, 2]);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toHaveLength(21);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "JR_1000",
+      requisitionId: "JR_1000",
+      locationCountry: "United States",
+      officialUrl: "https://venturegloballng.wd108.myworkdayjobs.com/External_Careers/job/Arlington-VA/Role-1_JR_1000",
+      applyUrl: "https://venturegloballng.wd108.myworkdayjobs.com/External_Careers/job/Arlington-VA/Role-1_JR_1000/apply",
+      publishedAt: "2026-08-24T07:00:00.000Z",
+      sourceUpdatedAt: "2026-08-24T07:00:00.000Z",
+    }));
+  });
+});
+
 describe("large catalog content", () => {
   it("keeps a bounded search summary without retaining every full description in memory", () => {
     const compactJibeContent = (crawlerModule as Record<string, unknown>).compactJibeContent;
@@ -1987,6 +2167,29 @@ Wrong description.
       }),
       expect.objectContaining({ externalId: "oXGwAfwt", title: "Data Analyst", location: "Plano, Texas" }),
     ]);
+  });
+
+  it("keeps a canonical Jobvite positions URL instead of falling back to its branding-only tenant root", async () => {
+    const requests: string[] = [];
+    const positionsUrl = "https://jobs.jobvite.com/loandepot/jobs/positions";
+    const result = await crawlSource({
+      id: "p2-0044-loandepot",
+      company: "LoanDepot",
+      postingUrl: positionsUrl,
+      adapter: "custom",
+    }, async (input) => {
+      requests.push(String(input));
+      return new Response(`<li class="row"><a href="/loandepot/job/oXGwAfwt">
+        <div class="jv-job-list-name">Data Analyst</div>
+        <div class="jv-job-list-location"><div class="jv-meta">Plano, Texas</div></div>
+      </a></li>`);
+    }, new Date());
+
+    expect(requests).toEqual([positionsUrl]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: true, resolvedListingUrl: positionsUrl,
+    }));
+    expect(result.jobs.map((job) => job.title)).toEqual(["Data Analyst"]);
   });
 
   it("paginates NeoGenomics' canonical Jobvite search and reads li.job cards", async () => {
@@ -4707,6 +4910,23 @@ HUMAN RESOURCES Posted Date
     }));
   });
 
+  it("retries Cloudflare SSL handshake failures and classifies a persistent 525 as blocked", async () => {
+    let attempts = 0;
+    const fetcher: typeof fetch = async () => {
+      attempts += 1;
+      return new Response("SSL handshake failed", { status: 525 });
+    };
+
+    const result = await crawlSource({
+      id: "cloudflare-525", company: "Acme", postingUrl: "https://careers.acme.example/jobs", adapter: "custom",
+    }, fetcher, new Date());
+
+    expect(attempts).toBeGreaterThanOrEqual(2);
+    expect(result).toEqual(expect.objectContaining({
+      status: "blocked", responseStatus: 525, completeListing: false, jobs: [],
+    }));
+  });
+
   it("uses browser-compatible headers for WAF-sensitive public careers pages", async () => {
     const fetcher: typeof fetch = async (_input, init) => {
       const headers = new Headers(init?.headers);
@@ -5360,6 +5580,45 @@ Wrong posting body.`);
     }));
     expect(result.jobs).toHaveLength(100);
   });
+
+  it.each(["legacy-row-794", "p5-0810-atrium-health"])(
+    "advances throttled Talemetry source %s by one page per pass",
+    async (sourceId) => {
+      const requestedPages: number[] = [];
+      const fetcher: typeof fetch = async (input) => {
+        const url = String(input);
+        if (!url.startsWith("https://r.jina.ai/")) return new Response("blocked", { status: 403 });
+        const page = Number(new URL(url.slice("https://r.jina.ai/".length)).searchParams.get("page") ?? 1);
+        requestedPages.push(page);
+        return Response.json({
+          current_page: page,
+          per_page: 100,
+          total_entries: 300,
+          entries: Array.from({ length: 100 }, (_, index) => ({
+            id: String((page - 1) * 100 + index + 1),
+            talemetry_job_id: String((page - 1) * 100 + index + 1),
+            permalink: `role-${(page - 1) * 100 + index + 1}`,
+            title: `Role ${(page - 1) * 100 + index + 1}`,
+          })),
+        });
+      };
+
+      const result = await crawlSource({
+        id: sourceId,
+        company: "Acme",
+        postingUrl: "https://careers.acme.example/search/jobs",
+        adapter: "custom",
+        crawlPageCursor: 2,
+      }, fetcher, new Date());
+
+      expect(requestedPages).toEqual([2]);
+      expect(result).toEqual(expect.objectContaining({
+        status: "succeeded",
+        completeListing: false,
+        pagination: { nextPage: 3, cycleComplete: false, totalPages: 3 },
+      }));
+    },
+  );
 
   it("uses A&M's equivalent locale-neutral reader key when the localized checkpoint is throttled", async () => {
     const requests: string[] = [];
@@ -9472,7 +9731,7 @@ We are an equal opportunity employer.`;
     const result = await crawlSource({
       id: "workday-site-direct",
       company: "Acme",
-      postingUrl: "https://wd1.myworkdaysite.com/recruiting/acme/External",
+      postingUrl: "https://wd1.myworkdaysite.com/en-US/recruiting/acme/External",
       adapter: "workday",
     }, fetcher, new Date("2026-08-11T12:00:00Z"));
 
@@ -12141,6 +12400,74 @@ We are an equal opportunity employer.`;
     ]);
   });
 
+  it("classifies Whatnot's HTML API challenge without throwing a JSON parser error", async () => {
+    const result = await crawlSource({
+      id: "p4-0386-whatnot",
+      company: "Whatnot",
+      postingUrl: "https://careers.whatnot.com/home",
+      adapter: "custom",
+    }, async () => new Response("<!doctype html><title>Just a moment...</title>", {
+      status: 200,
+      headers: { "content-type": "text/html; charset=utf-8" },
+    }), new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "blocked",
+      responseStatus: 200,
+      completeListing: false,
+      jobs: [],
+      error: "Whatnot jobs API returned an HTML access challenge and its verified reader catalog was unavailable.",
+    }));
+  });
+
+  it("collects PepsiCo's complete US Jibe API catalog", async () => {
+    const requests: URL[] = [];
+    const records = Array.from({ length: 101 }, (_, index) => ({
+      data: {
+        slug: String(460_000 + index),
+        req_id: String(460_000 + index),
+        title: index === 0 ? "2027 Data Science Intern" : `PepsiCo Role ${index + 1}`,
+        country: "United States",
+        city: "Plano",
+        state: "Texas",
+        full_location: "Plano, Texas, United States",
+        employment_type: "Full Time",
+        posted_date: "2026-08-24T07:59:00+0000",
+        description: "Build and operate reliable systems.",
+      },
+    }));
+    const result = await crawlSource({
+      id: "p5-0699-pepsico",
+      company: "PepsiCo",
+      postingUrl: "https://www.pepsicojobs.com/main/jobs?lang=en-US",
+      adapter: "custom",
+    }, async (input) => {
+      const url = new URL(String(input));
+      requests.push(url);
+      const page = Number(url.searchParams.get("page"));
+      const firstPass = requests.length <= 2;
+      return Response.json({
+        count: firstPass && page === 2 ? 100 : records.length,
+        totalCount: firstPass && page === 2 ? 100 : records.length,
+        jobs: page === 1 ? records.slice(0, 100) : records.slice(100),
+      });
+    }, new Date());
+
+    expect(requests.map((url) => url.searchParams.get("page"))).toEqual(["1", "2", "1", "2", "1", "2"]);
+    expect(requests.every((url) => url.searchParams.get("country") === "United States")).toBe(true);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: true,
+      resolvedListingUrl: "https://www.pepsicojobs.com/main/jobs?country=United%20States&lang=en-US",
+    }));
+    expect(result.jobs).toHaveLength(101);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      requisitionId: "460000",
+      title: "2027 Data Science Intern",
+      locationCountry: "United States",
+      officialUrl: "https://www.pepsicojobs.com/main/jobs/460000?lang=en-US",
+    }));
+  });
+
   it("uses the official USAJOBS API for organization search pages", async () => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input, init) => {
@@ -12248,6 +12575,33 @@ We are an equal opportunity employer.`;
       officialUrl: "https://www.usajobs.gov/job/879374700",
     })]);
     expect(requests).toHaveLength(2);
+  });
+
+  it("passes an exact location filter through to the USAJOBS API", async () => {
+    let searchUrl = "";
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url === "https://www.occ.gov/scripts/careers-openings.js") {
+        return new Response(`headers: { "Authorization-Key": "public-key" }`, { status: 200 });
+      }
+      if (url.startsWith("https://data.usajobs.gov/api/search?")) {
+        searchUrl = url;
+        return Response.json({ SearchResult: { SearchResultCount: 0, SearchResultCountAll: 0, SearchResultItems: [] } });
+      }
+      throw new Error(`Unexpected URL ${url}`);
+    };
+    const result = await crawlSource({
+      id: "p4-0297-irs-ci-los-angeles-field-office",
+      company: "IRS-CI Los Angeles Field Office",
+      postingUrl: "https://www.usajobs.gov/Search/Results?a=TR93&k=Criminal%20Investigation&l=Los%20Angeles%2C%20California",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-25T00:00:00Z"));
+
+    expect(result).toMatchObject({ status: "succeeded", completeListing: true, jobs: [] });
+    const endpoint = new URL(searchUrl);
+    expect(endpoint.searchParams.get("Organization")).toBe("TR93");
+    expect(endpoint.searchParams.get("Keyword")).toBe("Criminal Investigation");
+    expect(endpoint.searchParams.get("LocationName")).toBe("Los Angeles, California");
   });
 
   it("fails USAJOBS closed when the API count exceeds the returned page", async () => {
@@ -13673,8 +14027,41 @@ We are an equal opportunity employer.`;
       status: "failed",
       completeListing: false,
       jobs: [],
-      error: "Packaging Corporation job search returned duplicate or missing jobs.",
+      error: "Packaging Corporation job search returned duplicate or conflicting jobs.",
     }));
+  });
+
+  it("merges Packaging Corporation multi-location rows for the same requisition", async () => {
+    const listingUrl = "https://careers.packagingcorp.com/career-search/";
+    const apiUrl = "https://careers.packagingcorp.com/wp-content/themes/pcoa/get-jobs.php?ajax=1&keyword=&title=&location=&job_type=&spage=1";
+    const postingUrl = `${listingUrl}posting/summer-2027-engineering-co-op/24495`;
+    const row = (location: string) => `<tr><td class="id">24495</td><td class="title">Summer 2027 Engineering Co-op</td>
+      <td class="location">${location.replace(", ", ",&nbsp;")}</td><td class="posted">08/14/26</td>
+      <td class="apply"><a href="${postingUrl}">View Job</a></td></tr>`;
+    const payload = {
+      postings: [row("Lake Forest, IL"), row("DeRidder, LA"), row("Valdosta, GA")].join(""),
+      showingCount: "Showing 1 &ndash; 3 of 3",
+      pagination: "<ul><li>1</li></ul>",
+    };
+    const result = await crawlSource({
+      id: "legacy-row-846", company: "Packaging Corp. of America",
+      postingUrl: "https://careers.packagingcorp.com/", adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      if (url === listingUrl) return new Response(`<input id="template-url" value="https://careers.packagingcorp.com/wp-content/themes/pcoa">
+        <table><thead><tr><th class="id">JOB ID</th><th class="posted">POSTED DATE</th></tr></thead></table>`);
+      if (url === apiUrl) return Response.json(payload);
+      return new Response("detail unavailable", { status: 404 });
+    }, new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: true, resolvedListingUrl: listingUrl,
+    }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "24495",
+      location: "Lake Forest, IL",
+      secondaryLocations: ["DeRidder, LA", "Valdosta, GA"],
+    })]);
   });
 
   it("collects Fastenal's complete official U.S. AJAX catalog and enriches internship details", async () => {

@@ -114,9 +114,9 @@ jobs:
           # staying below the 25-minute job timeout (4 browser workers).
           BROWSER_FALLBACK_LIMIT: "120"
           BROWSER_FALLBACK_CONCURRENCY: "4"
-          # Delta's Avature listing is intentionally protected from Worker
-          # egress and therefore must not sit behind the generic recovery
-          # queue. The script still uses the official listing and verified
-          # official job-detail URLs.
-          BROWSER_FALLBACK_PRIORITY_SOURCE_IDS: p5-0722-saic,audit-row-342
+          # Sources whose official boards require client rendering, protected
+          # egress, or a browser-established session must not sit behind the
+          # generic recovery queue. The script still validates the official
+          # listing and direct job-detail URLs before ingesting any row.
+          BROWSER_FALLBACK_PRIORITY_SOURCE_IDS: audit-row-342,audit-row-388,audit-row-399,legacy-row-782,legacy-row-794,p1-0008-protiviti,p2-0035-coinbase,p2-0036-evercore,p2-0045-logix-federal-cu,p2-0053-pcb-bank,p2-0058-royal-business-bank,p2-0153-prosperity-bancshares,p2-0167-state-attorneys-general,p2-0180-valley-national-bancorp,p2-0196-graphistry,p2-0198-senzing,p4-0251-credera,p4-0287-gurucul,p4-0290-honor,p4-0302-l-e-k-consulting,p4-0317-nubank,p4-0336-ree-automotive,p4-0344-schr-dinger,p4-0385-west-monroe-los-angeles,p4-0386-whatnot,p4-0481-realtor-com,p5-0623-ibis-ai,p5-0644-kratos-defense,p5-0645-kuka-us,p5-0722-saic,p5-0744-tabnine,p5-0755-tower-semiconductor,p5-0810-atrium-health,p5-0920-greyorange,p5-1017-pear-health-labs,p5-1039-revolut,p5-1077-tesla
         run: npm run crawler:fallback:browser

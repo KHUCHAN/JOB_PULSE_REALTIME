@@ -100,7 +100,13 @@ describe("catalogDeltaSql", () => {
       "INSERT INTO sources VALUES ('same');\nINSERT INTO sources VALUES ('old');\n",
       "INSERT INTO sources VALUES ('same');\nINSERT INTO sources VALUES ('new');\n",
       "sha256:next",
-    )).toBe("-- catalog-version: sha256:next\nINSERT INTO sources VALUES ('new');\n");
+    )).toBe([
+      "-- catalog-version: sha256:next",
+      "INSERT INTO sources VALUES ('new');",
+      "UPDATE jobs SET status = 'closed', closed_at = COALESCE(closed_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE status = 'open' AND source_id IN (SELECT id FROM sources WHERE enabled = 0);",
+      "UPDATE job_matches SET is_active = 0 WHERE is_active = 1 AND job_id IN (SELECT jobs.id FROM jobs JOIN sources ON sources.id = jobs.source_id WHERE sources.enabled = 0);",
+      "",
+    ].join("\n"));
   });
 });
 
@@ -199,6 +205,11 @@ describe("large catalog US scope migration", () => {
     const dardenSolarEdgeRefresh = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0112_snapshot.json"), "utf8"));
     const durableAlertIdentity = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0113_snapshot.json"), "utf8"));
     const verifiedPostingLinkRepairs = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0114_snapshot.json"), "utf8"));
+    const catalogRefresh115 = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0115_snapshot.json"), "utf8"));
+    const catalogRefresh116 = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0116_snapshot.json"), "utf8"));
+    const catalogRefresh117 = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0117_snapshot.json"), "utf8"));
+    const catalogRefresh118 = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0118_snapshot.json"), "utf8"));
+    const catalogRefresh119 = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0119_snapshot.json"), "utf8"));
     const currentJournal = JSON.parse(readFileSync(resolve(drizzlePath, "meta/_journal.json"), "utf8"));
 
     expect(current.prevId).toBe(previous.id);
@@ -216,6 +227,11 @@ describe("large catalog US scope migration", () => {
     expect(dardenSolarEdgeRefresh.prevId).toBe(jobsynFoxJobviteRefresh.id);
     expect(durableAlertIdentity.prevId).toBe(dardenSolarEdgeRefresh.id);
     expect(verifiedPostingLinkRepairs.prevId).toBe(durableAlertIdentity.id);
+    expect(catalogRefresh115.prevId).toBe(verifiedPostingLinkRepairs.id);
+    expect(catalogRefresh116.prevId).toBe(catalogRefresh115.id);
+    expect(catalogRefresh117.prevId).toBe(catalogRefresh116.id);
+    expect(catalogRefresh118.prevId).toBe(catalogRefresh117.id);
+    expect(catalogRefresh119.prevId).toBe(catalogRefresh118.id);
     expect(durableAlertIdentity.tables).toHaveProperty("notification_identity_history");
     expect(durableAlertIdentity.tables.jobs.columns).toHaveProperty("alert_discovered_after_baseline");
     expect(currentJournal.entries.find((entry: { tag: string }) => entry.tag === "0100_large_catalog_us_scope")).toMatchObject({
@@ -223,8 +239,8 @@ describe("large catalog US scope migration", () => {
       tag: "0100_large_catalog_us_scope",
     });
     expect(currentJournal.entries.at(-1)).toMatchObject({
-      idx: 114,
-      tag: "0114_verified_posting_link_repairs",
+      idx: 119,
+      tag: "0119_refresh_sources_20260825084438",
     });
   });
 

@@ -84,6 +84,9 @@ export function normalizeAuditRecord(record: AuditSourceRecord): NormalizedSourc
     resumeUpload,
     jobAlerts: record.jobAlerts === "가능" ? "available" : "unknown",
     checkedAt: record.checkedAt,
-    enabled: !["NO_ACTIVE_CAREERS", "UNRESOLVED"].includes(record.verification),
+    // A source without a posting endpoint cannot be crawled even if it keeps
+    // a separate Talent Community URL for reference. Mark it inactive so the
+    // health view does not misclassify an acquired or retired board as healthy.
+    enabled: Boolean(postingUrl) && !["NO_ACTIVE_CAREERS", "UNRESOLVED"].includes(record.verification),
   };
 }

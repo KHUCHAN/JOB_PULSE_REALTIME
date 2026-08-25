@@ -151,12 +151,10 @@ const getJson = async (resource, timeoutMs) => {
   }
 };
 
-// The full source and overview views include correlated job/run counts and can
-// temporarily exceed the remaining workflow budget immediately after a large
-// drain. They are useful telemetry, but they must not convert an otherwise
-// healthy crawl into a hard schedule failure. The compact run-status query is
-// the required postcondition; collect the heavier snapshots concurrently and
-// treat a timeout as degraded observability only.
+// Source health is computed with grouped/windowed aggregates so the complete
+// 1,400+ source inventory remains practical to inspect after every drain.
+// Treat telemetry timeouts as degraded observability rather than retrying the
+// crawl itself; the compact run-status query is the required postcondition.
 const runStatus = await getJson("runStatus", 15_000);
 const [overviewResult, sourcesResult] = await Promise.allSettled([
   getJson("overview", 15_000),
@@ -174,6 +172,13 @@ if (!sourceHealthAvailable) {
 }
 const sourceCounts = {};
 for (const source of sources) sourceCounts[source.health] = (sourceCounts[source.health] || 0) + 1;
+const healthyZeroSources = sources
+  .filter((source) => source.health === "healthy" && number(source.currentJobs) === 0)
+  .map((source) => source.id);
+const suspiciousClosures = (Array.isArray(runStatus.recent) ? runStatus.recent : [])
+  .filter((run) => number(run.jobsClosed) >= 25
+    && number(run.jobsSeen) <= Math.max(5, Math.floor(number(run.jobsClosed) * 0.1)))
+  .map((run) => ({ sourceId: run.sourceId, jobsSeen: number(run.jobsSeen), jobsClosed: number(run.jobsClosed) }));
 const result = {
   ...summary,
   elapsedMinutes: Math.round((Date.now() - startedAt) / 600) / 100,
@@ -189,6 +194,8 @@ const result = {
   },
   totalSources: sources.length,
   sourceCounts,
+  healthyZeroSources,
+  suspiciousClosures,
   overviewAvailable,
   sourceHealthAvailable,
 };
@@ -207,6 +214,8 @@ if (process.env.GITHUB_STEP_SUMMARY) {
     `- Stop reason: ${result.stopReason || "queue drained or time limit reached"}`,
     `- Stale crawl rows finalized: ${result.staleRunsFinalized}`,
     `- Current source health: ${result.sourceHealthAvailable ? JSON.stringify(result.sourceCounts) : "detailed view timed out; overview remained healthy"}`,
+    `- Healthy zero-job sources (${result.healthyZeroSources.length}): ${result.healthyZeroSources.join(", ") || "none"}`,
+    `- Suspicious recent closure runs: ${result.suspiciousClosures.length ? JSON.stringify(result.suspiciousClosures) : "none"}`,
     "",
   ].join("\n"));
 }

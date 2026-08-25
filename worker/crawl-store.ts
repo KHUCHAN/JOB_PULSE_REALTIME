@@ -27,6 +27,10 @@ type ExistingJobRow = {
   resume_match_hash: string | null;
 };
 
+type WatermarkJobRow = ExistingJobRow & {
+  last_seen_at: string;
+};
+
 type SourceSyncRow = {
   company: string;
   posting_url: string;
@@ -43,6 +47,7 @@ type PagedCrawlState = {
 };
 
 const pagedCrawlStateKey = (sourceId: string): string => `crawl_page_checkpoint:${sourceId}`;
+const catalogVolumeQuarantineKey = (sourceId: string): string => `catalog_volume_quarantine:${sourceId}`;
 
 const mirrorIdentity = (value: unknown): string | null => {
   if (typeof value !== "string") return null;
@@ -275,6 +280,73 @@ const mergedFacets = (nativeFacets: CrawledFacet[] | undefined, jobs: CrawledJob
 export class D1CrawlStore implements CrawlStore {
   constructor(private readonly db: D1Database) {}
 
+  private async requireConfirmedCatalogDrop(
+    sourceId: string,
+    existingOpen: number,
+    incoming: number,
+    incomingIdentityHash: string,
+    now: string,
+  ): Promise<void> {
+    const catastrophicFloor = Math.max(5, Math.floor(existingOpen * 0.1));
+    if (existingOpen < 25 || incoming > catastrophicFloor || incoming >= existingOpen) return;
+
+    const quarantineKey = catalogVolumeQuarantineKey(sourceId);
+    const quarantineResult = await this.db.prepare(`
+      SELECT value FROM catalog_state WHERE key = ? LIMIT 1
+    `).bind(quarantineKey).all<{ value: string }>();
+    let confirmed = false;
+    try {
+      const previous = JSON.parse(quarantineResult.results[0]?.value ?? "null") as {
+        existingOpen?: unknown; incoming?: unknown; incomingIdentityHash?: unknown; observedAt?: unknown;
+      } | null;
+      const observedAt = typeof previous?.observedAt === "string" ? Date.parse(previous.observedAt) : Number.NaN;
+      confirmed = previous?.existingOpen === existingOpen
+        && previous?.incoming === incoming
+        && previous?.incomingIdentityHash === incomingIdentityHash
+        && Number.isFinite(observedAt)
+        && Date.now() - observedAt <= 48 * 60 * 60 * 1_000;
+    } catch {
+      confirmed = false;
+    }
+    if (!confirmed) {
+      await this.db.prepare(`
+        INSERT INTO catalog_state (key, value, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+      `).bind(quarantineKey, JSON.stringify({
+        existingOpen,
+        incoming,
+        incomingIdentityHash,
+        observedAt: now,
+      })).run();
+      throw new Error(`Catalog volume quarantine: verified complete listing fell from ${existingOpen} open jobs to ${incoming}; a second matching observation is required before closures.`);
+    }
+    await this.db.prepare(`DELETE FROM catalog_state WHERE key = ?`).bind(quarantineKey).run();
+  }
+
+  async closeStaleJobsAfterWatermark(sourceId: string, watermark: string): Promise<number> {
+    const watermarkTime = Date.parse(watermark);
+    if (!Number.isFinite(watermarkTime)) throw new Error("Catalog closure watermark is invalid.");
+    const result = await this.db.prepare(`
+      SELECT id, external_id, requisition_id, title, official_url, status, resume_match_hash, last_seen_at
+      FROM jobs WHERE source_id = ? AND status = 'open'
+    `).bind(sourceId).all<WatermarkJobRow>();
+    const existingOpen = result.results.filter((row) => !isNavigationArtifact(row));
+    const visible = existingOpen.filter((row) => Date.parse(row.last_seen_at) >= watermarkTime);
+    const identityHash = await sha256(JSON.stringify(visible
+      .map((row) => `${row.requisition_id ?? row.external_id ?? ""}\u0000${row.official_url}`)
+      .sort()));
+    const now = new Date().toISOString();
+    await this.requireConfirmedCatalogDrop(sourceId, existingOpen.length, visible.length, identityHash, now);
+    const closed = await this.db.prepare(`
+      UPDATE jobs
+      SET status = 'closed', closed_at = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE source_id = ? AND status = 'open'
+        AND julianday(last_seen_at) < julianday(?)
+    `).bind(now, sourceId, watermark).run();
+    return Number(closed.meta?.changes ?? 0);
+  }
+
   private async hydratePagedCrawlState(sources: PersistedSource[]): Promise<PersistedSource[]> {
     if (sources.length === 0) return sources;
     const checkpointKeys = sources.map((source) => pagedCrawlStateKey(source.id));
@@ -419,12 +491,7 @@ export class D1CrawlStore implements CrawlStore {
     const now = new Date().toISOString();
     let closedCount = 0;
     if (previousCycleStartedAt) {
-      const closed = await this.db.prepare(`
-        UPDATE jobs
-        SET status = 'closed', closed_at = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE source_id = ? AND status = 'open' AND last_seen_at < ?
-      `).bind(now, source.id, previousCycleStartedAt).run();
-      closedCount = Number(closed.meta?.changes ?? 0);
+      closedCount = await this.closeStaleJobsAfterWatermark(source.id, previousCycleStartedAt);
     }
     await this.db.prepare(`
       INSERT INTO catalog_state (key, value, updated_at)
@@ -504,6 +571,20 @@ export class D1CrawlStore implements CrawlStore {
       .filter((row) => row.status === "open")
       .map((row) => row.official_url));
     const visibleUrls = new Set(jobs.map((job) => job.officialUrl));
+    const existingOpenJobs = existingResult.results
+      .filter((row) => row.status === "open" && !isNavigationArtifact(row));
+    if (completeListing) {
+      const incomingIdentityHash = await sha256(JSON.stringify(jobs
+        .map((job) => `${job.requisitionId ?? job.externalId ?? ""}\u0000${job.officialUrl}`)
+        .sort()));
+      await this.requireConfirmedCatalogDrop(
+        sourceId,
+        existingOpenJobs.length,
+        jobs.length,
+        incomingIdentityHash,
+        now,
+      );
+    }
     const canonicalVisibleUrls = new Set([...visibleUrls].map(canonicalProtocolUrl));
     const duplicateJobIds = new Set(existingResult.results
       .filter((row) => row.status === "open")

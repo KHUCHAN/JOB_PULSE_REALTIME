@@ -68,8 +68,10 @@ describe("D1CrawlStore enriched job persistence", () => {
       previous_success_at?: string | null;
     };
     existingJobs?: Array<{ id: string; external_id: string | null; requisition_id?: string | null; title: string; official_url: string; status: string; resume_match_hash: string | null }>;
+    catalogState?: Record<string, string>;
   } = {}) => {
     const calls: Array<{ sql: string; values: unknown[] }> = [];
+    const catalogState = options.catalogState ?? {};
     const db = {
       prepare(sql: string) {
         return {
@@ -81,6 +83,8 @@ describe("D1CrawlStore enriched job persistence", () => {
                   ? options.source ? [options.source] : []
                   : sql.includes("SELECT id, external_id, requisition_id, title, official_url, status, resume_match_hash")
                   ? options.existingJobs ?? []
+                  : sql.includes("SELECT value FROM catalog_state WHERE key")
+                  ? (catalogState[String(values[0])] ? [{ value: catalogState[String(values[0])] }] : [])
                   : [],
               }),
               run: async () => {
@@ -90,6 +94,8 @@ describe("D1CrawlStore enriched job persistence", () => {
                 if (options.duplicateFacetConstraint && sql.includes("INSERT INTO source_facets") && !sql.includes("ON CONFLICT")) {
                   throw new Error("UNIQUE constraint failed: source_facets.source_id, source_facets.facet_key, source_facets.value_key");
                 }
+                if (sql.includes("INSERT INTO catalog_state")) catalogState[String(values[0])] = String(values[1]);
+                if (sql.includes("DELETE FROM catalog_state WHERE key = ?")) delete catalogState[String(values[0])];
                 return {};
               },
             };
@@ -530,6 +536,93 @@ describe("D1CrawlStore enriched job persistence", () => {
     expect(calls.some((call) => call.sql.includes("DELETE FROM source_facets"))).toBe(true);
   });
 
+  it("quarantines a first catastrophic complete-catalog drop before any jobs are closed", async () => {
+    const existingJobs = Array.from({ length: 30 }, (_, index) => ({
+      id: `existing-${index}`,
+      external_id: `REQ-${index}`,
+      title: `Real Role ${index}`,
+      official_url: `https://jobs.example/${index}`,
+      status: "open",
+      resume_match_hash: null,
+    }));
+    const { db, calls } = fakeDb({ existingJobs });
+
+    await expect(new D1CrawlStore(db).syncJobs("source-1", [], true)).rejects.toThrow(
+      "Catalog volume quarantine: verified complete listing fell from 30 open jobs to 0",
+    );
+
+    expect(calls.some((call) => call.sql.includes("INSERT INTO catalog_state"))).toBe(true);
+    expect(calls.some((call) => call.sql.includes("SET status = 'closed'"))).toBe(false);
+    expect(calls.some((call) => call.sql.includes("INSERT INTO jobs"))).toBe(false);
+  });
+
+  it("accepts a second matching catastrophic observation and then closes the stale catalog", async () => {
+    const existingJobs = Array.from({ length: 30 }, (_, index) => ({
+      id: `existing-${index}`,
+      external_id: `REQ-${index}`,
+      title: `Real Role ${index}`,
+      official_url: `https://jobs.example/${index}`,
+      status: "open",
+      resume_match_hash: null,
+    }));
+    const { db, calls } = fakeDb({ existingJobs });
+    const store = new D1CrawlStore(db);
+    await expect(store.syncJobs("source-1", [], true)).rejects.toThrow("Catalog volume quarantine");
+
+    const result = await store.syncJobs("source-1", [], true);
+
+    expect(result.closed).toBe(30);
+    expect(calls.some((call) => call.sql.includes("DELETE FROM catalog_state WHERE key = ?"))).toBe(true);
+    expect(calls.some((call) => call.sql.includes("SET status = 'closed'"))).toBe(true);
+  });
+
+  it("also quarantines catastrophic browser snapshot closures until they repeat", async () => {
+    const watermark = "2026-08-25T00:00:00.000Z";
+    const rows = Array.from({ length: 30 }, (_, index) => ({
+      id: `existing-${index}`,
+      external_id: `REQ-${index}`,
+      requisition_id: `REQ-${index}`,
+      title: `Real Role ${index}`,
+      official_url: `https://jobs.example/${index}`,
+      status: "open",
+      resume_match_hash: null,
+      last_seen_at: index < 2 ? "2026-08-25T00:05:00.000Z" : "2026-08-24T00:00:00.000Z",
+    }));
+    const calls: Array<{ sql: string; values: unknown[] }> = [];
+    const catalogState: Record<string, string> = {};
+    const db = {
+      prepare(sql: string) {
+        return {
+          bind(...values: unknown[]) {
+            calls.push({ sql, values });
+            return {
+              all: async () => ({
+                results: sql.includes("SELECT id, external_id, requisition_id, title, official_url, status, resume_match_hash, last_seen_at")
+                  ? rows
+                  : sql.includes("SELECT value FROM catalog_state WHERE key") && catalogState[String(values[0])]
+                    ? [{ value: catalogState[String(values[0])] }]
+                    : [],
+              }),
+              run: async () => {
+                if (sql.includes("INSERT INTO catalog_state")) catalogState[String(values[0])] = String(values[1]);
+                if (sql.includes("DELETE FROM catalog_state")) delete catalogState[String(values[0])];
+                return { meta: { changes: sql.includes("UPDATE jobs") ? 28 : 1 } };
+              },
+            };
+          },
+        };
+      },
+    } as unknown as D1Database;
+    const store = new D1CrawlStore(db);
+
+    await expect(store.closeStaleJobsAfterWatermark("source-1", watermark)).rejects.toThrow(
+      "Catalog volume quarantine: verified complete listing fell from 30 open jobs to 2",
+    );
+    expect(calls.some((call) => call.sql.includes("UPDATE jobs"))).toBe(false);
+    await expect(store.closeStaleJobsAfterWatermark("source-1", watermark)).resolves.toBe(28);
+    expect(calls.some((call) => call.sql.includes("UPDATE jobs"))).toBe(true);
+  });
+
   it("does not replace authoritative facets with values derived from an incomplete listing", async () => {
     const { db, calls } = fakeDb();
     const store = new D1CrawlStore(db);
@@ -828,7 +921,10 @@ describe("D1CrawlStore source leasing", () => {
         return {
           bind(...values: unknown[]) {
             calls.push({ sql, values });
-            return { run: async () => ({ meta: { changes: sql.includes("UPDATE jobs") ? 3 : 1 } }) };
+            return {
+              all: async () => ({ results: [] }),
+              run: async () => ({ meta: { changes: sql.includes("UPDATE jobs") ? 3 : 1 } }),
+            };
           },
         };
       },
@@ -853,8 +949,8 @@ describe("D1CrawlStore source leasing", () => {
     expect(calls[0].sql).toContain("INSERT INTO catalog_state");
     expect(String(calls[0].values[1])).toContain('"listingUrl":"https://www.google.com/about/careers/applications/jobs/results/"');
     expect(calls[1].sql).toContain("INSERT INTO catalog_state");
-    expect(calls[2].sql).toContain("last_seen_at < ?");
-    expect(calls[2].values[2]).toBe("2026-08-09T08:00:00.000Z");
-    expect(calls[3].sql).toContain("INSERT INTO catalog_state");
+    const closure = calls.find((call) => call.sql.includes("julianday(last_seen_at) < julianday(?)"));
+    expect(closure?.values[2]).toBe("2026-08-09T08:00:00.000Z");
+    expect(calls.at(-1)?.sql).toContain("INSERT INTO catalog_state");
   });
 });

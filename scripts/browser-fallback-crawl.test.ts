@@ -58,6 +58,7 @@ describe("browser fallback Workday recovery", () => {
   });
 
   it("selects only known Worker-egress failures for the independent native pass", () => {
+    expect(nativeRunnerRecoveryEligible({ id: "p5-1077-tesla", adapter: "custom" })).toBe(true);
     expect(nativeRunnerRecoveryEligible({ adapter: "workday" })).toBe(true);
     expect(nativeRunnerRecoveryEligible({ adapter: "custom", health: "blocked", currentJobs: 0 })).toBe(true);
     expect(nativeRunnerRecoveryEligible({

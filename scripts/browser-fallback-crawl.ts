@@ -60,11 +60,13 @@ export const browserListingSource = <T extends CrawlSource>(source: T): T => {
 };
 
 export const nativeRunnerRecoveryEligible = (source: {
+  id?: string | null;
   adapter: CrawlSource["adapter"];
   health?: string | null;
   currentJobs?: number | null;
   lastError?: string | null;
-}): boolean => source.adapter === "workday"
+}): boolean => source.id === "p5-1077-tesla"
+  || source.adapter === "workday"
   || source.health === "blocked"
   || source.lastError === "empty_board"
   || (source.currentJobs != null && source.currentJobs > 0);
@@ -155,6 +157,10 @@ const problemSources = async (): Promise<BrowserRecoverySource[]> => {
       return emptyRank * 10 + stateRank;
     };
     return sources
+      // Retired/acquired sources deliberately have no crawlable posting URL.
+      // Do not reinterpret a reference-only Talent URL as a board and
+      // accidentally reactivate the duplicate source during browser recovery.
+      .filter((source) => source.health !== "inactive")
       .map((source) => ({
         ...source,
         candidateUrl: candidateUrl(source),
@@ -328,9 +334,19 @@ const inspect = async (page: Page, source: CrawlSource): Promise<BrowserFallback
       return { source, status: 200, finalUrl: source.postingUrl, jobs: http1Jobs, error: null };
     }
     if (source.id === "p5-1077-tesla" || source.company === "Tesla") {
-      const stateResponse = page.waitForResponse((response) => response.url() === "https://www.tesla.com/cua-api/apps/careers/state", { timeout: 30_000 });
-      const response = await page.goto(source.postingUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
-      const state = await (await stateResponse).json() as TeslaState;
+      // Tesla's careers shell can keep loading nonessential assets long after
+      // navigation commits. Fetch the same-origin official state endpoint
+      // explicitly from the browser context: the shell does not request it on
+      // every visit, so passively waiting for a network event can time out.
+      const response = await page.goto(source.postingUrl, { waitUntil: "commit", timeout: 30_000 });
+      const state = await page.evaluate(async () => {
+        const stateResponse = await fetch("/cua-api/apps/careers/state", {
+          credentials: "include",
+          headers: { accept: "application/json" },
+        });
+        if (!stateResponse.ok) throw new Error(`Tesla browser state returned HTTP ${stateResponse.status}.`);
+        return stateResponse.json();
+      }) as TeslaState;
       const jobs = jobsFromTeslaState(source, state);
       return {
         source,

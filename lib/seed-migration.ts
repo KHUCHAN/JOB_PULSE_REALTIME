@@ -45,7 +45,11 @@ export function catalogDeltaSql(previousSql: string, nextSql: string, version: s
   const previousStatements = new Set(previousSql.split("\n").filter((line) => line.startsWith("INSERT INTO ")));
   const changedStatements = nextSql.split("\n")
     .filter((line) => line.startsWith("INSERT INTO ") && !previousStatements.has(line));
-  return `${versionedCatalogSql(changedStatements.join("\n"), version).trimEnd()}\n`;
+  const retireDisabledSourceData = changedStatements.length === 0 ? [] : [
+    "UPDATE jobs SET status = 'closed', closed_at = COALESCE(closed_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE status = 'open' AND source_id IN (SELECT id FROM sources WHERE enabled = 0);",
+    "UPDATE job_matches SET is_active = 0 WHERE is_active = 1 AND job_id IN (SELECT jobs.id FROM jobs JOIN sources ON sources.id = jobs.source_id WHERE sources.enabled = 0);",
+  ];
+  return `${versionedCatalogSql([...changedStatements, ...retireDisabledSourceData].join("\n"), version).trimEnd()}\n`;
 }
 
 export function planSeedMigration({

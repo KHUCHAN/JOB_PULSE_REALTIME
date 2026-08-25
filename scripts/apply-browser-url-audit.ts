@@ -6,7 +6,10 @@ import { buildRemediatedCatalog, type BrowserUrlAuditResult, type OfficialUrlOve
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const seed = JSON.parse(await readFile(resolve(projectRoot, "db/seed/sources.json"), "utf8")) as { sources: NormalizedSourceRecord[] };
-const audit = JSON.parse(await readFile(resolve(projectRoot, "output/playwright/url-audit/results.json"), "utf8")) as { results: BrowserUrlAuditResult[] };
+const auditPath = resolve(projectRoot, process.env.BROWSER_URL_AUDIT_PATH ?? "output/playwright/url-audit/results.json");
+const audit = process.env.BROWSER_URL_AUDIT_OFFICIAL_ONLY === "1"
+  ? { results: [] as BrowserUrlAuditResult[] }
+  : JSON.parse(await readFile(auditPath, "utf8")) as { results: BrowserUrlAuditResult[] };
 const official = JSON.parse(await readFile(resolve(projectRoot, "db/catalog/official-url-overrides.json"), "utf8")) as OfficialUrlOverrides;
 const { records, applied } = buildRemediatedCatalog(seed.sources, audit.results, official);
 

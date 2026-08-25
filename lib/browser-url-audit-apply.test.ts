@@ -104,4 +104,42 @@ describe("buildRemediatedCatalog", () => {
       checkedAt: "2026-08-15",
     }));
   });
+
+  it("keeps a retired posting endpoint inactive even when a Talent URL remains", () => {
+    const source = {
+      masterRow: 44,
+      company: "Acquired Co",
+      id: "acquired-co",
+      postingUrl: "https://acquired.example/jobs",
+      talentUrl: "https://acquired.example/community",
+      channel: "Official careers",
+      adapter: "custom" as const,
+      verification: "career_only",
+      confidence: "high",
+      resumeUpload: "unknown" as const,
+      jobAlerts: "unknown" as const,
+      enabled: true,
+      checkedAt: "2026-08-25",
+    };
+
+    const result = buildRemediatedCatalog([source], [], {
+      overrides: {
+        "acquired-co": {
+          url: null,
+          adapter: "custom",
+          verification: "MERGED_PARENT_CAREERS",
+          channel: "Use the parent source",
+        },
+      },
+      rejectedRecommendations: [],
+    });
+
+    // buildRemediatedCatalog returns audit-shaped rows; the normalization
+    // performed by the catalog build is what derives enabled=false.
+    expect(result.records[0]).toEqual(expect.objectContaining({
+      postingUrl: null,
+      talentPoolUrl: "https://acquired.example/community",
+      verification: "MERGED_PARENT_CAREERS",
+    }));
+  });
 });

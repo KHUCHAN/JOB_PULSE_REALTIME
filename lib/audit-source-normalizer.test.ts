@@ -53,6 +53,27 @@ describe("normalizeAuditRecord", () => {
     expect(normalized.resumeUpload).toBe("job_only");
   });
 
+  it("marks a source without a crawlable posting endpoint inactive", () => {
+    const normalized = normalizeAuditRecord({
+      masterRow: 367,
+      Company: "Acquired Company",
+      "Ledger ID": "acquired-company",
+      postingUrl: null,
+      talentPoolUrl: "https://parent.example/careers",
+      channel: "Use the parent source",
+      resumeUpload: "미확인",
+      jobAlerts: "미확인",
+      verification: "MERGED_PARENT_CAREERS",
+      confidence: "HIGH",
+      recommendedAction: "",
+      evidenceUrl: "",
+      evidenceNote: "Acquired",
+      checkedAt: "2026-08-25",
+    });
+
+    expect(normalized.enabled).toBe(false);
+  });
+
   it("classifies Ashby job boards for API crawling", () => {
     const normalized = normalizeAuditRecord({
       masterRow: 900,

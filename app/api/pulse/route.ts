@@ -294,13 +294,7 @@ async function persistBrowserSnapshot(
       facets,
     );
     if (watermarkFinalization) {
-      const closed = await database.prepare(`
-        UPDATE jobs
-        SET status = 'closed', closed_at = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE source_id = ? AND status = 'open'
-          AND julianday(last_seen_at) < julianday(?)
-      `).bind(new Date().toISOString(), source.id, snapshotStartedAt).run();
-      changes.closed += Number(closed.meta?.changes ?? 0);
+      changes.closed += await store.closeStaleJobsAfterWatermark(source.id, snapshotStartedAt!);
     }
     if (listingUrl && listingUrl !== source.postingUrl && isSafeCareerListingUrl(source.company, source.postingUrl, listingUrl)) {
       const original = await database.prepare("SELECT posting_url FROM sources WHERE id = ?").bind(source.id).first<{ posting_url: string | null }>();
@@ -463,22 +457,39 @@ async function listSources(sourceIds: string[] = []): Promise<SourceRecord[]> {
   const statement = db().prepare(`
     WITH selected_sources AS (
       SELECT * FROM sources ${selectedFilter}
+    ), ranked_runs AS (
+      SELECT cr.id, cr.source_id, cr.status, cr.response_status, cr.error,
+             row_number() OVER (
+               PARTITION BY cr.source_id
+               ORDER BY cr.scheduled_for DESC, cr.id DESC
+             ) AS rank
+      FROM crawl_runs cr
+      JOIN selected_sources selected ON selected.id = cr.source_id
+    ), latest_runs AS (
+      SELECT id, source_id, status, response_status, error
+      FROM ranked_runs WHERE rank = 1
+    ), job_counts AS (
+      SELECT j.source_id, count(*) AS current_jobs
+      FROM jobs j
+      JOIN selected_sources selected ON selected.id = j.source_id
+      WHERE j.status = 'open'
+      GROUP BY j.source_id
+    ), changed_runs AS (
+      SELECT cr.source_id, max(cr.finished_at) AS last_changed_at
+      FROM crawl_runs cr
+      JOIN selected_sources selected ON selected.id = cr.source_id
+      WHERE cr.jobs_created > 0 OR cr.jobs_updated > 0 OR cr.jobs_closed > 0
+      GROUP BY cr.source_id
     )
     SELECT s.id, s.company, s.posting_url, s.talent_url, s.adapter, s.enabled,
            s.checked_at, s.last_crawled_at, s.next_crawl_at,
            l.status AS latest_status, l.response_status, l.error AS latest_error,
-           (SELECT count(*) FROM jobs j
-            WHERE j.source_id = s.id AND j.status = 'open') AS current_jobs,
-           (SELECT max(ch.finished_at) FROM crawl_runs ch
-            WHERE ch.source_id = s.id
-              AND (ch.jobs_created > 0 OR ch.jobs_updated > 0 OR ch.jobs_closed > 0)) AS last_changed_at
+           coalesce(j.current_jobs, 0) AS current_jobs,
+           ch.last_changed_at
     FROM selected_sources s
-    LEFT JOIN crawl_runs l ON l.id = (
-      SELECT latest.id FROM crawl_runs latest
-      WHERE latest.source_id = s.id
-      ORDER BY latest.scheduled_for DESC, latest.id DESC
-      LIMIT 1
-    )
+    LEFT JOIN latest_runs l ON l.source_id = s.id
+    LEFT JOIN job_counts j ON j.source_id = s.id
+    LEFT JOIN changed_runs ch ON ch.source_id = s.id
     ORDER BY s.company ASC
     LIMIT 2000
   `);
