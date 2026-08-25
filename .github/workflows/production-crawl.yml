@@ -42,7 +42,9 @@ jobs:
       - name: Drain due production sources
         env:
           JOB_PULSE_SITE_URL: https://job-pulse-realtime.autodev61.chatgpt.site
-          JOB_PULSE_MAX_RUN_MINUTES: "20"
+          # A repair push needs a bounded smoke drain before its targeted
+          # recovery pass; the recurring schedule retains the full drain.
+          JOB_PULSE_MAX_RUN_MINUTES: ${{ github.event_name == 'push' && '2' || '20' }}
         run: node scripts/run-production-crawl.mjs
 
   request-recovery:
@@ -108,6 +110,10 @@ jobs:
         env:
           BROWSER_FALLBACK_LIVE_URL: https://job-pulse-realtime.autodev61.chatgpt.site
           BROWSER_FALLBACK_INGEST_URL: https://job-pulse-realtime.autodev61.chatgpt.site/api/pulse
+          # Repair pushes verify the exact affected sources immediately. The
+          # scheduled run leaves this empty and continues rotating through the
+          # full browser-recovery queue below.
+          BROWSER_FALLBACK_SOURCE_IDS: ${{ github.event_name == 'push' && 'legacy-row-777,legacy-row-811,p2-0132-mr-cooper,legacy-row-846,audit-row-411,p5-1072-tampa-general-hospital,p5-1077-tesla' || '' }}
           # The browser action records every empty/failed/blocked result in
           # crawl_runs and advances next_crawl_at. Selecting the oldest rows
           # therefore rotates fairly without a run-number offset that could
