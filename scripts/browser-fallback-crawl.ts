@@ -22,6 +22,7 @@ export type BrowserFallbackResult = {
   finalUrl: string | null;
   jobs: CrawledJob[];
   facets?: CrawledFacet[];
+  completeListing?: boolean;
   authoritativeEmpty?: boolean;
   browserState?: { kind: "tesla"; state: TeslaState };
   error: string | null;
@@ -372,6 +373,10 @@ export const recoverNativeOutsideWorker = async (
     finalUrl: result.resolvedListingUrl ?? source.postingUrl,
     jobs: result.jobs,
     ...(result.facets ? { facets: result.facets } : {}),
+    // Native recovery starts at page one. Preserve completeness only when the
+    // adapter proves the full catalog directly or reaches its validated final
+    // checkpoint, so production can safely close rows no longer upstream.
+    completeListing: result.completeListing || result.pagination?.cycleComplete === true,
     ...(result.jobs.length === 0 ? { authoritativeEmpty: true } : {}),
     error: null,
   };
@@ -640,7 +645,7 @@ async function main(): Promise<void> {
             if (!token) throw new Error("Production browser ingest authorization is unavailable.");
             return token;
           },
-          completeListing: false,
+          completeListing: result.completeListing === true,
           endpoint: productionIngestUrl,
           jobs: result.jobs,
           listingUrl,

@@ -35,6 +35,7 @@ describe("browser fallback Workday recovery", () => {
     expect(result).toMatchObject({
       status: 200,
       finalUrl: source.postingUrl,
+      completeListing: true,
       error: null,
       jobs: [{
         title: "Data Science Intern",
@@ -56,6 +57,26 @@ describe("browser fallback Workday recovery", () => {
       adapter: "custom",
     }, fetcher as typeof fetch)).resolves.toBeNull();
     expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("promotes a page-one native checkpoint that reaches its verified tail", async () => {
+    const block = (id: string) => `<div class="search--item"><p><a href="/posting/data-intern/${id}">Data Intern</a></p><label>Location</label><p>Oak Brook, Illinois</p></div>`;
+    const result = await recoverNativeOutsideWorker({
+      id: "legacy-row-777",
+      company: "Ace Hardware",
+      postingUrl: "https://careers.acehardware.com/",
+      adapter: "custom",
+      attemptNativeRecovery: true,
+    }, (async () => Response.json({
+      showing: "Showing  of  Results",
+      pagination: '<button data-href="2">Next</button>',
+      postings: { jobs: block("REQ-123456") },
+    })) as typeof fetch);
+
+    expect(result).toMatchObject({
+      completeListing: true,
+      jobs: [{ externalId: "REQ-123456" }],
+    });
   });
 
   it("selects only known Worker-egress failures for the independent native pass", () => {
