@@ -21396,16 +21396,16 @@
       "id": "p5-0621-hulu",
       "masterRow": 3395,
       "company": "Hulu (Disney Streaming)",
-      "postingUrl": "https://www.disneycareers.com/en/search-jobs",
-      "talentUrl": "https://www.disneycareers.com/en/",
-      "channel": "Disney Watch Our Jobs",
+      "postingUrl": null,
+      "talentUrl": null,
+      "channel": "Duplicate of the authoritative Disney careers catalog",
       "adapter": "custom",
-      "verification": "valid_job_alert_form",
+      "verification": "no_active_careers",
       "confidence": "high",
       "resumeUpload": "unknown",
-      "jobAlerts": "available",
-      "checkedAt": "2026-08-05",
-      "enabled": true
+      "jobAlerts": "unknown",
+      "checkedAt": "2026-08-25",
+      "enabled": false
     },
     {
       "id": "p5-0624-ibm",
@@ -30484,14 +30484,6 @@
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
       "checkedAt": "2026-08-08"
-    },
-    {
-      "id": "talent-p5-0621-hulu",
-      "sourceId": "p5-0621-hulu",
-      "officialUrl": "https://www.disneycareers.com/en/",
-      "resumeUpload": "unknown",
-      "jobAlerts": "available",
-      "checkedAt": "2026-08-05"
     },
     {
       "id": "talent-p5-0624-ibm",
