@@ -52,6 +52,7 @@ describe("filterable job schema", () => {
       ["jobs_status_arrangement_idx", ["status", "arrangement"]],
       ["jobs_status_employment_type_idx", ["status", "employment_type"]],
       ["jobs_status_published_at_idx", ["status", "published_at"]],
+      ["jobs_status_source_idx", ["status", "source_id"]],
       ["jobs_location_country_state_city_idx", ["location_country", "location_state", "location_city"]],
       ["jobs_experience_level_idx", ["experience_level"]],
       ["jobs_salary_currency_min_max_idx", ["salary_currency", "salary_min", "salary_max"]],

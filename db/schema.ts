@@ -105,6 +105,7 @@ export const jobs = sqliteTable("jobs", {
 }, (table) => [
   uniqueIndex("jobs_source_url_unique").on(table.sourceId, table.officialUrl),
   index("jobs_status_first_seen_idx").on(table.status, table.firstSeenAt),
+  index("jobs_status_source_idx").on(table.status, table.sourceId),
   index("jobs_status_topic_classified_id_idx").on(table.status, table.topicClassifiedAt, table.id),
   index("jobs_company_idx").on(table.company),
   index("jobs_status_company_idx").on(table.status, table.company),

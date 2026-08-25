@@ -489,7 +489,7 @@ async function listSources(sourceIds: string[] = []): Promise<SourceRecord[]> {
   `);
   const countsStatement = database.prepare(`
     SELECT source_id, count(*) AS current_jobs
-    FROM jobs INDEXED BY ${sourceIds.length > 0 ? "jobs_source_url_unique" : "jobs_status_first_seen_idx"}
+    FROM jobs INDEXED BY jobs_status_source_idx
     WHERE ${sourceIds.length > 0 ? "source_id IN (SELECT value FROM json_each(?)) AND" : ""} status = 'open'
     GROUP BY source_id
   `);
