@@ -6110,6 +6110,34 @@ We are an equal opportunity employer.`;
     });
   });
 
+  it("uses Greenhouse's compact catalog for Anduril to stay below Worker memory limits", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p5-0545-anduril-industries",
+      company: "Anduril Industries",
+      postingUrl: "https://job-boards.greenhouse.io/andurilindustries",
+      adapter: "greenhouse",
+    }, async (input) => {
+      requests.push(String(input));
+      return Response.json({ jobs: [{
+        id: 42,
+        title: "Software Engineer",
+        absolute_url: "https://job-boards.greenhouse.io/andurilindustries/jobs/42",
+        updated_at: "2026-08-25T10:00:00Z",
+        location: { name: "Costa Mesa, CA" },
+      }] });
+    }, new Date("2026-08-25T10:30:00Z"));
+
+    expect(requests).toEqual([
+      "https://boards-api.greenhouse.io/v1/boards/andurilindustries/jobs?content=false",
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      jobs: [expect.objectContaining({ externalId: "42", description: null })],
+    }));
+  });
+
   it("attaches Intel's authoritative Workday internship and time-type facets to each job", async () => {
     const requests: Array<Record<string, string[]>> = [];
     const fetcher: typeof fetch = async (_input, init) => {

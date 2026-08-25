@@ -23449,7 +23449,12 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   }
 
   try {
-    const response = await fetchWithTimeout(fetcher, `https://boards-api.greenhouse.io/v1/boards/${board}/jobs?content=true`);
+    // Anduril's Greenhouse board is large enough that requesting every HTML
+    // description in one response can exceed the production Worker's memory
+    // limit. The compact board payload still contains the canonical job URL,
+    // title, location, departments, offices, and source-updated timestamp.
+    const includeContent = source.id !== "p5-0545-anduril-industries";
+    const response = await fetchWithTimeout(fetcher, `https://boards-api.greenhouse.io/v1/boards/${board}/jobs?content=${includeContent}`);
     if (!response.ok) {
       return {
         status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
