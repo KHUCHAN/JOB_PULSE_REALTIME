@@ -19,3 +19,23 @@ export const overviewActivitySql = `
   ORDER BY cr.rowid DESC
   LIMIT ?
 `;
+
+// The dashboard only needs a small recency sample, not the full canonical
+// search/count plan used by the jobs explorer. Keep this on the composite
+// status/published_at index so it remains responsive while crawl writes are
+// active. The explorer still performs full duplicate suppression.
+export const overviewLatestJobsSql = `
+  SELECT j.id, j.source_id, j.company, j.title, j.location, j.arrangement,
+         substr(coalesce(j.summary, j.description), 1, 1200) AS summary,
+         j.official_url, j.first_seen_at, j.last_seen_at, j.review_state,
+         j.employment_type, j.published_at, j.location_region,
+         '[]' AS area_keys,
+         NULL AS resume_match_score,
+         NULL AS resume_match_evidence
+  FROM jobs j INDEXED BY jobs_status_published_at_idx
+  WHERE j.status = 'open'
+    AND j.published_at IS NOT NULL
+    AND (j.valid_through IS NULL OR j.valid_through >= date('now'))
+  ORDER BY j.published_at DESC
+  LIMIT ?
+`;

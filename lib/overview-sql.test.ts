@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { overviewActivitySql, overviewCountsSql } from "./overview-sql";
+import { overviewActivitySql, overviewCountsSql, overviewLatestJobsSql } from "./overview-sql";
 
 describe("overview counts SQL", () => {
   it("excludes disabled sources from the source error count", () => {
@@ -39,5 +39,26 @@ describe("overview counts SQL", () => {
 
     const rows = sqlite.prepare(overviewActivitySql).all(1) as Array<{ id: string }>;
     expect(rows).toEqual([{ id: "run-2", company: "Two", status: "failed", started_at: "2026-08-10 01:00:00", finished_at: null, jobs_seen: 0, jobs_created: 0, jobs_updated: 0, jobs_closed: 0, error: null }]);
+  });
+
+  it("reads the latest published jobs without invoking the full explorer plan", () => {
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec(`
+      CREATE TABLE jobs (
+        id TEXT PRIMARY KEY, source_id TEXT, company TEXT, title TEXT,
+        location TEXT, arrangement TEXT, summary TEXT, description TEXT,
+        official_url TEXT, first_seen_at TEXT, last_seen_at TEXT,
+        review_state TEXT, employment_type TEXT, published_at TEXT,
+        location_region TEXT, status TEXT, valid_through TEXT
+      );
+      CREATE INDEX jobs_status_published_at_idx ON jobs (status, published_at);
+      INSERT INTO jobs VALUES
+        ('older', 'source', 'One', 'Older', NULL, 'onsite', NULL, NULL, 'https://example.com/1', '2026-08-01', '2026-08-01', NULL, NULL, '2026-08-01', 'us', 'open', NULL),
+        ('latest', 'source', 'Two', 'Latest', NULL, 'remote', NULL, NULL, 'https://example.com/2', '2026-08-02', '2026-08-02', NULL, NULL, '2026-08-02', 'us', 'open', NULL),
+        ('closed', 'source', 'Three', 'Closed', NULL, 'onsite', NULL, NULL, 'https://example.com/3', '2026-08-03', '2026-08-03', NULL, NULL, '2026-08-03', 'us', 'closed', NULL);
+    `);
+
+    const rows = sqlite.prepare(overviewLatestJobsSql).all(1) as Array<{ id: string }>;
+    expect(rows[0]?.id).toBe("latest");
   });
 });
