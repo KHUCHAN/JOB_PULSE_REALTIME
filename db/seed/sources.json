@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:522902062828d40eae45c5c724e578c8cc9a0e55d82e85afd090c930c1b8e637",
+  "version": "v2:sha256:3c96ce5c9869f9e55a02e35f657d2dff7e36e650469a9b1f36fa434128a5aa03",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -20871,7 +20871,7 @@
       "id": "p5-0522-disney",
       "masterRow": 3332,
       "company": "Disney / Disney+",
-      "postingUrl": "https://www.disneycareers.com/en/",
+      "postingUrl": "https://www.disneycareers.com/en/search-jobs",
       "talentUrl": "https://www.disneycareers.com/en/",
       "channel": "Disney Watch Our Jobs",
       "adapter": "custom",
@@ -20879,7 +20879,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-25",
       "enabled": true
     },
     {

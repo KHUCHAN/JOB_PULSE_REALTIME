@@ -474,6 +474,7 @@
     "p4-0428-exl-service": { "url": "https://fa-ewjt-saasfaprod1.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_2/jobs", "adapter": "custom" },
     "p4-0477-qualtrics": { "url": "https://www.qualtrics.com/careers/us/search-results", "adapter": "phenom" },
     "p4-0482-recorded-future": { "url": "https://job-boards.greenhouse.io/recordedfuture", "adapter": "greenhouse" },
+    "p5-0522-disney": { "url": "https://www.disneycareers.com/en/search-jobs", "adapter": "custom" },
     "p5-0592-emerson-electric": { "url": "https://hdjq.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/jobs", "adapter": "custom" },
     "p5-0693-optumrx": { "url": "https://careers.unitedhealthgroup.com/search-jobs", "adapter": "custom" },
     "p5-0702-philips-healthcare": { "url": "https://www.careers.philips.com/na/en/search-results", "adapter": "phenom" },
