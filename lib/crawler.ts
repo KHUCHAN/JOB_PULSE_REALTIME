@@ -14193,6 +14193,7 @@ const crawlJobviteBoard = async (
 
 type AceJobsPayload = {
   postings?: { jobs?: string };
+  pagination?: string;
   showing?: string;
 };
 
@@ -14863,46 +14864,91 @@ const crawlAceJobs = async (source: CrawlSource, fetcher: typeof fetch): Promise
     for (const [key, value] of Object.entries({ ajax: "1", radius: "", lat: "", lng: "", keyword: "", state: "", city: "", location: "", category: "", career_area: "", country: "", spage: String(page) })) endpoint.searchParams.set(key, value);
     return endpoint.href;
   };
-  const fetchPage = async (page: number): Promise<{ status: number; total: number; jobs: CrawledJob[] } | null> => {
+  const fetchPage = async (page: number): Promise<{
+    status: number;
+    total: number | null;
+    jobs: CrawledJob[];
+    hasNext: boolean;
+  } | null> => {
     try {
       const response = await fetchWithTimeout(fetcher, endpointFor(page), { headers: { accept: "application/json" } }, false, { attempts: 1, timeoutMs: 10_000 });
       if (!response.ok) return null;
       const payload = await response.json() as AceJobsPayload;
-      const total = Number(payload.showing?.match(/\bof\s+([\d,]+)\s+Results\b/i)?.[1]?.replaceAll(",", ""));
-      if (!Number.isFinite(total) || total < 1 || typeof payload.postings?.jobs !== "string") return null;
-      return { status: response.status, total, jobs: aceJobsFromHtml(payload.postings.jobs, source) };
+      if (typeof payload.postings?.jobs !== "string" || typeof payload.pagination !== "string") return null;
+      const totalText = payload.showing?.match(/\bof\s+([\d,]+)\s+Results\b/i)?.[1]?.replaceAll(",", "");
+      const total = totalText ? Number(totalText) : null;
+      if (total !== null && (!Number.isSafeInteger(total) || total < 1 || total > 10_000)) return null;
+      const jobs = aceJobsFromHtml(payload.postings.jobs, source);
+      return {
+        status: response.status,
+        total,
+        jobs,
+        // Ace's August 2026 response stopped populating its human-readable
+        // result count and emits a numeric next-page control even after the
+        // final row. A short page is therefore the authoritative terminator.
+        hasNext: new RegExp(`\\bdata-href=["']${page + 1}["']`, "i").test(payload.pagination)
+          && jobs.length === pageSize,
+      };
     } catch {
       return null;
     }
   };
   const first = await fetchPage(1);
-  if (!first || first.jobs.length !== Math.min(pageSize, first.total)) return { status: "failed", responseStatus: first?.status ?? null, completeListing: false, jobs: [], error: "Ace Hardware job API did not return a usable first page." };
-  const totalPages = Math.ceil(first.total / pageSize);
-  const startPage = Math.min(Math.max(source.crawlPageCursor ?? 1, 1), totalPages);
-  const endPage = Math.min(startPage + (startPage === 1 ? 7 : 6), totalPages);
-  const pageNumbers = Array.from({ length: Math.max(0, endPage - Math.max(startPage, 2) + 1) }, (_, index) => Math.max(startPage, 2) + index);
-  const pages: Array<{ status: number; total: number; jobs: CrawledJob[] } | null> = [];
-  for (let index = 0; index < pageNumbers.length; index += 5) pages.push(...await Promise.all(pageNumbers.slice(index, index + 5).map(fetchPage)));
-  const seen = new Set(first.jobs.map((job) => job.externalId ?? job.officialUrl));
+  const firstExpected = first?.total == null
+    ? (first?.hasNext ? pageSize : first?.jobs.length ?? 0)
+    : Math.min(pageSize, first.total);
+  if (!first || first.jobs.length < 1 || first.jobs.length !== firstExpected) return { status: "failed", responseStatus: first?.status ?? null, completeListing: false, jobs: [], error: "Ace Hardware job API did not return a usable first page." };
+  const declaredTotalPages = first.total == null ? null : Math.ceil(first.total / pageSize);
+  const startPage = declaredTotalPages == null
+    ? Math.max(source.crawlPageCursor ?? 1, 1)
+    : Math.min(Math.max(source.crawlPageCursor ?? 1, 1), declaredTotalPages);
+  const lastCandidatePage = startPage + (startPage === 1 ? 25 : 24);
+  const pageNumbers: number[] = [];
+  const pages: Array<NonNullable<Awaited<ReturnType<typeof fetchPage>>>> = [];
   let firstFailedPage: number | null = null;
-  for (let index = 0; index < pages.length; index += 1) {
-    const page = pages[index];
-    const pageNumber = pageNumbers[index];
-    const expected = Math.min(pageSize, first.total - (pageNumber - 1) * pageSize);
-    if (!page || page.total !== first.total || !claimPageIdentities(page.jobs.map((job) => job.externalId ?? job.officialUrl), expected, seen)) {
-      firstFailedPage = pageNumber;
-      break;
+  let terminalPage = first.hasNext ? null : 1;
+  outer: for (let batchStart = Math.max(startPage, 2); terminalPage === null && batchStart <= lastCandidatePage; batchStart += 5) {
+    const batchNumbers = Array.from(
+      { length: Math.min(5, lastCandidatePage - batchStart + 1) },
+      (_, index) => batchStart + index,
+    );
+    const batch = await Promise.all(batchNumbers.map((pageNumber) => fetchPage(pageNumber)));
+    for (let index = 0; index < batchNumbers.length; index += 1) {
+      const pageNumber = batchNumbers[index];
+      const page = batch[index];
+      const expected = first.total == null
+        ? (page?.hasNext ? pageSize : page?.jobs.length ?? 0)
+        : Math.min(pageSize, Math.max(0, first.total - (pageNumber - 1) * pageSize));
+      const identities = page?.jobs.map((job) => job.externalId ?? job.officialUrl) ?? [];
+      // Ace's non-unique sort order can repeat a handful of postings across
+      // adjacent page boundaries. Require a complete, internally unique page,
+      // then deduplicate the combined catalog after reaching the real tail.
+      if (!page || expected < 1
+        || (page.total !== null && first.total !== null && page.total !== first.total)
+        || identities.length !== expected || new Set(identities).size !== expected) {
+        firstFailedPage = pageNumber;
+        break outer;
+      }
+      pageNumbers.push(pageNumber);
+      pages.push(page);
+      if (!page.hasNext) {
+        terminalPage = pageNumber;
+        break outer;
+      }
     }
   }
-  const jobs = uniqueJobs([first.jobs, ...pages.flatMap((page) => page?.jobs ?? [])].flat());
+  const jobs = uniqueJobs([first.jobs, ...pages.map((page) => page.jobs)].flat());
+  const lastObservedPage = pageNumbers.at(-1) ?? 1;
+  const cycleComplete = firstFailedPage === null && terminalPage !== null;
+  const totalPages = declaredTotalPages ?? terminalPage ?? lastObservedPage + 1;
   return {
     status: "succeeded",
     responseStatus: first.status,
     completeListing: false,
     jobs,
     pagination: {
-      nextPage: firstFailedPage ?? (endPage === totalPages ? 1 : endPage),
-      cycleComplete: firstFailedPage === null && endPage === totalPages,
+      nextPage: firstFailedPage ?? (cycleComplete ? 1 : lastObservedPage + 1),
+      cycleComplete,
       totalPages,
     },
     resolvedListingUrl: "https://careers.acehardware.com/job-search/",
@@ -15927,17 +15973,23 @@ const fastenalListingJob = (value: FastenalListingJob, source: CrawlSource): Cra
   const sourcePostedText = fastenalPublishedDate(value.approvedDate);
   const endDateText = asText(value.endDate);
   const validThrough = fastenalDate(endDateText);
-  if (!externalId || !/^\d{3,12}$/.test(externalId) || !title || !city || !state || !/^[A-Z]{2}$/.test(state)
+  const stateParts = state?.split(",").map((part) => part.trim()).filter(Boolean) ?? [];
+  const states = stateParts.filter((part) => part !== "TBD");
+  const locationCity = city?.replace(/,\s*TBD$/i, "").trim() ?? null;
+  if (!externalId || !/^\d{3,12}$/.test(externalId) || !title || !city || !state
+    || stateParts.length < 1 || stateParts.some((part) => part !== "TBD" && !/^[A-Z]{2}$/.test(part))
+    || states.length < 1 || !locationCity
     || !department || !listedType || !sourcePostedText || !validThrough) return null;
+  const location = [locationCity, ...states].join(", ");
   const programs = classifyJobPrograms(title).keys;
   return {
     externalId,
     requisitionId: externalId,
     title,
     company: source.company,
-    location: `${city}, ${state}`,
-    locationCity: city,
-    locationState: state,
+    location,
+    locationCity,
+    ...(states.length === 1 ? { locationState: states[0] } : {}),
     locationCountry: "United States",
     arrangement: /\bremote\b/i.test(`${title} ${city}`) ? "remote" : "unknown",
     employmentType: programs.includes("coop") ? "Co-op"
@@ -16214,7 +16266,7 @@ const pcaPage = (
   const total = Number(count[3].replaceAll(",", ""));
   const expectedStart = (page - 1) * 10 + 1;
   const expectedRows = Math.min(10, total - expectedStart + 1);
-  if (!Number.isSafeInteger(total) || total < 1 || total > 390 || expectedRows < 1
+  if (!Number.isSafeInteger(total) || total < 1 || total > 1_000 || expectedRows < 1
     || start !== expectedStart || end !== expectedStart + expectedRows - 1
     || (expectedTotal !== undefined && total !== expectedTotal)) return null;
   const rows = [...payload.postings.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)];
@@ -16327,7 +16379,7 @@ const crawlPcaCareerSearch = async (source: CrawlSource, fetcher: typeof fetch):
     const first = pcaPage(firstResponse.payload, 1, source);
     if (!first) throw new Error("Packaging Corporation job search returned an invalid first page.");
     const totalPages = Math.ceil(first.total / 10);
-    if (totalPages < 1 || totalPages > 39) throw new Error("Packaging Corporation job search exceeded its bounded catalog size.");
+    if (totalPages < 1 || totalPages > 100) throw new Error("Packaging Corporation job search exceeded its bounded catalog size.");
     const pages = new Map<number, CrawledJob[]>([[1, first.jobs]]);
     for (let start = 2; start <= totalPages; start += 6) {
       const pageNumbers = Array.from({ length: Math.min(6, totalPages - start + 1) }, (_, index) => start + index);

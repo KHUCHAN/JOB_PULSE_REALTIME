@@ -401,13 +401,30 @@ const inspect = async (page: Page, source: CrawlSource): Promise<BrowserFallback
       // explicitly from the browser context: the shell does not request it on
       // every visit, so passively waiting for a network event can time out.
       const response = await page.goto(source.postingUrl, { waitUntil: "commit", timeout: 30_000 });
+      const responseStatus = response?.status() ?? null;
+      if ([401, 403, 429, 520, 521, 522, 523, 524].includes(responseStatus ?? -1)) {
+        return {
+          source,
+          status: responseStatus,
+          finalUrl: page.url(),
+          jobs: [],
+          error: `Tesla careers returned HTTP ${responseStatus}.`,
+        };
+      }
       const state = await page.evaluate(async () => {
-        const stateResponse = await fetch("/cua-api/apps/careers/state", {
-          credentials: "include",
-          headers: { accept: "application/json" },
-        });
-        if (!stateResponse.ok) throw new Error(`Tesla browser state returned HTTP ${stateResponse.status}.`);
-        return stateResponse.json();
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 20_000);
+        try {
+          const stateResponse = await fetch("/cua-api/apps/careers/state", {
+            credentials: "include",
+            headers: { accept: "application/json" },
+            signal: controller.signal,
+          });
+          if (!stateResponse.ok) throw new Error(`Tesla browser state returned HTTP ${stateResponse.status}.`);
+          return stateResponse.json();
+        } finally {
+          clearTimeout(timeout);
+        }
       }) as TeslaState;
       const jobs = jobsFromTeslaState(source, state);
       return {

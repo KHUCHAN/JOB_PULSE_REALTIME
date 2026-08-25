@@ -12540,13 +12540,65 @@ We are an equal opportunity employer.`;
     const block = (id: string, title: string, location: string) => `<div class="search--item"><label>${id}</label><p><a href="/posting/${title.toLocaleLowerCase().replaceAll(" ", "-")}/${id}">${title}</a></p><label>Location</label><p>${location}</p><label>Category</label><p>Corporate</p></div>`;
     const result = await crawlSource({ id: "legacy-row-777", company: "Ace Hardware", postingUrl: "https://careers.acehardware.com/", adapter: "custom" }, async (input) => {
       requests.push(String(input));
-      return Response.json({ showing: "Showing 2 of 2 Results", postings: { jobs: `${block("REQ-123456", "Data Intern", "Oak Brook, Illinois")}${block("a1b2c3d4", "Developer", "Remote")}` } });
+      return Response.json({ showing: "Showing 2 of 2 Results", pagination: "", postings: { jobs: `${block("REQ-123456", "Data Intern", "Oak Brook, Illinois")}${block("a1b2c3d4", "Developer", "Remote")}` } });
     }, new Date());
 
     expect(requests).toHaveLength(1);
     expect(requests[0]).toContain("get-jobs.php");
     expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: false, pagination: { nextPage: 1, cycleComplete: true, totalPages: 1 } }));
     expect(result.jobs).toHaveLength(2);
+  });
+
+  it("checkpoints Ace Hardware when its official result-count label is blank", async () => {
+    const block = (id: number) => `<div class="search--item"><p><a href="/posting/role-${id}/REQ-${id}">Role ${id}</a></p><label>Location</label><p>Oak Brook, Illinois</p></div>`;
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "legacy-row-777", company: "Ace Hardware", postingUrl: "https://careers.acehardware.com/", adapter: "custom",
+    }, async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.href);
+      const page = Number(url.searchParams.get("spage"));
+      const rows = page === 1
+        ? Array.from({ length: 100 }, (_, index) => block(10_000 + index)).join("")
+        : Array.from({ length: 3 }, (_, index) => block(20_000 + index)).join("");
+      return Response.json({
+        showing: "Showing  of  Results",
+        pagination: page === 1 ? '<button data-href="2" aria-label="Next page">Next</button>' : "",
+        postings: { jobs: rows },
+      });
+    }, new Date());
+
+    expect(requests).toHaveLength(6);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: false,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 2 },
+    }));
+    expect(result.jobs).toHaveLength(103);
+  });
+
+  it("finishes Ace Hardware on a short page despite a stale next control and cross-page duplicates", async () => {
+    const block = (id: number) => `<div class="search--item"><p><a href="/posting/role-${id}/REQ-${id}">Role ${id}</a></p><label>Location</label><p>Oak Brook, Illinois</p></div>`;
+    const result = await crawlSource({
+      id: "legacy-row-777", company: "Ace Hardware", postingUrl: "https://careers.acehardware.com/", adapter: "custom",
+    }, async (input) => {
+      const page = Number(new URL(String(input)).searchParams.get("spage"));
+      const ids = page === 1
+        ? Array.from({ length: 100 }, (_, index) => 10_000 + index)
+        : page === 2
+          ? [10_099, ...Array.from({ length: 99 }, (_, index) => 20_000 + index)]
+          : page === 3 ? [30_000, 30_001] : [];
+      return Response.json({
+        showing: "Showing  of  Results",
+        pagination: `<button data-href="${page + 1}" aria-label="Next page">Next</button>`,
+        postings: { jobs: ids.map(block).join("") },
+      });
+    }, new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: false,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 3 },
+    }));
+    expect(result.jobs).toHaveLength(201);
   });
 
   it("loads every Astronics posting and description from its linked RSS feed", async () => {
@@ -14392,6 +14444,32 @@ We are an equal opportunity employer.`;
     }));
   });
 
+  it("accepts Packaging Corporation catalogs above the former 390-job ceiling", async () => {
+    const listingUrl = "https://careers.packagingcorp.com/career-search/";
+    const apiUrl = "https://careers.packagingcorp.com/wp-content/themes/pcoa/get-jobs.php?ajax=1&keyword=&title=&location=&job_type=&spage=1";
+    const rows = Array.from({ length: 10 }, (_, index) => `<tr><td class="id">${25_000 + index}</td><td class="title">PCA Role ${index}</td>
+      <td class="location">Lake Forest,&nbsp;IL</td><td class="posted">08/25/26</td>
+      <td class="apply"><a href="${listingUrl}posting/pca-role-${index}/${25_000 + index}">View Job</a></td></tr>`).join("");
+    const result = await crawlSource({
+      id: "legacy-row-846", company: "Packaging Corp. of America", postingUrl: listingUrl, adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      if (url === listingUrl) return new Response(`<input id="template-url" value="https://careers.packagingcorp.com/wp-content/themes/pcoa">
+        <table><thead><tr><th class="id">JOB ID</th><th class="posted">POSTED DATE</th></tr></thead></table>`);
+      if (url === apiUrl) return Response.json({
+        postings: rows,
+        showingCount: "Showing 1 &ndash; 10 of 425",
+        pagination: '<a data-href="2">2</a>',
+      });
+      return new Response("upstream maintenance", { status: 503 });
+    }, new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed",
+      error: "Packaging Corporation job search returned HTTP 503.",
+    }));
+  });
+
   it("fails Packaging Corporation closed when pagination repeats job identities", async () => {
     const listingUrl = "https://careers.packagingcorp.com/career-search/";
     const apiUrl = (page: number) => `https://careers.packagingcorp.com/wp-content/themes/pcoa/get-jobs.php?ajax=1&keyword=&title=&location=&job_type=&spage=${page}`;
@@ -14484,6 +14562,16 @@ We are an equal opportunity employer.`;
         endDate: "09-01-2026",
         approvedDate,
       },
+      {
+        jobId: 633003,
+        title: "Customer Supply Chain Administrator",
+        type: "Full-time",
+        city: "Edwardsville, TBD",
+        state: "KS, NE, MO, IA",
+        department: "Supply Chain",
+        endDate: "09-01-2026",
+        approvedDate,
+      },
     ];
     const listingHtml = `<meta content="X-CSRF-TOKEN" name="_csrf_header">
       <meta name="_csrf" content="11111111-2222-3333-4444-555555555555">
@@ -14515,7 +14603,7 @@ We are an equal opportunity employer.`;
       if (url === listingUrl) return new Response(listingHtml, {
         headers: { "set-cookie": "JSESSIONID=\"session123.jvm:02\"; Path=/; Secure; HttpOnly" },
       });
-      if (url === apiUrl) return Response.json({ draw: 1, recordsTotal: 2, recordsFiltered: 2, data: rows });
+      if (url === apiUrl) return Response.json({ draw: 1, recordsTotal: 3, recordsFiltered: 3, data: rows });
       if (url === detailUrl) return new Response(detailHtml);
       return new Response("unexpected", { status: 404 });
     }, new Date("2026-08-15T22:00:00.000Z"));
@@ -14531,7 +14619,7 @@ We are an equal opportunity employer.`;
       status: "succeeded", responseStatus: 200, completeListing: true,
       resolvedListingUrl: listingUrl, error: null,
     }));
-    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs).toHaveLength(3);
     expect(result.jobs[0]).toEqual(expect.objectContaining({
       externalId: "633001",
       requisitionId: "633001",
@@ -14553,6 +14641,12 @@ We are an equal opportunity employer.`;
       externalId: "633002",
       employmentType: "Full-time",
       officialUrl: "https://jobs.fastenal.com/details/633002",
+    }));
+    expect(result.jobs[2]).toEqual(expect.objectContaining({
+      externalId: "633003",
+      location: "Edwardsville, KS, NE, MO, IA",
+      locationCity: "Edwardsville",
+      locationCountry: "United States",
     }));
   });
 
