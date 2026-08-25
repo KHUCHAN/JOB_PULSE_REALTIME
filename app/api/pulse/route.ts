@@ -14,8 +14,8 @@ import type {
 import { runDueCrawls, runSpecificCrawls, type PersistedSource } from "../../../lib/crawl-runner";
 import {
   jobsFromTeslaState,
+  LARGE_CATALOG_US_SCOPE_POLICY_REQUEUE_SOURCE_IDS,
   LARGE_CATALOG_US_SCOPE_POLICY_VERSION,
-  US_SCOPED_LARGE_CATALOGS,
   type CrawledFacet,
   type CrawledJob,
   type TeslaState,
@@ -75,7 +75,7 @@ export const dynamic = "force-dynamic";
 
 const largeCatalogCrawlPolicy = {
   version: LARGE_CATALOG_US_SCOPE_POLICY_VERSION,
-  sourceIds: [...US_SCOPED_LARGE_CATALOGS],
+  sourceIds: LARGE_CATALOG_US_SCOPE_POLICY_REQUEUE_SOURCE_IDS,
 } as const;
 
 const json = (value: unknown, status = 200): Response =>

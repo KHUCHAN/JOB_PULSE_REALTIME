@@ -118,7 +118,10 @@ const isEightfoldListingUrl = (value: string): boolean => {
 // checkpoint segments, and changing scope between segments would make stale
 // closure nondeterministic. Unknown and mixed/global roles remain visible so
 // an incomplete location never causes a potentially relevant US role to drop.
-export const LARGE_CATALOG_US_SCOPE_POLICY_VERSION = "large-us-v5";
+export const LARGE_CATALOG_US_SCOPE_POLICY_VERSION = "large-us-v6";
+// Only sources newly added in this revision need an immediate checkpoint
+// reset and cleanup. The full membership set below still controls every crawl.
+export const LARGE_CATALOG_US_SCOPE_POLICY_REQUEUE_SOURCE_IDS = ["legacy-row-102"] as const;
 export const US_SCOPED_LARGE_CATALOGS = new Set([
   "audit-row-319", // Baker Hughes
   "audit-row-338", // Cummins
@@ -347,6 +350,7 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
   "p5-1091-upmc",
   "p5-0687-northrop-grumman",
   "legacy-row-100", // Humana
+  "legacy-row-102", // Jacobs Solutions
 ]);
 
 // These source pages render their ATS client-side (or challenge generic

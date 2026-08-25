@@ -400,9 +400,12 @@ describe("large catalog content", () => {
       "p5-0849-christus-health",
       "p5-0996-northwell-health",
       "legacy-row-100",
+      "legacy-row-102",
       "p5-0687-northrop-grumman",
       "p5-0773-rtx",
     ]));
+    expect(crawlerModule.LARGE_CATALOG_US_SCOPE_POLICY_VERSION).toBe("large-us-v6");
+    expect(crawlerModule.LARGE_CATALOG_US_SCOPE_POLICY_REQUEUE_SOURCE_IDS).toEqual(["legacy-row-102"]);
   });
 });
 
