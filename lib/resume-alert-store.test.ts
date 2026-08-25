@@ -121,7 +121,7 @@ describe("resume digest reservation", () => {
       2,
       1,
       ["job-1", "missing-job"],
-    )).rejects.toThrow("Exact Codex dispatch target mismatch");
+    )).rejects.toThrow('ineligible ["missing-job"]');
     expect(sqlite.prepare("SELECT count(*) AS total FROM notifications").get()).toEqual({ total: 0 });
     expect(sqlite.prepare("SELECT count(*) AS total FROM notification_items").get()).toEqual({ total: 0 });
   });

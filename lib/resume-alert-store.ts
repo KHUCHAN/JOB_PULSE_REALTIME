@@ -17,7 +17,7 @@ export interface ClaimedNotification extends PlannedNotification {
 
 type LeaseRow = { keyword_id: string };
 type RecipientRow = { recipient: string };
-type PendingMatchRow = { id: string; pending_recipients: string };
+type PendingMatchRow = { id: string; job_id: string; pending_recipients: string };
 type ClaimedRow = { id: string; recipient: string; job_count: number; attempt_count: number };
 type DigestRow = {
   notification_id: string;
@@ -171,7 +171,7 @@ export const planResumeDigests = async (
     }
     const matches = exactTargets === null
       ? await database.prepare(`
-      SELECT jm.id, json_group_array(pr.recipient) AS pending_recipients
+      SELECT jm.id, j.id AS job_id, json_group_array(pr.recipient) AS pending_recipients
       FROM job_matches jm
       JOIN jobs j ON j.id = jm.job_id
       JOIN profile_recipients pr ON pr.profile_id = ? AND pr.enabled = 1
@@ -219,7 +219,7 @@ export const planResumeDigests = async (
       WITH exact_jobs(id) AS MATERIALIZED (
         SELECT CAST(value AS TEXT) FROM json_each(?)
       )
-      SELECT jm.id, json_group_array(pr.recipient) AS pending_recipients
+      SELECT jm.id, j.id AS job_id, json_group_array(pr.recipient) AS pending_recipients
       FROM exact_jobs target
       JOIN jobs j ON j.id = target.id
       JOIN job_matches jm ON jm.job_id = j.id AND jm.keyword_id = ?
@@ -255,7 +255,12 @@ export const planResumeDigests = async (
     // superseded, or previously delivered identity must fail before an email
     // envelope is created rather than silently sending a partial batch.
     if (exactTargets !== null && matches.results.length !== exactTargets.length) {
-      throw new Error(`Exact Codex dispatch target mismatch: requested ${exactTargets.length}, eligible ${matches.results.length}.`);
+      const eligibleJobIds = new Set(matches.results.map((row) => row.job_id));
+      const ineligibleJobIds = exactTargets.filter((jobId) => !eligibleJobIds.has(jobId));
+      throw new Error(
+        `Exact Codex dispatch target mismatch: requested ${exactTargets.length}, eligible ${matches.results.length}, `
+        + `ineligible ${JSON.stringify(ineligibleJobIds)}.`,
+      );
     }
 
     // A normal digest has the exact same pending recipient set for every job,
