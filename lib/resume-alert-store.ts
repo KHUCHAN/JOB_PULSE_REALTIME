@@ -107,40 +107,68 @@ export const planResumeDigests = async (
       // An interrupted or failed prior attempt may have reserved some of this
       // exact Codex batch in an unsent envelope. Rebuild only those items so
       // retrying the batch is safe and cannot be blocked by stale reservations.
-      await database.batch([
-        database.prepare(`
-          DELETE FROM notification_items
-          WHERE job_match_id IN (
-            SELECT jm.id FROM job_matches jm
-            JOIN jobs j ON j.id = jm.job_id
-            WHERE j.id IN (SELECT CAST(value AS TEXT) FROM json_each(?))
-          ) AND notification_id IN (
-            SELECT n.id FROM notifications n
-            WHERE n.status <> 'sent'
-              AND (n.status <> 'sending' OR n.lease_expires_at IS NULL OR n.lease_expires_at <= ?)
-          )
-        `).bind(encodedTargets, now),
-        database.prepare(`
-          UPDATE notifications
-          SET job_count = (
-            SELECT count(DISTINCT ni.job_match_id)
-            FROM notification_items ni WHERE ni.notification_id = notifications.id
-          )
-          WHERE status <> 'sent'
-        `),
-        database.prepare(`
-          DELETE FROM notifications
-          WHERE status <> 'sent' AND NOT EXISTS (
-            SELECT 1 FROM notification_items ni WHERE ni.notification_id = notifications.id
-          )
-        `),
-      ]);
+      const staleNotifications = await database.prepare(`
+        SELECT DISTINCT ni.notification_id AS id
+        FROM json_each(?) target
+        JOIN job_matches jm ON jm.job_id = CAST(target.value AS TEXT) AND jm.keyword_id = ?
+        JOIN notification_items ni ON ni.job_match_id = jm.id
+        JOIN notifications n ON n.id = ni.notification_id
+        WHERE n.status <> 'sent'
+          AND (n.status <> 'sending' OR n.lease_expires_at IS NULL OR n.lease_expires_at <= ?)
+      `).bind(encodedTargets, keywordId, now).all<{ id: string }>();
+      const staleNotificationIds = staleNotifications.results.map((row) => row.id);
+      if (staleNotificationIds.length > 0) {
+        const encodedNotifications = JSON.stringify(staleNotificationIds);
+        await database.batch([
+          database.prepare(`
+            DELETE FROM notification_items
+            WHERE notification_id IN (SELECT CAST(value AS TEXT) FROM json_each(?))
+              AND job_match_id IN (
+                SELECT jm.id FROM job_matches jm
+                WHERE jm.keyword_id = ?
+                  AND jm.job_id IN (SELECT CAST(value AS TEXT) FROM json_each(?))
+              )
+          `).bind(encodedNotifications, keywordId, encodedTargets),
+          database.prepare(`
+            UPDATE notifications
+            SET job_count = (
+              SELECT count(DISTINCT ni.job_match_id)
+              FROM notification_items ni WHERE ni.notification_id = notifications.id
+            )
+            WHERE id IN (SELECT CAST(value AS TEXT) FROM json_each(?))
+          `).bind(encodedNotifications),
+          database.prepare(`
+            DELETE FROM notifications
+            WHERE id IN (SELECT CAST(value AS TEXT) FROM json_each(?))
+              AND NOT EXISTS (
+                SELECT 1 FROM notification_items ni WHERE ni.notification_id = notifications.id
+              )
+          `).bind(encodedNotifications),
+        ]);
+      }
     }
     // Normal planning must compare every pending match against the full open
     // catalog. An exact Codex dispatch already supplies a bounded, deduplicated
     // identity set, so compare contenders only inside that set. Re-running the
     // full better-match scan once per exact target can exceed D1's CPU limit
     // before Gmail is reached on a large production catalog.
+    if (exactTargets !== null) {
+      const duplicateIdentity = await database.prepare(`
+        WITH exact_jobs AS MATERIALIZED (
+          SELECT j.id, j.requisition_identity_key, j.external_identity_key, j.url_identity_key
+          FROM json_each(?) target
+          JOIN jobs j ON j.id = CAST(target.value AS TEXT)
+        )
+        SELECT 1 AS duplicate
+        FROM exact_jobs left_job
+        JOIN exact_jobs right_job ON right_job.id > left_job.id
+          AND ${postingIdentityOverlapSql("left_job", "right_job")}
+        LIMIT 1
+      `).bind(JSON.stringify(exactTargets)).first<{ duplicate: number }>();
+      if (duplicateIdentity) {
+        throw new Error("Exact Codex dispatch contains overlapping posting identities.");
+      }
+    }
     const matches = exactTargets === null
       ? await database.prepare(`
       SELECT jm.id, json_group_array(pr.recipient) AS pending_recipients
@@ -200,34 +228,11 @@ export const planResumeDigests = async (
         ON ni.job_match_id = jm.id AND ni.recipient = pr.recipient
       WHERE jm.is_active = 1 AND jm.notification_eligible = 1
         AND jm.open_generation = j.open_generation AND j.status = 'open'
-        AND ${canonicalOpenJobNotExists("j")}
         AND ni.id IS NULL
         AND NOT EXISTS (
           SELECT 1 FROM notification_identity_history history
           WHERE history.profile_id = ? AND history.recipient = pr.recipient
             AND ${postingIdentityHistoryMatchSql("j", "history")}
-        )
-        AND NOT EXISTS (
-          SELECT 1
-          FROM exact_jobs other_target
-          JOIN jobs other_job ON other_job.id = other_target.id
-          JOIN job_matches other_match
-            ON other_match.job_id = other_job.id AND other_match.keyword_id = jm.keyword_id
-          WHERE other_job.id <> j.id
-            AND other_match.is_active = 1 AND other_match.notification_eligible = 1
-            AND other_match.open_generation = other_job.open_generation
-            AND other_job.status = 'open'
-            AND ${postingIdentityOverlapSql("j", "other_job")}
-            AND (
-              other_match.score > jm.score
-              OR (other_match.score = jm.score
-                AND COALESCE(other_job.published_at, other_job.first_seen_at)
-                  > COALESCE(j.published_at, j.first_seen_at))
-              OR (other_match.score = jm.score
-                AND COALESCE(other_job.published_at, other_job.first_seen_at)
-                  = COALESCE(j.published_at, j.first_seen_at)
-                AND other_match.id < jm.id)
-            )
         )
       GROUP BY jm.id, jm.score, j.published_at, j.first_seen_at
       ORDER BY jm.score DESC, COALESCE(j.published_at, j.first_seen_at) DESC, jm.id
