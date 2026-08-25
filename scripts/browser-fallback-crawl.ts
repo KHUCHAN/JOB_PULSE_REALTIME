@@ -299,6 +299,10 @@ const jobsViaHttp1 = async (source: CrawlSource): Promise<CrawledJob[]> => {
   }
 };
 
+export const browserChallengeHtml = (html: string): boolean =>
+  /<title>\s*(?:Quick Check Needed|Checking your browser[^<]*)\s*<\/title>/i.test(html)
+  || /(?:oleeoProtect|altcha-widget|cf-chl-(?:widget|challenge)|challenge-platform\/h\/g\/turnstile|captcha|access denied)/i.test(html);
+
 const CURL_META = "__JOB_PULSE_CURL_META__";
 
 /**
@@ -414,6 +418,15 @@ const inspect = async (page: Page, source: CrawlSource): Promise<BrowserFallback
     await page.waitForTimeout(3_000);
     let jobs = await jobsAcrossPages(page, source);
     if (jobs.length === 0 && response && response.status() < 400) {
+      if (browserChallengeHtml(await page.content())) {
+        return {
+          source,
+          status: response.status(),
+          finalUrl: page.url(),
+          jobs: [],
+          error: "Browser page presented an access-verification challenge.",
+        };
+      }
       const candidates = careerCandidates(await anchorsOnPage(page), page.url());
       for (const candidate of candidates.slice(0, 2)) {
         const candidateResponse = await page.goto(candidate.href, { waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => null);
@@ -464,7 +477,7 @@ export const browserResultClassification = (result: BrowserFallbackResult): {
   if (result.error?.startsWith("Rejected unsafe browser listing candidate:")) return { status: "failed", code: "unsafe_listing" };
   if (result.jobs.length > 0 && result.finalUrl) return { status: "succeeded", code: "jobs_recovered" };
   if ([401, 403, 429, 520, 521, 522, 523, 524].includes(result.status ?? -1)
-    || /(?:cloudflare|captcha|challenge|blocked|access denied)/i.test(result.error ?? "")) {
+    || /(?:cloudflare|captcha|challenge|blocked|access denied|returned HTTP (?:401|403|429|52[0-4]))/i.test(result.error ?? "")) {
     return { status: "blocked", code: "blocked_challenge" };
   }
   if (result.status !== null && result.status >= 400) return { status: "failed", code: "http_error" };

@@ -445,57 +445,82 @@ async function runStatusFor(): Promise<{
 }
 
 async function listSources(sourceIds: string[] = []): Promise<SourceRecord[]> {
-  type Row = {
+  type SourceRow = {
     id: string; company: string; posting_url: string | null; talent_url: string | null;
-    adapter: SourceRecord["adapter"]; enabled: number; checked_at: string; last_crawled_at: string | null;
-    next_crawl_at: string | null; latest_status: string | null; response_status: number | null;
-    latest_error: string | null; current_jobs: number; last_changed_at: string | null;
+    adapter: SourceRecord["adapter"]; enabled: number; checked_at: string;
+    last_crawled_at: string | null; next_crawl_at: string | null;
   };
+  type LatestRow = {
+    source_id: string; status: string | null; response_status: number | null;
+    error: string | null; jobs_created: number | null; jobs_updated: number | null;
+    jobs_closed: number | null; finished_at: string | null;
+  };
+  type CountRow = { source_id: string; current_jobs: number };
   const selectedFilter = sourceIds.length > 0
     ? "WHERE id IN (SELECT value FROM json_each(?))"
     : "";
-  const statement = db().prepare(`
+  const selectedArgument = JSON.stringify(sourceIds);
+  const database = db();
+  // Keep the inventory query planner out of a 1,455-row nest of correlated
+  // job-count and latest-run lookups. D1 can execute these independent,
+  // indexed projections concurrently and the worker joins the small maps in
+  // memory. This keeps the complete monitoring feed bounded as history grows.
+  const sourcesStatement = database.prepare(`
+    SELECT id, company, posting_url, talent_url, adapter, enabled,
+           checked_at, last_crawled_at, next_crawl_at
+    FROM sources ${selectedFilter}
+    ORDER BY company ASC
+    LIMIT 2000
+  `);
+  const latestStatement = database.prepare(`
     WITH selected_sources AS (
-      SELECT * FROM sources ${selectedFilter}
+      SELECT id FROM sources ${selectedFilter}
     )
-    SELECT s.id, s.company, s.posting_url, s.talent_url, s.adapter, s.enabled,
-           s.checked_at, s.last_crawled_at, s.next_crawl_at,
-           l.status AS latest_status, l.response_status, l.error AS latest_error,
-           (SELECT count(*)
-              FROM jobs source_job INDEXED BY jobs_source_url_unique
-             WHERE source_job.source_id = s.id AND source_job.status = 'open') AS current_jobs,
-           CASE WHEN coalesce(l.jobs_created, 0) > 0
-                  OR coalesce(l.jobs_updated, 0) > 0
-                  OR coalesce(l.jobs_closed, 0) > 0
-                THEN l.finished_at ELSE NULL END AS last_changed_at
+    SELECT l.source_id, l.status, l.response_status, l.error,
+           l.jobs_created, l.jobs_updated, l.jobs_closed, l.finished_at
     FROM selected_sources s
-    LEFT JOIN crawl_runs l ON l.id = (
+    JOIN crawl_runs l ON l.id = (
       SELECT latest.id
       FROM crawl_runs latest INDEXED BY crawl_runs_source_scheduled_idx
       WHERE latest.source_id = s.id
       ORDER BY latest.scheduled_for DESC
       LIMIT 1
     )
-    ORDER BY s.company ASC
-    LIMIT 2000
   `);
-  const result = sourceIds.length > 0
-    ? await statement.bind(JSON.stringify(sourceIds)).all<Row>()
-    : await statement.all<Row>();
-  return result.results.map((row) => ({
+  const countsStatement = database.prepare(`
+    SELECT source_id, count(*) AS current_jobs
+    FROM jobs INDEXED BY jobs_status_first_seen_idx
+    WHERE status = 'open'
+      ${sourceIds.length > 0 ? "AND source_id IN (SELECT value FROM json_each(?))" : ""}
+    GROUP BY source_id
+  `);
+  const [sourceResult, latestResult, countsResult] = await Promise.all([
+    sourceIds.length > 0 ? sourcesStatement.bind(selectedArgument).all<SourceRow>() : sourcesStatement.all<SourceRow>(),
+    sourceIds.length > 0 ? latestStatement.bind(selectedArgument).all<LatestRow>() : latestStatement.all<LatestRow>(),
+    sourceIds.length > 0 ? countsStatement.bind(selectedArgument).all<CountRow>() : countsStatement.all<CountRow>(),
+  ]);
+  const latestBySource = new Map(latestResult.results.map((row) => [row.source_id, row]));
+  const countsBySource = new Map(countsResult.results.map((row) => [row.source_id, row.current_jobs]));
+  return sourceResult.results.map((row) => {
+    const latest = latestBySource.get(row.id);
+    return ({
     id: row.id,
     company: row.company,
     postingUrl: row.posting_url,
     talentUrl: row.talent_url,
     adapter: row.adapter,
-    health: sourceHealth(Boolean(row.enabled), row.latest_status),
-    httpStatus: row.response_status,
-    lastError: row.latest_error,
-    currentJobs: row.current_jobs,
+    health: sourceHealth(Boolean(row.enabled), latest?.status ?? null),
+    httpStatus: latest?.response_status ?? null,
+    lastError: latest?.error ?? null,
+    currentJobs: countsBySource.get(row.id) ?? 0,
     lastCheckedAt: row.last_crawled_at || row.checked_at,
-    lastChangedAt: row.last_changed_at,
+    lastChangedAt: latest && (Number(latest.jobs_created ?? 0) > 0
+      || Number(latest.jobs_updated ?? 0) > 0
+      || Number(latest.jobs_closed ?? 0) > 0)
+      ? latest.finished_at : null,
     nextRunAt: row.next_crawl_at || row.checked_at,
-  }));
+    });
+  });
 }
 
 async function listKeywords(): Promise<KeywordRule[]> {

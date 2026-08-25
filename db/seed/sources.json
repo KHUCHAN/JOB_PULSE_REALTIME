@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:f8ae6429b44a53abe6cfcca230d77e3db9e2c710bca27fa92630f5dc88044ce6",
+  "version": "v2:sha256:710f77334f1953e0c2498a8ad86893a44f9aaa19499e06de1376963fdb2f3838",
   "sources": [
     {
       "id": "p1-0005-guidehouse",
@@ -3816,7 +3816,7 @@
       "id": "p2-0180-valley-national-bancorp",
       "masterRow": 485,
       "company": "Valley National Bancorp",
-      "postingUrl": "https://recruiting.adp.com/srccar/public/RTI.home?c=2169307&d=ExternalCareerSite",
+      "postingUrl": "https://myjobs.adp.com/vnbcareers/cx?__tx_annotation=false&c=2169307&d=ExternalCareerSite&sor=adprm",
       "talentUrl": null,
       "channel": "공식 채용공고/ATS",
       "adapter": "custom",

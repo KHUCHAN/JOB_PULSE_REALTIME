@@ -97,6 +97,20 @@ describe("career URL remediation", () => {
     expect(isSafeCareerListingUrl("Oportun", "https://www.oportun.com/careers", "https://job-boards.greenhouse.io/oportun")).toBe(true);
   });
 
+  it("accepts exact verified opaque catalogs and canonical listing redirects", () => {
+    expect(isSafeCareerListingUrl("Honor", "https://www.honorcare.com/honor-careers/", "https://www.honorcare.com/honor-careers/")).toBe(true);
+    expect(isSafeCareerListingUrl("Kratos Defense", "https://kratosdefense.submit4jobs.com/", "https://kratosdefense.submit4jobs.com/")).toBe(true);
+    expect(isSafeCareerListingUrl("ibis.ai", "https://ibis.ai/jobs.html", "https://ibis.ai/jobs.html")).toBe(true);
+    expect(isSafeCareerListingUrl("Cathay Bank", "https://cathaygbcp.rec.pro.ukg.net/CAT1503CATB/JobBoard/tenant/", "https://cathaygbcp.rec.pro.ukg.net/CAT1503CATB/JobBoard/tenant/")).toBe(true);
+    expect(isSafeCareerListingUrl("LoanDepot", "https://jobs.jobvite.com/loandepot/jobAlerts", "https://jobs.jobvite.com/loandepot/jobs/positions")).toBe(true);
+    expect(isSafeCareerListingUrl("State Attorneys General", "https://www.calcareers.ca.gov/CalHRPublic/Search/JobSearchResults.aspx#depid=148", "https://calcareers.ca.gov/CalHRPublic/Search/JobSearchResults.aspx#depid=148")).toBe(true);
+  });
+
+  it("does not let exact-source admission turn a job detail or aggregator into a catalog", () => {
+    expect(isSafeCareerListingUrl("Acme", "https://careers.acme.com/jobs/staff-engineer-123", "https://careers.acme.com/jobs/staff-engineer-123")).toBe(false);
+    expect(isSafeCareerListingUrl("Acme", "https://indeed.com/jobs?q=acme", "https://indeed.com/jobs?q=acme")).toBe(false);
+  });
+
   it("admits only CGI's exact official Njoyn US tenant", () => {
     const listing = "https://cgi.njoyn.com/CORP/xweb/xweb.asp?CLID=21001&page=JobListing&lang=1&CountryID=US";
     expect(isSafeCareerListingUrl("CGI", "https://www.cgi.com/en/careers", listing)).toBe(true);

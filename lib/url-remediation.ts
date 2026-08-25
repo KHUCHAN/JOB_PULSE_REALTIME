@@ -1,6 +1,7 @@
-const ATS_HOST = /(?:greenhouse\.io|lever\.co|myworkdayjobs\.com|myworkdaysite\.com|smartrecruiters\.com|ashbyhq\.com|icims\.com|jobvite\.com|hirebridge\.com|taleo\.net|brassring\.com|apply\.workable\.com|bamboohr\.com|pinpointhq\.com|teamtailor\.com|jobs\.gusto\.com|ats\.rippling\.com|csod\.com|dayforcehcm\.com|successfactors\.(?:com|eu)|oraclecloud\.com|eightfold\.ai|avature\.net|(?:myjobs|workforcenow)\.adp\.com|recruiting\.paylocity\.com|recruiting\d*\.ultipro\.com)/i;
+const ATS_HOST = /(?:greenhouse\.io|lever\.co|myworkdayjobs\.com|myworkdaysite\.com|smartrecruiters\.com|ashbyhq\.com|icims\.com|jobvite\.com|hirebridge\.com|taleo\.net|tal\.net|brassring\.com|apply\.workable\.com|bamboohr\.com|pinpointhq\.com|teamtailor\.com|jobs\.gusto\.com|ats\.rippling\.com|csod\.com|dayforcehcm\.com|successfactors\.(?:com|eu)|oraclecloud\.com|eightfold\.ai|avature\.net|submit4jobs\.com|rec\.pro\.ukg\.net|(?:myjobs|workforcenow)\.adp\.com|recruiting\.paylocity\.com|recruiting\d*\.ultipro\.com)/i;
 const JOB_TEXT = /\b(?:jobs?|careers?|opportunities|open (?:positions|roles)|join (?:our )?team|search roles?)\b/i;
 const JOB_PATH = /\/(?:jobs?|careers?|opportunities|positions?|openings?|search-results|search\/results|job-search|open-positions|join-us)(?:\/|$|[?#-])/i;
+const JOB_LISTING_PATH = /(?:\/jobs?\/(?:search|positions?|openings?|listings?)(?:[/?#]|$)|\/JobBoard(?:[/?#]|$)|\/candidate\/jobboard(?:[/?#]|$)|\/CalHRPublic\/Search\/JobSearchResults\.aspx(?:[?#]|$)|\/jobs?\.html(?:[?#]|$))/i;
 const USER_ONLY = /(?:job-?alerts?|talent-?community|introduceyourself|sign[_-]?in|\/login|\/connect(?:[/?#]|$)|\/apply(?:[/?#]|$))/i;
 const JOB_DETAIL = /(?:\/(?:job|jobs)\/[^/?#]+(?:\/[^/?#]+)?(?:[?#]|$)|[?&](?:pid|jobid|jobseqno|gh_jid)=)/i;
 
@@ -21,7 +22,7 @@ export const unwrapSearchResultUrl = (href: string): string => {
 };
 
 const COMPANY_STOP_WORDS = new Set(["company", "corporation", "corp", "group", "holdings", "holding", "international", "services", "service", "technologies", "technology", "financial", "health", "healthcare", "bank", "systems", "system", "united", "america", "american"]);
-const NON_LISTING_PATH = /(?:career-areas?|early-careers?|students?|university|\/blog(?:\/|$)|jobcart|job-seeker-(?:resources|support)|career-progression|working-at|talent-community|jointalentcommunity|\/bca(?:\/|$)|loans?)/i;
+const NON_LISTING_PATH = /(?:career-areas?|early-careers?|students?|university|\/blog(?:\/|$)|jobcart|job-seeker-(?:resources|support)|career-progression|working-at|talent-community|jointalentcommunity|\/bca(?:\/|$)|\/loans?(?:[/?#]|$))/i;
 const THIRD_PARTY_AGGREGATOR = /(?:^|\.)(?:indeed\.com|glassdoor\.com|linkedin\.com|ziprecruiter\.com|gotocareer\.io|ev\.careers)$/i;
 const ATS_VENDOR_LANDING = /^(?:www\.)?(?:ashbyhq\.com|lever\.co|eightfold\.ai|bamboohr\.com)$/i;
 
@@ -42,7 +43,8 @@ export const isPublicAtsCatalogUrl = (value: string): boolean => {
   try {
     const url = new URL(value);
     const path = `${url.pathname}${url.search}`;
-    if (!ATS_HOST.test(url.hostname) || USER_ONLY.test(path) || JOB_DETAIL.test(path) || NON_LISTING_PATH.test(path)) return false;
+    if (!ATS_HOST.test(url.hostname) || USER_ONLY.test(path)
+      || (JOB_DETAIL.test(path) && !JOB_LISTING_PATH.test(path)) || NON_LISTING_PATH.test(path)) return false;
     if (ATS_VENDOR_LANDING.test(url.hostname) && /^\/?$/i.test(url.pathname)) return false;
     return url.protocol === "https:";
   } catch {
@@ -105,8 +107,9 @@ export const isSafeCareerRecommendation = (company: string, originalUrl: string,
   if (THIRD_PARTY_AGGREGATOR.test(recommended.hostname)) return false;
   if (/^(?:www\.)?ycombinator\.com$/i.test(recommended.hostname) && /^\/jobs\/?$/i.test(recommended.pathname)) return false;
   if (NON_LISTING_PATH.test(`${recommended.pathname}${recommended.search}`)) return false;
-  if (JOB_DETAIL.test(`${recommended.pathname}${recommended.search}`) && !/\/jobs?\/search(?:[/?#]|$)/i.test(recommended.pathname)) return false;
+  if (JOB_DETAIL.test(`${recommended.pathname}${recommended.search}`) && !JOB_LISTING_PATH.test(`${recommended.pathname}${recommended.search}`)) return false;
   if (recommended.origin === original.origin) return JOB_PATH.test(`${recommended.pathname}${recommended.search}`)
+    || JOB_LISTING_PATH.test(`${recommended.pathname}${recommended.search}`)
     || /^(?:jobs?|careers?)\./i.test(recommended.hostname)
     || /\.jobs$/i.test(recommended.hostname)
     || /careers?/i.test(recommended.hostname);
@@ -114,7 +117,9 @@ export const isSafeCareerRecommendation = (company: string, originalUrl: string,
   const originalRoot = original.hostname.split(".").slice(-2).join(".");
   const recommendedRoot = recommended.hostname.split(".").slice(-2).join(".");
   if (originalRoot === recommendedRoot) {
-    return JOB_PATH.test(`${recommended.pathname}${recommended.search}`) || /^(?:jobs?|careers?)\./i.test(recommended.hostname);
+    return JOB_PATH.test(`${recommended.pathname}${recommended.search}`)
+      || JOB_LISTING_PATH.test(`${recommended.pathname}${recommended.search}`)
+      || /^(?:jobs?|careers?)\./i.test(recommended.hostname);
   }
 
   // UKG/UltiPro uses opaque tenant codes instead of company names in its
@@ -152,6 +157,7 @@ export const isSafeCareerListingUrl = (company: string, originalUrl: string, can
     return false;
   }
   if (ATS_VENDOR_LANDING.test(candidate.hostname) && /^\/?$/i.test(candidate.pathname)) return false;
+  if (THIRD_PARTY_AGGREGATOR.test(candidate.hostname)) return false;
   if (NON_LISTING_PATH.test(`${candidate.pathname}${candidate.search}`)) return false;
   // CGI's official careers CTA uses an opaque Njoyn tenant ID, so neither the
   // company name nor its domain appears in the vendor URL. Admit only CGI's
@@ -171,6 +177,19 @@ export const isSafeCareerListingUrl = (company: string, originalUrl: string, can
   if (company.trim().toLocaleLowerCase() === "cgi"
     && isExactCgiUsCatalog(candidate)
     && (/(?:^|\.)cgi\.com$/i.test(original.hostname) || isExactCgiUsCatalog(original))) return true;
+  // The live browser may normalize `www` or preserve a harmless hash while
+  // staying on the exact catalog already verified and stored for the source.
+  // That identity is safer than trying to infer company tokens from opaque
+  // first-party/ATS host names such as submit4jobs or UKG tenant codes.
+  const normalizedHost = (url: URL): string => url.hostname.toLocaleLowerCase().replace(/^www\./, "");
+  const sameStoredCatalog = candidate.protocol === "https:"
+    && normalizedHost(candidate) === normalizedHost(original)
+    && candidate.pathname === original.pathname
+    && candidate.search === original.search;
+  if (sameStoredCatalog) {
+    const path = `${candidate.pathname}${candidate.search}`;
+    return !USER_ONLY.test(path) && (!JOB_DETAIL.test(path) || JOB_LISTING_PATH.test(path));
+  }
   if (isSafeCareerRecommendation(company, originalUrl, candidate.href)) return true;
   if (isPublicAtsCatalogUrl(candidate.href)) return true;
   try {

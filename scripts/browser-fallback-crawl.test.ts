@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createServer } from "node:http";
 import type { CrawledJob, CrawlSource } from "../lib/crawler";
-import { browserListingSource, browserResultClassification, curlNativeFetch, nativeRunnerRecoveryEligible, persistenceSql, recoverNativeOutsideWorker, type BrowserFallbackResult } from "./browser-fallback-crawl";
+import { browserChallengeHtml, browserListingSource, browserResultClassification, curlNativeFetch, nativeRunnerRecoveryEligible, persistenceSql, recoverNativeOutsideWorker, type BrowserFallbackResult } from "./browser-fallback-crawl";
 
 describe("browser fallback Workday recovery", () => {
   it("uses the independent runner's official CXS access before browser rendering", async () => {
@@ -208,6 +208,18 @@ describe("browser fallback persistenceSql", () => {
 });
 
 describe("browser fallback result classification", () => {
+  it("recognizes access-verification HTML and HTTP errors hidden inside browser exceptions", () => {
+    expect(browserChallengeHtml('<html><title>Quick Check Needed</title><script src="/vx/oleeoProtect/main.js"></script></html>')).toBe(true);
+    expect(browserChallengeHtml("<html><title>Careers</title></html>")).toBe(false);
+    expect(browserResultClassification({
+      source: { id: "tesla", company: "Tesla", postingUrl: "https://tesla.com/careers", adapter: "custom" },
+      status: null,
+      finalUrl: null,
+      jobs: [],
+      error: "Tesla browser state returned HTTP 403.",
+    })).toEqual({ status: "blocked", code: "blocked_challenge" });
+  });
+
   it("keeps a 2xx page with no verified jobs retryable instead of healthy", () => {
     expect(browserResultClassification({
       source: {
