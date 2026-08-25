@@ -76,6 +76,26 @@ describe("runtime catalog bootstrap", () => {
     expect(writes.filter((write) => write.kind === "talent")).toHaveLength(1);
   });
 
+  it("applies a declared one-source catalog transition without rewriting the full inventory", async () => {
+    const { db, writes } = fakeDb(501, "catalog-v0");
+    const incrementalSeed: CatalogSeed = {
+      ...seed,
+      version: "catalog-v2",
+      incrementalSourceIdsByPreviousVersion: { "catalog-v0": ["source-500"] },
+    };
+
+    expect(await ensureCatalogSeeded(db, incrementalSeed)).toEqual({
+      seeded: true,
+      sources: 501,
+      talentTargets: 1,
+    });
+    expect(writes.filter((write) => write.kind === "sources")).toEqual([
+      { kind: "sources", values: ["source-500"] },
+    ]);
+    expect(writes.filter((write) => write.kind === "talent")).toEqual([]);
+    expect(writes.at(-1)).toEqual({ kind: "state", values: ["sources", "catalog-v2"] });
+  });
+
   it("inserts bounded source batches before dependent talent targets", async () => {
     const { db, writes } = fakeDb(0);
     expect(await ensureCatalogSeeded(db, seed)).toEqual({ seeded: true, sources: 501, talentTargets: 1 });

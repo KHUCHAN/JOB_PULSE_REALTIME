@@ -28,6 +28,7 @@ export interface CatalogSeed {
   version: string;
   sources: CatalogSourceSeed[];
   talentTargets: CatalogTalentSeed[];
+  incrementalSourceIdsByPreviousVersion?: Record<string, string[]>;
 }
 
 interface CatalogStatement {
@@ -106,9 +107,19 @@ async function ensureCatalogSeededOnce(
   }
 
   const seedIsCurrent = existing.version === seed.version;
+  const incrementalSourceIds = existing.version
+    ? seed.incrementalSourceIdsByPreviousVersion?.[existing.version]
+    : undefined;
+  const incrementalSourceIdSet = incrementalSourceIds ? new Set(incrementalSourceIds) : null;
+  const sourcesToSync = incrementalSourceIdSet
+    ? seed.sources.filter((source) => incrementalSourceIdSet.has(source.id))
+    : seed.sources;
+  const talentTargetsToSync = incrementalSourceIdSet
+    ? seed.talentTargets.filter((target) => incrementalSourceIdSet.has(target.sourceId))
+    : seed.talentTargets;
   try {
 
-  for (const batch of seedIsCurrent ? [] : chunks(seed.sources, 500)) {
+  for (const batch of seedIsCurrent ? [] : chunks(sourcesToSync, 500)) {
     // A persisted page cursor belongs to one exact listing URL and adapter.
     // Drop it before changing either value so the new catalog always starts at
     // page one. Deleting first is deliberately fail-safe: if the following
@@ -198,7 +209,7 @@ async function ensureCatalogSeededOnce(
     `).bind(JSON.stringify(batch)).run();
   }
 
-  for (const batch of seedIsCurrent ? [] : chunks(seed.talentTargets, 500)) {
+  for (const batch of seedIsCurrent ? [] : chunks(talentTargetsToSync, 500)) {
     await database.prepare(`
       INSERT INTO talent_targets (
         id, source_id, official_url, resume_upload, job_alerts, checked_at
