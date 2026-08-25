@@ -12479,21 +12479,38 @@ const crawlJobsynWithSitemapFallback = async (
   return await crawlJobsynSitemap(canonical, fetcher) ?? direct;
 };
 
+const JACOBS_SITEMAP_SEGMENT_SIZE = 800;
+const JOBSYN_PASS_PAGE_STRIDE = 19;
+
+export const jacobsSitemapSegment = <T>(jobs: T[], crawlPageCursor = 1): T[] => {
+  if (jobs.length <= JACOBS_SITEMAP_SEGMENT_SIZE) return jobs;
+  const segmentCount = Math.ceil(jobs.length / JACOBS_SITEMAP_SEGMENT_SIZE);
+  // Jobsyn repeats the last page of each 20-page pass, so successive cursors
+  // advance by 19. Reuse that durable cursor to rotate through the sitemap
+  // without adding a second checkpoint namespace for the same source.
+  const pass = Math.floor((Math.max(1, crawlPageCursor) - 1) / JOBSYN_PASS_PAGE_STRIDE);
+  const segment = pass % segmentCount;
+  const start = segment * JACOBS_SITEMAP_SEGMENT_SIZE;
+  return jobs.slice(start, start + JACOBS_SITEMAP_SEGMENT_SIZE);
+};
+
 const crawlJacobsJobs = async (
   source: CrawlSource,
   fetcher: typeof fetch,
 ): Promise<SourceCrawlResult> => {
   const listingUrl = "https://jacobs.jobs/jobs/";
   const canonical = { ...source, postingUrl: listingUrl, adapter: "custom" as const };
-  // Jacobs exposes more than six thousand jobs. Bootstrap every canonical
-  // identity from its official sitemap while the bounded Jobsyn cursor adds
-  // rich descriptions and eventually performs a stable closing cycle.
+  // Jacobs exposes more than six thousand jobs. Rotate a bounded slice of its
+  // official sitemap alongside each Jobsyn pass so a fresh database still
+  // discovers every canonical identity, but no Worker request tries to write
+  // the entire catalog and expires before its crawl run can be finalized.
   const [direct, sitemap] = await Promise.all([
     crawlJobsyn(canonical, fetcher),
     crawlJobsynSitemap(canonical, fetcher),
   ]);
   if (direct.status === "succeeded" && sitemap?.status === "succeeded") {
-    const jobs = new Map(sitemap.jobs.map((job) => [job.officialUrl, job]));
+    const sitemapSegment = jacobsSitemapSegment(sitemap.jobs, source.crawlPageCursor);
+    const jobs = new Map(sitemapSegment.map((job) => [job.officialUrl, job]));
     for (const job of direct.jobs) jobs.set(job.officialUrl, job);
     return {
       ...direct,

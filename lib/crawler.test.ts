@@ -200,6 +200,14 @@ describe("repaired source adapters", () => {
     })]));
   });
 
+  it("rotates Jacobs sitemap identities in bounded persistence segments", () => {
+    const jobs = Array.from({ length: 1_650 }, (_, index) => `job-${index}`);
+    expect(crawlerModule.jacobsSitemapSegment(jobs, 1)).toEqual(jobs.slice(0, 800));
+    expect(crawlerModule.jacobsSitemapSegment(jobs, 20)).toEqual(jobs.slice(800, 1_600));
+    expect(crawlerModule.jacobsSitemapSegment(jobs, 39)).toEqual(jobs.slice(1_600));
+    expect(crawlerModule.jacobsSitemapSegment(jobs, 58)).toEqual(jobs.slice(0, 800));
+  });
+
   it("loads Murphy USA's complete official catalog with source update dates", async () => {
     const source = { id: "audit-row-399", company: "Murphy USA", postingUrl: "https://jobs.murphyusa.com/murphyusa/job-opportunities", adapter: "custom" as const };
     const result = await crawlSource(source, async () => Response.json([{
