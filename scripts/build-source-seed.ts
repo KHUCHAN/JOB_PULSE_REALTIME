@@ -13,6 +13,12 @@ import {
 } from "../lib/seed-migration.ts";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+// Include runtime synchronization semantics in the deployed seed marker. A
+// catalog row can stay byte-for-byte identical while the bounded Sites sync
+// gains a required cleanup (for example retiring schedules and matches). Bump
+// this value whenever that behavior changes so every production database runs
+// the new idempotent policy once.
+const catalogRuntimeSyncVersion = 2;
 const createMigration = process.argv.includes("--migration");
 const inputPaths = process.argv.slice(2).filter((argument) => argument !== "--migration");
 
@@ -74,7 +80,11 @@ const catalogVersion = `sha256:${createHash("sha256").update(sql).digest("hex")}
 
 const seedDir = resolve(projectRoot, "db/seed");
 await mkdir(seedDir, { recursive: true });
-const seedVersion = `v2:sha256:${createHash("sha256").update(JSON.stringify({ sources: rows, talentTargets: talentRows })).digest("hex")}`;
+const seedVersion = `v2:sha256:${createHash("sha256").update(JSON.stringify({
+  runtimeSyncVersion: catalogRuntimeSyncVersion,
+  sources: rows,
+  talentTargets: talentRows,
+})).digest("hex")}`;
 const seedJson = `${JSON.stringify({ generatedAt: rows[0]?.checkedAt ?? null, version: seedVersion, sources: rows, talentTargets: talentRows }, null, 2)}\n`;
 const migrationDir = resolve(projectRoot, "drizzle");
 const metaDir = resolve(migrationDir, "meta");
