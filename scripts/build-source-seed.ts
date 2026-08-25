@@ -18,7 +18,7 @@ const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // gains a required cleanup (for example retiring schedules and matches). Bump
 // this value whenever that behavior changes so every production database runs
 // the new idempotent policy once.
-const catalogRuntimeSyncVersion = 2;
+const catalogRuntimeSyncVersion = 3;
 const createMigration = process.argv.includes("--migration");
 const inputPaths = process.argv.slice(2).filter((argument) => argument !== "--migration");
 

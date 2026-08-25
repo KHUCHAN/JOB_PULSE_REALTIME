@@ -172,6 +172,23 @@ export async function ensureCatalogSeeded(
   }
 
   if (!seedIsCurrent) {
+    // Sites replaces the large catalog migrations with this bounded runtime
+    // sync. Apply one-time data-quality cleanup before publishing the new
+    // marker so an interrupted request safely retries it.
+    await database.prepare(`
+      UPDATE jobs
+      SET published_at = CASE
+            WHEN published_at IS NOT NULL
+             AND datetime(published_at) > datetime('now', '+5 minutes')
+            THEN NULL ELSE published_at END,
+          source_updated_at = CASE
+            WHEN source_updated_at IS NOT NULL
+             AND datetime(source_updated_at) > datetime('now', '+5 minutes')
+            THEN NULL ELSE source_updated_at END,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE (published_at IS NOT NULL AND datetime(published_at) > datetime('now', '+5 minutes'))
+         OR (source_updated_at IS NOT NULL AND datetime(source_updated_at) > datetime('now', '+5 minutes'))
+    `).bind().run();
     await database.prepare(`
       INSERT INTO catalog_state (key, value, updated_at)
       VALUES (?, ?, CURRENT_TIMESTAMP)

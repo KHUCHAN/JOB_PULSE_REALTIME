@@ -95,7 +95,8 @@ describe("runtime catalog bootstrap", () => {
       );
       CREATE TABLE jobs (
         id TEXT PRIMARY KEY, source_id TEXT NOT NULL, status TEXT NOT NULL,
-        location_region TEXT, closed_at TEXT, updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        location_region TEXT, published_at TEXT, source_updated_at TEXT,
+        closed_at TEXT, updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       );
       CREATE TABLE job_matches (
         job_id TEXT PRIMARY KEY, is_active INTEGER NOT NULL,
@@ -128,6 +129,7 @@ describe("runtime catalog bootstrap", () => {
       "unknown", seed.sources[0].id, "open", "unknown",
       "other-source", seed.sources[1].id, "open", "non_us",
     );
+    sqlite.prepare("UPDATE jobs SET published_at = '2099-01-01T00:00:00.000Z', source_updated_at = '2099-01-02T00:00:00.000Z' WHERE id = 'unknown'").run();
     sqlite.prepare("INSERT INTO catalog_state (key, value) VALUES (?, ?), (?, ?)").run(
       `crawl_page_checkpoint:${seed.sources[0].id}`, JSON.stringify({ nextPage: 9 }),
       `crawl_page_checkpoint:${seed.sources[1].id}`, JSON.stringify({ nextPage: 7 }),
@@ -145,6 +147,8 @@ describe("runtime catalog bootstrap", () => {
     expect(sqlite.prepare("SELECT value FROM catalog_state WHERE key = ?").get(
       `crawl_page_checkpoint:${seed.sources[1].id}`,
     )).toEqual({ value: JSON.stringify({ nextPage: 7 }) });
+    expect(sqlite.prepare("SELECT published_at, source_updated_at FROM jobs WHERE id = 'unknown'").get())
+      .toEqual({ published_at: null, source_updated_at: null });
 
     sqlite.prepare("UPDATE sources SET next_crawl_at = '2099-01-01 00:00:00' WHERE id = ?").run(seed.sources[0].id);
     sqlite.prepare("INSERT INTO catalog_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(
