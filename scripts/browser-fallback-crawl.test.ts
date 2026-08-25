@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { createServer } from "node:http";
 import type { CrawledJob, CrawlSource } from "../lib/crawler";
-import { browserListingSource, browserResultClassification, nativeRunnerRecoveryEligible, persistenceSql, recoverNativeOutsideWorker, type BrowserFallbackResult } from "./browser-fallback-crawl";
+import { browserListingSource, browserResultClassification, curlNativeFetch, nativeRunnerRecoveryEligible, persistenceSql, recoverNativeOutsideWorker, type BrowserFallbackResult } from "./browser-fallback-crawl";
 
 describe("browser fallback Workday recovery", () => {
   it("uses the independent runner's official CXS access before browser rendering", async () => {
@@ -105,6 +106,40 @@ describe("browser fallback Workday recovery", () => {
     const result = await recoverNativeOutsideWorker(source, fetcher as typeof fetch);
     expect(result).toMatchObject({ authoritativeEmpty: true, jobs: [], status: 200 });
     expect(browserResultClassification(result!)).toEqual({ status: "succeeded", code: "empty_board" });
+  });
+
+  it("replays native API requests through the bounded curl HTTP/1.1 transport", async () => {
+    const server = createServer((request, response) => {
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      request.on("end", () => {
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify({
+          method: request.method,
+          token: request.headers["x-test-token"],
+          body: Buffer.concat(chunks).toString("utf8"),
+        }));
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Test server address was unavailable.");
+      const response = await curlNativeFetch(`http://127.0.0.1:${address.port}/jobs`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-test-token": "verified" },
+        body: JSON.stringify({ page: 2 }),
+      });
+      await expect(response.json()).resolves.toEqual({
+        method: "POST",
+        token: "verified",
+        body: JSON.stringify({ page: 2 }),
+      });
+      expect(response.status).toBe(200);
+      expect(response.url).toContain("/jobs");
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
   });
 });
 

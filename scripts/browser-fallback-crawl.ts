@@ -43,6 +43,7 @@ const forceAll = process.env.BROWSER_FALLBACK_ALL === "1";
 const targetSourceId = process.env.BROWSER_FALLBACK_SOURCE_ID?.trim() || null;
 const targetSourceIds = new Set((process.env.BROWSER_FALLBACK_SOURCE_IDS ?? "").split(",").map((value) => value.trim()).filter(Boolean));
 const prioritySourceIds = new Set((process.env.BROWSER_FALLBACK_PRIORITY_SOURCE_IDS ?? "").split(",").map((value) => value.trim()).filter(Boolean));
+const forceNativeSourceIds = new Set((process.env.BROWSER_FALLBACK_FORCE_NATIVE_SOURCE_IDS ?? "").split(",").map((value) => value.trim()).filter(Boolean));
 const productionIngestUrl = process.env.BROWSER_FALLBACK_INGEST_URL?.trim() || null;
 const productionIngestSecret = process.env.BROWSER_FALLBACK_INGEST_SECRET?.trim() || null;
 const liveUrl = process.env.BROWSER_FALLBACK_LIVE_URL?.trim().replace(/\/$/, "") || null;
@@ -117,7 +118,7 @@ const problemSources = async (): Promise<BrowserRecoverySource[]> => {
           company: source.company,
           postingUrl: source.postingUrl,
           adapter: source.adapter,
-          attemptNativeRecovery: nativeRunnerRecoveryEligible(source, prioritySourceIds.has(source.id)),
+          attemptNativeRecovery: nativeRunnerRecoveryEligible(source, prioritySourceIds.has(source.id) || forceNativeSourceIds.has(source.id)),
         })]
       : []);
   }
@@ -130,7 +131,7 @@ const problemSources = async (): Promise<BrowserRecoverySource[]> => {
         attemptNativeRecovery: nativeRunnerRecoveryEligible({
           ...source,
           adapter: source.adapter as CrawlSource["adapter"],
-        }, prioritySourceIds.has(source.id)),
+        }, prioritySourceIds.has(source.id) || forceNativeSourceIds.has(source.id)),
       })]
     : []);
   if (liveUrl) {
@@ -168,10 +169,11 @@ const problemSources = async (): Promise<BrowserRecoverySource[]> => {
       .map((source) => ({
         ...source,
         candidateUrl: candidateUrl(source),
-        attemptNativeRecovery: nativeRunnerRecoveryEligible(source, prioritySourceIds.has(source.id)),
+        attemptNativeRecovery: nativeRunnerRecoveryEligible(source, prioritySourceIds.has(source.id) || forceNativeSourceIds.has(source.id)),
       }))
-      .filter((source) => source.candidateUrl && browserRecoveryDue(source))
-      .sort((left, right) => Number(prioritySourceIds.has(right.id)) - Number(prioritySourceIds.has(left.id))
+      .filter((source) => source.candidateUrl && (forceNativeSourceIds.has(source.id) || browserRecoveryDue(source)))
+      .sort((left, right) => Number(forceNativeSourceIds.has(right.id)) - Number(forceNativeSourceIds.has(left.id))
+        || Number(prioritySourceIds.has(right.id)) - Number(prioritySourceIds.has(left.id))
         || Number(right.attemptNativeRecovery) - Number(left.attemptNativeRecovery)
         || healthRank(left) - healthRank(right)
         || Date.parse(left.lastCheckedAt ?? "1970-01-01") - Date.parse(right.lastCheckedAt ?? "1970-01-01")
@@ -297,6 +299,48 @@ const jobsViaHttp1 = async (source: CrawlSource): Promise<CrawledJob[]> => {
   }
 };
 
+const CURL_META = "__JOB_PULSE_CURL_META__";
+
+/**
+ * Retry first-party JSON/search APIs over curl HTTP/1.1 when Undici traffic
+ * from the GitHub runner is challenged. Several ATS edges distinguish the
+ * protocol/TLS client even though both requests originate from the same
+ * runner. Keep the response fetch-compatible so the source-specific adapter
+ * retains all of its completeness checks.
+ */
+export const curlNativeFetch: typeof fetch = async (input, init) => {
+  const request = new Request(input, init);
+  const args = [
+    "--http1.1", "--location", "--silent", "--show-error", "--compressed",
+    "--connect-timeout", "8", "--max-time", "30",
+    "--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+    "--request", request.method,
+  ];
+  for (const [name, value] of request.headers) {
+    if (["accept-encoding", "content-length", "host", "user-agent"].includes(name.toLowerCase())) continue;
+    args.push("--header", `${name}: ${value}`);
+  }
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    args.push("--data-binary", await request.text());
+  }
+  args.push("--write-out", `\n${CURL_META}%{http_code}\t%{content_type}\t%{url_effective}`, request.url);
+  const { stdout } = await execFileAsync("curl", args, { maxBuffer: 100 * 1024 * 1024 });
+  const marker = stdout.lastIndexOf(`\n${CURL_META}`);
+  if (marker < 0) throw new Error("curl native retry returned no response metadata.");
+  const body = stdout.slice(0, marker);
+  const [statusText, contentType, effectiveUrl] = stdout.slice(marker + CURL_META.length + 1).trim().split("\t");
+  const status = Number.parseInt(statusText ?? "", 10);
+  if (!Number.isInteger(status) || status < 200 || status > 599) {
+    throw new Error(`curl native retry returned invalid HTTP status ${statusText || "unknown"}.`);
+  }
+  const response = new Response(body, {
+    status,
+    headers: contentType ? { "content-type": contentType } : undefined,
+  });
+  if (effectiveUrl) Object.defineProperty(response, "url", { value: effectiveUrl });
+  return response;
+};
+
 /**
  * Some first-party feeds are challenged or transformed only on the Sites
  * Worker egress range. The scheduled recovery job runs from an independent
@@ -311,7 +355,11 @@ export const recoverNativeOutsideWorker = async (
   now = new Date(),
 ): Promise<BrowserFallbackResult | null> => {
   if (!source.attemptNativeRecovery && source.adapter !== "workday") return null;
-  const result = await crawlSource(source, fetcher, now);
+  let result = await crawlSource(source, fetcher, now);
+  if (fetcher === fetch && (result.status !== "succeeded"
+    || (result.jobs.length === 0 && !result.completeListing))) {
+    result = await crawlSource(source, curlNativeFetch, now);
+  }
   if (result.status !== "succeeded"
     || (result.jobs.length === 0 && !result.completeListing)) return null;
   return {
