@@ -1,6 +1,6 @@
 import { crawlSource, type CrawlSource } from "../lib/crawler.ts";
 import { ingestJobSnapshotInChunks } from "../lib/job-snapshot-transport.ts";
-import { recoverCheckpointedCatalog } from "../lib/request-fallback-recovery.ts";
+import { isRequestFallbackDue, recoverCheckpointedCatalog } from "../lib/request-fallback-recovery.ts";
 import { isSafeCareerListingUrl } from "../lib/url-remediation.ts";
 
 type LiveSource = {
@@ -8,6 +8,7 @@ type LiveSource = {
   company: string;
   postingUrl: string | null;
   adapter: CrawlSource["adapter"];
+  nextRunAt: string | null;
 };
 
 type RecoverySummary = {
@@ -65,15 +66,17 @@ const liveSources = async (): Promise<CrawlSource[]> => {
   if (!response.ok) throw new Error(`Live source inventory returned HTTP ${response.status}.`);
   const inventory = await response.json() as LiveSource[];
   const byId = new Map(inventory.map((source) => [source.id, source]));
-  return sourceIds.map((sourceId) => {
+  const now = new Date();
+  return sourceIds.flatMap((sourceId): CrawlSource[] => {
     const source = byId.get(sourceId);
     if (!source?.postingUrl) throw new Error(`Request-fallback source ${sourceId} is unavailable.`);
-    return {
+    if (!isRequestFallbackDue(source.nextRunAt, now)) return [];
+    return [{
       id: source.id,
       company: source.company,
       postingUrl: source.postingUrl,
       adapter: source.adapter,
-    };
+    }];
   });
 };
 

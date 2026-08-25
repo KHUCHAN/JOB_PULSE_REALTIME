@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CrawlSource, SourceCrawlResult } from "./crawler";
-import { recoverCheckpointedCatalog } from "./request-fallback-recovery";
+import { isRequestFallbackDue, recoverCheckpointedCatalog } from "./request-fallback-recovery";
 
 const source: CrawlSource = {
   id: "checkpointed",
@@ -22,6 +22,15 @@ const job = (id: string): SourceCrawlResult["jobs"][number] => ({
 });
 
 describe("request fallback checkpoint recovery", () => {
+  it("skips a source already scheduled beyond the bounded handoff horizon", () => {
+    const now = new Date("2026-08-25T15:00:00.000Z");
+    expect(isRequestFallbackDue(null, now)).toBe(true);
+    expect(isRequestFallbackDue("invalid", now)).toBe(true);
+    expect(isRequestFallbackDue("2026-08-25T15:05:00.000Z", now)).toBe(true);
+    expect(isRequestFallbackDue("2026-08-25T15:05:00.001Z", now)).toBe(false);
+    expect(isRequestFallbackDue("2026-08-25T17:00:00.000Z", now)).toBe(false);
+  });
+
   it("joins bounded windows and removes the repeated page-one jobs", async () => {
     const crawl = vi.fn(async (requested: CrawlSource): Promise<SourceCrawlResult> => {
       if (requested.crawlPageCursor === 1) return {

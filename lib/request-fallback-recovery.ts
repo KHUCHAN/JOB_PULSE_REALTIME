@@ -17,6 +17,18 @@ const defaultWait = (milliseconds: number): Promise<void> => new Promise((resolv
   setTimeout(resolve, milliseconds);
 });
 
+const REQUEST_RECOVERY_DUE_HORIZON_MS = 5 * 60 * 1_000;
+
+export const isRequestFallbackDue = (
+  nextRunAt: string | null | undefined,
+  now = new Date(),
+): boolean => {
+  if (!nextRunAt) return true;
+  const scheduledTime = Date.parse(nextRunAt);
+  if (!Number.isFinite(scheduledTime)) return true;
+  return scheduledTime <= now.getTime() + REQUEST_RECOVERY_DUE_HORIZON_MS;
+};
+
 /**
  * Drain a checkpointed source inside an independent request runner. The
  * production Worker keeps each pass deliberately short; a fresh GitHub runner
