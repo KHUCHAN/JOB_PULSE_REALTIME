@@ -14455,7 +14455,7 @@ const crawlFedEx = async (source: CrawlSource, fetcher: typeof fetch): Promise<S
     }
   };
 
-  const first = await fetchPage(1);
+  let first = await fetchPage(1);
   if (!first) return {
     status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
     responseStatus,
@@ -14471,30 +14471,53 @@ const crawlFedEx = async (source: CrawlSource, fetcher: typeof fetch): Promise<S
     { length: Math.max(0, endPage - Math.max(2, startPage) + 1) },
     (_, index) => Math.max(2, startPage) + index,
   );
-  const pages = new Map<number, FedExListingPage>([[1, first]]);
-  for (let index = 0; index < pageNumbers.length; index += 3) {
-    const batch = pageNumbers.slice(index, index + 3);
-    const results = await Promise.all(batch.map(async (page) => ({ page, result: await fetchPage(page) })));
-    for (const { page, result } of results) if (result) pages.set(page, result);
-  }
-
-  const jobs = [...first.jobs];
-  const seen = new Set(first.jobs.map((job) => job.externalId ?? job.officialUrl));
-  let firstFailedPage: number | null = null;
-  for (let page = Math.max(2, startPage); page <= endPage; page += 1) {
-    const result = pages.get(page);
-    // FedEx's update-date feed is live while a checkpoint window is being
-    // read, so its advertised total can move by one without changing the
-    // page topology or any page's validated identities. Treat the topology as
-    // the stable contract; a total that crosses a page boundary still stops
-    // the cycle and is retried from the last successful page.
-    if (!result || Math.ceil(result.total / pageSize) !== totalPages
-      || !claimPageIdentities(result.jobs.map((job) => job.externalId ?? job.officialUrl), result.jobs.length, seen)) {
-      firstFailedPage = page;
-      break;
+  const fetchWindow = async (firstPage: FedExListingPage): Promise<Map<number, FedExListingPage>> => {
+    const pages = new Map<number, FedExListingPage>([[1, firstPage]]);
+    for (let index = 0; index < pageNumbers.length; index += 3) {
+      const batch = pageNumbers.slice(index, index + 3);
+      const results = await Promise.all(batch.map(async (page) => ({ page, result: await fetchPage(page) })));
+      for (const { page, result } of results) if (result) pages.set(page, result);
     }
-    jobs.push(...result.jobs);
+    return pages;
+  };
+  const collectWindow = (firstPage: FedExListingPage, pages: Map<number, FedExListingPage>): {
+    jobs: CrawledJob[];
+    firstFailedPage: number | null;
+  } => {
+    const jobs = [...firstPage.jobs];
+    const seen = new Set(firstPage.jobs.map((job) => job.externalId ?? job.officialUrl));
+    let firstFailedPage: number | null = null;
+    for (let page = Math.max(2, startPage); page <= endPage; page += 1) {
+      const result = pages.get(page);
+      // FedEx's update-date feed is live while a checkpoint window is being
+      // read, so its advertised total can move by one without changing the
+      // page topology or any page's validated identities. Treat the topology
+      // as the stable contract; a total that crosses a page boundary or an
+      // identity overlap still stops this snapshot.
+      if (!result || Math.ceil(result.total / pageSize) !== totalPages
+        || !claimPageIdentities(result.jobs.map((job) => job.externalId ?? job.officialUrl), result.jobs.length, seen)) {
+        firstFailedPage = page;
+        break;
+      }
+      jobs.push(...result.jobs);
+    }
+    return { jobs, firstFailedPage };
+  };
+
+  let collected = collectWindow(first, await fetchWindow(first));
+  if (collected.firstFailedPage !== null) {
+    // A posting inserted or re-sorted between the first page and the parallel
+    // tail requests can create a one-request boundary overlap. Re-read the
+    // whole bounded window once and accept it only if every strict total,
+    // cardinality, and identity check now agrees. A persistently repeated or
+    // malformed page remains incomplete and never advances the checkpoint.
+    const retryFirst = await fetchPage(1);
+    if (retryFirst && Math.ceil(retryFirst.total / pageSize) === totalPages) {
+      first = retryFirst;
+      collected = collectWindow(retryFirst, await fetchWindow(retryFirst));
+    }
   }
+  const { jobs, firstFailedPage } = collected;
   const cycleComplete = firstFailedPage === null && endPage === totalPages;
   return {
     status: "succeeded",

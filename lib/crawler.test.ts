@@ -12641,6 +12641,39 @@ We are an equal opportunity employer.`;
     expect(tail.pagination).toEqual({ nextPage: 1, cycleComplete: true, totalPages: 8 });
   });
 
+  it("retries one transiently unstable FedEx catalog window before retaining the checkpoint", async () => {
+    const job = (index: number) => ({
+      reference: `P25-${index}-1`, title: `Handler ${index}`, brandName: "FedEx",
+      locations: [{ city: "Memphis", stateAbbr: "TN", country: "United States", countryAbbr: "US", locationParsedText: "Memphis, TN, United States" }],
+      isRemote: false, employmentType: ["Part Time"],
+      applyURL: `https://fedex.paradox.ai/co/FederalExpressCorporation41/Job?job_id=P25-${index}-1`,
+      originalURL: `handler-${index}/job/P25-${index}-1`, customFields: [],
+    });
+    let pageOneReads = 0;
+    let pageTwoReads = 0;
+    const result = await crawlSource({
+      id: "audit-row-359", company: "FedEx", postingUrl: "https://careers.fedex.com/", adapter: "custom",
+    }, async (input) => {
+      const page = Number(new URL(String(input)).pathname.match(/\/(\d+)$/)?.[1]);
+      if (page === 1) pageOneReads += 1;
+      if (page === 2) pageTwoReads += 1;
+      const start = page === 2 && pageTwoReads === 1 ? 1 : (page - 1) * 100 + 1;
+      const count = page < 3 ? 100 : 50;
+      const jobs = Array.from({ length: count }, (_, offset) => job(start + offset));
+      return new Response(`<script>window.__PRELOAD_STATE__ = ${JSON.stringify({
+        jobSearch: { params: { page_number: page, page_size: 100, filter: { country: ["United States"] }, sort_by: "update_date" }, totalJob: 250, jobs },
+      })};</script>`);
+    }, new Date());
+
+    expect(pageOneReads).toBe(2);
+    expect(pageTwoReads).toBe(2);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", error: null,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 3 },
+    }));
+    expect(result.jobs).toHaveLength(250);
+  });
+
   it("does not advance a FedEx checkpoint across a repeated or empty catalog page", async () => {
     const job = (index: number) => ({
       reference: `P25-${index}-1`, title: `Handler ${index}`, brandName: "FedEx",
