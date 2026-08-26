@@ -97,6 +97,12 @@ describe("career URL remediation", () => {
     expect(isSafeCareerListingUrl("Oportun", "https://www.oportun.com/careers", "https://job-boards.greenhouse.io/oportun")).toBe(true);
   });
 
+  it("admits FedEx's exact filtered US catalog without treating page one as a job detail", () => {
+    const catalog = "https://careers.fedex.com/jobs/page/1?page_size=100&filter%5Bcountry%5D=United+States&sort_by=update_date";
+    expect(isSafeCareerListingUrl("FedEx", catalog, catalog)).toBe(true);
+    expect(isSafeCareerListingUrl("FedEx", catalog, "https://careers.fedex.com/jobs/page/1?page_size=100&sort_by=update_date")).toBe(false);
+  });
+
   it("accepts exact verified opaque catalogs and canonical listing redirects", () => {
     expect(isSafeCareerListingUrl("Honor", "https://www.honorcare.com/honor-careers/", "https://www.honorcare.com/honor-careers/")).toBe(true);
     expect(isSafeCareerListingUrl("Kratos Defense", "https://kratosdefense.submit4jobs.com/", "https://kratosdefense.submit4jobs.com/")).toBe(true);

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createServer } from "node:http";
 import type { CrawledJob, CrawlSource } from "../lib/crawler";
-import { browserChallengeHtml, browserListingSource, browserResultClassification, curlNativeFetch, nativeRunnerRecoveryEligible, persistenceSql, recoverNativeOutsideWorker, type BrowserFallbackResult } from "./browser-fallback-crawl";
+import { browserChallengeHtml, browserListingSource, browserResultClassification, curlNativeFetch, fedExBrowserApiResult, nativeRunnerRecoveryEligible, persistenceSql, recoverNativeOutsideWorker, type BrowserFallbackResult } from "./browser-fallback-crawl";
 
 describe("browser fallback Workday recovery", () => {
   it("uses the independent runner's official CXS access before browser rendering", async () => {
@@ -102,6 +102,41 @@ describe("browser fallback Workday recovery", () => {
     await expect(recoverNativeOutsideWorker({
       id: "audit-row-359", company: "FedEx", postingUrl: "https://careers.fedex.com/", adapter: "custom", attemptNativeRecovery: true,
     }, fetcher as typeof fetch)).resolves.toBeNull();
+  });
+
+  it("validates and joins a bounded FedEx browser API window", () => {
+    const source = { id: "audit-row-359", company: "FedEx", postingUrl: "https://careers.fedex.com/jobs/page/1", adapter: "custom" as const };
+    const job = (index: number) => ({
+      reference: `P25-${index}-1`, title: `Handler ${index}`, brandName: "FedEx",
+      locations: [{ city: "Memphis", stateAbbr: "TN", country: "United States", countryAbbr: "US", locationParsedText: "Memphis, TN, United States" }],
+      isRemote: false, employmentType: ["Part Time"],
+      applyURL: `https://fedex.paradox.ai/co/FederalExpressCorporation41/Job?job_id=P25-${index}-1`,
+      originalURL: `handler-${index}/job/P25-${index}-1`, customFields: [],
+    });
+    const pages = [1, 2, 3].map((page) => ({
+      page,
+      status: 200,
+      payload: {
+        totalJob: 250,
+        jobs: Array.from({ length: page < 3 ? 100 : 50 }, (_, offset) => job((page - 1) * 100 + offset + 1)),
+      },
+    }));
+
+    expect(fedExBrowserApiResult(source, pages, source.postingUrl)).toEqual(expect.objectContaining({
+      status: 200, completeListing: true, error: null,
+      jobs: expect.arrayContaining([expect.objectContaining({ externalId: "P25-250-1" })]),
+    }));
+    const oneBoundaryRepeat = {
+      ...pages[1],
+      payload: {
+        totalJob: 250,
+        jobs: [job(100), ...Array.from({ length: 99 }, (_, offset) => job(offset + 102))],
+      },
+    };
+    expect(fedExBrowserApiResult(source, [pages[0], oneBoundaryRepeat, pages[2]], source.postingUrl))
+      .toEqual(expect.objectContaining({ jobs: expect.any(Array), error: null }));
+    expect(fedExBrowserApiResult(source, [pages[0], { ...pages[1], payload: pages[0].payload }, pages[2]], source.postingUrl))
+      .toEqual(expect.objectContaining({ jobs: [], error: "FedEx browser API page 2 repeated too many prior job identities." }));
   });
 
   it("selects only known Worker-egress failures for the independent native pass", () => {

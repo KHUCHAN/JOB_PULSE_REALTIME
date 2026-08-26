@@ -13,7 +13,7 @@ import { browserRecoveryDue, needsBrowserFallback, type LatestCrawlSummary } fro
 import { numericPaginationTargets } from "../lib/browser-pagination.ts";
 import { ingestJobSnapshotInChunks } from "../lib/job-snapshot-transport.ts";
 import { jobPostingIdentityKeys } from "../lib/job-posting-identity.ts";
-import { anchorsFromHtml, crawlSource, deltaInternshipListingUrl, extractJobsFromHtml, jobsFromTeslaState, type CrawledFacet, type CrawledJob, type CrawlSource, type TeslaState } from "../lib/crawler.ts";
+import { anchorsFromHtml, crawlSource, deltaInternshipListingUrl, extractJobsFromHtml, jobsFromFedExApiPayload, jobsFromTeslaState, type CrawledFacet, type CrawledJob, type CrawlSource, type TeslaState } from "../lib/crawler.ts";
 import { careerCandidates, isSafeCareerListingUrl } from "../lib/url-remediation.ts";
 
 export type BrowserFallbackResult = {
@@ -316,6 +316,107 @@ export const browserChallengeHtml = (html: string): boolean =>
   /<title>\s*(?:Quick Check Needed|Checking your browser[^<]*)\s*<\/title>/i.test(html)
   || /(?:oleeoProtect|altcha-widget|cf-chl-(?:widget|challenge)|challenge-platform\/h\/g\/turnstile|captcha|access denied)/i.test(html);
 
+type FedExBrowserApiPage = { page: number; status: number; payload: unknown };
+
+export const fedExBrowserApiResult = (
+  source: CrawlSource,
+  pages: FedExBrowserApiPage[],
+  finalUrl: string,
+): BrowserFallbackResult => {
+  const first = pages.find((page) => page.page === 1);
+  const normalizedFirst = first ? jobsFromFedExApiPayload(first.payload, 1, source, first.status) : null;
+  const firstStatus = first?.status ?? null;
+  if (!normalizedFirst) {
+    return { source, status: firstStatus, finalUrl, jobs: [], error: "FedEx browser API returned an unusable first page." };
+  }
+  const totalPages = Math.ceil(normalizedFirst.total / 100);
+  const expectedPages = Math.min(7, totalPages);
+  const jobs: CrawledJob[] = [];
+  const seen = new Set<string>();
+  for (let page = 1; page <= expectedPages; page += 1) {
+    const raw = pages.find((candidate) => candidate.page === page);
+    const parsed = raw ? jobsFromFedExApiPayload(raw.payload, page, source, raw.status) : null;
+    if (!parsed || Math.ceil(parsed.total / 100) !== totalPages) {
+      return { source, status: raw?.status ?? firstStatus, finalUrl, jobs: [], error: `FedEx browser API page ${page} was unavailable or unstable.` };
+    }
+    const newJobs: CrawledJob[] = [];
+    let repeated = 0;
+    for (const job of parsed.jobs) {
+      const identity = job.externalId ?? job.officialUrl;
+      if (seen.has(identity)) {
+        repeated += 1;
+        continue;
+      }
+      seen.add(identity);
+      newJobs.push(job);
+    }
+    // This browser snapshot never advances the native page checkpoint and is
+    // non-authoritative for stale closure. A small live-sort boundary overlap
+    // is therefore safe to deduplicate, while a repeated/cached page remains
+    // a hard failure. Five percent admits at most five rows on a full page.
+    if (repeated > Math.max(1, Math.ceil(parsed.jobs.length * 0.05))) {
+      return { source, status: raw?.status ?? firstStatus, finalUrl, jobs: [], error: `FedEx browser API page ${page} repeated too many prior job identities.` };
+    }
+    jobs.push(...newJobs);
+  }
+  return {
+    source,
+    status: firstStatus,
+    finalUrl,
+    jobs,
+    completeListing: expectedPages === totalPages,
+    error: null,
+  };
+};
+
+const recoverFedExInBrowser = async (page: Page, source: CrawlSource): Promise<BrowserFallbackResult> => {
+  const response = await page.goto(source.postingUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
+  const finalUrl = page.url();
+  if (!response || response.status() >= 400) {
+    return { source, status: response?.status() ?? null, finalUrl, jobs: [], error: `FedEx browser session returned HTTP ${response?.status() ?? "unknown"}.` };
+  }
+  const loadWindow = async (): Promise<FedExBrowserApiPage[]> => page.evaluate(async (): Promise<FedExBrowserApiPage[]> => {
+    const load = async (pageNumber: number): Promise<FedExBrowserApiPage> => {
+      const endpoint = new URL("/api/get-jobs", window.location.origin);
+      endpoint.searchParams.set("page_number", String(pageNumber));
+      endpoint.searchParams.set("page_size", "100");
+      endpoint.searchParams.append("filter[country][0]", "United States");
+      endpoint.searchParams.set("sort_by", "update_date");
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 20_000);
+      try {
+        const apiResponse = await fetch(endpoint, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { accept: "application/json", "content-type": "application/json" },
+          body: JSON.stringify({ disable_switch_search_mode: false, site_available_languages: ["en"] }),
+          signal: controller.signal,
+        });
+        const payload = await apiResponse.json().catch(() => null);
+        return { page: pageNumber, status: apiResponse.status, payload };
+      } finally {
+        window.clearTimeout(timeout);
+      }
+    };
+    const first = await load(1);
+    const total = first.payload && typeof first.payload === "object"
+      ? Number((first.payload as { totalJob?: unknown }).totalJob)
+      : 0;
+    const totalPages = Number.isSafeInteger(total) && total > 0 ? Math.ceil(total / 100) : 1;
+    // The feed is ordered by live update time. Parallel page calls can land
+    // on different backend snapshots and repeat a boundary identity, so keep
+    // this bounded seven-page verification sequential inside one session.
+    const pages = [first];
+    for (let pageNumber = 2; pageNumber <= Math.min(7, totalPages); pageNumber += 1) {
+      pages.push(await load(pageNumber));
+    }
+    return pages;
+  });
+  let result = fedExBrowserApiResult(source, await loadWindow(), finalUrl);
+  if (result.error) result = fedExBrowserApiResult(source, await loadWindow(), finalUrl);
+  return result;
+};
+
 const CURL_META = "__JOB_PULSE_CURL_META__";
 
 /**
@@ -399,6 +500,8 @@ export const recoverNativeOutsideWorker = async (
 const inspect = async (page: Page, source: CrawlSource): Promise<BrowserFallbackResult> => {
   try {
     const isTesla = source.id === "p5-1077-tesla" || source.company === "Tesla";
+    const isFedEx = source.id === "audit-row-359" || source.company === "FedEx";
+    if (isFedEx) return recoverFedExInBrowser(page, source);
     // Re-run the full native adapter only for failures shown to differ by
     // egress (Workday, blocked pages, previously populated feeds, and browser
     // false-empty results). Other sources keep the short HTTP probe so a slow

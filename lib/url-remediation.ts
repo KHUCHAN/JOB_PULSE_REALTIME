@@ -159,6 +159,17 @@ export const isSafeCareerListingUrl = (company: string, originalUrl: string, can
   if (ATS_VENDOR_LANDING.test(candidate.hostname) && /^\/?$/i.test(candidate.pathname)) return false;
   if (THIRD_PARTY_AGGREGATOR.test(candidate.hostname)) return false;
   if (NON_LISTING_PATH.test(`${candidate.pathname}${candidate.search}`)) return false;
+  const isExactFedExUsCatalog = (url: URL): boolean => url.protocol === "https:"
+    && url.hostname.toLocaleLowerCase() === "careers.fedex.com"
+    && url.pathname === "/jobs/page/1"
+    && url.searchParams.get("page_size") === "100"
+    && url.searchParams.getAll("filter[country]").length === 1
+    && url.searchParams.get("filter[country]") === "United States"
+    && url.searchParams.get("sort_by") === "update_date"
+    && [...url.searchParams.keys()].every((key) => ["page_size", "filter[country]", "sort_by"].includes(key));
+  if (company.trim().toLocaleLowerCase() === "fedex"
+    && isExactFedExUsCatalog(candidate)
+    && isExactFedExUsCatalog(original)) return true;
   // CGI's official careers CTA uses an opaque Njoyn tenant ID, so neither the
   // company name nor its domain appears in the vendor URL. Admit only CGI's
   // exact US JobListing tenant when the stored source is CGI-owned or already

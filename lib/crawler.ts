@@ -14442,6 +14442,15 @@ const fedexListingData = (
   return { status, total: Number(total), jobs: normalized };
 };
 
+export const jobsFromFedExApiPayload = (
+  payload: unknown,
+  page: number,
+  source: CrawlSource,
+  status = 200,
+): FedExListingPage | null => payload && typeof payload === "object"
+  ? fedexListingData(payload as JsonLdValue, page, source, status)
+  : null;
+
 const fedexListingPage = (html: string, page: number, source: CrawlSource, status: number): FedExListingPage | null => {
   const payload = embeddedJsonObject(html, "window.__PRELOAD_STATE__ = ");
   const jobSearch = payload?.jobSearch;
@@ -14500,10 +14509,7 @@ const crawlFedEx = async (source: CrawlSource, fetcher: typeof fetch): Promise<S
         const final = new URL(response.url);
         if (final.origin !== "https://careers.fedex.com" || final.pathname !== "/api/get-jobs") return null;
       }
-      const payload = await response.json() as unknown;
-      return payload && typeof payload === "object"
-        ? fedexListingData(payload as JsonLdValue, page, source, response.status)
-        : null;
+      return jobsFromFedExApiPayload(await response.json(), page, source, response.status);
     } catch {
       return null;
     }
