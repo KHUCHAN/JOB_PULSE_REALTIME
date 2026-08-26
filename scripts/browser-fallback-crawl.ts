@@ -374,10 +374,12 @@ export const recoverNativeOutsideWorker = async (
   if (!source.attemptNativeRecovery && source.adapter !== "workday") return null;
   let result = await crawlSource(source, fetcher, now);
   if (fetcher === fetch && (result.status !== "succeeded"
+    || Boolean(result.error)
     || (result.jobs.length === 0 && !result.completeListing))) {
     result = await crawlSource(source, curlNativeFetch, now);
   }
   if (result.status !== "succeeded"
+    || result.error
     || (result.jobs.length === 0 && !result.completeListing)) return null;
   return {
     source,
@@ -700,6 +702,20 @@ async function main(): Promise<void> {
     recovered: successful.length,
     jobs: successful.reduce((sum, result) => sum + result.jobs.length, 0),
     persistenceFailures,
+    unresolved: results.flatMap((result) => {
+      const classification = browserResultClassification(result);
+      return classification.status === "succeeded" && classification.code !== "empty_board"
+        ? []
+        : [{
+            sourceId: result.source.id,
+            company: result.source.company,
+            status: classification.status,
+            code: classification.code,
+            responseStatus: result.status,
+            jobs: result.jobs.length,
+            error: result.error,
+          }];
+    }),
   })}\n`);
   if (persistenceFailures > 0) process.exitCode = 1;
 }

@@ -12641,6 +12641,54 @@ We are an equal opportunity employer.`;
     expect(tail.pagination).toEqual({ nextPage: 1, cycleComplete: true, totalPages: 8 });
   });
 
+  it("uses FedEx's session-backed JSON catalog instead of unstable cached HTML pages", async () => {
+    const job = (index: number) => ({
+      reference: `P25-${index}-1`, title: `Handler ${index}`, brandName: "FedEx",
+      locations: [{ city: "Memphis", stateAbbr: "TN", country: "United States", countryAbbr: "US", locationParsedText: "Memphis, TN, United States" }],
+      isRemote: false, employmentType: ["Part Time"],
+      applyURL: `https://fedex.paradox.ai/co/FederalExpressCorporation41/Job?job_id=P25-${index}-1`,
+      originalURL: `handler-${index}/job/P25-${index}-1`, customFields: [],
+    });
+    const requests: Array<{ method: string; path: string; cookie: string | null }> = [];
+    const result = await crawlSource({
+      id: "audit-row-359", company: "FedEx", postingUrl: "https://careers.fedex.com/", adapter: "custom",
+    }, async (input, init) => {
+      const request = new Request(input, init);
+      const url = new URL(request.url);
+      requests.push({ method: request.method, path: `${url.pathname}${url.search}`, cookie: request.headers.get("cookie") });
+      if (url.pathname === "/jobs/page/1") {
+        return new Response(`<script>window.__PRELOAD_STATE__ = ${JSON.stringify({
+          jobSearch: {
+            params: { page_number: 1, page_size: 100, filter: { country: ["United States"] }, sort_by: "update_date" },
+            totalJob: 250, jobs: Array.from({ length: 100 }, (_, offset) => job(offset + 1)),
+          },
+        })};</script>`, { headers: { "set-cookie": "ct=signed-session; Path=/; HttpOnly; Secure; SameSite=Lax" } });
+      }
+      expect(url.pathname).toBe("/api/get-jobs");
+      expect(request.method).toBe("POST");
+      expect(request.headers.get("cookie")).toBe("ct=signed-session");
+      expect(url.searchParams.get("filter[country][0]")).toBe("United States");
+      expect(await request.json()).toEqual({ disable_switch_search_mode: false, site_available_languages: ["en"] });
+      const page = Number(url.searchParams.get("page_number"));
+      const count = page < 3 ? 100 : 50;
+      const start = (page - 1) * 100 + 1;
+      return Response.json({ totalJob: 250, jobs: Array.from({ length: count }, (_, offset) => job(start + offset)), facets: [] });
+    }, new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", error: null,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 3 },
+    }));
+    expect(result.jobs).toHaveLength(250);
+    expect(requests.map((request) => request.path)).toEqual([
+      "/jobs/page/1?page_size=100&filter%5Bcountry%5D=United+States&sort_by=update_date",
+      "/api/get-jobs?page_number=1&page_size=100&filter%5Bcountry%5D%5B0%5D=United+States&sort_by=update_date",
+      "/api/get-jobs?page_number=2&page_size=100&filter%5Bcountry%5D%5B0%5D=United+States&sort_by=update_date",
+      "/api/get-jobs?page_number=3&page_size=100&filter%5Bcountry%5D%5B0%5D=United+States&sort_by=update_date",
+    ]);
+    expect(requests.slice(1).every((request) => request.method === "POST" && request.cookie === "ct=signed-session")).toBe(true);
+  });
+
   it("retries one transiently unstable FedEx catalog window before retaining the checkpoint", async () => {
     const job = (index: number) => ({
       reference: `P25-${index}-1`, title: `Handler ${index}`, brandName: "FedEx",

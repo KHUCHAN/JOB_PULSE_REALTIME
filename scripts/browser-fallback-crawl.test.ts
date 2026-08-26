@@ -79,6 +79,31 @@ describe("browser fallback Workday recovery", () => {
     });
   });
 
+  it("does not promote a partial native checkpoint whose adapter reported an error", async () => {
+    const job = (index: number) => ({
+      reference: `P25-${index}-1`, title: `Handler ${index}`, brandName: "FedEx",
+      locations: [{ city: "Memphis", stateAbbr: "TN", country: "United States", countryAbbr: "US", locationParsedText: "Memphis, TN, United States" }],
+      isRemote: false, employmentType: ["Part Time"],
+      applyURL: `https://fedex.paradox.ai/co/FederalExpressCorporation41/Job?job_id=P25-${index}-1`,
+      originalURL: `handler-${index}/job/P25-${index}-1`, customFields: [],
+    });
+    const fetcher = async (input: RequestInfo | URL) => {
+      const page = Number(new URL(String(input)).pathname.match(/\/(\d+)$/)?.[1]);
+      const start = page === 2 ? 1 : (page - 1) * 100 + 1;
+      const jobs = Array.from({ length: page < 3 ? 100 : 50 }, (_, offset) => job(start + offset));
+      return new Response(`<script>window.__PRELOAD_STATE__ = ${JSON.stringify({
+        jobSearch: {
+          params: { page_number: page, page_size: 100, filter: { country: ["United States"] }, sort_by: "update_date" },
+          totalJob: 250, jobs,
+        },
+      })};</script>`);
+    };
+
+    await expect(recoverNativeOutsideWorker({
+      id: "audit-row-359", company: "FedEx", postingUrl: "https://careers.fedex.com/", adapter: "custom", attemptNativeRecovery: true,
+    }, fetcher as typeof fetch)).resolves.toBeNull();
+  });
+
   it("selects only known Worker-egress failures for the independent native pass", () => {
     expect(nativeRunnerRecoveryEligible({ id: "p5-1077-tesla", adapter: "custom" })).toBe(true);
     expect(nativeRunnerRecoveryEligible({ adapter: "workday" })).toBe(true);

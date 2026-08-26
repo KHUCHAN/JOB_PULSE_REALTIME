@@ -14281,6 +14281,20 @@ const fedexListingUrl = (page: number): string => {
   return endpoint.href;
 };
 
+const fedexApiUrl = (page: number): string => {
+  const endpoint = new URL("/api/get-jobs", "https://careers.fedex.com");
+  endpoint.searchParams.set("page_number", String(page));
+  endpoint.searchParams.set("page_size", "100");
+  endpoint.searchParams.append("filter[country][0]", "United States");
+  endpoint.searchParams.set("sort_by", "update_date");
+  return endpoint.href;
+};
+
+const fedexSessionCookie = (setCookie: string | null): string | null => {
+  const match = setCookie?.match(/(?:^|,\s*)ct=([^;]+)/i);
+  return match?.[1] ? `ct=${match[1]}` : null;
+};
+
 const fedexCustomFields = (value: unknown): Map<string, string> => {
   if (!Array.isArray(value)) return new Map();
   return new Map(value.flatMap((field): Array<[string, string]> => {
@@ -14405,6 +14419,29 @@ const fedexListingJob = (value: unknown, source: CrawlSource): CrawledJob | null
   };
 };
 
+const fedexListingData = (
+  state: JsonLdValue,
+  page: number,
+  source: CrawlSource,
+  status: number,
+): FedExListingPage | null => {
+  const total = state.totalJob;
+  const rawJobs = state.jobs;
+  if (!Number.isSafeInteger(total) || Number(total) <= 0 || !Array.isArray(rawJobs)) return null;
+  const expected = Math.min(100, Math.max(0, Number(total) - (page - 1) * 100));
+  const lastPage = page === Math.ceil(Number(total) / 100);
+  // The live FedEx counter can briefly lead its final page by one row while a
+  // posting is removed. Admit only that bounded final-page discrepancy; any
+  // larger truncation remains incomplete and cannot advance the checkpoint.
+  if (rawJobs.length !== expected && !(lastPage && expected > 1 && rawJobs.length === expected - 1)) return null;
+  const jobs = rawJobs.map((job) => fedexListingJob(job, source));
+  if (jobs.some((job) => job === null)) return null;
+  const normalized = jobs as CrawledJob[];
+  const identities = normalized.map((job) => job.externalId);
+  if (new Set(identities).size !== identities.length) return null;
+  return { status, total: Number(total), jobs: normalized };
+};
+
 const fedexListingPage = (html: string, page: number, source: CrawlSource, status: number): FedExListingPage | null => {
   const payload = embeddedJsonObject(html, "window.__PRELOAD_STATE__ = ");
   const jobSearch = payload?.jobSearch;
@@ -14415,31 +14452,17 @@ const fedexListingPage = (html: string, page: number, source: CrawlSource, statu
   const request = params as JsonLdValue;
   const filter = request.filter;
   const countries = filter && typeof filter === "object" ? (filter as JsonLdValue).country : null;
-  const total = state.totalJob;
-  const rawJobs = state.jobs;
   if (request.page_number !== page || request.page_size !== 100 || request.sort_by !== "update_date"
-    || !Array.isArray(countries) || countries.length !== 1 || countries[0] !== "United States"
-    || !Number.isSafeInteger(total) || Number(total) <= 0 || !Array.isArray(rawJobs)) return null;
-  const expected = Math.min(100, Math.max(0, Number(total) - (page - 1) * 100));
-  const lastPage = page === Math.ceil(Number(total) / 100);
-  // FedEx currently advertises 2,411 US jobs while its official final page
-  // consistently exposes 10 rows (2,410 accessible jobs). Admit only that
-  // bounded one-row final-page discrepancy; any larger truncation remains an
-  // incomplete page and cannot advance the stale-closure checkpoint.
-  if (rawJobs.length !== expected && !(lastPage && expected > 1 && rawJobs.length === expected - 1)) return null;
-  const jobs = rawJobs.map((job) => fedexListingJob(job, source));
-  if (jobs.some((job) => job === null)) return null;
-  const normalized = jobs as CrawledJob[];
-  const identities = normalized.map((job) => job.externalId);
-  if (new Set(identities).size !== identities.length) return null;
-  return { status, total: Number(total), jobs: normalized };
+    || !Array.isArray(countries) || countries.length !== 1 || countries[0] !== "United States") return null;
+  return fedexListingData(state, page, source, status);
 };
 
 const crawlFedEx = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
   const pageSize = 100;
   const maxPagesPerPass = 7;
   let responseStatus: number | null = null;
-  const fetchPage = async (page: number): Promise<FedExListingPage | null> => {
+  let sessionCookie: string | null = null;
+  const fetchHtmlPage = async (page: number): Promise<FedExListingPage | null> => {
     try {
       const endpoint = fedexListingUrl(page);
       const response = await fetchWithTimeout(fetcher, endpoint, undefined, true, { attempts: 2, timeoutMs: 12_000 });
@@ -14449,13 +14472,50 @@ const crawlFedEx = async (source: CrawlSource, fetcher: typeof fetch): Promise<S
         const final = new URL(response.url);
         if (final.origin !== "https://careers.fedex.com" || final.pathname !== `/jobs/page/${page}`) return null;
       }
+      sessionCookie ??= fedexSessionCookie(response.headers.get("set-cookie"));
       return fedexListingPage(await response.text(), page, source, response.status);
     } catch {
       return null;
     }
   };
 
-  let first = await fetchPage(1);
+  const fetchApiPage = async (page: number): Promise<FedExListingPage | null> => {
+    if (!sessionCookie) return null;
+    try {
+      const endpoint = fedexApiUrl(page);
+      const response = await fetchWithTimeout(fetcher, endpoint, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+          cookie: sessionCookie,
+          origin: "https://careers.fedex.com",
+          referer: fedexListingUrl(1),
+        },
+        body: JSON.stringify({ disable_switch_search_mode: false, site_available_languages: ["en"] }),
+      }, true, { attempts: 2, timeoutMs: 12_000 });
+      responseStatus = response.status;
+      if (!response.ok) return null;
+      if (response.url) {
+        const final = new URL(response.url);
+        if (final.origin !== "https://careers.fedex.com" || final.pathname !== "/api/get-jobs") return null;
+      }
+      const payload = await response.json() as unknown;
+      return payload && typeof payload === "object"
+        ? fedexListingData(payload as JsonLdValue, page, source, response.status)
+        : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const fetchPage = async (page: number): Promise<FedExListingPage | null> => {
+    const api = await fetchApiPage(page);
+    return api ?? fetchHtmlPage(page);
+  };
+
+  const htmlFirst = await fetchHtmlPage(1);
+  let first = await fetchApiPage(1) ?? htmlFirst;
   if (!first) return {
     status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
     responseStatus,
