@@ -74,6 +74,32 @@ describe("resume digest reservation", () => {
     `).all()).toEqual([{ id: "job-1" }, { id: "job-3" }]);
   });
 
+  it("keeps exact Codex planning bounded to the supplied rows", async () => {
+    const sqlite = alertDatabaseWithMatches(3);
+    const raw = createD1ForSqlite(sqlite);
+    const preparedSql: string[] = [];
+    const database = {
+      ...raw,
+      prepare(sql: string) {
+        preparedSql.push(sql);
+        return raw.prepare(sql);
+      },
+    } as unknown as D1Database;
+
+    const planned = await planResumeDigests(
+      database,
+      "chanyoung-resume",
+      "2026-08-10T12:00:00.000Z",
+      2,
+      1,
+      ["job-1", "job-3"],
+    );
+
+    expect(planned).toHaveLength(1);
+    expect(preparedSql.join("\n")).not.toContain("FROM jobs newer");
+    expect(preparedSql.join("\n")).not.toContain("better_match");
+  });
+
   it("uses the persisted Codex approval when a derived eligibility flag drifted off", async () => {
     const sqlite = alertDatabaseWithMatches(1);
     sqlite.prepare("UPDATE job_matches SET notification_eligible = 0 WHERE id = 'match-1'").run();
@@ -109,6 +135,40 @@ describe("resume digest reservation", () => {
     expect(planned[0]?.jobCount).toBe(2);
     expect(sqlite.prepare("SELECT status, count(*) AS total FROM notifications GROUP BY status").all())
       .toEqual([{ status: "queued", total: 1 }]);
+  });
+
+  it("refuses to rebuild an exact batch while an existing send lease is active", async () => {
+    const sqlite = alertDatabaseWithMatches(1);
+    const db = createD1ForSqlite(sqlite);
+    await planResumeDigests(db, "chanyoung-resume", "2026-08-10T11:59:00.000Z", 1, 1, ["job-1"]);
+    sqlite.exec(`
+      UPDATE notifications
+      SET status = 'sending', lease_expires_at = '2026-08-10T12:05:00.000Z';
+      UPDATE match_profiles SET next_digest_at = '2026-08-10T12:00:00.000Z';
+    `);
+
+    await expect(planResumeDigests(
+      db, "chanyoung-resume", "2026-08-10T12:00:00.000Z", 1, 1, ["job-1"],
+    )).rejects.toThrow('already reserved or delivered: ["job-1"]');
+    expect(sqlite.prepare("SELECT status, count(*) AS total FROM notifications GROUP BY status").all())
+      .toEqual([{ status: "sending", total: 1 }]);
+  });
+
+  it("refuses an exact batch whose durable identity was already delivered", async () => {
+    const sqlite = alertDatabaseWithMatches(1);
+    sqlite.prepare(`INSERT INTO notification_identity_history
+      VALUES ('chanyoung-resume', 'kimchany@usc.edu', 'url:https://example.com/1',
+              '2026-08-10T11:00:00.000Z', 'notification-old', 'match-old')`).run();
+
+    await expect(planResumeDigests(
+      createD1ForSqlite(sqlite),
+      "chanyoung-resume",
+      "2026-08-10T12:00:00.000Z",
+      1,
+      1,
+      ["job-1"],
+    )).rejects.toThrow('already reserved or delivered: ["job-1"]');
+    expect(sqlite.prepare("SELECT count(*) AS total FROM notifications").get()).toEqual({ total: 0 });
   });
 
   it("does not create a partial exact Codex digest", async () => {

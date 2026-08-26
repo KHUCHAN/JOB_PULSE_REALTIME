@@ -18,6 +18,13 @@ export interface ClaimedNotification extends PlannedNotification {
 type LeaseRow = { keyword_id: string };
 type RecipientRow = { recipient: string };
 type PendingMatchRow = { id: string; job_id: string; pending_recipients: string };
+type ExactMatchRow = {
+  id: string;
+  job_id: string;
+  requisition_identity_key: string | null;
+  external_identity_key: string | null;
+  url_identity_key: string | null;
+};
 type ClaimedRow = { id: string; recipient: string; job_count: number; attempt_count: number };
 type DigestRow = {
   notification_id: string;
@@ -103,19 +110,68 @@ export const planResumeDigests = async (
     const exactTargets = exactTargetsInput;
     const enabledRecipients = recipients.results.map((row) => row.recipient);
     if (exactTargets !== null) {
-      const encodedTargets = JSON.stringify(exactTargets);
+      if (enabledRecipients.length === 0) {
+        throw new Error("Exact Codex dispatch has no enabled recipients.");
+      }
+      const exactMatches = await database.prepare(`
+        WITH exact_jobs(id) AS MATERIALIZED (
+          SELECT CAST(value AS TEXT) FROM json_each(?)
+        )
+        SELECT jm.id, j.id AS job_id,
+               j.requisition_identity_key, j.external_identity_key, j.url_identity_key
+        FROM exact_jobs target
+        JOIN jobs j ON j.id = target.id
+        JOIN job_matches jm
+          ON jm.job_id = j.id AND jm.keyword_id = ?
+         AND jm.open_generation = j.open_generation
+        JOIN codex_reviews review
+          ON review.job_match_id = jm.id
+         AND review.profile_id = ?
+         AND review.decision = 'approve'
+        WHERE jm.is_active = 1 AND j.status = 'open'
+      `).bind(JSON.stringify(exactTargets), keywordId, profileId).all<ExactMatchRow>();
+      if (exactMatches.results.length !== exactTargets.length) {
+        const eligibleJobIds = new Set(exactMatches.results.map((row) => row.job_id));
+        const ineligibleJobIds = exactTargets.filter((jobId) => !eligibleJobIds.has(jobId));
+        throw new Error(
+          `Exact Codex dispatch target mismatch: requested ${exactTargets.length}, eligible ${exactMatches.results.length}, `
+          + `ineligible ${JSON.stringify(ineligibleJobIds)}.`,
+        );
+      }
+
+      // The exact set is already the result of a persisted Codex review pass.
+      // Check duplicate durable identities in memory instead of asking D1 to
+      // self-join the complete jobs catalog for three bounded key columns.
+      const identityOwners = new Map<string, string>();
+      for (const match of exactMatches.results) {
+        for (const identityKey of [
+          match.requisition_identity_key,
+          match.external_identity_key,
+          match.url_identity_key,
+        ]) {
+          if (!identityKey) continue;
+          const ownerJobId = identityOwners.get(identityKey);
+          if (ownerJobId && ownerJobId !== match.job_id) {
+            throw new Error("Exact Codex dispatch contains overlapping posting identities.");
+          }
+          identityOwners.set(identityKey, match.job_id);
+        }
+      }
+
+      const encodedMatches = JSON.stringify(exactMatches.results.map((row) => row.id));
       // An interrupted or failed prior attempt may have reserved some of this
-      // exact Codex batch in an unsent envelope. Rebuild only those items so
-      // retrying the batch is safe and cannot be blocked by stale reservations.
+      // exact Codex batch in an unsent envelope. Rebuild only expired rows;
+      // an active sending lease remains a hard conflict so a second message
+      // can never race the first one.
       const staleNotifications = await database.prepare(`
         SELECT DISTINCT ni.notification_id AS id
         FROM json_each(?) target
-        JOIN job_matches jm ON jm.job_id = CAST(target.value AS TEXT) AND jm.keyword_id = ?
-        JOIN notification_items ni ON ni.job_match_id = jm.id
+        JOIN notification_items ni
+          ON ni.job_match_id = CAST(target.value AS TEXT)
         JOIN notifications n ON n.id = ni.notification_id
         WHERE n.status <> 'sent'
           AND (n.status <> 'sending' OR n.lease_expires_at IS NULL OR n.lease_expires_at <= ?)
-      `).bind(encodedTargets, keywordId, now).all<{ id: string }>();
+      `).bind(encodedMatches, now).all<{ id: string }>();
       const staleNotificationIds = staleNotifications.results.map((row) => row.id);
       if (staleNotificationIds.length > 0) {
         const encodedNotifications = JSON.stringify(staleNotificationIds);
@@ -123,12 +179,8 @@ export const planResumeDigests = async (
           database.prepare(`
             DELETE FROM notification_items
             WHERE notification_id IN (SELECT CAST(value AS TEXT) FROM json_each(?))
-              AND job_match_id IN (
-                SELECT jm.id FROM job_matches jm
-                WHERE jm.keyword_id = ?
-                  AND jm.job_id IN (SELECT CAST(value AS TEXT) FROM json_each(?))
-              )
-          `).bind(encodedNotifications, keywordId, encodedTargets),
+              AND job_match_id IN (SELECT CAST(value AS TEXT) FROM json_each(?))
+          `).bind(encodedNotifications, encodedMatches),
           database.prepare(`
             UPDATE notifications
             SET job_count = (
@@ -146,31 +198,70 @@ export const planResumeDigests = async (
           `).bind(encodedNotifications),
         ]);
       }
-    }
-    // Normal planning must compare every pending match against the full open
-    // catalog. An exact Codex dispatch already supplies a bounded, deduplicated
-    // identity set, so compare contenders only inside that set. Re-running the
-    // full better-match scan once per exact target can exceed D1's CPU limit
-    // before Gmail is reached on a large production catalog.
-    if (exactTargets !== null) {
-      const duplicateIdentity = await database.prepare(`
-        WITH exact_jobs AS MATERIALIZED (
-          SELECT j.id, j.requisition_identity_key, j.external_identity_key, j.url_identity_key
-          FROM json_each(?) target
-          JOIN jobs j ON j.id = CAST(target.value AS TEXT)
+
+      const exactRows = JSON.stringify(exactMatches.results);
+      const conflicts = await database.prepare(`
+        WITH exact_matches AS MATERIALIZED (
+          SELECT json_extract(value, '$.id') AS id,
+                 json_extract(value, '$.job_id') AS job_id,
+                 json_extract(value, '$.requisition_identity_key') AS requisition_identity_key,
+                 json_extract(value, '$.external_identity_key') AS external_identity_key,
+                 json_extract(value, '$.url_identity_key') AS url_identity_key
+          FROM json_each(?)
         )
-        SELECT 1 AS duplicate
-        FROM exact_jobs left_job
-        JOIN exact_jobs right_job ON right_job.id > left_job.id
-          AND ${postingIdentityOverlapSql("left_job", "right_job")}
-        LIMIT 1
-      `).bind(JSON.stringify(exactTargets)).first<{ duplicate: number }>();
-      if (duplicateIdentity) {
-        throw new Error("Exact Codex dispatch contains overlapping posting identities.");
+        SELECT DISTINCT exact.job_id
+        FROM exact_matches exact
+        JOIN profile_recipients recipient
+          ON recipient.profile_id = ? AND recipient.enabled = 1
+        LEFT JOIN notification_items reserved
+          ON reserved.job_match_id = exact.id AND reserved.recipient = recipient.recipient
+        LEFT JOIN notification_identity_history history
+          ON history.profile_id = ? AND history.recipient = recipient.recipient
+         AND history.identity_key IN (
+           exact.requisition_identity_key,
+           exact.external_identity_key,
+           exact.url_identity_key
+         )
+        WHERE reserved.id IS NOT NULL OR history.identity_key IS NOT NULL
+      `).bind(exactRows, profileId, profileId).all<{ job_id: string }>();
+      if (conflicts.results.length > 0) {
+        throw new Error(
+          `Exact Codex dispatch targets are already reserved or delivered: `
+          + `${JSON.stringify(conflicts.results.map((row) => row.job_id))}.`,
+        );
       }
+
+      const notificationId = crypto.randomUUID();
+      const recipientHeader = enabledRecipients.join(", ");
+      const items = exactMatches.results.flatMap((match) => enabledRecipients.map((recipient) => ({
+        id: crypto.randomUUID(), notificationId, jobMatchId: match.id, recipient,
+      })));
+      await database.batch([
+        database.prepare(`
+          INSERT INTO notifications (
+            id, keyword_id, channel, recipient, status, job_count, scheduled_at,
+            attempt_count, created_at
+          ) VALUES (?, ?, 'email', ?, 'queued', ?, ?, 0, ?)
+        `).bind(notificationId, keywordId, recipientHeader, exactMatches.results.length, now, now),
+        database.prepare(`
+          INSERT INTO notification_items (id, notification_id, job_match_id, recipient)
+          SELECT json_extract(value, '$.id'), json_extract(value, '$.notificationId'),
+                 json_extract(value, '$.jobMatchId'), json_extract(value, '$.recipient')
+          FROM json_each(?)
+        `).bind(JSON.stringify(items)),
+      ]);
+      planned.push({
+        id: notificationId,
+        recipient: recipientHeader,
+        jobCount: exactMatches.results.length,
+      });
+      completed = true;
+      return planned;
     }
-    const matches = exactTargets === null
-      ? await database.prepare(`
+
+    // Normal planning compares pending crawler matches against the complete
+    // catalog. Exact Codex batches return above through the bounded path.
+    const matches = await database.prepare(`
       SELECT jm.id, j.id AS job_id, json_group_array(pr.recipient) AS pending_recipients
       FROM job_matches jm
       JOIN jobs j ON j.id = jm.job_id
@@ -214,54 +305,7 @@ export const planResumeDigests = async (
       keywordId,
       profileId,
       boundedPageSize * boundedMessageLimit + 1,
-    ).all<PendingMatchRow>()
-      : await database.prepare(`
-      WITH exact_jobs(id) AS MATERIALIZED (
-        SELECT CAST(value AS TEXT) FROM json_each(?)
-      )
-      SELECT jm.id, j.id AS job_id, json_group_array(pr.recipient) AS pending_recipients
-      FROM exact_jobs target
-      JOIN jobs j ON j.id = target.id
-      JOIN job_matches jm ON jm.job_id = j.id AND jm.keyword_id = ?
-      JOIN codex_reviews review
-        ON review.job_match_id = jm.id
-       AND review.profile_id = ?
-       AND review.decision = 'approve'
-      JOIN profile_recipients pr ON pr.profile_id = ? AND pr.enabled = 1
-      LEFT JOIN notification_items ni
-        ON ni.job_match_id = jm.id AND ni.recipient = pr.recipient
-      WHERE jm.is_active = 1
-        AND jm.open_generation = j.open_generation AND j.status = 'open'
-        AND ${canonicalOpenJobNotExists("j")}
-        AND ni.id IS NULL
-        AND NOT EXISTS (
-          SELECT 1 FROM notification_identity_history history
-          WHERE history.profile_id = ? AND history.recipient = pr.recipient
-            AND ${postingIdentityHistoryMatchSql("j", "history")}
-        )
-      GROUP BY jm.id, jm.score, j.published_at, j.first_seen_at
-      ORDER BY jm.score DESC, COALESCE(j.published_at, j.first_seen_at) DESC, jm.id
-      LIMIT ?
-    `).bind(
-      JSON.stringify(exactTargets),
-      keywordId,
-      profileId,
-      profileId,
-      profileId,
-      boundedPageSize * boundedMessageLimit + 1,
     ).all<PendingMatchRow>();
-
-    // Exact Codex dispatches are all-or-nothing. A missing, already reserved,
-    // superseded, or previously delivered identity must fail before an email
-    // envelope is created rather than silently sending a partial batch.
-    if (exactTargets !== null && matches.results.length !== exactTargets.length) {
-      const eligibleJobIds = new Set(matches.results.map((row) => row.job_id));
-      const ineligibleJobIds = exactTargets.filter((jobId) => !eligibleJobIds.has(jobId));
-      throw new Error(
-        `Exact Codex dispatch target mismatch: requested ${exactTargets.length}, eligible ${matches.results.length}, `
-        + `ineligible ${JSON.stringify(ineligibleJobIds)}.`,
-      );
-    }
 
     // A normal digest has the exact same pending recipient set for every job,
     // so all recipients share one MIME message. If a prior partial delivery
