@@ -55,6 +55,7 @@ const catalogPinnedBrowserSourceIds = new Set([
   // The corporate careers page exposes only a partial rendered search and can
   // overwrite the complete first-party Workday board during URL remediation.
   "p5-0588-edwards-lifesciences",
+  "legacy-row-87",
 ]);
 
 export const browserListingSource = <T extends CrawlSource>(source: T): T => {

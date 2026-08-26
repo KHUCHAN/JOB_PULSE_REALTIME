@@ -114,7 +114,7 @@ jobs:
           # Repair pushes verify the exact affected sources immediately. The
           # scheduled run leaves this empty and continues rotating through the
           # full browser-recovery queue below.
-          BROWSER_FALLBACK_SOURCE_IDS: ${{ github.event_name == 'push' && 'p5-0588-edwards-lifesciences,p4-0241-cgi,legacy-row-777,legacy-row-811,legacy-row-846,audit-row-411,p5-1072-tampa-general-hospital,p5-1077-tesla,p5-0545-anduril-industries,legacy-row-794,audit-row-392,p4-0349-slalom,p5-0763-walmart' || '' }}
+          BROWSER_FALLBACK_SOURCE_IDS: ${{ github.event_name == 'push' && 'legacy-row-87,audit-row-359,p5-1028-progressive-insurance,p5-0712-raytheon,p5-0588-edwards-lifesciences,p4-0241-cgi,legacy-row-777,legacy-row-811,legacy-row-846,audit-row-411,p5-1072-tampa-general-hospital,p5-1077-tesla,p5-0545-anduril-industries,legacy-row-794,audit-row-392,p4-0349-slalom,p5-0763-walmart' || '' }}
           # The browser action records every empty/failed/blocked result in
           # crawl_runs and advances next_crawl_at. Selecting the oldest rows
           # therefore rotates fairly without a run-number offset that could

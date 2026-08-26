@@ -186,6 +186,18 @@ describe("browser fallback source normalization", () => {
     });
   });
 
+  it("keeps Core & Main recovery on the complete official Workday catalog", () => {
+    expect(browserListingSource({
+      id: "legacy-row-87",
+      company: "Core & Main",
+      postingUrl: "https://jobs.coreandmain.com/p/coreandmain/jobs",
+      adapter: "custom",
+    })).toMatchObject({
+      postingUrl: "https://coreandmain.wd1.myworkdayjobs.com/coreandmain",
+      adapter: "workday",
+    });
+  });
+
   it("leaves unrelated sources unchanged", () => {
     const source: CrawlSource = {
       id: "source-1",

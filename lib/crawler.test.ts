@@ -91,6 +91,45 @@ describe("repaired source adapters", () => {
     }));
   });
 
+  it("uses Core & Main's complete official Workday catalog after source remediation", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "legacy-row-87",
+      company: "Core & Main",
+      postingUrl: "https://coreandmain.wd1.myworkdayjobs.com/coreandmain",
+      adapter: "workday",
+    }, async (input) => {
+      requests.push(String(input));
+      return Response.json({
+        total: 1,
+        jobPostings: [{
+          title: "2027 Data & Analytics Intern",
+          externalPath: "/job/St-Louis-MO/2027-Data-Analytics-Intern_R-1001",
+          locationsText: "St. Louis, MO, United States",
+          postedOn: "Posted Today",
+          bulletFields: ["Internship", "R-1001"],
+        }],
+      });
+    }, new Date("2026-08-25T12:00:00Z"));
+
+    expect(requests[0]).toBe(
+      "https://coreandmain.wd1.myworkdayjobs.com/wday/cxs/coreandmain/coreandmain/jobs",
+    );
+    expect(requests.every((url) => url.startsWith(
+      "https://coreandmain.wd1.myworkdayjobs.com/wday/cxs/coreandmain/",
+    ))).toBe(true);
+    expect(requests.some((url) => url.includes("jobs.coreandmain.com"))).toBe(false);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      error: null,
+      jobs: [expect.objectContaining({
+        externalId: "R-1001",
+        title: "2027 Data & Analytics Intern",
+      })],
+    }));
+  });
+
   it("loads Tookitaki's complete Recruiterbox catalog with direct Trakstar job URLs", async () => {
     const source = { id: "p4-0370-tookitaki", company: "Tookitaki", postingUrl: "https://www.tookitaki.com/careers", adapter: "custom" as const };
     const requests: string[] = [];
@@ -5532,6 +5571,45 @@ HUMAN RESOURCES Posted Date
     expect(requests).toContain("https://r.jina.ai/https://careers.acme.example/search/jobs.json?per_page=100&page=2");
   });
 
+  it("uses Progressive's stable 90-row Talemetry page boundary", async () => {
+    const readerRequests: URL[] = [];
+    const total = 272;
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (!url.startsWith("https://r.jina.ai/")) return new Response("blocked", { status: 403 });
+      const target = new URL(url.slice("https://r.jina.ai/".length));
+      readerRequests.push(target);
+      const page = Number(target.searchParams.get("page"));
+      const perPage = Number(target.searchParams.get("per_page"));
+      const count = Math.min(perPage, total - (page - 1) * perPage);
+      return Response.json({
+        current_page: page,
+        per_page: perPage,
+        total_entries: total,
+        entries: Array.from({ length: count }, (_, index) => {
+          const id = String((page - 1) * perPage + index + 1);
+          return { id, talemetry_job_id: id, permalink: `role-${id}`, title: `Role ${id}` };
+        }),
+      });
+    };
+
+    const result = await crawlSource({
+      id: "p5-1028-progressive-insurance",
+      company: "Progressive Insurance",
+      postingUrl: "https://careers.progressive.com/search/jobs",
+      adapter: "custom",
+    }, fetcher, new Date("2026-08-25T12:00:00Z"));
+
+    expect(readerRequests.map((url) => url.searchParams.get("per_page"))).toEqual(["90", "90", "90", "90"]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 4 },
+      error: null,
+    }));
+    expect(result.jobs).toHaveLength(total);
+  });
+
   it("recovers Penn Medicine's US catalog from its compact Talemetry map feed and enriches internship details", async () => {
     const requests: string[] = [];
     const listingUrl = "https://careers.pennmedicine.org/search/jobs/in/country/united-states";
@@ -8601,6 +8679,41 @@ We are an equal opportunity employer.`;
         locationCountry: "United States of America",
       })]),
     }));
+  });
+
+  it("retries one transient Phenom first-window verification mismatch", async () => {
+    let widgetCalls = 0;
+    const jobs = (prefix: string) => [0, 1].map((index) => ({
+      title: `${prefix} Role ${index}`,
+      jobId: `${prefix}-${index}`,
+      reqId: `${prefix}-${index}`,
+      location: "Tucson, Arizona, United States of America",
+      applyUrl: `https://jobs.example/${prefix}-${index}`,
+    }));
+    const result = await crawlSource({
+      id: "p5-0712-raytheon",
+      company: "Raytheon (RTX)",
+      postingUrl: "https://careers.rtx.com/global/search-results",
+      adapter: "phenom",
+    }, async (input) => {
+      if (String(input) !== "https://careers.rtx.com/widgets") return new Response("challenge", { status: 403 });
+      widgetCalls += 1;
+      const rows = widgetCalls === 2 ? jobs("stale") : jobs("current");
+      return Response.json({ refineSearch: {
+        status: 200,
+        hits: rows.length,
+        totalHits: rows.length,
+        data: { jobs: rows },
+      } });
+    }, new Date("2026-08-25T12:00:00Z"));
+
+    expect(widgetCalls).toBe(3);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      error: null,
+    }));
+    expect(result.jobs.map((job) => job.externalId)).toEqual(["current-0", "current-1"]);
   });
 
   it("uses a direct Lever API for an official Lever board", async () => {
@@ -12500,7 +12613,9 @@ We are an equal opportunity employer.`;
       expect(url.searchParams.get("sort_by")).toBe("update_date");
       const page = Number(url.pathname.match(/\/jobs\/page\/(\d+)/)?.[1]);
       requestedPages.push(page);
-      const total = 702;
+      // A new posting may land between live page requests. The advertised
+      // total can move without changing the validated eight-page topology.
+      const total = page === 2 ? 703 : 702;
       const start = (page - 1) * 100;
       // FedEx's live final page is consistently one row shorter than its
       // advertised total; the crawler permits only that exact last-page gap.

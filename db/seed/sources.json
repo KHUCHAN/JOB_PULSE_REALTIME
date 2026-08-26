@@ -1,13 +1,21 @@
 {
   "generatedAt": "2026-08-08",
-  "version": "v2:sha256:35d0b0e9e927a06b2bb84e26779ec64316c0367f6fc968ef2754a20762a679e1",
+  "version": "v2:sha256:725408bf8a97b597d0522e3f83ed12d16d16e4ccd04bc964891451689a2ed5ce",
   "incrementalSourceIdsByPreviousVersion": {
     "v2:sha256:3c96ce5c9869f9e55a02e35f657d2dff7e36e650469a9b1f36fa434128a5aa03": [
       "p2-0132-mr-cooper",
-      "p5-0588-edwards-lifesciences"
+      "p5-0588-edwards-lifesciences",
+      "legacy-row-87",
+      "p5-0773-rtx"
     ],
     "v2:sha256:f0d10073c04bea92ea645b09930d2f28094c83a75e5ada8404709734369dc1e2": [
-      "p5-0588-edwards-lifesciences"
+      "p5-0588-edwards-lifesciences",
+      "legacy-row-87",
+      "p5-0773-rtx"
+    ],
+    "v2:sha256:35d0b0e9e927a06b2bb84e26779ec64316c0367f6fc968ef2754a20762a679e1": [
+      "legacy-row-87",
+      "p5-0773-rtx"
     ]
   },
   "sources": [
@@ -630,16 +638,16 @@
       "id": "p5-0773-rtx",
       "masterRow": 242,
       "company": "⚠️ RTX (Raytheon / Collins Aerospace / Pratt & Whitney)",
-      "postingUrl": "https://careers.rtx.com/global/search-results",
-      "talentUrl": "https://rtx.yello.co/app/collect/form/skcplB3_0DXSO3fy5M-o2A",
-      "channel": "공식 Talent Community/후보자 등록",
-      "adapter": "phenom",
-      "verification": "verified_talent",
-      "confidence": "medium",
+      "postingUrl": null,
+      "talentUrl": null,
+      "channel": "Duplicate of the authoritative Raytheon (RTX) careers catalog",
+      "adapter": "custom",
+      "verification": "no_active_careers",
+      "confidence": "high",
       "resumeUpload": "unknown",
-      "jobAlerts": "available",
-      "checkedAt": "2026-08-08",
-      "enabled": true
+      "jobAlerts": "unknown",
+      "checkedAt": "2026-08-25",
+      "enabled": false
     },
     {
       "id": "p5-0604-gilead-sciences",
@@ -7980,15 +7988,15 @@
       "id": "legacy-row-87",
       "masterRow": 2087,
       "company": "Core & Main",
-      "postingUrl": "https://jobs.coreandmain.com/p/coreandmain/home",
+      "postingUrl": "https://coreandmain.wd1.myworkdayjobs.com/coreandmain",
       "talentUrl": "https://jobs.coreandmain.com/p/coreandmain/jobs",
       "channel": "Core & Main Talent Community form",
-      "adapter": "custom",
+      "adapter": "workday",
       "verification": "valid_direct_talent_form",
       "confidence": "high",
       "resumeUpload": "available",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-08",
+      "checkedAt": "2026-08-25",
       "enabled": true
     },
     {
@@ -21866,14 +21874,6 @@
       "id": "talent-p4-0328-pnc-financial-services",
       "sourceId": "p4-0328-pnc-financial-services",
       "officialUrl": "https://flows.beamery.com/pnc/tc-signup",
-      "resumeUpload": "unknown",
-      "jobAlerts": "available",
-      "checkedAt": "2026-08-08"
-    },
-    {
-      "id": "talent-p5-0773-rtx",
-      "sourceId": "p5-0773-rtx",
-      "officialUrl": "https://rtx.yello.co/app/collect/form/skcplB3_0DXSO3fy5M-o2A",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
       "checkedAt": "2026-08-08"

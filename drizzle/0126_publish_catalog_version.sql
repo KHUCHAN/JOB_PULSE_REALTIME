@@ -1,7 +1,7 @@
 -- Keep the runtime catalog bootstrap from rewriting all 1,455 sources after
 -- this bounded catalog repair has already been applied by the deployment.
 INSERT INTO catalog_state (key, value, updated_at)
-VALUES ('sources', 'v2:sha256:35d0b0e9e927a06b2bb84e26779ec64316c0367f6fc968ef2754a20762a679e1', CURRENT_TIMESTAMP)
+VALUES ('sources', 'v2:sha256:725408bf8a97b597d0522e3f83ed12d16d16e4ccd04bc964891451689a2ed5ce', CURRENT_TIMESTAMP)
 ON CONFLICT(key) DO UPDATE SET
   value = excluded.value,
   updated_at = CURRENT_TIMESTAMP;

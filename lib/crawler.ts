@@ -3107,21 +3107,27 @@ const crawlPhenomWidgets = async (source: CrawlSource, fetcher: typeof fetch): P
     && index.totalHits <= 10_000
     && unique.length === index.totalHits;
   if (completeListing) {
-    const verification = await fetchPage(0);
     const initialIds = index.jobs.map((job) => job.externalId ?? job.officialUrl);
-    const verificationIds = verification?.jobs.map((job) => job.externalId ?? job.officialUrl) ?? [];
     const singlePageCatalog = index.totalHits <= pageSize;
-    const verificationIdentitySet = new Set(verificationIds);
-    const sameIdentities = singlePageCatalog
-      ? verificationIds.length === initialIds.length
-        && new Set(initialIds).size === initialIds.length
-        && initialIds.every((identity) => verificationIdentitySet.has(identity))
-      : verificationIds.length === initialIds.length
-        && initialIds.every((identity, position) => verificationIds[position] === identity);
-    if (!verification || verification.totalHits !== index.totalHits
-      || !sameIdentities) {
-      completeListing = false;
-    }
+    const verificationMatches = (verification: PhenomPage | null): boolean => {
+      const verificationIds = verification?.jobs.map((job) => job.externalId ?? job.officialUrl) ?? [];
+      const verificationIdentitySet = new Set(verificationIds);
+      const sameIdentities = singlePageCatalog
+        ? verificationIds.length === initialIds.length
+          && new Set(initialIds).size === initialIds.length
+          && initialIds.every((identity) => verificationIdentitySet.has(identity))
+        : verificationIds.length === initialIds.length
+          && initialIds.every((identity, position) => verificationIds[position] === identity);
+      return Boolean(verification && verification.totalHits === index.totalHits && sameIdentities);
+    };
+    // Phenom's relevance window can briefly return a stale first page even
+    // while every paginated window is internally complete. Require a matching
+    // first-window snapshot, but allow one fresh bounded read before retaining
+    // the prior inventory. This keeps stale closure strict without turning a
+    // transient cache race into a persistent partial-catalog warning.
+    const verification = await fetchPage(0);
+    completeListing = verificationMatches(verification)
+      || verificationMatches(await fetchPage(0));
   }
   if (unique.length === 0) return {
     status: "failed",
@@ -6969,9 +6975,14 @@ const crawlTalemetryJson = async (
     /^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?(?:search\/jobs|jobs\/search)(?:\/in\/country\/[a-z0-9-]+)?\/?$/i,
   )?.[0].replace(/\/$/, "");
   if (!catalogPath) return null;
+  // Progressive's live Talemetry catalog occasionally repeats one identity
+  // across a 100-row page boundary. Its official endpoint is stable at 90
+  // rows, so use that documented page-size parameter and retain the same
+  // exact total/cardinality/identity validation used by every other tenant.
+  const pageSize = source.id === "p5-1028-progressive-insurance" ? 90 : 100;
   const endpointFor = (page: number) => {
     const endpoint = new URL(`${catalogPath}.json`, posting.origin);
-    endpoint.searchParams.set("per_page", "100");
+    endpoint.searchParams.set("per_page", String(pageSize));
     endpoint.searchParams.set("page", String(page));
     return endpoint;
   };
@@ -6985,7 +6996,7 @@ const crawlTalemetryJson = async (
     // Its compact response avoids the Cloudflare challenge applied to the
     // ordinary list JSON while still carrying every stable job identity.
     endpoint.searchParams.set("data_format", "map");
-    endpoint.searchParams.set("per_page", "100");
+    endpoint.searchParams.set("per_page", String(pageSize));
     endpoint.searchParams.set("page", String(page));
     try {
       const response = await fetchWithTimeout(fetcher, `https://r.jina.ai/${endpoint.href}`, {
@@ -6999,7 +7010,6 @@ const crawlTalemetryJson = async (
           : `map reader returned HTTP ${response.status}`);
         return null;
       }
-      const pageSize = 100;
       const total = Math.max(0, payload.total_entries ?? 0);
       const expected = Math.min(pageSize, Math.max(0, total - (page - 1) * pageSize));
       const entries = payload.entries ?? [];
@@ -14473,7 +14483,12 @@ const crawlFedEx = async (source: CrawlSource, fetcher: typeof fetch): Promise<S
   let firstFailedPage: number | null = null;
   for (let page = Math.max(2, startPage); page <= endPage; page += 1) {
     const result = pages.get(page);
-    if (!result || result.total !== first.total
+    // FedEx's update-date feed is live while a checkpoint window is being
+    // read, so its advertised total can move by one without changing the
+    // page topology or any page's validated identities. Treat the topology as
+    // the stable contract; a total that crosses a page boundary still stops
+    // the cycle and is retried from the last successful page.
+    if (!result || Math.ceil(result.total / pageSize) !== totalPages
       || !claimPageIdentities(result.jobs.map((job) => job.externalId ?? job.officialUrl), result.jobs.length, seen)) {
       firstFailedPage = page;
       break;
@@ -23771,7 +23786,8 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-84") {
     return crawlCommunityHealthSystems(source, fetcher, now);
   }
-  if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-87") {
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-87"
+    && new URL(source.postingUrl).hostname === "jobs.coreandmain.com") {
     return crawlCoreAndMainCareers(source, fetcher);
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-846") {
