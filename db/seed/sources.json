@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-31",
-  "version": "v2:sha256:752eb839236a66e10c47c24fe62c1f61e1b2c5da186a1f5cdab9d0bb3265c10a",
+  "version": "v2:sha256:38d0db6929f4f89503a62b3a9b2f0b0359349f1576117229c2abdec73e7ac8c1",
   "incrementalSourceIdsByPreviousVersion": {
     "v2:sha256:b02754771d5feb8af4448fe600115b02ebf1a5295b48de1e36b00398d15c09cc": [
       "p4-0390-84-51"
@@ -27,6 +27,9 @@
       "p5-0773-rtx"
     ],
     "v2:sha256:be8ba252e09c11a5cc2742e0a6d5d2f158a26a4645456757b1a7fff4722e78a3": [
+      "p2-0086-cadence-bank"
+    ],
+    "v2:sha256:752eb839236a66e10c47c24fe62c1f61e1b2c5da186a1f5cdab9d0bb3265c10a": [
       "p2-0086-cadence-bank"
     ]
   },
@@ -4777,7 +4780,7 @@
       "company": "Cadence Bank",
       "postingUrl": null,
       "talentUrl": null,
-      "channel": "2026-02-01 Huntington 합병 완료; 별도 Huntington 소스가 공식 채용판을 수집하므로 중복 피드를 비활성화",
+      "channel": "2026-02-01 Huntington 합병 완료; 공식 채용판은 p2-0118-huntington-bancshares 한 곳에서만 수집",
       "adapter": "custom",
       "verification": "merged_parent_careers",
       "confidence": "medium",
