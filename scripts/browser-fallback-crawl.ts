@@ -52,6 +52,10 @@ const dryRun = process.env.BROWSER_FALLBACK_DRY_RUN === "1";
 
 let cachedOidc = { value: "", expiresAt: 0 };
 const catalogPinnedBrowserSourceIds = new Set([
+  // A repair push can start before the corresponding Sites/D1 migration is
+  // published. Use the checked-in first-party board during that narrow window
+  // so the recovery runner never replays 84.51°'s retired corporate page.
+  "p4-0390-84-51",
   // The corporate careers page exposes only a partial rendered search and can
   // overwrite the complete first-party Workday board during URL remediation.
   "p5-0588-edwards-lifesciences",

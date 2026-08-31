@@ -283,6 +283,18 @@ describe("browser fallback source normalization", () => {
     });
   });
 
+  it("uses the repaired 84.51° Greenhouse board before a live catalog migration lands", () => {
+    expect(browserListingSource({
+      id: "p4-0390-84-51",
+      company: "84.51° (Kroger subsidiary)",
+      postingUrl: "https://www.8451.com/careers/",
+      adapter: "custom",
+    })).toMatchObject({
+      postingUrl: "https://job-boards.greenhouse.io/8451",
+      adapter: "greenhouse",
+    });
+  });
+
   it("leaves unrelated sources unchanged", () => {
     const source: CrawlSource = {
       id: "source-1",
