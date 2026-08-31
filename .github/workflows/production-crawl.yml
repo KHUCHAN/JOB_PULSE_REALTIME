@@ -15,8 +15,14 @@ on:
       - scripts/run-production-crawl.mjs
       - scripts/request-fallback-crawl.ts
       - scripts/browser-fallback-crawl.ts
+      - scripts/prepare-sites-package.ts
       - lib/**
       - app/api/pulse/**
+      - build/sites-*.ts
+      - db/catalog/**
+      - db/seed/**
+      - db/schema.ts
+      - drizzle/**
   schedule:
     # GitHub scheduled events may be delayed during queue pressure. An hourly
     # watchdog gives a missed event a second chance; the production D1 due
