@@ -82,14 +82,25 @@ async function ensureCatalogSeededOnce(
   let existing = await catalogStatus(database);
   const alreadyCurrent = (): boolean => existing.version === seed.version
     && (!crawlPolicy || existing.crawl_policy_version === crawlPolicy.version);
-  if (alreadyCurrent()) return { seeded: false, sources: existing.count, talentTargets: 0 };
+  if (alreadyCurrent()) {
+    // A Worker can be canceled after publishing both version markers but
+    // before its finally block deletes the lock. The completed markers make
+    // that lock safe to clear and prevent a later deployment from waiting on
+    // a synchronization that is no longer running.
+    if (existing.lock_owner) {
+      await database.prepare(`
+        DELETE FROM catalog_state WHERE key = ? AND value = ?
+      `).bind(CATALOG_SYNC_LOCK_KEY, existing.lock_owner).run();
+    }
+    return { seeded: false, sources: existing.count, talentTargets: 0 };
+  }
 
   // A Sites deployment can receive several public reads and crawler POSTs at
   // the same instant. Without a database-visible lock, every isolate sees the
   // old catalog marker and rewrites the full 1,400+ source seed concurrently,
   // which can overload D1 before any request publishes the new marker.
   const lockOwner = crypto.randomUUID();
-  const lockDeadline = Date.now() + 45_000;
+  const lockDeadline = Date.now() + 50_000;
   while (true) {
     await database.prepare(`
       INSERT INTO catalog_state (key, value, updated_at)
@@ -97,7 +108,7 @@ async function ensureCatalogSeededOnce(
       ON CONFLICT(key) DO UPDATE SET
         value=excluded.value,
         updated_at=CURRENT_TIMESTAMP
-      WHERE datetime(catalog_state.updated_at) < datetime('now', '-2 minutes')
+      WHERE datetime(catalog_state.updated_at) < datetime('now', '-45 seconds')
     `).bind(CATALOG_SYNC_LOCK_KEY, lockOwner).run();
     existing = await catalogStatus(database);
     if (alreadyCurrent()) return { seeded: false, sources: existing.count, talentTargets: 0 };
@@ -117,6 +128,12 @@ async function ensureCatalogSeededOnce(
   const talentTargetsToSync = incrementalSourceIdSet
     ? seed.talentTargets.filter((target) => incrementalSourceIdSet.has(target.sourceId))
     : seed.talentTargets;
+  const refreshLock = async (): Promise<void> => {
+    await database.prepare(`
+      UPDATE catalog_state SET updated_at = CURRENT_TIMESTAMP
+      WHERE key = ? AND value = ?
+    `).bind(CATALOG_SYNC_LOCK_KEY, lockOwner).run();
+  };
   try {
 
   for (const batch of seedIsCurrent ? [] : chunks(sourcesToSync, 500)) {
@@ -207,6 +224,7 @@ async function ensureCatalogSeededOnce(
         )
       )
     `).bind(JSON.stringify(batch)).run();
+    await refreshLock();
   }
 
   for (const batch of seedIsCurrent ? [] : chunks(talentTargetsToSync, 500)) {
@@ -225,6 +243,7 @@ async function ensureCatalogSeededOnce(
         resume_upload=excluded.resume_upload, job_alerts=excluded.job_alerts,
         checked_at=excluded.checked_at, updated_at=CURRENT_TIMESTAMP
     `).bind(JSON.stringify(batch)).run();
+    await refreshLock();
   }
 
   if (!seedIsCurrent) {
@@ -245,6 +264,7 @@ async function ensureCatalogSeededOnce(
       WHERE (published_at IS NOT NULL AND datetime(published_at) > datetime('now', '+5 minutes'))
          OR (source_updated_at IS NOT NULL AND datetime(source_updated_at) > datetime('now', '+5 minutes'))
     `).bind().run();
+    await refreshLock();
     await database.prepare(`
       INSERT INTO catalog_state (key, value, updated_at)
       VALUES (?, ?, CURRENT_TIMESTAMP)
@@ -282,6 +302,7 @@ async function ensureCatalogSeededOnce(
           AND status = 'open'
           AND location_region = 'non_us'
       `).bind(JSON.stringify(batch)).run();
+      await refreshLock();
     }
     // Publish the marker last. If a request is interrupted above, the next
     // request sees the old version and retries the idempotent reset.

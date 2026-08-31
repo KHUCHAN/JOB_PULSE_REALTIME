@@ -270,6 +270,19 @@ describe("runtime catalog bootstrap", () => {
       .toEqual({ status: "closed", closed: 1 });
     expect(sqlite.prepare("SELECT is_active AS active FROM job_matches WHERE job_id = 'retired-job'").get())
       .toEqual({ active: 0 });
+
+    // A canceled Worker may leave its lock after the version marker was
+    // committed. A current-catalog read must self-heal that completed lock.
+    sqlite.prepare("INSERT INTO catalog_state (key, value) VALUES (?, ?)").run(
+      "sources_sync_lock_v1", "completed-worker",
+    );
+    await ensureCatalogSeeded(database, {
+      ...seed,
+      version: "catalog-v3",
+      sources: [{ ...seed.sources[0], postingUrl: null, talentUrl: null, enabled: false }],
+      talentTargets: [],
+    });
+    expect(sqlite.prepare("SELECT value FROM catalog_state WHERE key = 'sources_sync_lock_v1'").get()).toBeUndefined();
     sqlite.close();
   });
 });
