@@ -7,6 +7,8 @@ export type JobAreaKey = "ai-ml" | "data-analytics" | "software-engineering";
 export type JobRegion = "us" | "non_us" | "mixed" | "unknown";
 export type SourceHealth =
   | "healthy"
+  | "stale"
+  | "empty"
   | "changed"
   | "blocked"
   | "failed"

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mapCrawlActivity, mapJob, sourceHealth } from "./pulse-mappers";
+import { mapCrawlActivity, mapJob, sourceHealth, utcTimestamp } from "./pulse-mappers";
 
 describe("live D1 view mapping", () => {
   it("maps open crawler jobs to a reviewable UI state", () => {
@@ -91,6 +91,15 @@ describe("live D1 view mapping", () => {
     expect(sourceHealth(true, "blocked")).toBe("blocked");
     expect(sourceHealth(true, "failed")).toBe("failed");
     expect(sourceHealth(false, null)).toBe("inactive");
+    expect(sourceHealth(true, "succeeded", "2026-08-31 10:00:00", 3, new Date("2026-08-31T17:00:01Z"))).toBe("stale");
+    expect(sourceHealth(true, "succeeded", "2026-08-31 16:00:00", 0, new Date("2026-08-31T17:00:00Z"))).toBe("empty");
+    expect(sourceHealth(true, "succeeded", "2026-08-31 16:00:00", 3, new Date("2026-08-31T17:00:00Z"))).toBe("healthy");
+  });
+
+  it("normalizes D1 timestamps to explicit UTC ISO values", () => {
+    expect(utcTimestamp("2026-08-31 16:00:00")).toBe("2026-08-31T16:00:00.000Z");
+    expect(utcTimestamp("2026-08-31T16:00:00-07:00")).toBe("2026-08-31T23:00:00.000Z");
+    expect(utcTimestamp(null)).toBeNull();
   });
 
   it("turns crawl failures into readable activity", () => {

@@ -20,6 +20,62 @@ describe("source crawl budget", () => {
 });
 
 describe("repaired source adapters", () => {
+  it("collects every official USAO attorney and internship table page with source dates", async () => {
+    const row = (slug: string, title: string, state: string, posted: string, deadline?: string) => `<tr>
+      <td class="views-field-field-hiring-org">USAO Test District</td>
+      <td class="views-field-title"><a href="/legal-careers/job/${slug}">${title}</a></td>
+      <td class="views-field-administrative-area">${state}</td>
+      <td class="views-field-changed-2"><time datetime="${posted}">posted</time></td>
+      <td class="views-field-field-date">${deadline ? `<time datetime="${deadline}">deadline</time>` : "See Posting"}</td>
+    </tr>`;
+    const page = (body: string, more = false) => `<html><table><tbody>${body}</tbody></table>${more ? '<a href="?page=1">2</a>' : ""}</html>`;
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p2-0179-us-attorney-s-office",
+      company: "US Attorney's Office (districts)",
+      postingUrl: "https://www.justice.gov/usao/career-center/job-openings/attorneys",
+      adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url.includes("/attorneys?page=1")) {
+        return new Response(page(row("assistant-us-attorney-two", "Assistant U.S. Attorney", "CA", "2026-08-30T09:00:00-04:00")));
+      }
+      if (url.includes("/attorneys")) {
+        return new Response(page(row("assistant-us-attorney-one", "Assistant U.S. Attorney", "NY", "2026-08-31T10:00:00-04:00", "2026-09-30T12:00:00Z"), true));
+      }
+      return new Response(page(row("law-student-volunteer-summer", "Law Student Volunteer, Summer 2027", "TX", "2026-08-31T09:54:42-04:00")));
+    }, new Date("2026-08-31T17:00:00Z"));
+
+    expect(requests).toEqual(expect.arrayContaining([
+      "https://www.justice.gov/usao/career-center/job-openings/attorneys",
+      "https://www.justice.gov/usao/career-center/job-openings/attorneys?page=1",
+      "https://www.justice.gov/usao/career-center/job-openings/internships",
+    ]));
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://www.justice.gov/usao/career-center/job-openings/attorneys",
+      error: null,
+    }));
+    expect(result.jobs).toHaveLength(3);
+    expect(result.jobs).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        externalId: "assistant-us-attorney-one",
+        location: "NY, United States",
+        locationCountry: "United States",
+        publishedAt: "2026-08-31T14:00:00.000Z",
+        validThrough: "2026-09-30T12:00:00.000Z",
+      }),
+      expect.objectContaining({
+        externalId: "law-student-volunteer-summer",
+        employmentType: "Internship",
+        publishedAt: "2026-08-31T13:54:42.000Z",
+        officialUrl: "https://www.justice.gov/legal-careers/job/law-student-volunteer-summer",
+      }),
+    ]));
+  });
+
   it("loads Core & Main's server-rendered cards without closing its hidden inventory", async () => {
     const requests: Array<{ url: string; userAgent: string | null }> = [];
     const result = await crawlSource({

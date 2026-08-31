@@ -82,4 +82,12 @@ describe("browser recovery queue timing", () => {
       lastCheckedAt: "2026-08-15T02:19:00.000Z", nextRunAt: null,
     }, now)).toBe(false);
   });
+
+  it.each(["stale", "empty"])("queues a due %s source", (health) => {
+    expect(browserRecoveryDue({
+      health, currentJobs: health === "empty" ? 0 : 12,
+      lastCheckedAt: "2026-08-14T20:00:00.000Z",
+      nextRunAt: "2026-08-15T02:19:00.000Z",
+    }, now)).toBe(true);
+  });
 });

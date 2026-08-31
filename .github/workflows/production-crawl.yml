@@ -54,6 +54,9 @@ jobs:
           # A repair push needs a bounded smoke drain before its targeted
           # recovery pass; the recurring schedule retains the full drain.
           JOB_PULSE_MAX_RUN_MINUTES: ${{ github.event_name == 'push' && '2' || '20' }}
+          # Each request atomically leases one source. Six independent workers
+          # fit the observed source latency while preserving per-source limits.
+          JOB_PULSE_REQUEST_CONCURRENCY: "6"
         run: node scripts/run-production-crawl.mjs
 
   request-recovery:
@@ -129,9 +132,9 @@ jobs:
           # therefore rotates fairly without a run-number offset that could
           # skip sources as the queue shrinks.
           # The iframe-aware extractor can safely drain a larger slice while
-          # staying below the 25-minute job timeout (4 browser workers).
+          # staying below the 25-minute job timeout (6 browser workers).
           BROWSER_FALLBACK_LIMIT: "120"
-          BROWSER_FALLBACK_CONCURRENCY: "4"
+          BROWSER_FALLBACK_CONCURRENCY: "6"
           # Sources whose official boards require client rendering, protected
           # egress, or a browser-established session must not sit behind the
           # generic recovery queue. The script still validates the official

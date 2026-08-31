@@ -231,6 +231,8 @@ a { color: inherit; }
 .status-badge[data-status="changed"],
 .status-badge[data-status="warning"],
 .status-badge[data-status="blocked"] { color: var(--warning); background: #fff4e3; }
+.status-badge[data-status="stale"] { color: #b45309; background: #fff7ed; }
+.status-badge[data-status="empty"] { color: #175cd3; background: #eff8ff; }
 .status-badge[data-status="failed"],
 .status-badge[data-status="error"],
 .status-badge[data-status="hidden"] { color: var(--danger); background: #fff0ee; }

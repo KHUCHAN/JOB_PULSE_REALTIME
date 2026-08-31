@@ -30,7 +30,12 @@ const currentOfficialBoards: Record<string, [string, string]> = {
   "p5-1041-rippling": ["https://www.rippling.com/careers/open-roles", "custom"],
 };
 
-const expectedOfficialBoards = { ...previousOfficialBoards, ...currentOfficialBoards };
+const repairedOfficialBoards: Record<string, [string, string]> = {
+  "legacy-row-126": ["https://www.jobs-ups.com/us/en/search-results", "phenom"],
+  "p2-0179-us-attorney-s-office": ["https://www.justice.gov/usao/career-center/job-openings/attorneys", "custom"],
+};
+
+const expectedOfficialBoards = { ...previousOfficialBoards, ...currentOfficialBoards, ...repairedOfficialBoards };
 
 describe("verified official source catalog", () => {
   it("uses the first-party ATS boards instead of stale corporate landing pages", () => {
@@ -63,6 +68,21 @@ describe("verified official source catalog", () => {
     }));
     expect(huntington).toEqual(expect.objectContaining({
       postingUrl: "https://huntington-careers.com/search/searchjobs",
+      enabled: true,
+    }));
+  });
+
+  it("keeps retired Bitstamp inactive while retaining Robinhood's authoritative catalog", () => {
+    const seed = JSON.parse(readFileSync(join(process.cwd(), "db/seed/sources.json"), "utf8")) as { sources: SeedSource[] };
+    const byId = new Map(seed.sources.map((source) => [source.id, source]));
+
+    expect(byId.get("p4-0230-bitstamp")).toEqual(expect.objectContaining({
+      postingUrl: null,
+      enabled: false,
+    }));
+    expect(byId.get("p2-0057-robinhood")).toEqual(expect.objectContaining({
+      postingUrl: "https://job-boards.greenhouse.io/robinhood",
+      adapter: "greenhouse",
       enabled: true,
     }));
   });
@@ -117,5 +137,9 @@ describe("verified official source catalog", () => {
     const currentMigration = readFileSync(join(process.cwd(), "drizzle", currentMigrationName!), "utf8");
     for (const id of Object.keys(currentOfficialBoards)) expect(currentMigration).toContain(`'${id}'`);
     expect(currentMigration).toContain("SET `next_crawl_at` = CURRENT_TIMESTAMP");
+
+    const repairedMigration = readFileSync(join(process.cwd(), "drizzle/0133_refresh_sources_20260831192633.sql"), "utf8");
+    for (const id of Object.keys(repairedOfficialBoards)) expect(repairedMigration).toContain(`'${id}'`);
+    expect(repairedMigration).toContain("SET `next_crawl_at` = CURRENT_TIMESTAMP");
   });
 });

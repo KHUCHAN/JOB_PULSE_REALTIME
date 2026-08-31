@@ -1474,7 +1474,9 @@ const decodeHtmlAttribute = (value: string): string => value
   .replaceAll("&quot;", '"')
   .replaceAll("&#39;", "'")
   .replaceAll("&lt;", "<")
-  .replaceAll("&gt;", ">");
+  .replaceAll("&gt;", ">")
+  .replace(/&#(\d+);/g, (_match, code: string) => String.fromCodePoint(Number(code)))
+  .replace(/&#x([\da-f]+);/gi, (_match, code: string) => String.fromCodePoint(Number.parseInt(code, 16)));
 
 const coreAndMainJobs = (html: string, source: CrawlSource): { jobs: CrawledJob[]; total: number | null } => {
   const totalText = html.match(/class=["'][^"']*\bresult-count\b[^"']*["'][^>]*>\s*([\d,]+)\s+jobs?\s*</i)?.[1];
@@ -4518,6 +4520,138 @@ const crawlCfpbCareers = async (source: CrawlSource, fetcher: typeof fetch): Pro
       completeListing: false,
       jobs: [],
       error: error instanceof Error ? error.message : "Unknown CFPB careers crawler error.",
+    };
+  }
+};
+
+const JUSTICE_USAO_ATTORNEY_URL = "https://www.justice.gov/usao/career-center/job-openings/attorneys";
+const JUSTICE_USAO_INTERNSHIP_URL = "https://www.justice.gov/usao/career-center/job-openings/internships";
+
+type JusticeUsaoPage = {
+  jobs: CrawledJob[];
+  lastPageIndex: number;
+  rawCount: number;
+};
+
+const justiceUsaoRows = (
+  html: string,
+  source: CrawlSource,
+  listingUrl: string,
+  internship: boolean,
+): JusticeUsaoPage | null => {
+  const tbody = html.match(/<tbody\b[^>]*>([\s\S]*?)<\/tbody>/i)?.[1];
+  if (!tbody) return null;
+  const rows = [...tbody.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)];
+  const jobs = rows.flatMap((row): CrawledJob[] => {
+    const cells = [...row[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)];
+    if (cells.length !== 5) return [];
+    const anchor = cells[1][1].match(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/i);
+    const organization = decodeHtmlAttribute(plainText(cells[0][1]) ?? "");
+    const title = decodeHtmlAttribute(plainText(anchor?.[2]) ?? "");
+    const state = decodeHtmlAttribute(plainText(cells[2][1]) ?? "");
+    const sourcePostedText = decodeHtmlAttribute(cells[3][1].match(/<time\b[^>]*datetime=["']([^"']+)["']/i)?.[1] ?? "");
+    const deadlineText = decodeHtmlAttribute(cells[4][1].match(/<time\b[^>]*datetime=["']([^"']+)["']/i)?.[1] ?? "");
+    const publishedAt = normalizedDate(sourcePostedText);
+    if (!anchor?.[1] || !organization || !title || !publishedAt) return [];
+    let officialUrl: URL;
+    try {
+      officialUrl = new URL(decodeHtmlAttribute(anchor[1]), listingUrl);
+    } catch {
+      return [];
+    }
+    const slug = officialUrl.pathname.match(/^\/(?:archives\/)?legal-careers\/job\/([^/]+)\/?$/i)?.[1];
+    if (officialUrl.origin !== "https://www.justice.gov" || officialUrl.search || officialUrl.hash || !slug) return [];
+    const validThrough = normalizedDate(deadlineText);
+    return [{
+      externalId: slug,
+      title,
+      company: source.company,
+      location: state ? `${state}, United States` : "United States",
+      ...(/^[A-Z]{2}$/.test(state) ? { locationState: state } : {}),
+      locationCountry: "United States",
+      arrangement: "unknown",
+      employmentType: internship ? "Internship" : null,
+      department: organization,
+      summary: validThrough
+        ? `${organization}. Application deadline: ${validThrough.slice(0, 10)}.`
+        : `${organization}. Application deadline: see official posting.`,
+      requisitionId: slug,
+      officialUrl: officialUrl.href,
+      applyUrl: officialUrl.href,
+      sourcePostedText,
+      sourceUpdatedAt: publishedAt,
+      publishedAt,
+      ...(validThrough ? { validThrough } : {}),
+      rawPayload: { provider: "justice.gov", listing: internship ? "internships" : "attorneys" },
+    }];
+  });
+  const pageIndexes = [...html.matchAll(/[?&]page=(\d+)/gi)].map((match) => Number(match[1]));
+  const lastPageIndex = pageIndexes.length ? Math.max(...pageIndexes) : 0;
+  if (!Number.isSafeInteger(lastPageIndex) || lastPageIndex < 0 || lastPageIndex > 30) return null;
+  return { jobs, lastPageIndex, rawCount: rows.length };
+};
+
+const crawlJusticeUsaoCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  let responseStatus: number | null = null;
+  let failureStatus: number | null = null;
+  const fetchPage = async (listingUrl: string, pageIndex: number, internship: boolean): Promise<JusticeUsaoPage | null> => {
+    const url = new URL(listingUrl);
+    if (pageIndex > 0) url.searchParams.set("page", String(pageIndex));
+    const response = await fetchWithTimeout(fetcher, url, {
+      headers: { accept: "text/html,application/xhtml+xml", referer: listingUrl },
+    }, true, { attempts: 1, timeoutMs: 10_000 });
+    responseStatus ??= response.status;
+    if (!response.ok) {
+      failureStatus ??= response.status;
+      return null;
+    }
+    return justiceUsaoRows(await response.text(), source, listingUrl, internship);
+  };
+  try {
+    const [attorneyFirst, internshipFirst] = await Promise.all([
+      fetchPage(JUSTICE_USAO_ATTORNEY_URL, 0, false),
+      fetchPage(JUSTICE_USAO_INTERNSHIP_URL, 0, true),
+    ]);
+    if (!attorneyFirst || !internshipFirst || attorneyFirst.rawCount === 0 || internshipFirst.rawCount === 0) {
+      throw new Error("Justice USAO careers returned an empty or malformed first page.");
+    }
+    const pending = [
+      ...Array.from({ length: attorneyFirst.lastPageIndex }, (_, index) => ({
+        listingUrl: JUSTICE_USAO_ATTORNEY_URL, pageIndex: index + 1, internship: false,
+      })),
+      ...Array.from({ length: internshipFirst.lastPageIndex }, (_, index) => ({
+        listingUrl: JUSTICE_USAO_INTERNSHIP_URL, pageIndex: index + 1, internship: true,
+      })),
+    ];
+    const remaining = await Promise.all(pending.map((page) => fetchPage(page.listingUrl, page.pageIndex, page.internship)));
+    if (remaining.some((page) => page === null)) {
+      throw new Error("Justice USAO careers pagination was incomplete.");
+    }
+    const pages = [attorneyFirst, internshipFirst, ...remaining.filter((page): page is JusticeUsaoPage => page !== null)];
+    const rawCount = pages.reduce((sum, page) => sum + page.rawCount, 0);
+    const rows = pages.flatMap((page) => page.jobs);
+    const jobs = uniqueJobs(rows);
+    if (rawCount === 0 || rows.length !== rawCount || jobs.length !== rawCount
+      || new Set(jobs.map((job) => job.externalId)).size !== jobs.length
+      || new Set(jobs.map((job) => job.officialUrl)).size !== jobs.length) {
+      throw new Error("Justice USAO careers returned duplicate or malformed vacancy rows.");
+    }
+    return {
+      status: "succeeded",
+      responseStatus,
+      completeListing: true,
+      jobs,
+      resolvedListingUrl: JUSTICE_USAO_ATTORNEY_URL,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: isBlockedHttpStatus(failureStatus ?? responseStatus) ? "blocked" : "failed",
+      responseStatus: failureStatus ?? responseStatus,
+      completeListing: false,
+      jobs: [],
+      resolvedListingUrl: JUSTICE_USAO_ATTORNEY_URL,
+      error: error instanceof Error ? error.message : "Unknown Justice USAO careers crawler error.",
     };
   }
 };
@@ -24005,6 +24139,9 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p4-0240-cfpb") {
     return crawlCfpbCareers(source, fetcher);
+  }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p2-0179-us-attorney-s-office") {
+    return crawlJusticeUsaoCareers(source, fetcher);
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p4-0258-deutsche-bank-americas") {
     return crawlDeutscheBankCareers(source, fetcher, now);

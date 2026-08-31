@@ -299,8 +299,8 @@ describe("large catalog US scope migration", () => {
       tag: "0128_add_resume_alert_recipients",
     });
     expect(currentJournal.entries.at(-1)).toMatchObject({
-      idx: 132,
-      tag: "0132_refresh_sources_20260831181419",
+      idx: 133,
+      tag: "0133_refresh_sources_20260831192633",
     });
   });
 
@@ -335,7 +335,7 @@ describe("large catalog US scope migration", () => {
       sources: unknown[];
       talentTargets: unknown[];
     };
-    const sql = readFileSync(resolve(drizzlePath, "0132_refresh_sources_20260831181419.sql"), "utf8");
+    const sql = readFileSync(resolve(drizzlePath, "0133_refresh_sources_20260831192633.sql"), "utf8");
 
     expect(seed.version).toBe(catalogSeedVersion(seed.sources, seed.talentTargets));
     expect(sql).toContain(`VALUES ('sources', '${seed.version}', CURRENT_TIMESTAMP)`);

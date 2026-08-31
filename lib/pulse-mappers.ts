@@ -213,11 +213,31 @@ export function mapJob(row: JobViewRow): RichJobPosting {
   };
 }
 
-export function sourceHealth(enabled: boolean, latestStatus: string | null): SourceHealth {
+export function utcTimestamp(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(value)
+    ? `${value.replace(" ", "T")}Z`
+    : value;
+  const time = Date.parse(normalized);
+  return Number.isFinite(time) ? new Date(time).toISOString() : value;
+}
+
+export function sourceHealth(
+  enabled: boolean,
+  latestStatus: string | null,
+  lastCheckedAt?: string | null,
+  currentJobs?: number,
+  now = new Date(),
+): SourceHealth {
   if (!enabled) return "inactive";
   if (latestStatus === "blocked") return "blocked";
   if (latestStatus === "failed") return "failed";
-  if (latestStatus === "succeeded") return "healthy";
+  if (latestStatus === "succeeded") {
+    const checkedAt = Date.parse(utcTimestamp(lastCheckedAt) ?? "");
+    if (Number.isFinite(checkedAt) && now.getTime() - checkedAt > 6 * 60 * 60 * 1_000) return "stale";
+    if (currentJobs === 0) return "empty";
+    return "healthy";
+  }
   return "changed";
 }
 

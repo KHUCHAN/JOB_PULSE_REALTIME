@@ -168,6 +168,8 @@ describe("browser fallback Workday recovery", () => {
     expect(nativeRunnerRecoveryEligible({ id: "p5-1077-tesla", adapter: "custom" })).toBe(true);
     expect(nativeRunnerRecoveryEligible({ adapter: "workday" })).toBe(true);
     expect(nativeRunnerRecoveryEligible({ adapter: "custom", health: "blocked", currentJobs: 0 })).toBe(true);
+    expect(nativeRunnerRecoveryEligible({ adapter: "phenom", health: "empty", currentJobs: 0 })).toBe(true);
+    expect(nativeRunnerRecoveryEligible({ adapter: "custom", health: "stale", currentJobs: 10 })).toBe(true);
     expect(nativeRunnerRecoveryEligible({
       adapter: "custom",
       health: "failed",

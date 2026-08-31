@@ -87,6 +87,8 @@ export const nativeRunnerRecoveryEligible = (source: {
   || source.id === "p5-1077-tesla"
   || source.adapter === "workday"
   || source.health === "blocked"
+  || source.health === "stale"
+  || source.health === "empty"
   || source.lastError === "empty_board"
   || (source.currentJobs != null && source.currentJobs > 0);
 

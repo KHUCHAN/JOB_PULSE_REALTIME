@@ -48,6 +48,7 @@ import {
   mapCrawlActivity,
   mapJob,
   sourceHealth,
+  utcTimestamp,
   type CrawlActivityRow,
   type JobViewRow,
 } from "../../../lib/pulse-mappers";
@@ -239,14 +240,11 @@ async function recordBrowserCrawlResult(
     LIMIT 1
   `).bind(sourceId).first<{ status: "succeeded" | "failed" | "blocked"; jobs_seen: number }>();
   if (!shouldRecordBrowserResult(previous?.status ?? null, status)) {
-    // Keep the native adapter's specific error visible, but still advance the
-    // lease so the same unrendered shell cannot starve the browser queue every
-    // two hours. Never shorten a backoff already assigned by the native run.
-    const existingTime = Date.parse(source.nextCrawlAt ?? "");
-    const preservedNextCrawlAt = Number.isFinite(existingTime) && existingTime > Date.parse(nextCrawlAt)
-      ? source.nextCrawlAt!
-      : nextCrawlAt;
-    if (source.nextCrawlAt !== preservedNextCrawlAt) await store.scheduleNext(source.id, preservedNextCrawlAt);
+    // A weaker browser shell failure must not overwrite a successful native
+    // observation or stretch its healthy two-hour schedule to six/24 hours.
+    // The browser priority queue has its own rotation and can retry later.
+    const preservedNextCrawlAt = source.nextCrawlAt ?? new Date(now.getTime() + 2 * 60 * 60 * 1_000).toISOString();
+    if (!source.nextCrawlAt) await store.scheduleNext(source.id, preservedNextCrawlAt);
     return {
       sourceId,
       status: previous!.status,
@@ -513,16 +511,21 @@ async function listSources(sourceIds: string[] = []): Promise<SourceRecord[]> {
     postingUrl: row.posting_url,
     talentUrl: row.talent_url,
     adapter: row.adapter,
-    health: sourceHealth(Boolean(row.enabled), latest?.status ?? null),
+    health: sourceHealth(
+      Boolean(row.enabled),
+      latest?.status ?? null,
+      row.last_crawled_at || row.checked_at,
+      countsBySource.get(row.id) ?? 0,
+    ),
     httpStatus: latest?.response_status ?? null,
     lastError: latest?.error ?? null,
     currentJobs: countsBySource.get(row.id) ?? 0,
-    lastCheckedAt: row.last_crawled_at || row.checked_at,
+    lastCheckedAt: utcTimestamp(row.last_crawled_at || row.checked_at) ?? row.checked_at,
     lastChangedAt: latest && (Number(latest.jobs_created ?? 0) > 0
       || Number(latest.jobs_updated ?? 0) > 0
       || Number(latest.jobs_closed ?? 0) > 0)
-      ? latest.finished_at : null,
-    nextRunAt: row.enabled ? row.next_crawl_at || row.checked_at : null,
+      ? utcTimestamp(latest.finished_at) : null,
+    nextRunAt: row.enabled ? utcTimestamp(row.next_crawl_at || row.checked_at) : null,
     });
   });
 }

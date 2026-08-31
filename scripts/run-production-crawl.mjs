@@ -1,5 +1,13 @@
 const siteUrl = (process.env.JOB_PULSE_SITE_URL || "https://job-pulse-realtime.autodev61.chatgpt.site").replace(/\/$/, "");
-const maximumMinutes = Math.max(1, Math.min(20, Number(process.env.JOB_PULSE_MAX_RUN_MINUTES || 20)));
+const boundedInteger = (value, fallback, minimum, maximum) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(minimum, Math.min(maximum, Math.trunc(parsed))) : fallback;
+};
+const maximumMinutes = boundedInteger(process.env.JOB_PULSE_MAX_RUN_MINUTES, 20, 1, 20);
+// Each API call still leases and crawls exactly one company. Parallelizing
+// independent requests here raises throughput without letting one slow or
+// malformed source consume a multi-company Worker request.
+const requestConcurrency = boundedInteger(process.env.JOB_PULSE_REQUEST_CONCURRENCY, 6, 1, 8);
 const apiUrl = `${siteUrl}/api/pulse`;
 const audience = "job-pulse-realtime";
 const startedAt = Date.now();
@@ -61,6 +69,7 @@ const summary = {
   drained: false,
   stopReason: null,
   staleRunsFinalized: 0,
+  requestConcurrency,
 };
 
 const number = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
@@ -102,7 +111,7 @@ const isRecoverableRequestError = (error) => {
 let consecutiveRequestErrorRounds = 0;
 while (Date.now() < deadline) {
   summary.rounds += 1;
-  const settled = await Promise.allSettled([crawlOne(), crawlOne()]);
+  const settled = await Promise.allSettled(Array.from({ length: requestConcurrency }, () => crawlOne()));
   summary.requests += settled.length;
   const fulfilled = settled.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
   const rejected = settled.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
@@ -113,14 +122,16 @@ while (Date.now() < deadline) {
       summary[key] += number(result[key]);
     }
   }
-  if (fulfilled.length === 2 && fulfilled.every((result) => number(result.attempted) === 0)) {
+  if (fulfilled.length === requestConcurrency && fulfilled.every((result) => number(result.attempted) === 0)) {
     summary.drained = true;
     break;
   }
   if (rejected.some((error) => !isRecoverableRequestError(error))) {
     throw new Error("Production crawl API authorization or configuration failed.");
   }
-  consecutiveRequestErrorRounds = rejected.length > 0 ? consecutiveRequestErrorRounds + 1 : 0;
+  // A single transient edge failure must not stop the other healthy workers.
+  // Count only rounds where every independent request failed.
+  consecutiveRequestErrorRounds = rejected.length === requestConcurrency ? consecutiveRequestErrorRounds + 1 : 0;
   if (consecutiveRequestErrorRounds >= 3) {
     // Browser recovery is the independent safety net for slow/edge-blocked
     // sources. Stop this bounded native drain cleanly so the recovery job can
@@ -173,7 +184,7 @@ if (!sourceHealthAvailable) {
 const sourceCounts = {};
 for (const source of sources) sourceCounts[source.health] = (sourceCounts[source.health] || 0) + 1;
 const healthyZeroSources = sources
-  .filter((source) => source.health === "healthy" && number(source.currentJobs) === 0)
+  .filter((source) => (source.health === "empty" || source.health === "healthy") && number(source.currentJobs) === 0)
   .map((source) => source.id);
 const suspiciousClosures = (Array.isArray(runStatus.recent) ? runStatus.recent : [])
   .filter((run) => number(run.jobsClosed) >= 25
@@ -211,10 +222,11 @@ if (process.env.GITHUB_STEP_SUMMARY) {
     `- Successful / failed / blocked: ${result.succeeded} / ${result.failed} / ${result.blocked}`,
     `- Jobs created / updated / closed: ${result.created} / ${result.updated} / ${result.closed}`,
     `- Runtime: ${result.elapsedMinutes} minutes`,
+    `- Independent request concurrency: ${result.requestConcurrency}`,
     `- Stop reason: ${result.stopReason || "queue drained or time limit reached"}`,
     `- Stale crawl rows finalized: ${result.staleRunsFinalized}`,
     `- Current source health: ${result.sourceHealthAvailable ? JSON.stringify(result.sourceCounts) : "detailed view timed out; overview remained healthy"}`,
-    `- Healthy zero-job sources (${result.healthyZeroSources.length}): ${result.healthyZeroSources.join(", ") || "none"}`,
+    `- Successful empty sources (${result.healthyZeroSources.length}): ${result.healthyZeroSources.join(", ") || "none"}`,
     `- Suspicious recent closure runs: ${result.suspiciousClosures.length ? JSON.stringify(result.suspiciousClosures) : "none"}`,
     "",
   ].join("\n"));

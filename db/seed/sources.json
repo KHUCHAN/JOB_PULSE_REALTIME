@@ -1,7 +1,12 @@
 {
   "generatedAt": "2026-08-31",
-  "version": "v2:sha256:38d0db6929f4f89503a62b3a9b2f0b0359349f1576117229c2abdec73e7ac8c1",
+  "version": "v2:sha256:bcf60567072725f67b788198646b800db234e8f7bc8899fd1277ca1b783927e2",
   "incrementalSourceIdsByPreviousVersion": {
+    "v2:sha256:38d0db6929f4f89503a62b3a9b2f0b0359349f1576117229c2abdec73e7ac8c1": [
+      "legacy-row-126",
+      "p2-0179-us-attorney-s-office",
+      "p4-0230-bitstamp"
+    ],
     "v2:sha256:b02754771d5feb8af4448fe600115b02ebf1a5295b48de1e36b00398d15c09cc": [
       "p4-0390-84-51"
     ],
@@ -4253,15 +4258,15 @@
       "id": "p2-0179-us-attorney-s-office",
       "masterRow": 1030,
       "company": "US Attorney's Office (districts)",
-      "postingUrl": "https://www.usajobs.gov/Search/Results?a=DJ00&k=United%20States%20Attorney",
+      "postingUrl": "https://www.justice.gov/usao/career-center/job-openings/attorneys",
       "talentUrl": null,
-      "channel": "공식 채용공고/ATS",
+      "channel": "DOJ 공식 USAO attorney 및 internship 전체 채용 표",
       "adapter": "custom",
-      "verification": "career_only",
-      "confidence": "medium",
+      "verification": "valid_posting_feed",
+      "confidence": "high",
       "resumeUpload": "job_only",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-25",
+      "checkedAt": "2026-08-31",
       "enabled": true
     },
     {
@@ -8588,15 +8593,15 @@
       "id": "legacy-row-126",
       "masterRow": 2126,
       "company": "UPS",
-      "postingUrl": "https://www.jobs-ups.com/",
+      "postingUrl": "https://www.jobs-ups.com/us/en/search-results",
       "talentUrl": "https://www.jobs-ups.com/us/en/job-alerts",
-      "channel": "UPS Talent Community and Job Alerts",
-      "adapter": "custom",
-      "verification": "valid_job_alert_form",
+      "channel": "UPS 공식 Phenom 채용 검색 및 Talent Community",
+      "adapter": "phenom",
+      "verification": "valid_posting_feed",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-31",
       "enabled": true
     },
     {
@@ -16627,17 +16632,17 @@
     {
       "id": "p4-0230-bitstamp",
       "masterRow": 2944,
-      "company": "Bitstamp (Circle)",
-      "postingUrl": "https://apply.workable.com/bitstamp/",
-      "talentUrl": "https://apply.workable.com/bitstamp/",
-      "channel": "공식 Career Portal",
+      "company": "Bitstamp (Robinhood)",
+      "postingUrl": null,
+      "talentUrl": null,
+      "channel": "Robinhood 인수 후 채용이 Robinhood 공식 소스로 통합됨",
       "adapter": "custom",
-      "verification": "career_page_only",
+      "verification": "merged_parent_careers",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
-      "enabled": true
+      "checkedAt": "2026-08-31",
+      "enabled": false
     },
     {
       "id": "p4-0233-bretton-ai",
@@ -23723,7 +23728,7 @@
       "officialUrl": "https://www.jobs-ups.com/us/en/job-alerts",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-31"
     },
     {
       "id": "talent-legacy-row-127",
@@ -27945,14 +27950,6 @@
       "id": "talent-p4-0228-bird",
       "sourceId": "p4-0228-bird",
       "officialUrl": "https://bird.co/careers/jobs/",
-      "resumeUpload": "unknown",
-      "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
-    },
-    {
-      "id": "talent-p4-0230-bitstamp",
-      "sourceId": "p4-0230-bitstamp",
-      "officialUrl": "https://apply.workable.com/bitstamp/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
       "checkedAt": "2026-08-05"

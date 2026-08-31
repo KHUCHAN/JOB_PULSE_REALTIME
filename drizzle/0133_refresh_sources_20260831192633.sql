@@ -1,0 +1,20 @@
+-- catalog-version: sha256:f64a10b6c85085a14975db3edbb7c4c9435f6a7c9b8e49d9408fd1b70270dce3
+INSERT INTO sources (id, master_row, company, posting_url, talent_url, channel, adapter, verification, confidence, resume_upload, job_alerts, enabled, checked_at) VALUES ('p2-0179-us-attorney-s-office', 1030, 'US Attorney''s Office (districts)', 'https://www.justice.gov/usao/career-center/job-openings/attorneys', NULL, 'DOJ 공식 USAO attorney 및 internship 전체 채용 표', 'custom', 'valid_posting_feed', 'high', 'job_only', 'unknown', 1, '2026-08-31') ON CONFLICT(id) DO UPDATE SET master_row = excluded.master_row, company = excluded.company, posting_url = excluded.posting_url, talent_url = excluded.talent_url, channel = excluded.channel, adapter = excluded.adapter, verification = excluded.verification, confidence = excluded.confidence, resume_upload = excluded.resume_upload, job_alerts = excluded.job_alerts, enabled = excluded.enabled, checked_at = excluded.checked_at;
+INSERT INTO sources (id, master_row, company, posting_url, talent_url, channel, adapter, verification, confidence, resume_upload, job_alerts, enabled, checked_at) VALUES ('legacy-row-126', 2126, 'UPS', 'https://www.jobs-ups.com/us/en/search-results', 'https://www.jobs-ups.com/us/en/job-alerts', 'UPS 공식 Phenom 채용 검색 및 Talent Community', 'phenom', 'valid_posting_feed', 'high', 'unknown', 'available', 1, '2026-08-31') ON CONFLICT(id) DO UPDATE SET master_row = excluded.master_row, company = excluded.company, posting_url = excluded.posting_url, talent_url = excluded.talent_url, channel = excluded.channel, adapter = excluded.adapter, verification = excluded.verification, confidence = excluded.confidence, resume_upload = excluded.resume_upload, job_alerts = excluded.job_alerts, enabled = excluded.enabled, checked_at = excluded.checked_at;
+INSERT INTO sources (id, master_row, company, posting_url, talent_url, channel, adapter, verification, confidence, resume_upload, job_alerts, enabled, checked_at) VALUES ('p4-0230-bitstamp', 2944, 'Bitstamp (Robinhood)', NULL, NULL, 'Robinhood 인수 후 채용이 Robinhood 공식 소스로 통합됨', 'custom', 'merged_parent_careers', 'high', 'unknown', 'unknown', 0, '2026-08-31') ON CONFLICT(id) DO UPDATE SET master_row = excluded.master_row, company = excluded.company, posting_url = excluded.posting_url, talent_url = excluded.talent_url, channel = excluded.channel, adapter = excluded.adapter, verification = excluded.verification, confidence = excluded.confidence, resume_upload = excluded.resume_upload, job_alerts = excluded.job_alerts, enabled = excluded.enabled, checked_at = excluded.checked_at;
+INSERT INTO talent_targets (id, source_id, official_url, resume_upload, job_alerts, checked_at) VALUES ('talent-legacy-row-126', 'legacy-row-126', 'https://www.jobs-ups.com/us/en/job-alerts', 'unknown', 'available', '2026-08-31') ON CONFLICT(id) DO UPDATE SET source_id = excluded.source_id, official_url = excluded.official_url, resume_upload = excluded.resume_upload, job_alerts = excluded.job_alerts, checked_at = excluded.checked_at;
+DELETE FROM talent_targets WHERE id IN ('talent-p4-0230-bitstamp');
+UPDATE jobs SET status = 'closed', closed_at = COALESCE(closed_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE status = 'open' AND source_id IN (SELECT id FROM sources WHERE enabled = 0);
+UPDATE job_matches SET is_active = 0 WHERE is_active = 1 AND job_id IN (SELECT jobs.id FROM jobs JOIN sources ON sources.id = jobs.source_id WHERE sources.enabled = 0);
+INSERT INTO catalog_state (key, value, updated_at) VALUES ('sources', 'v2:sha256:bcf60567072725f67b788198646b800db234e8f7bc8899fd1277ca1b783927e2', CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP;
+DELETE FROM catalog_state WHERE key = 'sources_sync_lock_v1';
+-- Requeue only the two repaired active catalogs. The retired Bitstamp source
+-- stays inactive and its historical jobs are closed by the statements above.
+UPDATE `sources`
+SET `next_crawl_at` = CURRENT_TIMESTAMP,
+    `updated_at` = CURRENT_TIMESTAMP
+WHERE `id` IN (
+  'legacy-row-126',
+  'p2-0179-us-attorney-s-office'
+);
+PRAGMA optimize;

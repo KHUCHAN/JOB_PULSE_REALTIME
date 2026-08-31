@@ -32,7 +32,7 @@ export function SourcesScreen(): ReactElement {
         <div className="filter-control">
           <label htmlFor="source-health">Source health</label>
           <select id="source-health" value={health} onChange={(event) => setHealth(event.target.value as "all" | SourceHealth)}>
-            <option value="all">All health states</option><option value="healthy">Healthy</option><option value="changed">Changed</option><option value="blocked">Blocked</option><option value="failed">Failed</option><option value="inactive">Inactive</option>
+            <option value="all">All health states</option><option value="healthy">Healthy</option><option value="stale">Stale</option><option value="empty">Empty</option><option value="changed">Changed</option><option value="blocked">Blocked</option><option value="failed">Failed</option><option value="inactive">Inactive</option>
           </select>
         </div>
         <p>Posting and Talent URLs stay separate so each workflow can be verified independently.</p>

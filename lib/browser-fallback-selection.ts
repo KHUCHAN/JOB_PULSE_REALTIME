@@ -19,7 +19,8 @@ export const browserRecoveryDue = (
   now = Date.now(),
 ): boolean => {
   const problem = source.health === "failed" || source.health === "blocked"
-    || source.health === "inactive" || (source.health === "healthy" && source.currentJobs === 0);
+    || source.health === "inactive" || source.health === "stale" || source.health === "empty"
+    || (source.health === "healthy" && source.currentJobs === 0);
   if (!problem) return false;
   const next = Date.parse(source.nextRunAt ?? "");
   if (!Number.isFinite(next) || next <= now) return true;
