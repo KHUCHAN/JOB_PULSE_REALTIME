@@ -5155,7 +5155,7 @@ type CoastCentralOpening = {
   description: string;
   officialUrl: string;
   validThrough: string | null;
-  locationCity: string;
+  locationCity: string | null;
 };
 
 const COAST_CENTRAL_LISTING_URL = "https://www.coastccu.org/community/careers/";
@@ -5238,7 +5238,7 @@ const coastCentralOpenings = (html: string): CoastCentralOpening[] | null => {
     const pathIdentity = officialUrl.pathname.match(/^\/wp-content\/uploads\/(\d{4})\/(\d{2})\/([^/]+)\.pdf$/i);
     if (!pathIdentity || officialUrl.origin !== "https://www.coastccu.org" || officialUrl.search || officialUrl.hash) return null;
     const locationCity = coastCentralCity(description);
-    if (!locationCity) return null;
+    if (!locationCity && !/\b(?:relief position|outlying locations|various locations|various departments)\b/i.test(description)) return null;
     const deadline = description.match(/\bDeadline to apply is\b[^.]*?\b(\d{1,2})\/(\d{1,2})\b/i);
     const validThrough = deadline
       ? new Date(Date.UTC(Number(pathIdentity[1]), Number(deadline[1]) - 1, Number(deadline[2]))).toISOString()
@@ -5269,7 +5269,7 @@ const coastCentralJob = (
     externalId: opening.externalId,
     title: opening.title,
     company: source.company,
-    location: `${opening.locationCity}, CA`,
+    location: opening.locationCity ? `${opening.locationCity}, CA` : "Northern California",
     arrangement: "onsite",
     employmentType: programs.includes("coop")
       ? "Co-op"
@@ -5279,7 +5279,7 @@ const coastCentralJob = (
           : /\bpart[- ]time\b/i.test(opening.description) ? "Part-time" : null,
     summary: opening.description.slice(0, 1_200),
     description: opening.description,
-    locationCity: opening.locationCity,
+    ...(opening.locationCity ? { locationCity: opening.locationCity } : {}),
     locationState: "CA",
     locationCountry: "United States",
     ...coastCentralSalaryFields(opening.description),
@@ -5292,6 +5292,21 @@ const coastCentralJob = (
     officialUrl: opening.officialUrl,
     publishedAt: null,
   };
+};
+
+/**
+ * Parse Coast Central's first-party careers DOM after a real browser has
+ * cleared the edge layer. The caller must still validate every returned PDF
+ * before treating the snapshot as complete.
+ */
+export const coastCentralJobsFromHtml = (html: string, source: CrawlSource): CrawledJob[] | null => {
+  const openings = coastCentralOpenings(html);
+  const applyUrl = coastCentralApplyUrl(html);
+  const pageUpdatedAt = normalizedDate(html.match(
+    /<meta\b[^>]*property=["']article:modified_time["'][^>]*content=["']([^"']+)["']/i,
+  )?.[1]);
+  if (!openings || !applyUrl || !pageUpdatedAt) return null;
+  return openings.map((opening) => coastCentralJob(opening, source, applyUrl, pageUpdatedAt));
 };
 
 const crawlCoastCentralCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {

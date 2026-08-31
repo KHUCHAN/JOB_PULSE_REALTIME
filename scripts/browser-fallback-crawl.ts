@@ -13,7 +13,7 @@ import { browserRecoveryDue, needsBrowserFallback, type LatestCrawlSummary } fro
 import { numericPaginationTargets } from "../lib/browser-pagination.ts";
 import { ingestJobSnapshotInChunks } from "../lib/job-snapshot-transport.ts";
 import { jobPostingIdentityKeys } from "../lib/job-posting-identity.ts";
-import { anchorsFromHtml, crawlSource, deltaInternshipListingUrl, extractJobsFromHtml, jobsFromFedExApiPayload, jobsFromTeslaState, type CrawledFacet, type CrawledJob, type CrawlSource, type TeslaState } from "../lib/crawler.ts";
+import { anchorsFromHtml, coastCentralJobsFromHtml, crawlSource, deltaInternshipListingUrl, extractJobsFromHtml, jobsFromFedExApiPayload, jobsFromTeslaState, type CrawledFacet, type CrawledJob, type CrawlSource, type TeslaState } from "../lib/crawler.ts";
 import { careerCandidates, isSafeCareerListingUrl } from "../lib/url-remediation.ts";
 
 export type BrowserFallbackResult = {
@@ -245,6 +245,24 @@ const anchorsOnPage = async (page: Page): Promise<BrowserAnchor[]> => {
   return [...new Map(anchors.map((anchor) => [`${anchor.href}\u0000${anchor.text}`, anchor])).values()];
 };
 
+export const browserJobsForSource = (source: CrawlSource, jobs: CrawledJob[]): CrawledJob[] => {
+  if (source.id !== "p5-0653-linkedin") return jobs;
+  const verified = jobs.flatMap((job) => {
+    let url: URL;
+    try {
+      url = new URL(job.officialUrl);
+    } catch {
+      return [];
+    }
+    const identity = decodeURIComponent(url.pathname).match(/^\/jobs\/view\/(?:[^/]+-)?at-linkedin-(\d+)\/?$/i)?.[1];
+    if (!identity || !/(?:^|\.)linkedin\.com$/i.test(url.hostname)) return [];
+    url.search = "";
+    url.hash = "";
+    return [{ ...job, externalId: identity, officialUrl: url.href }];
+  });
+  return [...new Map(verified.map((job) => [job.externalId ?? job.officialUrl, job])).values()];
+};
+
 const jobsOnPage = async (page: Page, source: CrawlSource): Promise<CrawledJob[]> => {
   const structured: CrawledJob[] = [];
   for (const frame of page.frames()) {
@@ -256,7 +274,7 @@ const jobsOnPage = async (page: Page, source: CrawlSource): Promise<CrawledJob[]
   }
   const linked = jobsFromBrowserAnchors(await anchorsOnPage(page), source);
   const unique = new Map([...structured, ...linked].map((job) => [job.officialUrl, job]));
-  return [...unique.values()];
+  return browserJobsForSource(source, [...unique.values()]);
 };
 
 type PaginationControl = { frame: Frame; index: number; label: string };
@@ -314,7 +332,8 @@ const jobsViaHttp1 = async (source: CrawlSource): Promise<CrawledJob[]> => {
 
 export const browserChallengeHtml = (html: string): boolean =>
   /<title>\s*(?:Quick Check Needed|Checking your browser[^<]*)\s*<\/title>/i.test(html)
-  || /(?:oleeoProtect|altcha-widget|cf-chl-(?:widget|challenge)|challenge-platform\/h\/g\/turnstile|captcha|access denied)/i.test(html);
+  || /(?:oleeoProtect|altcha-widget|cf-chl-(?:widget|challenge)|challenge-platform\/h\/g\/turnstile)/i.test(html)
+  || /<title>\s*Access Denied\s*<\/title>|>\s*(?:Please verify you are human|Complete the CAPTCHA)\s*</i.test(html);
 
 type FedExBrowserApiPage = { page: number; status: number; payload: unknown };
 
@@ -491,17 +510,19 @@ export const recoverNativeOutsideWorker = async (
   if (result.status !== "succeeded"
     || result.error
     || (result.jobs.length === 0 && !result.completeListing)) return null;
+  const verifiedJobs = browserJobsForSource(source, result.jobs);
+  if (source.id === "p5-0653-linkedin" && verifiedJobs.length === 0) return null;
   return {
     source,
     status: result.responseStatus,
     finalUrl: result.resolvedListingUrl ?? source.postingUrl,
-    jobs: result.jobs,
+    jobs: verifiedJobs,
     ...(result.facets ? { facets: result.facets } : {}),
     // Native recovery starts at page one. Preserve completeness only when the
     // adapter proves the full catalog directly or reaches its validated final
     // checkpoint, so production can safely close rows no longer upstream.
     completeListing: result.completeListing || result.pagination?.cycleComplete === true,
-    ...(result.jobs.length === 0 ? { authoritativeEmpty: true } : {}),
+    ...(verifiedJobs.length === 0 ? { authoritativeEmpty: true } : {}),
     error: null,
   };
 };
@@ -521,7 +542,7 @@ const inspect = async (page: Page, source: CrawlSource): Promise<BrowserFallback
     if (!isTesla) {
       const native = await recoverNativeOutsideWorker(source);
       if (native) return native;
-      const http1Jobs = await jobsViaHttp1(source);
+      const http1Jobs = browserJobsForSource(source, await jobsViaHttp1(source));
       if (http1Jobs.length > 0) {
         return { source, status: 200, finalUrl: source.postingUrl, jobs: http1Jobs, error: null };
       }
@@ -570,6 +591,56 @@ const inspect = async (page: Page, source: CrawlSource): Promise<BrowserFallback
     const response = await page.goto(source.postingUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
     // Client-rendered ATS pages such as Dayforce populate job cards after hydration.
     await page.waitForTimeout(3_000);
+    if (source.id === "p2-0034-coast-central-cu") {
+      const jobs = coastCentralJobsFromHtml(await page.content(), source);
+      if (!jobs) {
+        return {
+          source,
+          status: response?.status() ?? null,
+          finalUrl: page.url(),
+          jobs: [],
+          error: "Coast Central browser page returned a malformed openings section.",
+        };
+      }
+      const verified = await Promise.all(jobs.map(async (job) => {
+        try {
+          let pdf = await page.request.fetch(job.officialUrl, {
+            method: "HEAD",
+            headers: { accept: "application/pdf", referer: source.postingUrl },
+            timeout: 10_000,
+          });
+          if (pdf.status() === 405) {
+            pdf = await page.request.fetch(job.officialUrl, {
+              method: "GET",
+              headers: { accept: "application/pdf", referer: source.postingUrl },
+              timeout: 10_000,
+            });
+          }
+          return pdf.ok()
+            && /^application\/pdf\b/i.test(pdf.headers()["content-type"] ?? "")
+            && pdf.url() === job.officialUrl;
+        } catch {
+          return false;
+        }
+      }));
+      if (!verified.every(Boolean)) {
+        return {
+          source,
+          status: response?.status() ?? null,
+          finalUrl: page.url(),
+          jobs: [],
+          error: "Coast Central browser job-description PDFs were incomplete or unavailable.",
+        };
+      }
+      return {
+        source,
+        status: response?.status() ?? 200,
+        finalUrl: page.url(),
+        jobs,
+        completeListing: true,
+        error: null,
+      };
+    }
     let jobs = await jobsAcrossPages(page, source);
     if (jobs.length === 0 && response && response.status() < 400) {
       if (browserChallengeHtml(await page.content())) {

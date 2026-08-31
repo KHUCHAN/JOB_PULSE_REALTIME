@@ -97,6 +97,13 @@ describe("career URL remediation", () => {
     expect(isSafeCareerListingUrl("Oportun", "https://www.oportun.com/careers", "https://job-boards.greenhouse.io/oportun")).toBe(true);
   });
 
+  it("admits only LinkedIn's own exact company-jobs catalog", () => {
+    const listing = "https://www.linkedin.com/company/linkedin/jobs/";
+    expect(isSafeCareerListingUrl("LinkedIn (Microsoft)", listing, listing)).toBe(true);
+    expect(isSafeCareerListingUrl("Another Company", listing, listing)).toBe(false);
+    expect(isSafeCareerListingUrl("LinkedIn (Microsoft)", listing, "https://www.linkedin.com/jobs/linkedin-jobs")).toBe(false);
+  });
+
   it("admits FedEx's exact filtered US catalog without treating page one as a job detail", () => {
     const catalog = "https://careers.fedex.com/jobs/page/1?page_size=100&filter%5Bcountry%5D=United+States&sort_by=update_date";
     expect(isSafeCareerListingUrl("FedEx", catalog, catalog)).toBe(true);

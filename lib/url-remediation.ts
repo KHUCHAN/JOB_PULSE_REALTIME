@@ -156,6 +156,13 @@ export const isSafeCareerListingUrl = (company: string, originalUrl: string, can
   } catch {
     return false;
   }
+  const isExactLinkedInCompanyJobs = (url: URL): boolean => url.protocol === "https:"
+    && url.hostname.toLocaleLowerCase() === "www.linkedin.com"
+    && url.pathname === "/company/linkedin/jobs/"
+    && !url.search && !url.hash;
+  if (/^linkedin(?:\s|$)/i.test(company.trim())
+    && isExactLinkedInCompanyJobs(original)
+    && isExactLinkedInCompanyJobs(candidate)) return true;
   if (ATS_VENDOR_LANDING.test(candidate.hostname) && /^\/?$/i.test(candidate.pathname)) return false;
   if (THIRD_PARTY_AGGREGATOR.test(candidate.hostname)) return false;
   if (NON_LISTING_PATH.test(`${candidate.pathname}${candidate.search}`)) return false;

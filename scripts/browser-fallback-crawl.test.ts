@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createServer } from "node:http";
 import type { CrawledJob, CrawlSource } from "../lib/crawler";
-import { browserChallengeHtml, browserListingSource, browserResultClassification, curlNativeFetch, fedExBrowserApiResult, nativeRunnerRecoveryEligible, persistenceSql, recoverNativeOutsideWorker, type BrowserFallbackResult } from "./browser-fallback-crawl";
+import { browserChallengeHtml, browserJobsForSource, browserListingSource, browserResultClassification, curlNativeFetch, fedExBrowserApiResult, nativeRunnerRecoveryEligible, persistenceSql, recoverNativeOutsideWorker, type BrowserFallbackResult } from "./browser-fallback-crawl";
 
 describe("browser fallback Workday recovery", () => {
   it("uses the independent runner's official CXS access before browser rendering", async () => {
@@ -341,6 +341,7 @@ describe("browser fallback result classification", () => {
   it("recognizes access-verification HTML and HTTP errors hidden inside browser exceptions", () => {
     expect(browserChallengeHtml('<html><title>Quick Check Needed</title><script src="/vx/oleeoProtect/main.js"></script></html>')).toBe(true);
     expect(browserChallengeHtml("<html><title>Careers</title></html>")).toBe(false);
+    expect(browserChallengeHtml('<html><title>Careers</title><script src="/assets/recaptcha.js"></script></html>')).toBe(false);
     expect(browserResultClassification({
       source: { id: "tesla", company: "Tesla", postingUrl: "https://tesla.com/careers", adapter: "custom" },
       status: null,
@@ -355,6 +356,35 @@ describe("browser fallback result classification", () => {
       jobs: [],
       error: "Browser fallback exceeded 60 seconds.",
     })).toEqual({ status: "blocked", code: "blocked_challenge" });
+  });
+
+  it("keeps only canonical LinkedIn-owned job details from LinkedIn's company listing", () => {
+    const source = {
+      id: "p5-0653-linkedin",
+      company: "LinkedIn (Microsoft)",
+      postingUrl: "https://www.linkedin.com/company/linkedin/jobs/",
+      adapter: "custom" as const,
+    };
+    const job = (title: string, officialUrl: string): CrawledJob => ({
+      externalId: null,
+      title,
+      company: source.company,
+      location: null,
+      arrangement: "unknown",
+      employmentType: null,
+      summary: null,
+      officialUrl,
+      publishedAt: null,
+    });
+    expect(browserJobsForSource(source, [
+      job("Staff Software Engineer", "https://www.linkedin.com/jobs/view/staff-software-engineer-at-linkedin-4415398666?trackingId=secret"),
+      job("Engineer jobs 555,845 open jobs", "https://www.linkedin.com/jobs/engineer-jobs?trk=organization_guest-browse_jobs"),
+      job("Other company role", "https://www.linkedin.com/jobs/view/role-at-other-company-4461217158"),
+    ])).toEqual([expect.objectContaining({
+      externalId: "4415398666",
+      title: "Staff Software Engineer",
+      officialUrl: "https://www.linkedin.com/jobs/view/staff-software-engineer-at-linkedin-4415398666",
+    })]);
   });
 
   it("keeps a 2xx page with no verified jobs retryable instead of healthy", () => {

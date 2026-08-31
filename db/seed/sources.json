@@ -1,7 +1,10 @@
 {
   "generatedAt": "2026-08-31",
-  "version": "v2:sha256:b02754771d5feb8af4448fe600115b02ebf1a5295b48de1e36b00398d15c09cc",
+  "version": "v2:sha256:be8ba252e09c11a5cc2742e0a6d5d2f158a26a4645456757b1a7fff4722e78a3",
   "incrementalSourceIdsByPreviousVersion": {
+    "v2:sha256:b02754771d5feb8af4448fe600115b02ebf1a5295b48de1e36b00398d15c09cc": [
+      "p4-0390-84-51"
+    ],
     "v2:sha256:725408bf8a97b597d0522e3f83ed12d16d16e4ccd04bc964891451689a2ed5ce": [
       "p2-0076-ameriprise-financial",
       "p5-0850-ciena",
@@ -20114,15 +20117,15 @@
       "id": "p4-0390-84-51",
       "masterRow": 3262,
       "company": "84.51° (Kroger subsidiary)",
-      "postingUrl": "https://www.8451.com/careers/",
+      "postingUrl": "https://job-boards.greenhouse.io/8451",
       "talentUrl": "https://www.8451.com/careers/",
-      "channel": "공식 Career Portal",
-      "adapter": "custom",
-      "verification": "career_page_only",
+      "channel": "84.51° 공식 Careers가 연결하는 Greenhouse 공고 목록",
+      "adapter": "greenhouse",
+      "verification": "valid_official_greenhouse",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-31",
       "enabled": true
     },
     {
@@ -29810,7 +29813,7 @@
       "officialUrl": "https://www.8451.com/careers/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-31"
     },
     {
       "id": "talent-p4-0391-abnormal-security",

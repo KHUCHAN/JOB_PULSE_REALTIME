@@ -14650,6 +14650,30 @@ We are an equal opportunity employer.`;
     expect(result.jobs.some((job) => /secret shopper/i.test(job.title))).toBe(false);
   });
 
+  it("keeps Coast Central relief roles whose official location spans multiple branches", async () => {
+    const listingUrl = "https://www.coastccu.org/community/careers/";
+    const pdfUrl = "https://www.coastccu.org/wp-content/uploads/2026/08/Member-Services-Specialist.pdf";
+    const html = `<meta property="article:modified_time" content="2026-08-29T00:07:56+00:00">
+      <a href="https://www.coastccu.org/speed-bump/?url=https%3A%2F%2Fcopilot.formstack.com%2Fstart-workflow%2F21b99460-89d4-402b-96cb-61323a3cd8d3&prev=https%3A%2F%2Fwww.coastccu.org%2Fcommunity%2Fcareers%2F">Apply Now</a>
+      <h2>Current Openings</h2><section><div class="co-accordion"><button class="co-accordion--trigger"><span>Member Services Specialist</span></button>
+      <div class="co-accordion--content"><p>This relief position may be assigned to various departments and at outlying locations.</p>
+      <a href="${pdfUrl}">Member Services Specialist Full Job Description</a></div></div></section>`;
+    const result = await crawlSource({
+      id: "p2-0034-coast-central-cu", company: "Coast Central Credit Union", postingUrl: listingUrl, adapter: "custom",
+    }, async (input) => String(input) === listingUrl
+      ? new Response(html)
+      : new Response(null, { status: 200, headers: { "content-type": "application/pdf" } }), new Date());
+
+    expect(result.jobs).toEqual([expect.objectContaining({
+      title: "Member Services Specialist",
+      location: "Northern California",
+      locationState: "CA",
+      locationCountry: "United States",
+      officialUrl: pdfUrl,
+    })]);
+    expect(result.jobs[0]).not.toHaveProperty("locationCity");
+  });
+
   it("fails Coast Central closed when an advertised job PDF is unavailable", async () => {
     const listingUrl = "https://www.coastccu.org/community/careers/";
     const pdfUrl = "https://www.coastccu.org/wp-content/uploads/2026/08/Business-Portfolio-Officer.pdf";

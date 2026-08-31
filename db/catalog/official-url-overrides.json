@@ -1,5 +1,6 @@
 {
   "overrides": {
+    "p4-0390-84-51": { "url": "https://job-boards.greenhouse.io/8451", "talentUrl": "https://www.8451.com/careers/", "adapter": "greenhouse", "verification": "valid_official_greenhouse", "channel": "84.51° 공식 Careers가 연결하는 Greenhouse 공고 목록", "checkedAt": "2026-08-31" },
     "p1-0008-protiviti": { "url": "https://roberthalf.wd1.myworkdayjobs.com/ProtivitiNA", "adapter": "workday", "checkedAt": "2026-08-25" },
     "p2-0098-discover": { "url": null, "talentUrl": null, "adapter": "custom", "verification": "MERGED_PARENT_CAREERS", "channel": "Capital One 인수 후 Discover 독립 채용 목록이 종료되어 Capital One 소스와 중복됨", "checkedAt": "2026-08-25" },
     "p2-0036-evercore": { "url": "https://evercore.tal.net/candidate/jobboard/vacancy/2", "adapter": "custom", "checkedAt": "2026-08-25" },
