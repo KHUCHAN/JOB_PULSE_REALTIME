@@ -29,6 +29,7 @@ export const sitesSchemaMigrationFiles = [
   "0038_job_topic_backfill_index.sql",
   "0039_job_filter_options_cache.sql",
   "0040_indexed_job_programs.sql",
+  "0129_repair_crawler_sources_and_query_indexes.sql",
 ] as const;
 
 // Packages Sites metadata and migrations after Vite finishes compiling.
