@@ -904,6 +904,13 @@
       "when": 1787702400000,
       "tag": "0128_add_resume_alert_recipients",
       "breakpoints": true
+    },
+    {
+      "idx": 129,
+      "version": "6",
+      "when": 1788164899644,
+      "tag": "0129_repair_crawler_sources_and_query_indexes",
+      "breakpoints": true
     }
   ]
 }

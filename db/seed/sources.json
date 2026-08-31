@@ -1,7 +1,13 @@
 {
-  "generatedAt": "2026-08-08",
-  "version": "v2:sha256:725408bf8a97b597d0522e3f83ed12d16d16e4ccd04bc964891451689a2ed5ce",
+  "generatedAt": "2026-08-31",
+  "version": "v2:sha256:b02754771d5feb8af4448fe600115b02ebf1a5295b48de1e36b00398d15c09cc",
   "incrementalSourceIdsByPreviousVersion": {
+    "v2:sha256:725408bf8a97b597d0522e3f83ed12d16d16e4ccd04bc964891451689a2ed5ce": [
+      "p2-0076-ameriprise-financial",
+      "p5-0850-ciena",
+      "legacy-row-807",
+      "p5-1106-wcg"
+    ],
     "v2:sha256:3c96ce5c9869f9e55a02e35f657d2dff7e36e650469a9b1f36fa434128a5aa03": [
       "p2-0132-mr-cooper",
       "p5-0588-edwards-lifesciences",
@@ -10107,11 +10113,11 @@
       "talentUrl": "https://www.ciena.com/company/careers/",
       "channel": "공식 채용공고 검색·지원",
       "adapter": "workday",
-      "verification": "not_audited",
+      "verification": "valid_official_workday",
       "confidence": "medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-31",
       "enabled": true
     },
     {
@@ -14063,15 +14069,15 @@
       "id": "p5-1106-wcg",
       "masterRow": 2769,
       "company": "WCG",
-      "postingUrl": "https://careers.wcgclinical.com/",
-      "talentUrl": "https://www.wcgclinical.com/careers/",
-      "channel": "공식 Career Portal",
+      "postingUrl": "https://www.wcgclinical.com/about/careers/",
+      "talentUrl": "https://www.wcgclinical.com/about/careers/",
+      "channel": "공식 채용 포털 전환 안내(2026-09-01 재개 예정)",
       "adapter": "custom",
-      "verification": "career_page_only",
+      "verification": "temporary_portal_transition",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-31",
       "enabled": true
     },
     {
@@ -14633,15 +14639,15 @@
       "id": "legacy-row-807",
       "masterRow": 2807,
       "company": "Enterprise Products Partners",
-      "postingUrl": "https://www.enterpriseproducts.com/careers",
+      "postingUrl": "https://www.enterpriseproducts.com/careers/job-openings/",
       "talentUrl": "https://www.enterpriseproducts.com/careers",
       "channel": "공식 Career Portal",
       "adapter": "custom",
-      "verification": "career_page_only",
+      "verification": "valid_official_taleo",
       "confidence": "medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-31",
       "enabled": true
     },
     {
@@ -18788,15 +18794,15 @@
       "id": "p2-0076-ameriprise-financial",
       "masterRow": 3119,
       "company": "Ameriprise Financial",
-      "postingUrl": "https://careers.ameriprise.com/search-jobs/",
+      "postingUrl": "https://ameriprise.wd5.myworkdayjobs.com/Ameriprise",
       "talentUrl": "https://www.ameriprise.com/careers",
-      "channel": "Embedded Talent Network",
-      "adapter": "custom",
-      "verification": "valid_embedded_talent_network",
+      "channel": "Ameriprise 공식 Workday 채용 목록",
+      "adapter": "workday",
+      "verification": "valid_official_workday",
       "confidence": "medium-high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-15",
+      "checkedAt": "2026-08-31",
       "enabled": true
     },
     {
@@ -24532,7 +24538,7 @@
       "officialUrl": "https://www.ciena.com/company/careers/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-31"
     },
     {
       "id": "talent-p5-0851-cirrus-logic",
@@ -26585,10 +26591,10 @@
     {
       "id": "talent-p5-1106-wcg",
       "sourceId": "p5-1106-wcg",
-      "officialUrl": "https://www.wcgclinical.com/careers/",
+      "officialUrl": "https://www.wcgclinical.com/about/careers/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-31"
     },
     {
       "id": "talent-p5-1107-welldoc",
@@ -26892,7 +26898,7 @@
       "officialUrl": "https://www.enterpriseproducts.com/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-31"
     },
     {
       "id": "talent-legacy-row-808",
@@ -29108,7 +29114,7 @@
       "officialUrl": "https://www.ameriprise.com/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-15"
+      "checkedAt": "2026-08-31"
     },
     {
       "id": "talent-p2-0087-caliber-home-loans",

@@ -234,6 +234,9 @@ describe("large catalog US scope migration", () => {
     const duplicateSourceRetirement = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0123_snapshot.json"), "utf8"));
     const canonicalCrawlerBoards = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0124_snapshot.json"), "utf8"));
     const bumbleLeverRefresh = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0125_snapshot.json"), "utf8"));
+    const finalCatalogRefresh = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0126_snapshot.json"), "utf8"));
+    const atriumRefresh = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0127_snapshot.json"), "utf8"));
+    const crawlerRepair = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0129_snapshot.json"), "utf8"));
     const currentJournal = JSON.parse(readFileSync(resolve(drizzlePath, "meta/_journal.json"), "utf8"));
 
     expect(current.prevId).toBe(previous.id);
@@ -262,15 +265,22 @@ describe("large catalog US scope migration", () => {
     expect(duplicateSourceRetirement.prevId).toBe(futureTimestampRepair.id);
     expect(canonicalCrawlerBoards.prevId).toBe(duplicateSourceRetirement.id);
     expect(bumbleLeverRefresh.prevId).toBe(canonicalCrawlerBoards.id);
+    expect(finalCatalogRefresh.prevId).toBe(bumbleLeverRefresh.id);
+    expect(atriumRefresh.prevId).toBe(finalCatalogRefresh.id);
+    expect(crawlerRepair.prevId).toBe(atriumRefresh.id);
     expect(durableAlertIdentity.tables).toHaveProperty("notification_identity_history");
     expect(durableAlertIdentity.tables.jobs.columns).toHaveProperty("alert_discovered_after_baseline");
     expect(currentJournal.entries.find((entry: { tag: string }) => entry.tag === "0100_large_catalog_us_scope")).toMatchObject({
       idx: 100,
       tag: "0100_large_catalog_us_scope",
     });
+    expect(currentJournal.entries.find((entry: { tag: string }) => entry.tag === "0128_add_resume_alert_recipients")).toMatchObject({
+      idx: 128,
+      tag: "0128_add_resume_alert_recipients",
+    });
     expect(currentJournal.entries.at(-1)).toMatchObject({
-      idx: 127,
-      tag: "0127_refresh_sources_20260825192902",
+      idx: 129,
+      tag: "0129_repair_crawler_sources_and_query_indexes",
     });
   });
 
@@ -305,7 +315,7 @@ describe("large catalog US scope migration", () => {
       sources: unknown[];
       talentTargets: unknown[];
     };
-    const sql = readFileSync(resolve(drizzlePath, "0126_publish_catalog_version.sql"), "utf8");
+    const sql = readFileSync(resolve(drizzlePath, "0129_repair_crawler_sources_and_query_indexes.sql"), "utf8");
 
     expect(seed.version).toBe(catalogSeedVersion(seed.sources, seed.talentTargets));
     expect(sql).toContain(`VALUES ('sources', '${seed.version}', CURRENT_TIMESTAMP)`);

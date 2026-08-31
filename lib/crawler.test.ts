@@ -7676,6 +7676,28 @@ We are an equal opportunity employer.`;
     expect(result.error).not.toContain("sensitive marker");
   });
 
+  it("retries Ciena's transient Workday outage and preserves its prior inventory", async () => {
+    let requests = 0;
+    const result = await crawlSource({
+      id: "p5-0850-ciena",
+      company: "Ciena",
+      postingUrl: "https://ciena.wd5.myworkdayjobs.com/Careers",
+      adapter: "workday",
+    }, async () => {
+      requests += 1;
+      return new Response("Bad Gateway", { status: 502 });
+    }, new Date("2026-08-31T07:00:00.000Z"));
+
+    expect(requests).toBe(3);
+    expect(result).toEqual(expect.objectContaining({
+      status: "blocked",
+      responseStatus: 502,
+      completeListing: false,
+      jobs: [],
+      error: "Ciena's official Workday catalog is temporarily unavailable (HTTP 502); retained prior inventory.",
+    }));
+  });
+
   it("combines Houlihan Lokey's three official Workday catalogs", async () => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input) => {
@@ -11647,7 +11669,7 @@ We are an equal opportunity employer.`;
     const result = await crawlSource({
       id: "p2-0076-ameriprise-financial",
       company: "Ameriprise Financial",
-      postingUrl: "https://www.ameriprise.com/careers",
+      postingUrl: "https://careers.ameriprise.com/search-jobs/",
       adapter: "custom",
     }, async (input, init) => {
       const url = new URL(String(input));
@@ -11664,6 +11686,60 @@ We are an equal opportunity employer.`;
     expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true, resolvedListingUrl: "https://careers.ameriprise.com/search-jobs/" }));
     expect(result.jobs).toHaveLength(2);
     expect(result.jobs[1]).toEqual(expect.objectContaining({ title: "AI Intern", employmentType: "Internship", publishedAt: "2026-08-12T10:00:00.000Z" }));
+  });
+
+  it("uses Ameriprise's replacement official Workday catalog", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p2-0076-ameriprise-financial",
+      company: "Ameriprise Financial",
+      postingUrl: "https://ameriprise.wd5.myworkdayjobs.com/Ameriprise",
+      adapter: "workday",
+    }, async (input) => {
+      requests.push(String(input));
+      return Response.json({
+        total: 1,
+        jobPostings: [{
+          title: "Financial Analyst",
+          externalPath: "/job/Minneapolis-MN/Financial-Analyst_R27-101",
+          locationsText: "Minneapolis, MN",
+          postedOn: "Posted Today",
+        }],
+      });
+    }, new Date("2026-08-31T07:00:00.000Z"));
+
+    expect(requests).toEqual([
+      "https://ameriprise.wd5.myworkdayjobs.com/wday/cxs/ameriprise/Ameriprise/jobs",
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      jobs: [expect.objectContaining({
+        externalId: "R27-101",
+        officialUrl: "https://ameriprise.wd5.myworkdayjobs.com/Ameriprise/job/Minneapolis-MN/Financial-Analyst_R27-101",
+      })],
+    }));
+  });
+
+  it("preserves WCG inventory while its official portal is in a published transition", async () => {
+    const result = await crawlSource({
+      id: "p5-1106-wcg",
+      company: "WCG",
+      postingUrl: "https://www.wcgclinical.com/about/careers/",
+      adapter: "custom",
+    }, async (input) => {
+      expect(String(input)).toBe("https://www.wcgclinical.com/about/careers/");
+      return new Response("<p>The WCG job listing and application portal is currently in transition to a new and improved experience. Please return on 9/1/2026 to view and apply.</p>");
+    }, new Date("2026-08-31T07:00:00.000Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "blocked",
+      responseStatus: 200,
+      completeListing: false,
+      jobs: [],
+      resolvedListingUrl: "https://www.wcgclinical.com/about/careers/",
+      error: "WCG's official job portal is in a published transition through September 1, 2026; retained prior inventory.",
+    }));
   });
 
   it("uses Ameriprise's reader sitemap as an addition-only fallback when Worker egress is blocked", async () => {
@@ -14923,8 +14999,9 @@ We are an equal opportunity employer.`;
     const values = [
       ...row("386032", "000H15", "Engineer, Project (I%26E)", "USA-Texas-Houston", "Aug 12, 2026"),
       ...row("379288", "000GEK", "Summer Data Intern", "USA-New Mexico-Carlsbad, USA-New Mexico-Jal", "Mar 16, 2026"),
+      ...row("385892", "000H0S", "Deckhand, Inland - Starting Pay: %24210/day", "USA", "Aug 26, 2026"),
     ];
-    const listingHtml = `<input name="listRequisition.nbElements" value="2">
+    const listingHtml = `<input name="listRequisition.nbElements" value="3">
       <input name="listRequisition.hasElements" value="true"><input name="listRequisition.size" value="1000">
       <input name="listRequisition.isEmpty" value="false">
       <script>api.fillList('requisitionListInterface', 'listRequisition', ${JSON.stringify(values)});</script>`;
@@ -14950,7 +15027,7 @@ We are an equal opportunity employer.`;
       resolvedListingUrl: listingUrl,
       error: null,
     }));
-    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs).toHaveLength(3);
     expect(result.jobs[0]).toEqual(expect.objectContaining({
       externalId: "386032",
       requisitionId: "000H15",
@@ -14967,6 +15044,13 @@ We are an equal opportunity employer.`;
       employmentType: "Internship",
       location: "Carlsbad, New Mexico, United States; Jal, New Mexico, United States",
       secondaryLocations: ["Jal, New Mexico, United States"],
+    }));
+    expect(result.jobs[2]).toEqual(expect.objectContaining({
+      title: "Deckhand, Inland - Starting Pay: $210/day",
+      location: "United States",
+      locationCity: null,
+      locationState: null,
+      locationCountry: "United States",
     }));
   });
 
@@ -14998,6 +15082,41 @@ We are an equal opportunity employer.`;
       completeListing: false,
       jobs: [],
       error: "Enterprise Products Taleo board returned duplicate or missing requisitions.",
+    }));
+  });
+
+  it("keeps Enterprise Products usable when Taleo exposes one half-published row", async () => {
+    const corporateUrl = "https://www.enterpriseproducts.com/careers/job-openings/";
+    const officialBoardUrl = "https://epco.taleo.net/careersection/alljobs/jobsearch.ftl?lang=en&radiusType=K&location=101372523&searchExpanded=false&radius=1";
+    const listingUrl = "https://epco.taleo.net/careersection/alljobs/jobsearch.ftl?lang=en&location=101372523&radius=1&radiusType=K&searchExpanded=false&dropListSize=1000";
+    const row = (externalId: string, requisitionId: string, title: string, location: string) => [
+      "false", "false", "false", externalId, requisitionId, title, externalId, title, externalId,
+      location, "false", "", "", "", "", "Aug 30, 2026", "Apply",
+      `Apply for this position (${title})`, externalId, "true", "Re-apply", "Re-apply for this job", externalId,
+      "false", "false", externalId, "false", "false",
+      `Submission for the position: ${title} - (Job Number: ${requisitionId})`, "false", "true",
+      "Add to My Job Cart", `Add this position to the job cart: ${title}`, externalId, "false", "true", "false",
+    ];
+    const values = [
+      ...row("386032", "000H15", "Data Analyst", "USA-Texas-Houston"),
+      ...row("pending", "", "Publishing", ""),
+    ];
+    const html = `<input name="listRequisition.nbElements" value="2">
+      <input name="listRequisition.hasElements" value="true"><input name="listRequisition.size" value="1000">
+      <input name="listRequisition.isEmpty" value="false">
+      <script>api.fillList('requisitionListInterface', 'listRequisition', ${JSON.stringify(values)});</script>`;
+    const result = await crawlSource({
+      id: "legacy-row-807", company: "Enterprise Products Partners",
+      postingUrl: corporateUrl, adapter: "custom",
+    }, async (input) => String(input) === corporateUrl
+      ? new Response(`<a href="${officialBoardUrl}">View Job Openings</a>`)
+      : String(input) === listingUrl ? new Response(html) : new Response("unexpected", { status: 404 }), new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      jobs: [expect.objectContaining({ requisitionId: "000H15" })],
+      error: "Enterprise Products Taleo skipped 1 malformed catalog row; retained prior inventory for an incomplete snapshot.",
     }));
   });
 

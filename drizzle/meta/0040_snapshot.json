@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "26f52c14-ff5a-4192-bce6-9723db0610f6",
-  "prevId": "29d3d502-3a44-4023-8f82-ff1e2bf0c2de",
+  "id": "0d82165e-a79e-4b57-9812-12546504237f",
+  "prevId": "26f52c14-ff5a-4192-bce6-9723db0610f6",
   "tables": {
     "catalog_state": {
       "name": "catalog_state",

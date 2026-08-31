@@ -59,6 +59,31 @@ describe("browser fallback Workday recovery", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
+  it("keeps explicit upstream maintenance states blocked during independent recovery", async () => {
+    const ciena = await recoverNativeOutsideWorker({
+      id: "p5-0850-ciena",
+      company: "Ciena",
+      postingUrl: "https://ciena.wd5.myworkdayjobs.com/Careers",
+      adapter: "workday",
+    }, (async () => new Response("Bad Gateway", { status: 502 })) as typeof fetch);
+    expect(ciena).toEqual(expect.objectContaining({
+      status: 502,
+      jobs: [],
+      error: "Ciena's official Workday catalog is temporarily unavailable (HTTP 502); retained prior inventory.",
+    }));
+    expect(browserResultClassification(ciena!)).toEqual({ status: "blocked", code: "blocked_challenge" });
+
+    const wcg = await recoverNativeOutsideWorker({
+      id: "p5-1106-wcg",
+      company: "WCG",
+      postingUrl: "https://www.wcgclinical.com/about/careers/",
+      adapter: "custom",
+      attemptNativeRecovery: true,
+    }, (async () => new Response("The WCG job listing and application portal is currently in transition. Please return on 9/1/2026.")) as typeof fetch);
+    expect(wcg).toEqual(expect.objectContaining({ status: 200, jobs: [], error: expect.stringContaining("published transition") }));
+    expect(browserResultClassification(wcg!)).toEqual({ status: "blocked", code: "blocked_challenge" });
+  });
+
   it("promotes a page-one native checkpoint that reaches its verified tail", async () => {
     const block = (id: string) => `<div class="search--item"><p><a href="/posting/data-intern/${id}">Data Intern</a></p><label>Location</label><p>Oak Brook, Illinois</p></div>`;
     const result = await recoverNativeOutsideWorker({

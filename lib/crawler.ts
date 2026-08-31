@@ -16705,8 +16705,8 @@ const taleoClassicHiddenValue = (html: string, name: string): string | null => {
 
 type EnterpriseProductsLocation = {
   location: string;
-  city: string;
-  state: string;
+  city: string | null;
+  state: string | null;
 };
 
 const enterpriseProductsLocations = (value: string): EnterpriseProductsLocation[] | null => {
@@ -16715,6 +16715,7 @@ const enterpriseProductsLocations = (value: string): EnterpriseProductsLocation[
     return null;
   }
   const structured = parts.flatMap((part): EnterpriseProductsLocation[] => {
+    if (part === "USA") return [{ location: "United States", city: null, state: null }];
     const match = part.match(/^USA-([^-]+)-(.+)$/);
     if (!match?.[1].trim() || !match[2].trim()) return [];
     const state = match[1].trim();
@@ -16806,6 +16807,7 @@ const crawlEnterpriseProductsTaleo = async (
     }
 
     const jobs: CrawledJob[] = [];
+    let malformedRows = 0;
     for (let index = 0; index < total; index += 1) {
       const row = values.slice(index * 37, (index + 1) * 37);
       const externalId = row[3]?.trim();
@@ -16823,7 +16825,12 @@ const crawlEnterpriseProductsTaleo = async (
         || repeatedIds.some((value) => value !== externalId)
         || !row[28]?.startsWith("Submission for the position:")
         || !row[28]?.endsWith(`(Job Number: ${requisitionId})`)) {
-        throw new Error("Enterprise Products Taleo board returned a malformed requisition identity.");
+        // Taleo occasionally exposes a transient, half-published row while
+        // the other 100+ requisitions remain valid. Keep those verified rows
+        // usable, but make the snapshot non-authoritative so the malformed
+        // slot cannot close a previously stored posting.
+        malformedRows += 1;
+        continue;
       }
       const officialUrl = new URL("https://epco.taleo.net/careersection/alljobs/jobdetail.ftl");
       officialUrl.searchParams.set("job", requisitionId);
@@ -16849,19 +16856,23 @@ const crawlEnterpriseProductsTaleo = async (
         officialUrl: officialUrl.href,
       });
     }
-    if (jobs.length !== total
-      || new Set(jobs.map(({ externalId }) => externalId)).size !== total
-      || new Set(jobs.map(({ requisitionId }) => requisitionId)).size !== total
-      || new Set(jobs.map(({ officialUrl }) => officialUrl)).size !== total) {
+    if (jobs.length === 0) {
+      throw new Error("Enterprise Products Taleo board returned no valid requisitions.");
+    }
+    if (new Set(jobs.map(({ externalId }) => externalId)).size !== jobs.length
+      || new Set(jobs.map(({ requisitionId }) => requisitionId)).size !== jobs.length
+      || new Set(jobs.map(({ officialUrl }) => officialUrl)).size !== jobs.length) {
       throw new Error("Enterprise Products Taleo board returned duplicate or missing requisitions.");
     }
     return {
       status: "succeeded",
       responseStatus: listingResponse.status,
-      completeListing: true,
+      completeListing: malformedRows === 0 && jobs.length === total,
       jobs,
       resolvedListingUrl: ENTERPRISE_PRODUCTS_TALEO_LISTING_URL,
-      error: null,
+      error: malformedRows > 0
+        ? `Enterprise Products Taleo skipped ${malformedRows} malformed catalog row${malformedRows === 1 ? "" : "s"}; retained prior inventory for an incomplete snapshot.`
+        : null,
     };
   } catch (error) {
     return {
@@ -19867,6 +19878,7 @@ const workdayCatalogIdentity = (job: WorkdayJob): string | null => {
 async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
   try {
     const isCisco = source.id === "p4-0245-cisco";
+    const isCiena = source.id === "p5-0850-ciena";
     let activeEndpoint = endpoint;
     const endpointUrl = new URL(endpoint);
     const sourceUrl = new URL(source.postingUrl);
@@ -19890,7 +19902,13 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
       // A later scheduled crawl is the retry boundary. Retrying a slow tenant
       // inside the same source lease can otherwise hold a two-source batch for
       // 30+ seconds without adding coverage.
-      }, true, { attempts: 1, timeoutMs: source.id === "p5-1096-vantor" ? 22_000 : 12_000 });
+      }, true, {
+        // Ciena's Workday tenant intermittently returns a short-lived 502.
+        // Retry only this known tenant inside the bounded source lease; other
+        // large catalogs retain their scheduled-run retry boundary.
+        attempts: isCiena ? 3 : 1,
+        timeoutMs: source.id === "p5-1096-vantor" ? 22_000 : 12_000,
+      });
       // A small set of Workday vanity hosts replace the tenant underscore in
       // the public CXS path with a hyphen (for example sallie-mae ->
       // sallie_mae). The board HTML advertises the underscored tenant, but a
@@ -20141,12 +20159,18 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
     const blockedInterstitial = typeof error === "object" && error
       && "blockedInterstitial" in error
       && (error as { blockedInterstitial: unknown }).blockedInterstitial === true;
+    const externalProviderOutage = source.id === "p5-0850-ciena"
+      && responseStatus != null
+      && responseStatus >= 500;
     return {
-      status: blockedInterstitial || (responseStatus != null && isBlockedHttpStatus(responseStatus)) ? "blocked" : "failed",
+      status: blockedInterstitial || externalProviderOutage
+        || (responseStatus != null && isBlockedHttpStatus(responseStatus)) ? "blocked" : "failed",
       responseStatus,
       completeListing: false,
       jobs: [],
-      error: error instanceof Error ? error.message : "Unknown crawler error.",
+      error: externalProviderOutage
+        ? `Ciena's official Workday catalog is temporarily unavailable (HTTP ${responseStatus}); retained prior inventory.`
+        : error instanceof Error ? error.message : "Unknown crawler error.",
     };
   }
 }
@@ -23846,7 +23870,60 @@ const crawlCoreAndMainCareers = async (
   }
 };
 
+const WCG_CURRENT_CAREERS_URL = "https://www.wcgclinical.com/about/careers/";
+
+const crawlWcgCareers = async (
+  source: CrawlSource,
+  fetcher: typeof fetch,
+  now: Date,
+): Promise<SourceCrawlResult> => {
+  try {
+    const response = await fetchWithTimeout(fetcher, WCG_CURRENT_CAREERS_URL, {
+      headers: { accept: "text/html,application/xhtml+xml" },
+    }, true, { attempts: 2, timeoutMs: 12_000 });
+    if (!response.ok) return {
+      status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
+      responseStatus: response.status,
+      completeListing: false,
+      jobs: [],
+      resolvedListingUrl: WCG_CURRENT_CAREERS_URL,
+      error: `WCG's current official careers page returned HTTP ${response.status}.`,
+    };
+    const content = plainText(await response.text()) ?? "";
+    if (/job listing and application portal is currently in transition/i.test(content)
+      && /return on 9\/1\/2026/i.test(content)) return {
+      status: "blocked",
+      responseStatus: response.status,
+      completeListing: false,
+      jobs: [],
+      resolvedListingUrl: WCG_CURRENT_CAREERS_URL,
+      error: "WCG's official job portal is in a published transition through September 1, 2026; retained prior inventory.",
+    };
+    // Once WCG publishes its replacement ATS link, immediately hand the
+    // current first-party page back to normal feed discovery. Incrementing
+    // discovery depth prevents this source-specific probe from recursing.
+    return crawlSourceBase({
+      ...source,
+      postingUrl: WCG_CURRENT_CAREERS_URL,
+      adapter: "custom",
+      discoveryDepth: (source.discoveryDepth ?? 0) + 1,
+    }, fetcher, now);
+  } catch (error) {
+    return {
+      status: "failed",
+      responseStatus: null,
+      completeListing: false,
+      jobs: [],
+      resolvedListingUrl: WCG_CURRENT_CAREERS_URL,
+      error: error instanceof Error ? error.message : "WCG careers probe failed.",
+    };
+  }
+};
+
 async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-1106-wcg") {
+    return crawlWcgCareers(source, fetcher, now);
+  }
   if ((source.discoveryDepth ?? 0) === 0) {
     try {
       const page = new URL(source.postingUrl);
@@ -24113,7 +24190,7 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   if (source.id === "p4-0479-rain-ai" || sourcePage.hostname === "rain.ai") return crawlRainAi(source, fetcher);
   if (source.id === "audit-row-364") return crawlGraybar(source, fetcher);
   if (source.id === "audit-row-354" || sourcePage.hostname === "careers.eogresources.com") return crawlEogJobs(source, fetcher);
-  if (source.id === "p2-0076-ameriprise-financial" || sourcePage.hostname === "careers.ameriprise.com") return crawlAmeripriseJobs(source, fetcher);
+  if (sourcePage.hostname === "careers.ameriprise.com") return crawlAmeripriseJobs(source, fetcher);
   if (source.id === "p5-0566-cardinal-health" || sourcePage.hostname === "jobs.cardinalhealth.com") return crawlCardinalHealth(source, fetcher);
   if (source.id === "p5-1095-vanguard" || sourcePage.hostname === "www.vanguardjobs.com") return crawlVanguard(source, fetcher);
   if (source.id === "p5-1005-olympus-medical-systems") return crawlOlympusSuccessFactors(source, fetcher);

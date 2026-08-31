@@ -113,7 +113,19 @@ export const jobs = sqliteTable("jobs", {
   index("jobs_status_employment_type_idx").on(table.status, table.employmentType),
   index("jobs_status_published_at_idx").on(table.status, table.publishedAt),
   index("jobs_status_location_region_seen_idx").on(table.status, table.locationRegion, table.firstSeenAt),
+  index("jobs_status_region_published_seen_idx").on(
+    table.status,
+    table.locationRegion,
+    table.publishedAt,
+    table.firstSeenAt,
+  ),
   index("jobs_location_country_state_city_idx").on(table.locationCountry, table.locationState, table.locationCity),
+  index("jobs_status_country_published_seen_nocase_idx").on(
+    table.status,
+    sql`${table.locationCountry} COLLATE NOCASE`,
+    table.publishedAt,
+    table.firstSeenAt,
+  ),
   index("jobs_experience_level_idx").on(table.experienceLevel),
   index("jobs_salary_currency_min_max_idx").on(table.salaryCurrency, table.salaryMin, table.salaryMax),
   index("jobs_status_url_seen_company_id_idx").on(
@@ -256,6 +268,12 @@ export const jobMatches = sqliteTable("job_matches", {
   uniqueIndex("job_matches_job_keyword_generation_unique").on(table.jobId, table.keywordId, table.openGeneration),
   index("job_matches_keyword_created_idx").on(table.keywordId, table.createdAt),
   index("job_matches_keyword_active_score_idx").on(table.keywordId, table.isActive, table.score),
+  index("job_matches_keyword_active_job_generation_idx").on(
+    table.keywordId,
+    table.isActive,
+    table.jobId,
+    table.openGeneration,
+  ),
 ]);
 
 export const codexReviews = sqliteTable("codex_reviews", {
@@ -316,6 +334,7 @@ export const notificationIdentityHistory = sqliteTable("notification_identity_hi
   jobMatchId: text("job_match_id"),
 }, (table) => [
   primaryKey({ columns: [table.profileId, table.recipient, table.identityKey] }),
+  index("notification_identity_history_profile_identity_idx").on(table.profileId, table.identityKey),
 ]);
 
 export const talentTargets = sqliteTable("talent_targets", {

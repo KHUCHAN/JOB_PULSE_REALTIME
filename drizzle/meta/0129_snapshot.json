@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "8ee30eab-9676-468b-89a2-b9784ae000ed",
-  "prevId": "0d82165e-a79e-4b57-9812-12546504237f",
+  "id": "054673bd-bed9-4196-a2ed-aa85ae702b8a",
+  "prevId": "8cd2847b-1bb0-4689-8647-fd27e449d492",
   "tables": {
     "catalog_state": {
       "name": "catalog_state",
@@ -32,6 +32,140 @@
       },
       "indexes": {},
       "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "codex_reviews": {
+      "name": "codex_reviews",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "job_match_id": {
+          "name": "job_match_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "profile_id": {
+          "name": "profile_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "decision": {
+          "name": "decision",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "rationale": {
+          "name": "rationale",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "verified_url": {
+          "name": "verified_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_file": {
+          "name": "source_file",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "reviewer": {
+          "name": "reviewer",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'codex'"
+        },
+        "reviewed_at": {
+          "name": "reviewed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CURRENT_TIMESTAMP)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CURRENT_TIMESTAMP)"
+        }
+      },
+      "indexes": {
+        "codex_reviews_job_match_unique": {
+          "name": "codex_reviews_job_match_unique",
+          "columns": [
+            "job_match_id"
+          ],
+          "isUnique": true
+        },
+        "codex_reviews_profile_decision_idx": {
+          "name": "codex_reviews_profile_decision_idx",
+          "columns": [
+            "profile_id",
+            "decision",
+            "reviewed_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "codex_reviews_job_match_id_job_matches_id_fk": {
+          "name": "codex_reviews_job_match_id_job_matches_id_fk",
+          "tableFrom": "codex_reviews",
+          "tableTo": "job_matches",
+          "columnsFrom": [
+            "job_match_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "codex_reviews_profile_id_match_profiles_id_fk": {
+          "name": "codex_reviews_profile_id_match_profiles_id_fk",
+          "tableFrom": "codex_reviews",
+          "tableTo": "match_profiles",
+          "columnsFrom": [
+            "profile_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
@@ -271,6 +405,30 @@
           "notNull": true,
           "autoincrement": false
         },
+        "open_generation": {
+          "name": "open_generation",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "is_active": {
+          "name": "is_active",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "notification_eligible": {
+          "name": "notification_eligible",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "text",
@@ -288,11 +446,12 @@
         }
       },
       "indexes": {
-        "job_matches_job_keyword_unique": {
-          "name": "job_matches_job_keyword_unique",
+        "job_matches_job_keyword_generation_unique": {
+          "name": "job_matches_job_keyword_generation_unique",
           "columns": [
             "job_id",
-            "keyword_id"
+            "keyword_id",
+            "open_generation"
           ],
           "isUnique": true
         },
@@ -301,6 +460,25 @@
           "columns": [
             "keyword_id",
             "created_at"
+          ],
+          "isUnique": false
+        },
+        "job_matches_keyword_active_score_idx": {
+          "name": "job_matches_keyword_active_score_idx",
+          "columns": [
+            "keyword_id",
+            "is_active",
+            "score"
+          ],
+          "isUnique": false
+        },
+        "job_matches_keyword_active_job_generation_idx": {
+          "name": "job_matches_keyword_active_job_generation_idx",
+          "columns": [
+            "keyword_id",
+            "is_active",
+            "job_id",
+            "open_generation"
           ],
           "isUnique": false
         }
@@ -588,6 +766,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "location_region": {
+          "name": "location_region",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "location_postal_code": {
           "name": "location_postal_code",
           "type": "text",
@@ -701,6 +886,27 @@
           "notNull": false,
           "autoincrement": false
         },
+        "requisition_identity_key": {
+          "name": "requisition_identity_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "external_identity_key": {
+          "name": "external_identity_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "url_identity_key": {
+          "name": "url_identity_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "apply_url": {
           "name": "apply_url",
           "type": "text",
@@ -758,6 +964,36 @@
           "autoincrement": false,
           "default": "'open'"
         },
+        "open_generation": {
+          "name": "open_generation",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "reopened_at": {
+          "name": "reopened_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "alert_discovered_after_baseline": {
+          "name": "alert_discovered_after_baseline",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "resume_match_hash": {
+          "name": "resume_match_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "review_state": {
           "name": "review_state",
           "type": "text",
@@ -801,6 +1037,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "area_classified_at": {
+          "name": "area_classified_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "text",
@@ -832,6 +1075,14 @@
           "columns": [
             "status",
             "first_seen_at"
+          ],
+          "isUnique": false
+        },
+        "jobs_status_source_idx": {
+          "name": "jobs_status_source_idx",
+          "columns": [
+            "status",
+            "source_id"
           ],
           "isUnique": false
         },
@@ -883,12 +1134,41 @@
           ],
           "isUnique": false
         },
+        "jobs_status_location_region_seen_idx": {
+          "name": "jobs_status_location_region_seen_idx",
+          "columns": [
+            "status",
+            "location_region",
+            "first_seen_at"
+          ],
+          "isUnique": false
+        },
+        "jobs_status_region_published_seen_idx": {
+          "name": "jobs_status_region_published_seen_idx",
+          "columns": [
+            "status",
+            "location_region",
+            "published_at",
+            "first_seen_at"
+          ],
+          "isUnique": false
+        },
         "jobs_location_country_state_city_idx": {
           "name": "jobs_location_country_state_city_idx",
           "columns": [
             "location_country",
             "location_state",
             "location_city"
+          ],
+          "isUnique": false
+        },
+        "jobs_status_country_published_seen_nocase_idx": {
+          "name": "jobs_status_country_published_seen_nocase_idx",
+          "columns": [
+            "status",
+            "\"location_country\" COLLATE NOCASE",
+            "published_at",
+            "first_seen_at"
           ],
           "isUnique": false
         },
@@ -1057,6 +1337,336 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
+    "match_profiles": {
+      "name": "match_profiles",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "keyword_id": {
+          "name": "keyword_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "enabled": {
+          "name": "enabled",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "rule_version": {
+          "name": "rule_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "rules_json": {
+          "name": "rules_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "min_score": {
+          "name": "min_score",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 60
+        },
+        "activation_watermark": {
+          "name": "activation_watermark",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "next_digest_at": {
+          "name": "next_digest_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "evaluation_lease_owner": {
+          "name": "evaluation_lease_owner",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "evaluation_lease_expires_at": {
+          "name": "evaluation_lease_expires_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "dispatch_lease_owner": {
+          "name": "dispatch_lease_owner",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "dispatch_lease_expires_at": {
+          "name": "dispatch_lease_expires_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "gmail_state": {
+          "name": "gmail_state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'unconfigured'"
+        },
+        "last_digest_at": {
+          "name": "last_digest_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_error": {
+          "name": "last_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CURRENT_TIMESTAMP)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CURRENT_TIMESTAMP)"
+        }
+      },
+      "indexes": {
+        "match_profiles_keyword_unique": {
+          "name": "match_profiles_keyword_unique",
+          "columns": [
+            "keyword_id"
+          ],
+          "isUnique": true
+        },
+        "match_profiles_enabled_digest_idx": {
+          "name": "match_profiles_enabled_digest_idx",
+          "columns": [
+            "enabled",
+            "next_digest_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "match_profiles_keyword_id_keywords_id_fk": {
+          "name": "match_profiles_keyword_id_keywords_id_fk",
+          "tableFrom": "match_profiles",
+          "tableTo": "keywords",
+          "columnsFrom": [
+            "keyword_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "notification_identity_history": {
+      "name": "notification_identity_history",
+      "columns": {
+        "profile_id": {
+          "name": "profile_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "recipient": {
+          "name": "recipient",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "identity_key": {
+          "name": "identity_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "first_sent_at": {
+          "name": "first_sent_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "notification_id": {
+          "name": "notification_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "job_match_id": {
+          "name": "job_match_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "notification_identity_history_profile_identity_idx": {
+          "name": "notification_identity_history_profile_identity_idx",
+          "columns": [
+            "profile_id",
+            "identity_key"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "notification_identity_history_profile_id_recipient_identity_key_pk": {
+          "columns": [
+            "profile_id",
+            "recipient",
+            "identity_key"
+          ],
+          "name": "notification_identity_history_profile_id_recipient_identity_key_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "notification_items": {
+      "name": "notification_items",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "notification_id": {
+          "name": "notification_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "job_match_id": {
+          "name": "job_match_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "recipient": {
+          "name": "recipient",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CURRENT_TIMESTAMP)"
+        }
+      },
+      "indexes": {
+        "notification_items_match_recipient_unique": {
+          "name": "notification_items_match_recipient_unique",
+          "columns": [
+            "job_match_id",
+            "recipient"
+          ],
+          "isUnique": true
+        },
+        "notification_items_notification_idx": {
+          "name": "notification_items_notification_idx",
+          "columns": [
+            "notification_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "notification_items_notification_id_notifications_id_fk": {
+          "name": "notification_items_notification_id_notifications_id_fk",
+          "tableFrom": "notification_items",
+          "tableTo": "notifications",
+          "columnsFrom": [
+            "notification_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "notification_items_job_match_id_job_matches_id_fk": {
+          "name": "notification_items_job_match_id_job_matches_id_fk",
+          "tableFrom": "notification_items",
+          "tableTo": "job_matches",
+          "columnsFrom": [
+            "job_match_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
     "notifications": {
       "name": "notifications",
       "columns": {
@@ -1131,6 +1741,35 @@
           "notNull": false,
           "autoincrement": false
         },
+        "attempt_count": {
+          "name": "attempt_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "next_retry_at": {
+          "name": "next_retry_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "lease_owner": {
+          "name": "lease_owner",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "lease_expires_at": {
+          "name": "lease_expires_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "text",
@@ -1146,6 +1785,15 @@
           "columns": [
             "status",
             "scheduled_at"
+          ],
+          "isUnique": false
+        },
+        "notifications_retry_lease_idx": {
+          "name": "notifications_retry_lease_idx",
+          "columns": [
+            "status",
+            "next_retry_at",
+            "lease_expires_at"
           ],
           "isUnique": false
         }
@@ -1166,6 +1814,76 @@
         }
       },
       "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "profile_recipients": {
+      "name": "profile_recipients",
+      "columns": {
+        "profile_id": {
+          "name": "profile_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "recipient": {
+          "name": "recipient",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "enabled": {
+          "name": "enabled",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CURRENT_TIMESTAMP)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CURRENT_TIMESTAMP)"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "profile_recipients_profile_id_match_profiles_id_fk": {
+          "name": "profile_recipients_profile_id_match_profiles_id_fk",
+          "tableFrom": "profile_recipients",
+          "tableTo": "match_profiles",
+          "columnsFrom": [
+            "profile_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "profile_recipients_profile_id_recipient_pk": {
+          "columns": [
+            "profile_id",
+            "recipient"
+          ],
+          "name": "profile_recipients_profile_id_recipient_pk"
+        }
+      },
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
@@ -1467,6 +2185,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "alert_baseline_at": {
+          "name": "alert_baseline_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "facet_sync_generation": {
           "name": "facet_sync_generation",
           "type": "text",
@@ -1628,6 +2353,13 @@
   },
   "internal": {
     "indexes": {
+      "jobs_status_country_published_seen_nocase_idx": {
+        "columns": {
+          "\"location_country\" COLLATE NOCASE": {
+            "isExpression": true
+          }
+        }
+      },
       "jobs_status_company_nocase_idx": {
         "columns": {
           "\"company\" COLLATE NOCASE": {

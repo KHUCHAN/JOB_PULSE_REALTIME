@@ -479,6 +479,15 @@ export const recoverNativeOutsideWorker = async (
     || (result.jobs.length === 0 && !result.completeListing))) {
     result = await crawlSource(source, curlNativeFetch, now);
   }
+  if (result.status === "blocked"
+    && (source.id === "p5-0850-ciena" || source.id === "p5-1106-wcg")) return {
+    source,
+    status: result.responseStatus,
+    finalUrl: result.resolvedListingUrl ?? source.postingUrl,
+    jobs: [],
+    completeListing: false,
+    error: result.error,
+  };
   if (result.status !== "succeeded"
     || result.error
     || (result.jobs.length === 0 && !result.completeListing)) return null;
@@ -621,7 +630,9 @@ export const browserResultClassification = (result: BrowserFallbackResult): {
   if (result.authoritativeEmpty) return { status: "succeeded", code: "empty_board" };
   if (result.error?.startsWith("Rejected unsafe browser listing candidate:")) return { status: "failed", code: "unsafe_listing" };
   if (result.jobs.length > 0 && result.finalUrl) return { status: "succeeded", code: "jobs_recovered" };
-  if ([401, 403, 429, 520, 521, 522, 523, 524].includes(result.status ?? -1)
+  if ((result.source.id === "p5-0850-ciena" && /temporarily unavailable/i.test(result.error ?? ""))
+    || (result.source.id === "p5-1106-wcg" && /portal is in a published transition/i.test(result.error ?? ""))
+    || [401, 403, 429, 520, 521, 522, 523, 524].includes(result.status ?? -1)
     || /(?:cloudflare|captcha|challenge|blocked|access denied|returned HTTP (?:401|403|429|52[0-4]))/i.test(result.error ?? "")) {
     return { status: "blocked", code: "blocked_challenge" };
   }
