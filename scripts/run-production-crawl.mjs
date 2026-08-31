@@ -7,7 +7,7 @@ const maximumMinutes = boundedInteger(process.env.JOB_PULSE_MAX_RUN_MINUTES, 20,
 // Each API call still leases and crawls exactly one company. Parallelizing
 // independent requests here raises throughput without letting one slow or
 // malformed source consume a multi-company Worker request.
-const requestConcurrency = boundedInteger(process.env.JOB_PULSE_REQUEST_CONCURRENCY, 6, 1, 8);
+const requestConcurrency = boundedInteger(process.env.JOB_PULSE_REQUEST_CONCURRENCY, 4, 1, 8);
 const apiUrl = `${siteUrl}/api/pulse`;
 const audience = "job-pulse-realtime";
 const startedAt = Date.now();
@@ -73,6 +73,20 @@ const summary = {
 };
 
 const number = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
+
+const retry = async (operation, attempts = 3, delayMs = 1_000) => {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (attempt === attempts) break;
+      await new Promise((resolve) => setTimeout(resolve, delayMs * attempt));
+    }
+  }
+  throw lastError;
+};
 
 const postAction = async (action, timeoutMs) => {
   const token = await oidcToken();
@@ -141,7 +155,10 @@ while (Date.now() < deadline) {
   }
 }
 
-const staleRunRepair = await postAction("finalizeStaleCrawlRuns", 15_000);
+// Edge capacity can remain briefly saturated after the final parallel round.
+// Retry only the compact finalization and verification calls; never repeat a
+// completed source crawl just because post-drain observability was delayed.
+const staleRunRepair = await retry(() => postAction("finalizeStaleCrawlRuns", 15_000));
 summary.staleRunsFinalized = number(staleRunRepair.finalized);
 
 const getJson = async (resource, timeoutMs) => {
@@ -166,7 +183,7 @@ const getJson = async (resource, timeoutMs) => {
 // 1,400+ source inventory remains practical to inspect after every drain.
 // Treat telemetry timeouts as degraded observability rather than retrying the
 // crawl itself; the compact run-status query is the required postcondition.
-const runStatus = await getJson("runStatus", 15_000);
+const runStatus = await retry(() => getJson("runStatus", 15_000));
 const [overviewResult, sourcesResult] = await Promise.allSettled([
   getJson("overview", 15_000),
   getJson("sources", 15_000),

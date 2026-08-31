@@ -54,9 +54,9 @@ jobs:
           # A repair push needs a bounded smoke drain before its targeted
           # recovery pass; the recurring schedule retains the full drain.
           JOB_PULSE_MAX_RUN_MINUTES: ${{ github.event_name == 'push' && '2' || '20' }}
-          # Each request atomically leases one source. Six independent workers
-          # fit the observed source latency while preserving per-source limits.
-          JOB_PULSE_REQUEST_CONCURRENCY: "6"
+          # Each request atomically leases one source. Four independent workers
+          # preserve API headroom while materially improving source throughput.
+          JOB_PULSE_REQUEST_CONCURRENCY: "4"
         run: node scripts/run-production-crawl.mjs
 
   request-recovery:
