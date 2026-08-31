@@ -25,7 +25,8 @@ const siteUrl = (process.env.REQUEST_FALLBACK_LIVE_URL
 const ingestUrl = process.env.REQUEST_FALLBACK_INGEST_URL?.trim() || `${siteUrl}/api/pulse`;
 const sourceIds = [...new Set((process.env.REQUEST_FALLBACK_SOURCE_IDS ?? "legacy-row-826,p2-0075-american-family-insurance")
   .split(",").map((value) => value.trim()).filter(Boolean))].slice(0, 10);
-const concurrency = 2;
+const concurrency = Math.max(1, Math.min(8,
+  Number.parseInt(process.env.REQUEST_FALLBACK_CONCURRENCY ?? "4", 10) || 4));
 const checkpointedSourceIds = new Set([
   "p4-0241-cgi",
   "p5-1018-penn-medicine",

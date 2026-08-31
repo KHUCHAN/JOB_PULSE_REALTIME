@@ -7,7 +7,7 @@ const maximumMinutes = boundedInteger(process.env.JOB_PULSE_MAX_RUN_MINUTES, 20,
 // Each API call still leases and crawls exactly one company. Parallelizing
 // independent requests here raises throughput without letting one slow or
 // malformed source consume a multi-company Worker request.
-const requestConcurrency = boundedInteger(process.env.JOB_PULSE_REQUEST_CONCURRENCY, 4, 1, 8);
+const requestConcurrency = boundedInteger(process.env.JOB_PULSE_REQUEST_CONCURRENCY, 6, 1, 8);
 const apiUrl = `${siteUrl}/api/pulse`;
 const audience = "job-pulse-realtime";
 const startedAt = Date.now();
