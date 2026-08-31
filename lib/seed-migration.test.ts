@@ -109,6 +109,24 @@ describe("catalogDeltaSql", () => {
       "",
     ].join("\n"));
   });
+
+  it("removes Talent targets retired by an acquired-source catalog change", () => {
+    const previous = [
+      "INSERT INTO sources VALUES ('same');",
+      "INSERT INTO talent_targets (id, source_id) VALUES ('talent-retired', 'retired');",
+      "INSERT INTO talent_targets (id, source_id) VALUES ('talent-kept', 'kept');",
+      "",
+    ].join("\n");
+    const next = [
+      "INSERT INTO sources VALUES ('same');",
+      "INSERT INTO talent_targets (id, source_id) VALUES ('talent-kept', 'kept');",
+      "",
+    ].join("\n");
+
+    expect(catalogDeltaSql(previous, next, "sha256:next")).toContain(
+      "DELETE FROM talent_targets WHERE id IN ('talent-retired');",
+    );
+  });
 });
 
 describe("advanceSeedSnapshot", () => {
@@ -281,8 +299,8 @@ describe("large catalog US scope migration", () => {
       tag: "0128_add_resume_alert_recipients",
     });
     expect(currentJournal.entries.at(-1)).toMatchObject({
-      idx: 130,
-      tag: "0130_refresh_sources_20260831161034",
+      idx: 131,
+      tag: "0131_refresh_sources_20260831175738",
     });
   });
 
@@ -317,11 +335,20 @@ describe("large catalog US scope migration", () => {
       sources: unknown[];
       talentTargets: unknown[];
     };
-    const sql = readFileSync(resolve(drizzlePath, "0130_refresh_sources_20260831161034.sql"), "utf8");
+    const sql = readFileSync(resolve(drizzlePath, "0131_refresh_sources_20260831175738.sql"), "utf8");
 
     expect(seed.version).toBe(catalogSeedVersion(seed.sources, seed.talentTargets));
     expect(sql).toContain(`VALUES ('sources', '${seed.version}', CURRENT_TIMESTAMP)`);
     expect(sql).toContain("WHERE key = 'sources_sync_lock_v1'");
+  });
+
+  it("retires the duplicate Cadence feed and its stale Talent target after the Huntington merger", () => {
+    const sql = readFileSync(resolve(drizzlePath, "0131_refresh_sources_20260831175738.sql"), "utf8");
+
+    expect(sql).toContain("'p2-0086-cadence-bank'");
+    expect(sql).toContain("'talent-p2-0086-cadence-bank'");
+    expect(sql).toContain("UPDATE jobs SET status = 'closed'");
+    expect(sql).toContain("UPDATE job_matches SET is_active = 0");
   });
 
   it("requeues every repaired source for the server-owned batch", () => {

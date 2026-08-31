@@ -52,6 +52,21 @@ describe("verified official source catalog", () => {
     }));
   });
 
+  it("keeps the acquired Cadence catalog inactive instead of duplicating Huntington jobs", () => {
+    const seed = JSON.parse(readFileSync(join(process.cwd(), "db/seed/sources.json"), "utf8")) as { sources: SeedSource[] };
+    const cadence = seed.sources.find((source) => source.id === "p2-0086-cadence-bank");
+    const huntington = seed.sources.find((source) => source.id === "p2-0118-huntington-bancshares");
+
+    expect(cadence).toEqual(expect.objectContaining({
+      postingUrl: null,
+      enabled: false,
+    }));
+    expect(huntington).toEqual(expect.objectContaining({
+      postingUrl: "https://huntington-careers.com/search/searchjobs",
+      enabled: true,
+    }));
+  });
+
   it("disables duplicate acquired feeds while retaining each authoritative catalog", () => {
     const seed = JSON.parse(readFileSync(join(process.cwd(), "db/seed/sources.json"), "utf8")) as { sources: SeedSource[] };
     const byId = new Map(seed.sources.map((source) => [source.id, source]));

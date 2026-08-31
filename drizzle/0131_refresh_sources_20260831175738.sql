@@ -1,0 +1,8 @@
+-- catalog-version: sha256:090f3b97a00220baed862f8e9bc9c7eead2bb5f212f5d89207c89cd87e038708
+INSERT INTO sources (id, master_row, company, posting_url, talent_url, channel, adapter, verification, confidence, resume_upload, job_alerts, enabled, checked_at) VALUES ('p2-0086-cadence-bank', 1237, 'Cadence Bank', NULL, NULL, '2026-02-01 Huntington 합병 완료; 별도 Huntington 소스가 공식 채용판을 수집하므로 중복 피드를 비활성화', 'custom', 'merged_parent_careers', 'medium', 'available', 'available', 0, '2026-08-31') ON CONFLICT(id) DO UPDATE SET master_row = excluded.master_row, company = excluded.company, posting_url = excluded.posting_url, talent_url = excluded.talent_url, channel = excluded.channel, adapter = excluded.adapter, verification = excluded.verification, confidence = excluded.confidence, resume_upload = excluded.resume_upload, job_alerts = excluded.job_alerts, enabled = excluded.enabled, checked_at = excluded.checked_at;
+DELETE FROM talent_targets WHERE id IN ('talent-p2-0086-cadence-bank');
+UPDATE jobs SET status = 'closed', closed_at = COALESCE(closed_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE status = 'open' AND source_id IN (SELECT id FROM sources WHERE enabled = 0);
+UPDATE job_matches SET is_active = 0 WHERE is_active = 1 AND job_id IN (SELECT jobs.id FROM jobs JOIN sources ON sources.id = jobs.source_id WHERE sources.enabled = 0);
+INSERT INTO catalog_state (key, value, updated_at) VALUES ('sources', 'v2:sha256:752eb839236a66e10c47c24fe62c1f61e1b2c5da186a1f5cdab9d0bb3265c10a', CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP;
+DELETE FROM catalog_state WHERE key = 'sources_sync_lock_v1';
+PRAGMA optimize;

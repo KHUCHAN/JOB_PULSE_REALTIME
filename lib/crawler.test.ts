@@ -12109,9 +12109,9 @@ We are an equal opportunity employer.`;
 
   it("keeps an Activate response non-authoritative when record identities repeat", async () => {
     const result = await crawlSource({
-      id: "p2-0086-cadence-bank",
-      company: "Huntington Bank",
-      postingUrl: "https://huntington-careers.com/search/searchjobs",
+      id: "activate-duplicate-identities",
+      company: "Example Bank",
+      postingUrl: "https://example-bank-careers.com/search/searchjobs",
       adapter: "custom",
     }, async (input) => new URL(String(input)).pathname === "/Search/SearchResults"
       ? Response.json({

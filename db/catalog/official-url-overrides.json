@@ -163,7 +163,7 @@
     "p5-0828-blue-origin": { "url": "https://blueorigin.wd5.myworkdayjobs.com/BlueOrigin", "adapter": "workday" },
     "audit-row-327": { "url": "https://myjobs.adp.com/caseysstore/cx", "adapter": "custom" },
     "audit-row-329": { "url": "https://career-celanese.icims.com/jobs/intro", "adapter": "icims" },
-    "p2-0086-cadence-bank": { "url": "https://huntington-careers.com/search/searchjobs/", "talentUrl": "https://flows.beamery.com/huntingtonbank/tc-sign-up", "adapter": "custom", "verification": "MERGED_PARENT_CAREERS", "channel": "모회사/승계 조직 공식 채용 경로" },
+    "p2-0086-cadence-bank": { "url": null, "talentUrl": null, "adapter": "custom", "verification": "MERGED_PARENT_CAREERS", "channel": "2026-02-01 Huntington 합병 완료; 별도 Huntington 소스가 공식 채용판을 수집하므로 중복 피드를 비활성화", "checkedAt": "2026-08-31" },
     "p5-0566-cardinal-health": { "url": "https://jobs.cardinalhealth.com/search/searchjobs", "adapter": "custom" },
     "legacy-row-797": { "url": "https://jobs.concentrix.com/job-search/?country=United+States+Of+America&wh=1", "adapter": "custom" },
     "p2-0105-finastra": { "url": "https://finastra.wd3.myworkdayjobs.com/FINC", "adapter": "workday" },

@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-31",
-  "version": "v2:sha256:be8ba252e09c11a5cc2742e0a6d5d2f158a26a4645456757b1a7fff4722e78a3",
+  "version": "v2:sha256:752eb839236a66e10c47c24fe62c1f61e1b2c5da186a1f5cdab9d0bb3265c10a",
   "incrementalSourceIdsByPreviousVersion": {
     "v2:sha256:b02754771d5feb8af4448fe600115b02ebf1a5295b48de1e36b00398d15c09cc": [
       "p4-0390-84-51"
@@ -25,6 +25,9 @@
     "v2:sha256:35d0b0e9e927a06b2bb84e26779ec64316c0367f6fc968ef2754a20762a679e1": [
       "legacy-row-87",
       "p5-0773-rtx"
+    ],
+    "v2:sha256:be8ba252e09c11a5cc2742e0a6d5d2f158a26a4645456757b1a7fff4722e78a3": [
+      "p2-0086-cadence-bank"
     ]
   },
   "sources": [
@@ -4772,16 +4775,16 @@
       "id": "p2-0086-cadence-bank",
       "masterRow": 1237,
       "company": "Cadence Bank",
-      "postingUrl": "https://huntington-careers.com/search/searchjobs/",
-      "talentUrl": "https://flows.beamery.com/huntingtonbank/tc-sign-up",
-      "channel": "모회사/승계 조직 공식 채용 경로",
+      "postingUrl": null,
+      "talentUrl": null,
+      "channel": "2026-02-01 Huntington 합병 완료; 별도 Huntington 소스가 공식 채용판을 수집하므로 중복 피드를 비활성화",
       "adapter": "custom",
       "verification": "merged_parent_careers",
       "confidence": "medium",
       "resumeUpload": "available",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-08",
-      "enabled": true
+      "checkedAt": "2026-08-31",
+      "enabled": false
     },
     {
       "id": "p2-0088-chime",
@@ -22428,14 +22431,6 @@
       "sourceId": "p2-0085-brex",
       "officialUrl": "https://my.greenhouse.io/users/sign_in?job_board=brex&source=job_alert_board",
       "resumeUpload": "unknown",
-      "jobAlerts": "available",
-      "checkedAt": "2026-08-08"
-    },
-    {
-      "id": "talent-p2-0086-cadence-bank",
-      "sourceId": "p2-0086-cadence-bank",
-      "officialUrl": "https://flows.beamery.com/huntingtonbank/tc-sign-up",
-      "resumeUpload": "available",
       "jobAlerts": "available",
       "checkedAt": "2026-08-08"
     },
