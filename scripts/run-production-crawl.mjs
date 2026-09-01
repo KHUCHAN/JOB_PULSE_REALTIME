@@ -11,7 +11,7 @@ const requestConcurrency = boundedInteger(process.env.JOB_PULSE_REQUEST_CONCURRE
 const targetedSourceIds = [...new Set((process.env.JOB_PULSE_TARGETED_RECRAWL_SOURCE_IDS || "")
   .split(",")
   .map((value) => value.trim())
-  .filter(Boolean))].slice(0, 4);
+  .filter(Boolean))].slice(0, 8);
 const targetedRecrawlAttempts = targetedSourceIds.length > 0
   ? boundedInteger(process.env.JOB_PULSE_TARGETED_RECRAWL_ATTEMPTS, 1, 1, 2)
   : 0;
@@ -125,11 +125,21 @@ const postAction = async (action, timeoutMs, values = {}) => {
 // catalog drop: D1's volume quarantine accepts the closure only when both
 // independently fetched snapshots match.
 for (let attempt = 0; attempt < targetedRecrawlAttempts; attempt += 1) {
-  const targeted = await postAction("recrawlSources", 55_000, { sourceIds: targetedSourceIds });
-  summary.targetedRecrawls += 1;
-  summary.requests += 1;
-  for (const key of ["attempted", "succeeded", "failed", "blocked", "created", "updated", "closed"]) {
-    summary[key] += number(targeted[key]);
+  // Keep every targeted source in its own Worker request, just like the due
+  // queue below. The former four-ID request was processed serially inside one
+  // Worker and silently truncated repair lists longer than four, allowing a
+  // slow first-party board to delay or entirely skip the sources behind it.
+  for (let offset = 0; offset < targetedSourceIds.length; offset += requestConcurrency) {
+    const sourceWindow = targetedSourceIds.slice(offset, offset + requestConcurrency);
+    const targeted = await Promise.all(sourceWindow.map((sourceId) =>
+      postAction("recrawlSources", 55_000, { sourceIds: [sourceId] })));
+    summary.targetedRecrawls += targeted.length;
+    summary.requests += targeted.length;
+    for (const result of targeted) {
+      for (const key of ["attempted", "succeeded", "failed", "blocked", "created", "updated", "closed"]) {
+        summary[key] += number(result[key]);
+      }
+    }
   }
 }
 
@@ -261,7 +271,7 @@ if (process.env.GITHUB_STEP_SUMMARY) {
     `- Jobs created / updated / closed: ${result.created} / ${result.updated} / ${result.closed}`,
     `- Runtime: ${result.elapsedMinutes} minutes`,
     `- Independent request concurrency: ${result.requestConcurrency}`,
-    `- Targeted repair passes: ${result.targetedRecrawls}`,
+    `- Targeted repair requests: ${result.targetedRecrawls}`,
     `- Stop reason: ${result.stopReason || "queue drained or time limit reached"}`,
     `- Stale crawl rows finalized: ${result.staleRunsFinalized}`,
     `- Current source health: ${result.sourceHealthAvailable ? JSON.stringify(result.sourceCounts) : "detailed view timed out; overview remained healthy"}`,
