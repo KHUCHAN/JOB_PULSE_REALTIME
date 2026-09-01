@@ -6429,6 +6429,42 @@ We are an equal opportunity employer.`;
     ]);
   });
 
+  it("routes Palladyne AI to its complete official Paylocity catalog", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p5-1052-sarcos-robotics",
+      company: "Sarcos Robotics (Palladyne AI)",
+      postingUrl: "https://www.palladyneai.com/careers/",
+      adapter: "custom",
+    }, async (input) => {
+      requests.push(String(input));
+      return new Response(`<script>window.pageData = {"Jobs":[{
+        "JobId":4462634,
+        "JobTitle":"Senior Embedded Software Engineer",
+        "LocationName":"Salt Lake City, UT",
+        "PublishedDate":"2026-08-28T16:10:35-05:00",
+        "JobLocation":{"City":"Salt Lake City","State":"UT","Country":"USA"}
+      }]};</script>`, { status: 200, headers: { "content-type": "text/html" } });
+    }, new Date());
+
+    expect(requests).toEqual([
+      "https://recruiting.paylocity.com/recruiting/jobs/All/265fde3e-5bd7-4a32-8881-2f62c8f3d32e/Palladyne-AI",
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://recruiting.paylocity.com/recruiting/jobs/All/265fde3e-5bd7-4a32-8881-2f62c8f3d32e/Palladyne-AI",
+    }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        externalId: "4462634",
+        title: "Senior Embedded Software Engineer",
+        locationState: "UT",
+        publishedAt: "2026-08-28T21:10:35.000Z",
+      }),
+    ]);
+  });
+
   it("uses McKinsey's public job API instead of the edge-blocked careers HTML", async () => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input) => {
@@ -11717,6 +11753,39 @@ We are an equal opportunity employer.`;
     expect(result.jobs).toEqual([
       expect.objectContaining({ title: "Software Engineering Intern", locationState: "WA", locationCountry: "United States" }),
       expect.objectContaining({ title: "Data Analyst", locationState: "OR", locationCountry: "United States" }),
+    ]);
+  });
+
+  it("recovers Southern Company from its official Jobsyn sitemap when the search API is blocked", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "legacy-row-864",
+      company: "Southern",
+      postingUrl: "https://southerncompany.jobs/",
+      adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url.startsWith("https://prod-search-api.jobsyn.org/")) return new Response("Forbidden", { status: 403 });
+      expect(url).toBe("https://southerncompany.jobs/sitemaps/jobs_1.xml");
+      return new Response(`<urlset>
+        <url><loc>https://southerncompany.jobs/atlanta-ga/data-science-intern/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/job/</loc><lastmod>2026-08-31</lastmod></url>
+        <url><loc>https://southerncompany.jobs/birmingham-al/engineering-co-op/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB/job/</loc><lastmod>2026-08-30</lastmod></url>
+      </urlset>`);
+    }, new Date());
+
+    expect(requests).toEqual([
+      "https://prod-search-api.jobsyn.org/api/v1/solr/search?page=1",
+      "https://southerncompany.jobs/sitemaps/jobs_1.xml",
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      resolvedListingUrl: "https://southerncompany.jobs/jobs/",
+    }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({ title: "Data Science Intern", locationState: "GA", employmentType: "Internship" }),
+      expect.objectContaining({ title: "Engineering Co Op", locationState: "AL", employmentType: "Co-op" }),
     ]);
   });
 

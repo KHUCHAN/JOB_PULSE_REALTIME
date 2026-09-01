@@ -359,6 +359,13 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
 // every pass. Keep the verified, first-party board identity here and promote
 // the canonical listing URL after the first successful sync.
 const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
+  "p5-1052-sarcos-robotics": {
+    // Palladyne's careers page embeds only a small presentation subset. Its
+    // linked Paylocity board is the canonical complete catalog and includes
+    // structured publication timestamps for every currently open role.
+    listingUrl: "https://recruiting.paylocity.com/recruiting/jobs/All/265fde3e-5bd7-4a32-8881-2f62c8f3d32e/Palladyne-AI",
+    adapter: "custom",
+  },
   "audit-row-345": {
     discovered: { kind: "jibe", endpoint: "https://careers.dollargeneral.com/api/jobs?page=1&limit=100&sortBy=posted_date&descending=true&internal=false" },
     listingUrl: "https://careers.dollargeneral.com/jobs?page=1",
@@ -6762,7 +6769,9 @@ const crawlWellsFargo = async (
         company: source.company,
         location: null,
         arrangement: "unknown",
-        employmentType: programs.keys.some((key) => key === "internship" || key === "coop") ? "Internship" : null,
+        employmentType: programs.keys.includes("coop")
+          ? "Co-op"
+          : programs.keys.includes("internship") ? "Internship" : null,
         summary: null,
         requisitionId: entry.id,
         ...(entry.lastModified ? { sourceUpdatedAt: normalizedDate(entry.lastModified) } : {}),
@@ -10884,7 +10893,9 @@ const crawlOktaCareers = async (source: CrawlSource, fetcher: typeof fetch): Pro
         company: source.company,
         location,
         arrangement: /remote/i.test(location ?? "") ? "remote" : "unknown",
-        employmentType: programs.keys.some((key) => key === "internship" || key === "coop") ? "Internship" : null,
+        employmentType: programs.keys.includes("coop")
+          ? "Co-op"
+          : programs.keys.includes("internship") ? "Internship" : null,
         summary: null,
         officialUrl,
         publishedAt: null,
@@ -12566,7 +12577,9 @@ const crawlJobSitemap = async (
         company: source.company,
         location: null,
         arrangement: "unknown",
-        employmentType: programs.keys.some((key) => key === "internship" || key === "coop") ? "Internship" : null,
+        employmentType: programs.keys.includes("coop")
+          ? "Co-op"
+          : programs.keys.includes("internship") ? "Internship" : null,
         summary: null,
         requisitionId: externalId,
         ...(entry.lastModified ? { sourceUpdatedAt: normalizedDate(entry.lastModified) } : {}),
@@ -12698,7 +12711,9 @@ const crawlJobsynSitemap = async (
           company: source.company,
           location: parsedLocation.location,
           arrangement: /\bremote\b/i.test(`${title} ${parsedLocation.location}`) ? "remote" : "unknown",
-          employmentType: programs.some((key) => key === "internship" || key === "coop") ? "Internship" : null,
+          employmentType: programs.includes("coop")
+            ? "Co-op"
+            : programs.includes("internship") ? "Internship" : null,
           summary: null,
           ...(parsedLocation.city ? { locationCity: parsedLocation.city } : {}),
           ...(parsedLocation.state ? { locationState: parsedLocation.state } : {}),
@@ -24338,6 +24353,9 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-1054-siemens-eda") {
     return crawlJobsynWithSitemapFallback(source, "https://jobs.sw.siemens.com/jobs/", fetcher);
+  }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-864") {
+    return crawlJobsynWithSitemapFallback(source, "https://southerncompany.jobs/jobs/", fetcher);
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-102") {
     return crawlJacobsJobs(source, fetcher, now);

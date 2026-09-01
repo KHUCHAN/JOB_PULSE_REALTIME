@@ -59,7 +59,7 @@ jobs:
           # A repair deployment verifies the remediated official feeds
           # before the normal oldest-first drain. Two matching observations
           # let the catalog-volume guard safely confirm Nubank's current zero.
-          JOB_PULSE_TARGETED_RECRAWL_SOURCE_IDS: ${{ github.event_name == 'push' && 'p4-0369-tigerconnect,audit-row-3447,audit-row-3448,p5-0846-caterpillar' || '' }}
+          JOB_PULSE_TARGETED_RECRAWL_SOURCE_IDS: ${{ github.event_name == 'push' && 'p4-0369-tigerconnect,audit-row-3447,audit-row-3448,p5-0846-caterpillar,legacy-row-864,p5-1052-sarcos-robotics' || '' }}
           JOB_PULSE_TARGETED_RECRAWL_ATTEMPTS: "2"
         run: node scripts/run-production-crawl.mjs
 
@@ -131,7 +131,7 @@ jobs:
           # Repair pushes verify the exact affected sources immediately. The
           # scheduled run leaves this empty and continues rotating through the
           # full browser-recovery queue below.
-          BROWSER_FALLBACK_SOURCE_IDS: ${{ github.event_name == 'push' && 'p4-0317-nubank,p4-0386-whatnot,p5-0726-semtech,p5-0755-tower-semiconductor,p2-0183-webster-bank,p2-0196-graphistry,p5-1077-tesla,p2-0076-ameriprise-financial,p2-0034-coast-central-cu,p4-0390-84-51,p5-0653-linkedin,p5-0850-ciena,p5-1028-progressive-insurance,legacy-row-807,p5-1106-wcg,legacy-row-126,p2-0179-us-attorney-s-office' || '' }}
+          BROWSER_FALLBACK_SOURCE_IDS: ${{ github.event_name == 'push' && 'p4-0317-nubank,p4-0386-whatnot,p5-0726-semtech,p5-0755-tower-semiconductor,p2-0183-webster-bank,p2-0196-graphistry,p5-1077-tesla,p2-0167-state-attorneys-general,p5-1052-sarcos-robotics,p2-0076-ameriprise-financial,p2-0034-coast-central-cu,p4-0390-84-51,p5-0653-linkedin,p5-0850-ciena,p5-1028-progressive-insurance,legacy-row-807,p5-1106-wcg,legacy-row-126,p2-0179-us-attorney-s-office' || '' }}
           # The browser action records every empty/failed/blocked result in
           # crawl_runs and advances next_crawl_at. Selecting the oldest rows
           # therefore rotates fairly without a run-number offset that could

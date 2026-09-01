@@ -304,6 +304,103 @@ export const browserJobsForSource = (source: CrawlSource, jobs: CrawledJob[]): C
   return [...new Map(verified.map((job) => [job.externalId ?? job.officialUrl, job])).values()];
 };
 
+export type CalCareersBrowserRow = {
+  classification: string;
+  workingTitle: string;
+  jobControl: string;
+  workType: string;
+  department: string;
+  location: string;
+  telework: string;
+  publishDate: string;
+  filingDeadline: string;
+  officialUrl: string;
+};
+
+const calCareersUtcDate = (value: string): string | null => {
+  const match = value.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!match) return null;
+  const month = Number(match[1]);
+  const day = Number(match[2]);
+  const year = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year
+    && date.getUTCMonth() === month - 1
+    && date.getUTCDate() === day
+    ? date.toISOString()
+    : null;
+};
+
+/**
+ * Convert the complete, rendered CalCareers result set into durable jobs.
+ * The official ASP.NET board exposes dates and Job Control only after its
+ * client-side postback, so generic anchor recovery loses the fields needed to
+ * distinguish a genuinely new posting from a newly observed old posting.
+ */
+export const calCareersBrowserJobs = (
+  source: CrawlSource,
+  rows: CalCareersBrowserRow[],
+): CrawledJob[] => {
+  const unique = new Map<string, CrawledJob>();
+  for (const row of rows) {
+    let officialUrl: URL;
+    try {
+      officialUrl = new URL(row.officialUrl, source.postingUrl);
+    } catch {
+      continue;
+    }
+    const officialJobControl = officialUrl.searchParams.get("JobControlId")?.trim() ?? "";
+    if (!officialJobControl
+      || officialJobControl !== row.jobControl.trim()
+      || !/(?:^|\.)calcareers\.ca\.gov$/i.test(officialUrl.hostname)
+      || !/\/CalHRPublic\/(?:Search|Jobs)\/JobPosting\.aspx$/i.test(officialUrl.pathname)) continue;
+    officialUrl.hash = "";
+    const title = row.workingTitle.trim() || row.classification.trim();
+    if (!title) continue;
+    const programText = `${title} ${row.classification} ${row.workType}`;
+    const employmentType = /\bco[ -]?op(?:erative)?\b/i.test(programText)
+      ? "Co-op"
+      : /\bintern(?:ship)?\b/i.test(programText)
+        ? "Internship"
+        : row.workType.trim() || null;
+    const telework = row.telework.trim();
+    const arrangement: CrawledJob["arrangement"] = /\bremote\b/i.test(telework)
+      ? "remote"
+      : /\bhybrid\b/i.test(telework)
+        ? "hybrid"
+        : /\b(?:in[ -]?office|onsite|on[ -]?site)\b/i.test(telework)
+          ? "onsite"
+          : "unknown";
+    const publishedAt = calCareersUtcDate(row.publishDate);
+    const validThrough = calCareersUtcDate(row.filingDeadline);
+    unique.set(officialJobControl, {
+      externalId: officialJobControl,
+      requisitionId: officialJobControl,
+      title,
+      company: source.company,
+      location: row.location.trim() || "California, United States",
+      locationState: "CA",
+      locationCountry: "United States",
+      arrangement,
+      employmentType,
+      department: row.department.trim() || "Department of Justice",
+      summary: [
+        row.classification.trim() ? `Classification: ${row.classification.trim()}.` : "",
+        row.workType.trim() ? `Work Type/Schedule: ${row.workType.trim()}.` : "",
+        telework ? `Telework: ${telework}.` : "",
+      ].filter(Boolean).join(" ") || null,
+      shiftSchedule: row.workType.trim() || null,
+      sourcePostedText: row.publishDate.trim() ? `Publish Date: ${row.publishDate.trim()}` : null,
+      validThrough,
+      publishedAt,
+      officialUrl: officialUrl.href,
+      applyUrl: officialUrl.href,
+      rawPayload: { ...row },
+    });
+  }
+  return [...unique.values()];
+};
+
 const jobsOnPage = async (page: Page, source: CrawlSource): Promise<CrawledJob[]> => {
   const structured: CrawledJob[] = [];
   for (const frame of page.frames()) {
@@ -477,6 +574,87 @@ const recoverFedExInBrowser = async (page: Page, source: CrawlSource): Promise<B
   return result;
 };
 
+const recoverCalCareersInBrowser = async (page: Page, source: CrawlSource): Promise<BrowserFallbackResult> => {
+  const response = await page.goto(source.postingUrl, { waitUntil: "domcontentloaded", timeout: 20_000 });
+  const finalUrl = page.url();
+  if (!response || response.status() >= 400) {
+    return { source, status: response?.status() ?? null, finalUrl, jobs: [], error: `CalCareers browser session returned HTTP ${response?.status() ?? "unknown"}.` };
+  }
+  await page.waitForFunction(() => {
+    const criteria = document.querySelector<HTMLInputElement>('input[name="ctl00$cphMainContent$hdnSearchCriteria"]')?.value ?? "";
+    return criteria.includes("depid=148")
+      && document.querySelectorAll('div[id*="_pnlCardContainer_"]').length > 0;
+  }, { timeout: 15_000 });
+  const result = await page.evaluate(async () => {
+    const form = document.querySelector<HTMLFormElement>("form");
+    if (!form) throw new Error("CalCareers search form was unavailable.");
+    const data = new FormData(form);
+    data.set("ctl00$ToolkitScriptManager1", "ctl00$cphMainContent$pnlSearchResults|ctl00$cphMainContent$ddlRowCount");
+    data.set("__EVENTTARGET", "ctl00$cphMainContent$ddlRowCount");
+    data.set("__EVENTARGUMENT", "");
+    data.set("ctl00$cphMainContent$hdnSearchCriteria", "#depid=148");
+    data.set("ctl00$cphMainContent$hdnInit", "false");
+    data.set("ctl00$cphMainContent$ddlRowCount", "100");
+    data.set("__ASYNCPOST", "true");
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 15_000);
+    try {
+      const postback = await fetch(form.action, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "cache-control": "no-cache",
+          "x-microsoftajax": "Delta=true",
+          "x-requested-with": "XMLHttpRequest",
+        },
+        body: new URLSearchParams([...data.entries()].map(([key, value]) => [key, String(value)])),
+        signal: controller.signal,
+      });
+      const html = await postback.text();
+      const documentSnapshot = new DOMParser().parseFromString(html, "text/html");
+      const normalized = (value: string | null | undefined): string => (value ?? "").replace(/\s+/g, " ").trim();
+      const capture = (text: string, pattern: RegExp): string => normalized(text.match(pattern)?.[1]);
+      const rows = [...documentSnapshot.querySelectorAll<HTMLElement>('div[id*="_pnlCardContainer_"]')].flatMap((card) => {
+        const text = normalized(card.textContent);
+        const anchor = card.querySelector<HTMLAnchorElement>('a.lead[href*="JobPosting.aspx?JobControlId="], a[href*="JobPosting.aspx?JobControlId="]');
+        const href = anchor?.getAttribute("href");
+        const jobControl = capture(text, /Job Control:\s*(\d+)/i);
+        if (!href || !jobControl) return [];
+        return [{
+          classification: normalized(card.querySelector("a.lead")?.textContent),
+          workingTitle: capture(text, /Working Title:\s*(.*?)\s*Job Control:/i),
+          jobControl,
+          workType: capture(text, /Work Type\/Schedule:\s*(.*?)\s*Department:/i),
+          department: capture(text, /Department:\s*(.*?)\s*Location:/i),
+          location: capture(text, /Location:\s*(.*?)\s*Telework:/i),
+          telework: capture(text, /Telework:\s*(.*?)\s*Publish Date:/i),
+          publishDate: capture(text, /Publish Date:\s*(\d{1,2}\/\d{1,2}\/\d{4})/i),
+          filingDeadline: capture(text, /Filing Deadline:\s*(\d{1,2}\/\d{1,2}\/\d{4})/i),
+          officialUrl: new URL(href, window.location.href).href,
+        }];
+      });
+      const total = Number(capture(normalized(documentSnapshot.body.textContent), /(\d+)\s+job\(s\)\s+found/i));
+      return { status: postback.status, total, rows };
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  });
+  const jobs = calCareersBrowserJobs(source, result.rows);
+  if (!result.status || result.status >= 400) {
+    return { source, status: result.status || null, finalUrl, jobs: [], error: `CalCareers result postback returned HTTP ${result.status || "unknown"}.` };
+  }
+  if (!Number.isSafeInteger(result.total) || result.total < 1 || jobs.length !== result.total) {
+    return {
+      source,
+      status: result.status,
+      finalUrl,
+      jobs: [],
+      error: `CalCareers returned an incomplete catalog (${jobs.length}/${Number.isFinite(result.total) ? result.total : "unknown"}).`,
+    };
+  }
+  return { source, status: result.status, finalUrl, jobs, completeListing: true, error: null };
+};
+
 const CURL_META = "__JOB_PULSE_CURL_META__";
 
 /**
@@ -572,7 +750,10 @@ const inspect = async (page: Page, source: CrawlSource): Promise<BrowserFallback
   try {
     const isTesla = source.id === "p5-1077-tesla" || source.company === "Tesla";
     const isFedEx = source.id === "audit-row-359" || source.company === "FedEx";
+    const isCalCareers = source.id === "p2-0167-state-attorneys-general"
+      || /calcareers\.ca\.gov\/CalHRPublic\/Search\/JobSearchResults\.aspx/i.test(source.postingUrl);
     if (isFedEx) return recoverFedExInBrowser(page, source);
+    if (isCalCareers) return recoverCalCareersInBrowser(page, source);
     // Re-run the full native adapter only for failures shown to differ by
     // egress (Workday, blocked pages, previously populated feeds, and browser
     // false-empty results). Other sources keep the short HTTP probe so a slow
@@ -593,7 +774,7 @@ const inspect = async (page: Page, source: CrawlSource): Promise<BrowserFallback
       // navigation commits. Fetch the same-origin official state endpoint
       // explicitly from the browser context: the shell does not request it on
       // every visit, so passively waiting for a network event can time out.
-      const response = await page.goto(source.postingUrl, { waitUntil: "commit", timeout: 30_000 });
+      const response = await page.goto(source.postingUrl, { waitUntil: "commit", timeout: 12_000 });
       const responseStatus = response?.status() ?? null;
       if ([401, 403, 429, 520, 521, 522, 523, 524].includes(responseStatus ?? -1)) {
         return {
@@ -606,7 +787,7 @@ const inspect = async (page: Page, source: CrawlSource): Promise<BrowserFallback
       }
       const state = await page.evaluate(async () => {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 20_000);
+        const timeout = setTimeout(() => controller.abort(), 10_000);
         try {
           const stateResponse = await fetch("/cua-api/apps/careers/state", {
             credentials: "include",

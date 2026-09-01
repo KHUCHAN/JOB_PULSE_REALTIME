@@ -1,9 +1,57 @@
 import { describe, expect, it, vi } from "vitest";
 import { createServer } from "node:http";
 import type { CrawledJob, CrawlSource } from "../lib/crawler";
-import { browserChallengeHtml, browserJobsForSource, browserListingSource, browserResultClassification, curlNativeFetch, fedExBrowserApiResult, nativeRunnerRecoveryEligible, persistenceSql, recoverNativeOutsideWorker, type BrowserFallbackResult } from "./browser-fallback-crawl";
+import { browserChallengeHtml, browserJobsForSource, browserListingSource, browserResultClassification, calCareersBrowserJobs, curlNativeFetch, fedExBrowserApiResult, nativeRunnerRecoveryEligible, persistenceSql, recoverNativeOutsideWorker, type BrowserFallbackResult } from "./browser-fallback-crawl";
 
 describe("browser fallback Workday recovery", () => {
+  it("preserves dates and durable Job Control IDs from the complete CalCareers postback", () => {
+    const source = {
+      id: "p2-0167-state-attorneys-general",
+      company: "State Attorneys General",
+      postingUrl: "https://www.calcareers.ca.gov/CalHRPublic/Search/JobSearchResults.aspx#depid=148",
+      adapter: "custom" as const,
+    };
+    expect(calCareersBrowserJobs(source, [{
+      classification: "INFORMATION TECHNOLOGY ASSOCIATE",
+      workingTitle: "Student Technology Intern",
+      jobControl: "527777",
+      workType: "Limited Term - Full Time",
+      department: "Department of Justice",
+      location: "Sacramento County",
+      telework: "Hybrid",
+      publishDate: "8/31/2026",
+      filingDeadline: "9/14/2026",
+      officialUrl: "https://www.calcareers.ca.gov/CalHrPublic/Jobs/JobPosting.aspx?JobControlId=527777",
+    }])).toEqual([expect.objectContaining({
+      externalId: "527777",
+      requisitionId: "527777",
+      title: "Student Technology Intern",
+      employmentType: "Internship",
+      arrangement: "hybrid",
+      location: "Sacramento County",
+      locationState: "CA",
+      locationCountry: "United States",
+      sourcePostedText: "Publish Date: 8/31/2026",
+      publishedAt: "2026-08-31T00:00:00.000Z",
+      validThrough: "2026-09-14T00:00:00.000Z",
+    })]);
+  });
+
+  it("rejects a CalCareers row whose official URL does not match its Job Control", () => {
+    expect(calCareersBrowserJobs({
+      id: "p2-0167-state-attorneys-general",
+      company: "State Attorneys General",
+      postingUrl: "https://www.calcareers.ca.gov/CalHRPublic/Search/JobSearchResults.aspx#depid=148",
+      adapter: "custom",
+    }, [{
+      classification: "ANALYST II", workingTitle: "Analyst", jobControl: "527777",
+      workType: "Permanent Fulltime", department: "Department of Justice",
+      location: "Sacramento County", telework: "Hybrid", publishDate: "8/31/2026",
+      filingDeadline: "9/14/2026",
+      officialUrl: "https://calcareers.ca.gov/CalHRPublic/Search/JobPosting.aspx?JobControlId=999999",
+    }])).toEqual([]);
+  });
+
   it("uses the independent runner's official CXS access before browser rendering", async () => {
     const source = {
       id: "workday-source",
