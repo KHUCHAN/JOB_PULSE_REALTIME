@@ -11206,9 +11206,11 @@ const crawlJobsyn = async (
       const locationSlug = jobsynSlug(job.location_exact);
       const officialUrl = new URL(`/${locationSlug}/${job.title_slug}/${job.guid}/job/`, listing.origin).href;
       const programs = classifyJobPrograms(job.title_exact).keys;
-      const employmentType = programs.some((key) => key === "internship" || key === "coop")
-        ? "Internship"
-        : normalizeEmploymentType(job.job_type) ?? job.job_type ?? null;
+      const employmentType = programs.includes("coop")
+        ? "Co-op"
+        : programs.includes("internship")
+          ? "Internship"
+          : normalizeEmploymentType(job.job_type) ?? job.job_type ?? null;
       const arrangement = /remote/i.test(`${job.job_type ?? ""} ${job.location_exact}`)
         ? "remote" as const
         : /hybrid/i.test(job.job_type ?? "")

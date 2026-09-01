@@ -717,6 +717,29 @@ export const recoverNativeOutsideWorker = async (
     || (result.jobs.length === 0 && !result.completeListing))) {
     result = await crawlSource(source, curlNativeFetch, now);
   }
+  if (source.id === "legacy-row-864"
+    && result.status === "succeeded"
+    && !result.error
+    && result.pagination
+    && !result.pagination.cycleComplete) {
+    // Southern's first-party Jobsyn API is available to the independent
+    // runner but its 273+ jobs exceed the Worker's 20-page checkpoint window.
+    // Finish the one remaining window in the same stable recovery snapshot so
+    // production can close identities that disappeared upstream instead of
+    // accumulating stale sitemap-only rows forever.
+    const continuation = await crawlSource({
+      ...source,
+      crawlPageCursor: result.pagination.nextPage,
+    }, fetcher, now);
+    if (continuation.status === "succeeded"
+      && !continuation.error
+      && continuation.pagination?.cycleComplete
+      && continuation.pagination.totalPages === result.pagination.totalPages) {
+      const jobs = new Map(result.jobs.map((job) => [job.externalId ?? job.officialUrl, job]));
+      for (const job of continuation.jobs) jobs.set(job.externalId ?? job.officialUrl, job);
+      result = { ...continuation, jobs: [...jobs.values()], completeListing: true };
+    }
+  }
   if (result.status === "blocked"
     && (source.id === "p5-0850-ciena" || source.id === "p5-1106-wcg")) return {
     source,

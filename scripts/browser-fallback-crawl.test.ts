@@ -152,6 +152,45 @@ describe("browser fallback Workday recovery", () => {
     });
   });
 
+  it("finishes Southern's bounded Jobsyn checkpoint and authorizes exact stale closure", async () => {
+    const requestedPages: number[] = [];
+    const result = await recoverNativeOutsideWorker({
+      id: "legacy-row-864",
+      company: "Southern",
+      postingUrl: "https://southerncompany.jobs/",
+      adapter: "custom",
+      attemptNativeRecovery: true,
+    }, (async (input) => {
+      const page = Number(new URL(String(input)).searchParams.get("page"));
+      requestedPages.push(page);
+      const guid = page.toString(16).padStart(32, "0");
+      return Response.json({
+        jobs: [{
+          guid,
+          title_exact: page === 21 ? "Engineering Co-op" : `Engineer ${page}`,
+          title_slug: page === 21 ? "engineering-co-op" : `engineer-${page}`,
+          location_exact: "Atlanta, GA",
+          city_exact: "Atlanta",
+          state_short_exact: "GA",
+          country_exact: "United States",
+          date_new: "2026-09-01T00:00:00Z",
+        }],
+        pagination: { page, page_size: 1, total: 21, total_pages: 21 },
+      });
+    }) as typeof fetch, new Date("2026-09-01T12:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      completeListing: true,
+      error: null,
+      jobs: expect.arrayContaining([
+        expect.objectContaining({ title: "Engineering Co-op", employmentType: "Co-op" }),
+      ]),
+    }));
+    expect(result?.jobs).toHaveLength(21);
+    expect(requestedPages.filter((page) => page === 1)).toHaveLength(2);
+    expect(requestedPages).toContain(21);
+  });
+
   it("does not promote a partial native checkpoint whose adapter reported an error", async () => {
     const job = (index: number) => ({
       reference: `P25-${index}-1`, title: `Handler ${index}`, brandName: "FedEx",
