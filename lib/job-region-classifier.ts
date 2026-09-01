@@ -33,6 +33,18 @@ const usStateCodes = new Set(
   "AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC".split(" "),
 );
 
+// `DE` is both Delaware's postal code and Germany's ISO country code. Several
+// global feeds emit German cities as `Marktoberdorf, DE`, which previously
+// entered the U.S. scan as Delaware. A bare `, DE` is U.S. evidence only for
+// a known Delaware locality (or when a U.S. ZIP/country supplies independent
+// evidence); otherwise treat it as the country code.
+const delawareLocalities = new Set([
+  "bear", "bethany beach", "camden", "cheswold", "claymont", "dover",
+  "georgetown", "harrington", "hockessin", "laurel", "lewes", "middletown",
+  "milford", "millsboro", "milton", "new castle", "newark", "ocean view",
+  "rehoboth beach", "seaford", "selbyville", "smyrna", "wilmington",
+]);
+
 const canadianProvinceCodes = new Set(
   "AB BC MB NB NL NS NT NU ON PE QC SK YT".split(" "),
 );
@@ -86,6 +98,10 @@ const rawLocation = (value: unknown): RegionEvidence => {
   if (nonUsCountryNames.some((country) => containsPhrase(location, country))) return "non_us";
   if (usStateNames.some((state) => containsPhrase(location, state))) return "us";
   const contextualCode = original.match(/,\s*([A-Z]{2})(?:\s*[,-]|\s+[A-Z]\d[A-Z]\s*\d[A-Z]\d|\s+\d{5}|$)/);
+  if (contextualCode?.[1] === "DE" && !/,\s*DE\s+\d{5}\b/.test(original)) {
+    const locality = normalize(original.slice(0, contextualCode.index));
+    return delawareLocalities.has(locality) ? "us" : "non_us";
+  }
   if (contextualCode && usStateCodes.has(contextualCode[1])) return "us";
   if (contextualCode && canadianProvinceCodes.has(contextualCode[1])) return "non_us";
   return null;

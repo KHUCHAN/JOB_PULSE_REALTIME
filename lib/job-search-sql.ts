@@ -236,6 +236,13 @@ JOIN job_matches resume_match
     )`, areas);
   }
   addAnyEquals("j.location_region", filters.regions);
+  if (asNormalizedValues(filters.regions).includes("us")) {
+    // Historical AGCO rows used Germany's `DE` country suffix as if it were
+    // Delaware. The catalog migration backfills them; this query guard keeps
+    // a stale replica or partially migrated edge from leaking them into the
+    // U.S. review scan in the meantime.
+    add("NOT (j.source_id = 'legacy-row-779' AND upper(trim(coalesce(j.location, ''))) LIKE '%, DE')");
+  }
 
   if (filters.snapshotAt) add("j.first_seen_at <= ?", [filters.snapshotAt]);
 

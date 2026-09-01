@@ -110,6 +110,7 @@ describe("parameterized job search SQL", () => {
     expect(plan.pageSql).toContain("FROM job_topics selected_area INDEXED BY job_topics_topic_job_idx");
     expect(plan.pageSql).toContain("selected_area.topic_key IN (?, ?, ?)");
     expect(plan.pageSql).toContain("j.location_region = ?");
+    expect(plan.pageSql).toContain("j.source_id = 'legacy-row-779'");
     expect(plan.pageSql).not.toContain("lower(j.location_region)");
     expect(plan.bindings).toEqual([
       "area:ai-ml", "area:data-analytics", "area:software-engineering", "us",

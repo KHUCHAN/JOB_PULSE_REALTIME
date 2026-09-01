@@ -620,9 +620,10 @@ describe("large catalog content", () => {
       "legacy-row-102",
       "p5-0687-northrop-grumman",
       "p5-0773-rtx",
+      "audit-row-3447",
     ]));
-    expect(crawlerModule.LARGE_CATALOG_US_SCOPE_POLICY_VERSION).toBe("large-us-v6");
-    expect(crawlerModule.LARGE_CATALOG_US_SCOPE_POLICY_REQUEUE_SOURCE_IDS).toEqual(["legacy-row-102"]);
+    expect(crawlerModule.LARGE_CATALOG_US_SCOPE_POLICY_VERSION).toBe("large-us-v7");
+    expect(crawlerModule.LARGE_CATALOG_US_SCOPE_POLICY_REQUEUE_SOURCE_IDS).toEqual(["audit-row-3447"]);
   });
 });
 
@@ -842,17 +843,17 @@ describe("crawlSource", () => {
       })}</script><a href="${row.applyUrl}">Apply Now</a>`);
     }, new Date("2026-08-15T22:00:00.000Z"));
 
-    expect(requests.filter((url) => url.startsWith(apiUrl))).toHaveLength(4);
-    expect(requests).toHaveLength(36);
+    expect(requests.filter((url) => url.startsWith(apiUrl))).toHaveLength(2);
+    expect(requests).toHaveLength(3);
     expect(result).toEqual(expect.objectContaining({
       status: "succeeded",
       responseStatus: 200,
       completeListing: false,
-      pagination: { nextPage: 1, cycleComplete: true, totalPages: 1 },
+      pagination: { nextPage: 2, cycleComplete: false, totalPages: 2 },
       resolvedListingUrl: listingUrl,
       error: null,
     }));
-    expect(result.jobs).toHaveLength(rows.length);
+    expect(result.jobs).toHaveLength(500);
     expect(result.jobs[0]).toEqual(expect.objectContaining({
       externalId: "130000",
       requisitionId: "130000",
@@ -869,13 +870,13 @@ describe("crawlSource", () => {
       officialUrl: rows[0].officialUrl,
     }));
     expect(result.jobs.at(-1)).toEqual(expect.objectContaining({
-      externalId: "130500",
-      title: "Clinical Role 500",
+      externalId: "130499",
+      title: "Clinical Role 499",
       location: "Austin, TX",
       locationCity: "Austin",
       locationState: "TX",
       locationCountry: "United States",
-      officialUrl: rows.at(-1)!.officialUrl,
+      officialUrl: rows[499].officialUrl,
     }));
   });
 
@@ -885,15 +886,17 @@ describe("crawlSource", () => {
       <h5 class="job-title"><a href="https://www.careershealthcare.com/job/hospital/tx/austin/role-${internalId}">Clinical Role ${internalId}</a></h5>
       <a href="https://www.careershealthcare.com/job/hospital/tx/austin/role-${internalId}">Learn More</a>
       <a href="https://fa-evxo-saasfaprod1.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/job/${requisitionId}">Apply</a></div>`;
-    const firstPage = Array.from({ length: 500 }, (_, index) => card(110_000 + index, 130_000 + index));
+    const firstPage = Array.from({ length: 500 }, (_, index) =>
+      card(110_000 + index, index === 499 ? 130_000 : 130_000 + index));
     const result = await crawlSource({
       id: "legacy-row-84", company: "Community Health Systems",
       postingUrl: "https://communityhealth.careers/", adapter: "custom",
     }, async (input) => {
       const url = new URL(String(input));
       const offset = Number(url.searchParams.get("offset"));
+      const limit = Number(url.searchParams.get("limit"));
       return Response.json({
-        payload: offset === 0 ? firstPage : [firstPage[0]],
+        payload: offset === 0 ? firstPage.slice(0, limit) : [firstPage[0]],
         message: "501 Positions found.",
         meta: { total: 501 },
       });
@@ -926,7 +929,7 @@ describe("crawlSource", () => {
         catalogRead = true;
         return Response.json({ payload: [card(110_000, 130_000), card(110_001, 130_001)], message: "2 Positions found.", meta: { total: 2 } });
       }
-      const value = catalogRead && offset === 1 ? card(110_002, 130_002) : card(110_000, 130_000);
+      const value = catalogRead && offset === 0 ? card(110_002, 130_002) : card(110_000, 130_000);
       return Response.json({ payload: [value], message: "2 Positions found.", meta: { total: 2 } });
     }, new Date("2026-08-15T22:00:00.000Z"));
 
@@ -4412,8 +4415,13 @@ HUMAN RESOURCES Posted Date
       return `<a href="/about/careers/applications/jobs/results/${id}-role-${id}" aria-label="Learn more about Role ${id}"></a>`;
     }).join("");
     const fetcher: typeof fetch = async (input) => {
-      const pageNumber = Number(new URL(String(input)).searchParams.get("page") ?? 1);
+      const url = new URL(String(input));
+      const pageNumber = Number(url.searchParams.get("page") ?? 1);
       requests.push(pageNumber);
+      if (url.searchParams.get("q") === "2027 internship") {
+        return new Response(`<span class="SWhIm">1</span> jobs matched
+          <a href="/about/careers/applications/jobs/results/94172495052972742-software-engineering-intern-ms-summer-2027?q=2027+internship" aria-label="Learn more about Software Engineering Intern, MS, Summer 2027"></a>`, { status: 200 });
+      }
       const count = pageNumber === 22 ? 1 : 20;
       return new Response(`<span class="SWhIm">421</span> jobs matched ${page(pageNumber * 100, count)}`, { status: 200 });
     };
@@ -4426,13 +4434,17 @@ HUMAN RESOURCES Posted Date
       crawlPageCursor: 21,
     }, fetcher, new Date());
 
-    expect(requests).toEqual([1, 21, 22]);
+    expect(requests).toEqual([1, 1, 1, 21, 22]);
     expect(result).toEqual(expect.objectContaining({
       status: "succeeded",
       completeListing: false,
       pagination: { nextPage: 1, cycleComplete: true, totalPages: 22 },
     }));
-    expect(result.jobs).toHaveLength(41);
+    expect(result.jobs).toHaveLength(42);
+    expect(result.jobs).toContainEqual(expect.objectContaining({
+      externalId: "94172495052972742",
+      officialUrl: "https://www.google.com/about/careers/applications/jobs/results/94172495052972742-software-engineering-intern-ms-summer-2027",
+    }));
   });
 
   it("retries the first failed Google page instead of completing an incomplete crawl cycle", async () => {
@@ -4456,7 +4468,7 @@ HUMAN RESOURCES Posted Date
       crawlPageCursor: 21,
     }, fetcher, new Date());
 
-    expect(requests).toEqual([1, 21, 22]);
+    expect(requests).toEqual([1, 1, 1, 21, 22]);
     expect(result).toEqual(expect.objectContaining({
       completeListing: false,
       pagination: { nextPage: 22, cycleComplete: false, totalPages: 22 },

@@ -38,7 +38,14 @@ export type CrawlBatchResult = {
 
 const emptyResult = (): CrawlBatchResult => ({ attempted: 0, succeeded: 0, failed: 0, blocked: 0, created: 0, updated: 0, closed: 0 });
 
-const nextCrawlAtForStatus = (now: Date, status: "succeeded" | "failed" | "blocked"): string => {
+const nextCrawlAtForStatus = (
+  now: Date,
+  status: "succeeded" | "failed" | "blocked",
+  hasPendingCheckpoint = false,
+): string => {
+  if (status === "succeeded" && hasPendingCheckpoint) {
+    return new Date(now.getTime() + 5 * 60 * 1_000).toISOString();
+  }
   const hours = status === "succeeded" ? 2 : status === "failed" ? 6 : 24;
   return new Date(now.getTime() + hours * 60 * 60 * 1000).toISOString();
 };
@@ -125,7 +132,10 @@ const runSource = async (
     error,
     finishedAt: new Date().toISOString(),
   });
-  await store.scheduleNext(source.id, nextCrawlAtForStatus(now, status));
+  await store.scheduleNext(
+    source.id,
+    nextCrawlAtForStatus(now, status, Boolean(crawl.pagination && !crawl.pagination.cycleComplete)),
+  );
 
   return result;
 };

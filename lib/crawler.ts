@@ -118,11 +118,12 @@ const isEightfoldListingUrl = (value: string): boolean => {
 // checkpoint segments, and changing scope between segments would make stale
 // closure nondeterministic. Unknown and mixed/global roles remain visible so
 // an incomplete location never causes a potentially relevant US role to drop.
-export const LARGE_CATALOG_US_SCOPE_POLICY_VERSION = "large-us-v6";
+export const LARGE_CATALOG_US_SCOPE_POLICY_VERSION = "large-us-v7";
 // Only sources newly added in this revision need an immediate checkpoint
 // reset and cleanup. The full membership set below still controls every crawl.
-export const LARGE_CATALOG_US_SCOPE_POLICY_REQUEUE_SOURCE_IDS = ["legacy-row-102"] as const;
+export const LARGE_CATALOG_US_SCOPE_POLICY_REQUEUE_SOURCE_IDS = ["audit-row-3447"] as const;
 export const US_SCOPED_LARGE_CATALOGS = new Set([
+  "audit-row-3447", // TD Bank global Workday catalog
   "audit-row-319", // Baker Hughes
   "audit-row-338", // Cummins
   "audit-row-359", // FedEx
@@ -6688,7 +6689,12 @@ const crawlDeltaAvature = async (
     status: "failed", responseStatus: null, completeListing: false, jobs: [],
     error: "Delta Avature reader listing was unavailable.",
   };
-  const result = await crawlAvatureReaderPages({ ...source, postingUrl: listingUrl }, markdown, fetcher);
+  const result = await crawlAvatureReaderPages(
+    { ...source, postingUrl: listingUrl },
+    markdown,
+    fetcher,
+    { nestedProxyFallback: true },
+  );
   return result ?? {
     status: "failed", responseStatus: 200, completeListing: false, jobs: [],
     error: "Delta Avature reader listing contained no usable jobs.",
@@ -18796,6 +18802,11 @@ const googleJobsFromHtml = (html: string, source: CrawlSource): CrawledJob[] => 
       "https://www.google.com/about/careers/applications/",
     );
     official.searchParams.delete("page");
+    // Result cards echo the active search query onto detail links. It is not
+    // part of the durable posting identity and would create tracking variants
+    // between the full catalog and the priority internship views.
+    official.searchParams.delete("q");
+    official.searchParams.delete("company");
     const officialUrl = official.href;
     const externalId = new URL(officialUrl).pathname.match(/\/jobs\/results\/(\d+)-/i)?.[1];
     const title = decodeHtmlAttribute(label).replace(/^Learn more about\s+/i, "").trim();
@@ -18873,21 +18884,24 @@ const googleJobsFromResponse = async (
 };
 
 const crawlGoogleCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
-  const endpointFor = (page: number) => {
+  const endpointFor = (page: number, queryOverride?: string) => {
     const endpoint = new URL("https://www.google.com/about/careers/applications/jobs/results/");
     const sourceEndpoint = new URL(source.postingUrl);
     const company = sourceEndpoint.searchParams.get("company");
-    const query = sourceEndpoint.searchParams.get("q");
+    const query = queryOverride ?? sourceEndpoint.searchParams.get("q");
     if (company) endpoint.searchParams.set("company", company);
     if (query) endpoint.searchParams.set("q", query);
     if (page > 1) endpoint.searchParams.set("page", String(page));
     return endpoint;
   };
-  const fetchPage = async (page: number): Promise<{ status: number; jobs: CrawledJob[]; total: number | null } | null> => {
+  const fetchPage = async (
+    page: number,
+    queryOverride?: string,
+  ): Promise<{ status: number; jobs: CrawledJob[]; total: number | null } | null> => {
     try {
       const response = await fetchWithTimeout(
         fetcher,
-        endpointFor(page),
+        endpointFor(page, queryOverride),
         { headers: { accept: "text/html" } },
         true,
         source.id === "p4-0285-google" ? { attempts: 1 } : undefined,
@@ -18911,13 +18925,27 @@ const crawlGoogleCareers = async (source: CrawlSource, fetcher: typeof fetch): P
   const boundedPages = Math.min(totalPages, 500);
   const jobsByUrl = new Map(first.jobs.map((job) => [job.officialUrl, job]));
   let successfulPages = 1;
-  const pageConcurrency = 1;
+  const pageConcurrency = 8;
+  const maxWindowPages = 32;
   const isCheckpointedCatalog = source.id === "p4-0285-google" && totalPages > 20;
+  // Google's full catalog is thousands of rows and newest internship roles
+  // can otherwise wait behind several checkpoint windows. These two official
+  // query views are a priority lane only; the unfiltered checkpoint still
+  // walks the complete catalog for data-quality and closure semantics.
+  if (isCheckpointedCatalog) {
+    const priorityPages = await Promise.all([
+      fetchPage(1, "2027 internship"),
+      fetchPage(1, "2027 co-op"),
+    ]);
+    for (const priority of priorityPages) {
+      for (const job of priority?.jobs ?? []) jobsByUrl.set(job.officialUrl, job);
+    }
+  }
   const startPage = isCheckpointedCatalog
     ? Math.min(Math.max(source.crawlPageCursor ?? 1, 1), boundedPages)
     : 1;
   const endPage = isCheckpointedCatalog
-    ? Math.min(startPage + (startPage === 1 ? 19 : 18), boundedPages)
+    ? Math.min(startPage + maxWindowPages - 1, boundedPages)
     : boundedPages;
   const firstRequestedPage = Math.max(startPage, 2);
   successfulPages = startPage === 1 ? 1 : 0;
@@ -18948,7 +18976,7 @@ const crawlGoogleCareers = async (source: CrawlSource, fetcher: typeof fetch): P
       completeListing: false,
       jobs,
       pagination: {
-        nextPage: firstFailedPage ?? (endPage === boundedPages ? 1 : endPage),
+        nextPage: firstFailedPage ?? (endPage === boundedPages ? 1 : endPage + 1),
         cycleComplete: firstFailedPage === null && endPage === boundedPages,
         totalPages,
       },
@@ -22557,7 +22585,7 @@ const COMMUNITY_HEALTH_LISTING_URL = "https://www.careershealthcare.com/job/";
 const COMMUNITY_HEALTH_API_URL = "https://api.careershealthcare.com/job/wp_job_grid";
 const COMMUNITY_HEALTH_PAGE_SIZE = 500;
 const COMMUNITY_HEALTH_MAX_TOTAL = 10_000;
-const COMMUNITY_HEALTH_DETAIL_LIMIT = 32;
+const COMMUNITY_HEALTH_DETAIL_LIMIT = 8;
 
 type CommunityHealthCatalogRecord = {
   internalId: string;
@@ -22736,6 +22764,7 @@ const crawlCommunityHealthSystems = async (
   fetcher: typeof fetch,
   now: Date,
 ): Promise<SourceCrawlResult> => {
+  void now;
   let responseStatus: number | null = null;
   const fetchPage = async (offset: number, limit: number): Promise<{
     total: number;
@@ -22783,22 +22812,19 @@ const crawlCommunityHealthSystems = async (
   try {
     const first = await fetchPage(0, COMMUNITY_HEALTH_PAGE_SIZE);
     const totalPages = Math.ceil(first.total / COMMUNITY_HEALTH_PAGE_SIZE);
-    const pages = new Map<number, CommunityHealthCatalogRecord[]>([[0, first.records]]);
-    const offsets = Array.from({ length: totalPages - 1 }, (_, index) => (index + 1) * COMMUNITY_HEALTH_PAGE_SIZE);
-    for (let start = 0; start < offsets.length; start += 5) {
-      const batch = offsets.slice(start, start + 5);
-      const responses = await Promise.all(batch.map((offset) => fetchPage(offset, COMMUNITY_HEALTH_PAGE_SIZE)));
-      responses.forEach((page, index) => {
-        if (page.total !== first.total) throw new Error("Community Health Systems catalog total changed during collection.");
-        pages.set(batch[index], page.records);
-      });
+    const requestedPage = Math.max(1, Math.trunc(source.crawlPageCursor ?? 1));
+    const pageNumber = requestedPage <= totalPages ? requestedPage : 1;
+    const selectedPage = pageNumber === 1
+      ? first
+      : await fetchPage((pageNumber - 1) * COMMUNITY_HEALTH_PAGE_SIZE, COMMUNITY_HEALTH_PAGE_SIZE);
+    if (selectedPage.total !== first.total) {
+      throw new Error("Community Health Systems catalog total changed during collection.");
     }
-    const catalog = [0, ...offsets].flatMap((offset) => pages.get(offset) ?? []);
+    const catalog = selectedPage.records;
     const internalIds = catalog.map((record) => record.internalId);
     const requisitionIds = catalog.map((record) => record.job.externalId);
     const officialUrls = catalog.map((record) => record.job.officialUrl);
-    if (catalog.length !== first.total
-      || new Set(internalIds).size !== catalog.length
+    if (new Set(internalIds).size !== catalog.length
       || new Set(requisitionIds).size !== catalog.length
       || new Set(officialUrls).size !== catalog.length
       || !catalog.every((record, index) => index === 0
@@ -22806,39 +22832,22 @@ const crawlCommunityHealthSystems = async (
       throw new Error("Community Health Systems job API returned duplicate, missing, or unordered jobs.");
     }
 
-    // Verify both edges after collection. New records use increasing IDs, so
-    // an insertion/deletion while offset pages are in flight changes the total
-    // or one of these two identities and cannot authorize stale closure.
-    const [firstStability, lastStability] = await Promise.all([
-      fetchPage(0, 1),
-      fetchPage(first.total - 1, 1),
-    ]);
-    const stable = firstStability.total === first.total
-      && lastStability.total === first.total
-      && firstStability.records[0]?.internalId === catalog[0].internalId
-      && firstStability.records[0]?.job.externalId === catalog[0].job.externalId
-      && jobIdentityText(firstStability.records[0]?.job.title) === jobIdentityText(catalog[0].job.title)
-      && lastStability.records[0]?.internalId === catalog.at(-1)?.internalId
-      && lastStability.records[0]?.job.externalId === catalog.at(-1)?.job.externalId
-      && jobIdentityText(lastStability.records[0]?.job.title) === jobIdentityText(catalog.at(-1)?.job.title);
+    // Verify this window's leading edge. Each pass is intentionally bounded
+    // to 500 rows so a 2,500-row catalog never produces one giant D1 request.
+    const stability = await fetchPage((pageNumber - 1) * COMMUNITY_HEALTH_PAGE_SIZE, 1);
+    const stable = stability.total === first.total
+      && stability.records[0]?.internalId === catalog[0]?.internalId
+      && stability.records[0]?.job.externalId === catalog[0]?.job.externalId
+      && jobIdentityText(stability.records[0]?.job.title) === jobIdentityText(catalog[0]?.job.title);
     if (!stable) throw new Error("Community Health Systems catalog changed during collection.");
 
-    // Reserve eight requests for the shared internship enrichment fallback.
-    const catalogRequests = totalPages + 2;
-    const detailBudget = Math.max(0, Math.min(COMMUNITY_HEALTH_DETAIL_LIMIT, 42 - catalogRequests));
-    const priority = catalog
+    // Full descriptions are needed for the candidate-facing internship pass,
+    // not for thousands of unrelated clinical roles. Bound this enrichment
+    // to the eight newest program rows in the current page.
+    const selected = catalog
       .filter((record) => classifyJobPrograms(record.job.title).keys.length > 0)
-      .sort((left, right) => Number(right.internalId) - Number(left.internalId));
-    const priorityIds = new Set(priority.map((record) => record.internalId));
-    const rotating = catalog.filter((record) => !priorityIds.has(record.internalId));
-    const prioritySelection = priority.slice(0, detailBudget);
-    const rotatingBudget = Math.max(0, detailBudget - prioritySelection.length);
-    const rotatingStart = rotating.length === 0 || rotatingBudget === 0
-      ? 0
-      : (Math.floor(now.getTime() / (2 * 60 * 60 * 1_000)) * rotatingBudget) % rotating.length;
-    const rotatingSelection = Array.from({ length: Math.min(rotatingBudget, rotating.length) }, (_, index) =>
-      rotating[(rotatingStart + index) % rotating.length]);
-    const selected = [...prioritySelection, ...rotatingSelection];
+      .sort((left, right) => Number(right.internalId) - Number(left.internalId))
+      .slice(0, COMMUNITY_HEALTH_DETAIL_LIMIT);
     const details = new Map<string, CrawledJob>();
     const enrich = async (record: CommunityHealthCatalogRecord): Promise<void> => {
       try {
@@ -22863,10 +22872,14 @@ const crawlCommunityHealthSystems = async (
       status: "succeeded",
       responseStatus: responseStatus ?? 200,
       // Require the existing two stable cycles before closing an unseen job,
-      // even though this pass validated the complete first-party catalog.
+      // even though independent recovery joins every bounded page.
       completeListing: false,
       jobs: catalog.map((record) => details.get(record.internalId) ?? record.job),
-      pagination: { nextPage: 1, cycleComplete: true, totalPages: 1 },
+      pagination: {
+        nextPage: pageNumber === totalPages ? 1 : pageNumber + 1,
+        cycleComplete: pageNumber === totalPages,
+        totalPages,
+      },
       resolvedListingUrl: COMMUNITY_HEALTH_LISTING_URL,
       error: null,
     };

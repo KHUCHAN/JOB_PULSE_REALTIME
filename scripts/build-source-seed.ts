@@ -76,7 +76,37 @@ const catalogVersion = `sha256:${createHash("sha256").update(sql).digest("hex")}
 const seedDir = resolve(projectRoot, "db/seed");
 await mkdir(seedDir, { recursive: true });
 const seedVersion = catalogSeedVersion(rows, talentRows);
-const seedJson = `${JSON.stringify({ generatedAt: rows[0]?.checkedAt ?? null, version: seedVersion, sources: rows, talentTargets: talentRows }, null, 2)}\n`;
+type PreviousSeed = {
+  version?: string;
+  sources?: typeof rows;
+  talentTargets?: typeof talentRows;
+  incrementalSourceIdsByPreviousVersion?: Record<string, string[]>;
+};
+const previousSeed = await readFile(resolve(seedDir, "sources.json"), "utf8")
+  .then((content) => JSON.parse(content) as PreviousSeed)
+  .catch(() => null);
+const previousSources = new Map((previousSeed?.sources ?? []).map((row) => [row.id, row]));
+const previousTalent = new Map((previousSeed?.talentTargets ?? []).map((row) => [row.sourceId, row]));
+const currentTalent = new Map(talentRows.map((row) => [row.sourceId, row]));
+const changedSourceIds = rows.flatMap((row): string[] => {
+  const sourceChanged = JSON.stringify(previousSources.get(row.id)) !== JSON.stringify(row);
+  const talentChanged = JSON.stringify(previousTalent.get(row.id)) !== JSON.stringify(currentTalent.get(row.id));
+  return sourceChanged || talentChanged ? [row.id] : [];
+});
+const incrementalSourceIdsByPreviousVersion = {
+  ...(previousSeed?.incrementalSourceIdsByPreviousVersion ?? {}),
+  ...(previousSeed?.version && previousSeed.version !== seedVersion && changedSourceIds.length > 0
+    ? { [previousSeed.version]: changedSourceIds }
+    : {}),
+};
+const generatedAt = rows.map((row) => row.checkedAt).filter(Boolean).sort().at(-1) ?? null;
+const seedJson = `${JSON.stringify({
+  generatedAt,
+  version: seedVersion,
+  ...(Object.keys(incrementalSourceIdsByPreviousVersion).length > 0 ? { incrementalSourceIdsByPreviousVersion } : {}),
+  sources: rows,
+  talentTargets: talentRows,
+}, null, 2)}\n`;
 const migrationDir = resolve(projectRoot, "drizzle");
 const metaDir = resolve(migrationDir, "meta");
 const journalPath = resolve(metaDir, "_journal.json");

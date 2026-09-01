@@ -34,6 +34,12 @@ describe("classifyJobRegion", () => {
     expect(classifyJobRegion({ location })).toBe("non_us");
   });
 
+  it("does not confuse Germany's DE country code with Delaware", () => {
+    expect(classifyJobRegion({ location: "Marktoberdorf, DE" })).toBe("non_us");
+    expect(classifyJobRegion({ location: "Wilmington, DE" })).toBe("us");
+    expect(classifyJobRegion({ location: "Wilmington, DE 19801" })).toBe("us");
+  });
+
   it.each(["Remote", "Flexible - Any Site", "21 Locations", "Location not specified", "CA"])(
     "keeps an ambiguous location unknown: %s",
     (location) => {

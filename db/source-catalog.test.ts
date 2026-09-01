@@ -37,6 +37,9 @@ const repairedOfficialBoards: Record<string, [string, string]> = {
 
 const latestRepairedOfficialBoards: Record<string, [string, string]> = {
   "p2-0183-webster-bank": ["https://websteronline.wd12.myworkdayjobs.com/WebsterExternalCareerSite", "workday"],
+  "p4-0369-tigerconnect": ["https://tigerconnect.wd1.myworkdayjobs.com/TC", "workday"],
+  "audit-row-3447": ["https://td.wd3.myworkdayjobs.com/TD_Bank_Careers", "workday"],
+  "audit-row-3448": ["https://careers-springswindowfashions.icims.com/jobs/search?ss=1&in_iframe=1", "icims"],
 };
 
 const expectedOfficialBoards = {
@@ -47,6 +50,25 @@ const expectedOfficialBoards = {
 };
 
 describe("verified official source catalog", () => {
+  it("preserves incremental catalog synchronization for this repair", () => {
+    const seed = JSON.parse(readFileSync(join(process.cwd(), "db/seed/sources.json"), "utf8")) as {
+      generatedAt: string;
+      incrementalSourceIdsByPreviousVersion: Record<string, string[]>;
+    };
+    expect(seed.generatedAt).toBe("2026-09-01");
+    expect(seed.incrementalSourceIdsByPreviousVersion[
+      "v2:sha256:835306aa88bf670a9266a8abb509471bf5ac9d7170dcabdee2ff62f70cf66e25"
+    ]).toEqual([
+      "audit-row-342",
+      "legacy-row-84",
+      "p5-0842-carefirst-bluecross-blueshield",
+      "p4-0285-google",
+      "p4-0369-tigerconnect",
+      "audit-row-3447",
+      "audit-row-3448",
+    ]);
+  });
+
   it("uses the first-party ATS boards instead of stale corporate landing pages", () => {
     const seed = JSON.parse(readFileSync(join(process.cwd(), "db/seed/sources.json"), "utf8")) as { sources: SeedSource[] };
     const byId = new Map(seed.sources.map((source) => [source.id, source]));
@@ -152,7 +174,7 @@ describe("verified official source catalog", () => {
     expect(repairedMigration).toContain("SET `next_crawl_at` = CURRENT_TIMESTAMP");
 
     const latestMigrationName = readdirSync(join(process.cwd(), "drizzle"))
-      .find((name) => /^0136_refresh_sources_\d+\.sql$/.test(name));
+      .find((name) => /^0138_refresh_sources_\d+\.sql$/.test(name));
     expect(latestMigrationName).toBeTruthy();
     const latestMigration = readFileSync(join(process.cwd(), "drizzle", latestMigrationName!), "utf8");
     for (const id of Object.keys(latestRepairedOfficialBoards)) expect(latestMigration).toContain(`'${id}'`);

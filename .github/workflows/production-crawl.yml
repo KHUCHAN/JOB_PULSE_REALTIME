@@ -59,7 +59,7 @@ jobs:
           # A repair deployment verifies the remediated official feeds
           # before the normal oldest-first drain. Two matching observations
           # let the catalog-volume guard safely confirm Nubank's current zero.
-          JOB_PULSE_TARGETED_RECRAWL_SOURCE_IDS: ${{ github.event_name == 'push' && 'p2-0183-webster-bank,p2-0196-graphistry' || '' }}
+          JOB_PULSE_TARGETED_RECRAWL_SOURCE_IDS: ${{ github.event_name == 'push' && 'p4-0369-tigerconnect,audit-row-3447,audit-row-3448' || '' }}
           JOB_PULSE_TARGETED_RECRAWL_ATTEMPTS: "2"
         run: node scripts/run-production-crawl.mjs
 
@@ -68,7 +68,7 @@ jobs:
     # independent runner but reject Sites Worker egress. The native source
     # lease excludes these IDs, so this job can run in parallel with the main
     # drain without duplicate ingestion or a ten-minute serial dependency.
-    if: ${{ github.event_name != 'push' }}
+    if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -94,7 +94,7 @@ jobs:
           # dedicated priority slot in browser-recovery.
           # Jacobs Jobsyn rejects Sites Worker egress intermittently. Its
           # bounded catalog pass rotates by production slot on this runner.
-          REQUEST_FALLBACK_SOURCE_IDS: p4-0241-cgi,p5-1018-penn-medicine,legacy-row-826,p2-0075-american-family-insurance,legacy-row-102
+          REQUEST_FALLBACK_SOURCE_IDS: ${{ github.event_name == 'push' && 'p4-0285-google,legacy-row-84,audit-row-342,p5-0842-carefirst-bluecross-blueshield' || 'p4-0241-cgi,p5-1018-penn-medicine,legacy-row-826,p2-0075-american-family-insurance,legacy-row-102,p4-0285-google,legacy-row-84,audit-row-342,p5-0842-carefirst-bluecross-blueshield' }}
         run: node scripts/request-fallback-crawl.ts
 
   browser-recovery:

@@ -58,6 +58,13 @@ export const nativeCrawlExcludedSourceIds = [
   "legacy-row-826",
   "p2-0075-american-family-insurance",
   "legacy-row-102",
+  // Large checkpointed catalogs and reader-backed feeds are drained by the
+  // independent request runner. Keeping them out of Worker leases prevents
+  // repeated 2,500-row persistence timeouts and egress-specific failures.
+  "p4-0285-google",
+  "legacy-row-84",
+  "audit-row-342",
+  "p5-0842-carefirst-bluecross-blueshield",
   // Tesla's Akamai policy blocks both Worker and generic server egress. Keep
   // it isolated in the browser recovery lane so it cannot delay other firms.
   "p5-1077-tesla",

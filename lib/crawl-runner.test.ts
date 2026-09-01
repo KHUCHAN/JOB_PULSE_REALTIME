@@ -205,4 +205,21 @@ describe("runDueCrawls", () => {
     }]);
   });
 
+  it("requeues an unfinished checkpoint after five minutes instead of two hours", async () => {
+    const source: PersistedSource = {
+      id: "p4-0285-google",
+      company: "Google / Alphabet",
+      postingUrl: "https://www.google.com/about/careers/applications/jobs/results/",
+      adapter: "custom",
+      nextCrawlAt: null,
+    };
+    const store = new MemoryStore([source]);
+    const page = Array.from({ length: 20 }, (_, index) =>
+      `<a href="/about/careers/applications/jobs/results/${100 + index}-role" aria-label="Learn more about Role ${index}"></a>`).join("");
+    await runDueCrawls(store, async () => new Response(`<span class="SWhIm">1000</span> jobs matched ${page}`),
+      new Date("2026-08-08T12:00:00.000Z"), { concurrency: 1 });
+
+    expect(source.nextCrawlAt).toBe("2026-08-08T12:05:00.000Z");
+  });
+
 });

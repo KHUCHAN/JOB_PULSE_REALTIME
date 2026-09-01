@@ -260,6 +260,8 @@ describe("large catalog US scope migration", () => {
     const towerCatalogRefreshBase = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0134_snapshot.json"), "utf8"));
     const currentCatalogRefresh = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0135_snapshot.json"), "utf8"));
     const websterCatalogRefresh = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0136_snapshot.json"), "utf8"));
+    const repairedCatalogRefresh = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0137_snapshot.json"), "utf8"));
+    const finalCatalogRefresh138 = JSON.parse(readFileSync(resolve(drizzlePath, "meta/0138_snapshot.json"), "utf8"));
     const currentJournal = JSON.parse(readFileSync(resolve(drizzlePath, "meta/_journal.json"), "utf8"));
 
     expect(current.prevId).toBe(previous.id);
@@ -295,6 +297,8 @@ describe("large catalog US scope migration", () => {
     expect(towerCatalogRefreshBase.prevId).toBe(previousCatalogRefresh.id);
     expect(currentCatalogRefresh.prevId).toBe(towerCatalogRefreshBase.id);
     expect(websterCatalogRefresh.prevId).toBe(currentCatalogRefresh.id);
+    expect(repairedCatalogRefresh.prevId).toBe(websterCatalogRefresh.id);
+    expect(finalCatalogRefresh138.prevId).toBe(repairedCatalogRefresh.id);
     expect(durableAlertIdentity.tables).toHaveProperty("notification_identity_history");
     expect(durableAlertIdentity.tables.jobs.columns).toHaveProperty("alert_discovered_after_baseline");
     expect(currentJournal.entries.find((entry: { tag: string }) => entry.tag === "0100_large_catalog_us_scope")).toMatchObject({
@@ -306,8 +310,8 @@ describe("large catalog US scope migration", () => {
       tag: "0128_add_resume_alert_recipients",
     });
     expect(currentJournal.entries.at(-1)).toMatchObject({
-      idx: 136,
-      tag: "0136_refresh_sources_20260901081516",
+      idx: 138,
+      tag: "0138_refresh_sources_20260901091756",
     });
   });
 
@@ -342,7 +346,7 @@ describe("large catalog US scope migration", () => {
       sources: unknown[];
       talentTargets: unknown[];
     };
-    const sql = readFileSync(resolve(drizzlePath, "0136_refresh_sources_20260901081516.sql"), "utf8");
+    const sql = readFileSync(resolve(drizzlePath, "0138_refresh_sources_20260901091756.sql"), "utf8");
 
     expect(seed.version).toBe(catalogSeedVersion(seed.sources, seed.talentTargets));
     expect(sql).toContain(`VALUES ('sources', '${seed.version}', CURRENT_TIMESTAMP)`);

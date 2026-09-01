@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-09-01",
-  "version": "v2:sha256:835306aa88bf670a9266a8abb509471bf5ac9d7170dcabdee2ff62f70cf66e25",
+  "version": "v2:sha256:74fb574f9ac21f60c31256870aaf1aea0972af4914c666c986700e3c20d85bc2",
   "incrementalSourceIdsByPreviousVersion": {
     "v2:sha256:9d5dbbfa7d4d1af2fd573464ed8fe41c0d1a274458191b5eb8515391b29adb87": [
       "p5-0755-tower-semiconductor"
@@ -47,6 +47,15 @@
     ],
     "v2:sha256:77c5ddcda4852fe896955c5e95a8d3cda23f644882446156053b2b41831f87b3": [
       "p2-0183-webster-bank"
+    ],
+    "v2:sha256:835306aa88bf670a9266a8abb509471bf5ac9d7170dcabdee2ff62f70cf66e25": [
+      "audit-row-342",
+      "legacy-row-84",
+      "p5-0842-carefirst-bluecross-blueshield",
+      "p4-0285-google",
+      "p4-0369-tigerconnect",
+      "audit-row-3447",
+      "audit-row-3448"
     ]
   },
   "sources": [
@@ -1937,7 +1946,7 @@
       "confidence": "medium",
       "resumeUpload": "job_only",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-08",
+      "checkedAt": "2026-09-01",
       "enabled": true
     },
     {
@@ -7982,7 +7991,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-15",
+      "checkedAt": "2026-09-01",
       "enabled": true
     },
     {
@@ -10022,7 +10031,7 @@
       "confidence": "medium",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-08",
+      "checkedAt": "2026-09-01",
       "enabled": true
     },
     {
@@ -19682,7 +19691,7 @@
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-11",
+      "checkedAt": "2026-09-01",
       "enabled": true
     },
     {
@@ -19959,15 +19968,15 @@
       "id": "p4-0369-tigerconnect",
       "masterRow": 3249,
       "company": "TigerConnect",
-      "postingUrl": "https://tigerconnect.com/about/careers/",
+      "postingUrl": "https://tigerconnect.wd1.myworkdayjobs.com/TC",
       "talentUrl": "https://tigerconnect.com/about/careers/",
-      "channel": "공식 Career Portal",
-      "adapter": "custom",
-      "verification": "career_page_only",
+      "channel": "Official Workday job board",
+      "adapter": "workday",
+      "verification": "valid_posting_feed",
       "confidence": "high",
-      "resumeUpload": "unknown",
+      "resumeUpload": "job_only",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-09-01",
       "enabled": true
     },
     {
@@ -21874,6 +21883,36 @@
       "jobAlerts": "unknown",
       "checkedAt": "2026-08-05",
       "enabled": true
+    },
+    {
+      "id": "audit-row-3447",
+      "masterRow": 3447,
+      "company": "TD Bank",
+      "postingUrl": "https://td.wd3.myworkdayjobs.com/TD_Bank_Careers",
+      "talentUrl": null,
+      "channel": "Official Workday job board",
+      "adapter": "workday",
+      "verification": "valid_posting_feed",
+      "confidence": "high",
+      "resumeUpload": "job_only",
+      "jobAlerts": "unknown",
+      "checkedAt": "2026-09-01",
+      "enabled": true
+    },
+    {
+      "id": "audit-row-3448",
+      "masterRow": 3448,
+      "company": "Springs Window Fashions",
+      "postingUrl": "https://careers-springswindowfashions.icims.com/jobs/search?ss=1&in_iframe=1",
+      "talentUrl": null,
+      "channel": "Official iCIMS job board",
+      "adapter": "icims",
+      "verification": "valid_posting_feed",
+      "confidence": "high",
+      "resumeUpload": "job_only",
+      "jobAlerts": "unknown",
+      "checkedAt": "2026-09-01",
+      "enabled": true
     }
   ],
   "talentTargets": [
@@ -23403,7 +23442,7 @@
       "officialUrl": "https://communityhealth.careers/",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-15"
+      "checkedAt": "2026-09-01"
     },
     {
       "id": "talent-legacy-row-85",
@@ -24491,7 +24530,7 @@
       "officialUrl": "https://www.carefirst.com/careers",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-08"
+      "checkedAt": "2026-09-01"
     },
     {
       "id": "talent-p5-0843-caris-life-sciences",
@@ -29571,7 +29610,7 @@
       "officialUrl": "https://www.google.com/about/careers/applications/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-11"
+      "checkedAt": "2026-09-01"
     },
     {
       "id": "talent-p4-0287-gurucul",
@@ -29721,9 +29760,9 @@
       "id": "talent-p4-0369-tigerconnect",
       "sourceId": "p4-0369-tigerconnect",
       "officialUrl": "https://tigerconnect.com/about/careers/",
-      "resumeUpload": "unknown",
+      "resumeUpload": "job_only",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-09-01"
     },
     {
       "id": "talent-p4-0372-travelers",
