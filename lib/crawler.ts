@@ -12586,6 +12586,31 @@ const crawlJobSitemap = async (
   }
 };
 
+const crawlCaterpillarSitemap = async (
+  source: CrawlSource,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult | null> => {
+  const sitemap = await crawlJobSitemap(
+    source,
+    "https://careers.caterpillar.com/sitemap.xml",
+    "careers.caterpillar.com",
+    fetcher,
+  );
+  if (!sitemap) return null;
+  // The multilingual sitemap repeats each requisition on several localized
+  // `/jobs/` routes. Keep the canonical English record so one requisition is
+  // persisted once and cross-locale duplicates cannot inflate the catalog.
+  const jobs = sitemap.jobs.filter((job) => {
+    try {
+      return new URL(job.officialUrl).pathname.startsWith("/en/jobs/");
+    } catch {
+      return false;
+    }
+  });
+  if (jobs.length === 0) return null;
+  return { ...sitemap, completeListing: true, jobs };
+};
+
 const JOBSYN_US_REGION_CODES = new Set(
   "AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC PR VI GU AS MP".split(" "),
 );
@@ -24534,6 +24559,15 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   if (sourcePage.hostname === "careers.newscorp.com") return crawlNewsCorpSitemap(source, fetcher);
   if (sourcePage.hostname === "careers.nutanix.com") {
     const sitemap = await crawlJobSitemap(source, "https://careers.nutanix.com/sitemap.xml", "careers.nutanix.com", fetcher);
+    if (sitemap) return sitemap;
+  }
+  if (source.id === "p5-0846-caterpillar" || sourcePage.hostname === "careers.caterpillar.com") {
+    // Caterpillar's interactive search page is protected by Cloudflare and
+    // can alternate between HTTP 429 and a browser challenge. Its first-party
+    // sitemap remains available, contains the complete canonical job catalog,
+    // and includes per-posting lastmod timestamps. Prefer that single bounded
+    // request so the source cannot consume a browser lane or delay the batch.
+    const sitemap = await crawlCaterpillarSitemap(source, fetcher);
     if (sitemap) return sitemap;
   }
   if (sourcePage.hostname === "careers.northwesternmutual.com"

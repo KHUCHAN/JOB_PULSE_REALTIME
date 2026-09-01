@@ -7237,6 +7237,44 @@ We are an equal opportunity employer.`;
     ]);
   });
 
+  it("uses Caterpillar's complete official sitemap instead of its rate-limited search page", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      requests.push(String(input));
+      return new Response(`<urlset>
+        <url><loc>https://careers.caterpillar.com/en/jobs/r0000381898/2027-it-intern/</loc><lastmod>2026-07-23T07:00:00Z</lastmod></url>
+        <url><loc>https://careers.caterpillar.com/de/jobs/r0000381898/2027-it-intern/</loc><lastmod>2026-07-23T07:00:00Z</lastmod></url>
+        <url><loc>https://careers.caterpillar.com/en/jobs/r0000391405/2027-summer-corporate-intern-business-operations/</loc><lastmod>2026-08-31T07:00:00Z</lastmod></url>
+      </urlset>`, { status: 200, headers: { "content-type": "application/xml" } });
+    };
+
+    const result = await crawlSource({
+      id: "p5-0846-caterpillar",
+      company: "Caterpillar",
+      postingUrl: "https://careers.caterpillar.com/en/jobs/",
+      adapter: "custom",
+    }, fetcher, new Date("2026-09-01T09:00:00Z"));
+
+    expect(requests).toEqual(["https://careers.caterpillar.com/sitemap.xml"]);
+    expect(result.status).toBe("succeeded");
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        externalId: "r0000381898",
+        requisitionId: "r0000381898",
+        title: "2027 IT Intern",
+        employmentType: "Internship",
+        publishedAt: "2026-07-23T07:00:00.000Z",
+      }),
+      expect.objectContaining({
+        externalId: "r0000391405",
+        title: "2027 Summer Corporate Intern Business Operations",
+        employmentType: "Internship",
+        publishedAt: "2026-08-31T07:00:00.000Z",
+      }),
+    ]);
+  });
+
   it("redirects a Phenom talent-community source to its public search results", async () => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input) => {
