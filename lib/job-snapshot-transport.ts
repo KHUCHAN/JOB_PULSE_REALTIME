@@ -14,6 +14,8 @@ type SnapshotTransportOptions = SnapshotChunkOptions & {
   jobs: CrawledJob[];
   listingUrl: string;
   sourceId: string;
+  attempts?: number;
+  retryDelayMs?: number;
   timeoutMs?: number;
 };
 
@@ -23,6 +25,14 @@ export type SnapshotTransportSummary = {
   updated: number;
   closed: number;
   chunks: number;
+};
+
+type SnapshotIngestPayload = {
+  jobs?: number;
+  created?: number;
+  updated?: number;
+  closed?: number;
+  error?: string;
 };
 
 const boundedText = (value: unknown, max: number): unknown => (
@@ -84,6 +94,11 @@ export const ingestJobSnapshotInChunks = async (
   options: SnapshotTransportOptions,
 ): Promise<SnapshotTransportSummary> => {
   const fetcher = options.fetcher ?? fetch;
+  const attempts = options.attempts ?? 3;
+  const retryDelayMs = options.retryDelayMs ?? 250;
+  if (!Number.isInteger(attempts) || attempts < 1 || attempts > 5) {
+    throw new Error("Snapshot transport attempts must be between 1 and 5.");
+  }
   const chunks = browserIngestChunks(options.jobs, options);
   if (chunks.length === 0) throw new Error("Browser snapshot contained no jobs to transport.");
   const snapshotStartedAt = new Date().toISOString();
@@ -96,38 +111,55 @@ export const ingestJobSnapshotInChunks = async (
   };
 
   for (let index = 0; index < chunks.length; index += 1) {
-    const bearer = await options.authorization();
-    const response = await fetcher(options.endpoint, {
-      method: "POST",
-      headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
-      body: JSON.stringify({
-        action: "ingestBrowserJobs",
-        sourceId: options.sourceId,
-        listingUrl: options.listingUrl,
-        jobs: chunks[index],
-        allowedOrigins: options.allowedOrigins,
-        // Facets derived from one transport chunk are not a complete source
-        // snapshot. Preserve the last authoritative facet generation.
-        replaceFacets: false,
-        snapshotStartedAt,
-        // Keep this backwards compatible during a rolling deployment: an old
-        // Worker safely ignores finalizeSnapshot while completeListing stays
-        // false, instead of closing rows that arrived in earlier chunks.
-        completeListing: false,
-        finalizeSnapshot: options.completeListing && index === chunks.length - 1,
-      }),
-      signal: AbortSignal.timeout(options.timeoutMs ?? 120_000),
+    const body = JSON.stringify({
+      action: "ingestBrowserJobs",
+      sourceId: options.sourceId,
+      listingUrl: options.listingUrl,
+      jobs: chunks[index],
+      allowedOrigins: options.allowedOrigins,
+      // Facets derived from one transport chunk are not a complete source
+      // snapshot. Preserve the last authoritative facet generation.
+      replaceFacets: false,
+      snapshotStartedAt,
+      // Keep this backwards compatible during a rolling deployment: an old
+      // Worker safely ignores finalizeSnapshot while completeListing stays
+      // false, instead of closing rows that arrived in earlier chunks.
+      completeListing: false,
+      finalizeSnapshot: options.completeListing && index === chunks.length - 1,
     });
-    const payload = await response.json().catch(() => null) as {
-      jobs?: number;
-      created?: number;
-      updated?: number;
-      closed?: number;
-      error?: string;
-    } | null;
-    if (!response.ok) {
-      throw new Error(`Production ingest returned HTTP ${response.status}${payload?.error ? `: ${payload.error}` : "."}`);
+    let payload: SnapshotIngestPayload | null = null;
+    let lastError: Error | null = null;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      let response: Response;
+      try {
+        const bearer = await options.authorization();
+        response = await fetcher(options.endpoint, {
+          method: "POST",
+          headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
+          body,
+          signal: AbortSignal.timeout(options.timeoutMs ?? 120_000),
+        });
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error("Production browser ingest failed.");
+        if (attempt === attempts) throw lastError;
+        if (retryDelayMs > 0) {
+          await new Promise((resolveDelay) => setTimeout(resolveDelay, retryDelayMs * attempt));
+        }
+        continue;
+      }
+      payload = await response.json().catch(() => null) as SnapshotIngestPayload | null;
+      if (response.ok) {
+        lastError = null;
+        break;
+      }
+      lastError = new Error(`Production ingest returned HTTP ${response.status}${payload?.error ? `: ${payload.error}` : "."}`);
+      const retryable = [408, 425, 429].includes(response.status) || response.status >= 500;
+      if (!retryable || attempt === attempts) throw lastError;
+      if (retryDelayMs > 0) {
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, retryDelayMs * attempt));
+      }
     }
+    if (lastError) throw lastError;
     summary.jobs += payload?.jobs ?? chunks[index].length;
     summary.created += payload?.created ?? 0;
     summary.updated += payload?.updated ?? 0;

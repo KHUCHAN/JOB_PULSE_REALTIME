@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-08-31",
-  "version": "v2:sha256:77c5ddcda4852fe896955c5e95a8d3cda23f644882446156053b2b41831f87b3",
+  "generatedAt": "2026-09-01",
+  "version": "v2:sha256:835306aa88bf670a9266a8abb509471bf5ac9d7170dcabdee2ff62f70cf66e25",
   "incrementalSourceIdsByPreviousVersion": {
     "v2:sha256:9d5dbbfa7d4d1af2fd573464ed8fe41c0d1a274458191b5eb8515391b29adb87": [
       "p5-0755-tower-semiconductor"
@@ -44,6 +44,9 @@
     ],
     "v2:sha256:752eb839236a66e10c47c24fe62c1f61e1b2c5da186a1f5cdab9d0bb3265c10a": [
       "p2-0086-cadence-bank"
+    ],
+    "v2:sha256:77c5ddcda4852fe896955c5e95a8d3cda23f644882446156053b2b41831f87b3": [
+      "p2-0183-webster-bank"
     ]
   },
   "sources": [
@@ -5166,15 +5169,15 @@
       "id": "p2-0183-webster-bank",
       "masterRow": 1290,
       "company": "Webster Bank",
-      "postingUrl": "https://careers.websteronline.com/?_ga=2.242800194.1759806723.1631627972-296609041.1617124185",
+      "postingUrl": "https://websteronline.wd12.myworkdayjobs.com/WebsterExternalCareerSite",
       "talentUrl": "https://websteronline.wd12.myworkdayjobs.com/en-US/WebsterExternalCareerSite/introduceYourself",
-      "channel": "공식 Talent Community/후보자 프로필",
+      "channel": "공식 Workday 채용공고/후보자 프로필",
       "adapter": "workday",
-      "verification": "verified_talent",
-      "confidence": "medium",
+      "verification": "valid_posting_feed",
+      "confidence": "high",
       "resumeUpload": "available",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-08",
+      "checkedAt": "2026-09-01",
       "enabled": true
     },
     {
@@ -22512,7 +22515,7 @@
       "officialUrl": "https://websteronline.wd12.myworkdayjobs.com/en-US/WebsterExternalCareerSite/introduceYourself",
       "resumeUpload": "available",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-08"
+      "checkedAt": "2026-09-01"
     },
     {
       "id": "talent-p2-0187-wolters-kluwer",

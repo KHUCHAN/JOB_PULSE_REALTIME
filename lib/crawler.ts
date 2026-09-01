@@ -20119,6 +20119,7 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
     };
 
     let activeFacets: Record<string, string[]> = {};
+    let activeCountryName: string | null = null;
     let first = await fetchPage(0);
     const explicitRequestedCountry = sourceUrl.searchParams.get("country")?.trim() ?? "";
     const requestedCountry = explicitRequestedCountry || (source.regionScope === "us" ? "United States" : "");
@@ -20145,6 +20146,7 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
         };
       } else {
         activeFacets = { [countryFacet!.facetParameter!]: [countryValue.id] };
+        activeCountryName = requestedIsUs ? "United States" : countryValue.descriptor ?? requestedCountry;
         first = await fetchPage(0, activeFacets);
       }
     }
@@ -20238,7 +20240,7 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
         employmentType: bulletFields.employmentType,
         summary: job.bulletFields?.join(" · ") ?? null,
         department: bulletFields.department,
-        ...(requestedIsUs && Object.keys(activeFacets).length > 0 ? { locationCountry: "US" } : {}),
+        ...(activeCountryName ? { locationCountry: activeCountryName } : {}),
         ...(workdayRequisitionId ? { requisitionId: workdayRequisitionId, applyUrl: `${officialUrl.replace(/\/$/, "")}/apply` } : {}),
         sourcePostedText: job.postedOn ?? null,
         officialUrl,
@@ -23157,7 +23159,17 @@ const fetchVerifiedStaticCareerHtml = async (
   fetcher: typeof fetch,
 ): Promise<{ html: string; status: number; url: string }> => {
   const expected = new URL(source.postingUrl);
-  const response = await fetchWithTimeout(fetcher, expected, undefined, true, { attempts: 2, timeoutMs: 12_000 });
+  let response = await fetchWithTimeout(fetcher, expected, undefined, true, { attempts: 2, timeoutMs: 12_000 });
+  // Some static career hosts briefly return HTTP 202 while their edge cache
+  // prepares the rendered page. A 202 is technically successful, so the
+  // generic HTTP retry policy cannot distinguish it from a valid API reply.
+  // Retry it once here before the parser sees an empty placeholder document.
+  if (response.status === 202) {
+    await response.body?.cancel().catch(() => undefined);
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
+    response = await fetchWithTimeout(fetcher, expected, undefined, true, { attempts: 1, timeoutMs: 12_000 });
+  }
+  if (response.status === 202) throw Object.assign(new Error("Official careers page remained pending after a bounded retry."), { responseStatus: response.status });
   if (!response.ok) throw Object.assign(new Error(`Official careers page returned HTTP ${response.status}.`), { responseStatus: response.status });
   const final = new URL(response.url || expected.href);
   if (final.origin !== expected.origin) throw Object.assign(new Error("Official careers page redirected outside its verified origin."), { responseStatus: response.status });
@@ -23742,7 +23754,7 @@ const towerCategoryJobs = (markdown: string, expectedUrl: string, source: CrawlS
   const category = new URL(expectedUrl).pathname.split("/").filter(Boolean).at(-1) ?? "unknown";
   const rows = [...content.matchAll(/^\|\s*\[([^\]\n]+)\]\((https?:\/\/careers\.towersemi\.com\/job-description\/\?job_id=(\d+))\)\s*\|\s*([^|\n]+?)\s*\|\s*([^|\n]+?)\s*\|\s*$/gmi)];
   const jobs = rows.flatMap((match): CrawledJob[] => {
-    const title = decodeHtmlAttribute(match[1]).replace(/\\([\\`*{}\[\]()#+.!_-])/g, "$1").trim();
+    const title = decodeHtmlAttribute(match[1]).replace(/\\([\\`*{}[\]()#+.!_-])/g, "$1").trim();
     const location = decodeHtmlAttribute(match[4]).trim();
     const division = decodeHtmlAttribute(match[5]).trim();
     if (!title || !location || !division) return [];
@@ -25141,7 +25153,7 @@ const enrichProgramJobDetails = async (
   const targets = result.jobs.flatMap((job, index) => {
     const indexedAsProgram = classifyJobPrograms(job.title).keys.length > 0
       || normalizeEmploymentType(job.employmentType)?.split(" / ").includes("Internship");
-    const hasLocation = Boolean(job.location && !/^(?:location not specified|multiple locations)$/i.test(job.location.trim()));
+    const hasLocation = Boolean(job.location && !/^(?:location not specified|multiple locations|\d+\s+locations?)$/i.test(job.location.trim()));
     const needsDetail = !hasLocation
       || !job.description || job.description.trim().length < 100
       || !(job.requisitionId ?? job.externalId)

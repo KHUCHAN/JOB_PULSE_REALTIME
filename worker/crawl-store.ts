@@ -2,6 +2,7 @@ import type { CrawlStore, PersistedSource } from "../lib/crawl-runner";
 import type { CrawledFacet, CrawledJob } from "../lib/crawler";
 import { classifyJobAreas, jobAreaClassificationMarker } from "../lib/job-area-classifier";
 import { classifyJobRegion } from "../lib/job-region-classifier";
+import { inferJobLocationCountry } from "../lib/job-country-inference";
 import { classifyAiDataJob } from "../lib/job-topic-classifier";
 import { classifyJobPrograms } from "../lib/job-program-classifier";
 import { classifyRecruitingYears } from "../lib/job-recruiting-year-classifier";
@@ -641,8 +642,10 @@ export class D1CrawlStore implements CrawlStore {
         score: area.score,
         evidence: area.evidence,
       }));
+      const locationCountry = inferJobLocationCountry(job) ?? job.locationCountry ?? null;
       const locationRegion = classifyJobRegion({
         ...job,
+        locationCountry,
         sourceCompany: source.company,
         sourcePostingUrl: source.posting_url,
       });
@@ -687,7 +690,7 @@ export class D1CrawlStore implements CrawlStore {
         businessUnit: job.businessUnit ?? null, jobFamily: job.jobFamily ?? null,
         jobFunction: job.jobFunction ?? null, industry: job.industry ?? null, office: job.office ?? null,
         secondaryLocations: job.secondaryLocations ?? [], locationCity: job.locationCity ?? null,
-        locationState: job.locationState ?? null, locationCountry: job.locationCountry ?? null,
+        locationState: job.locationState ?? null, locationCountry,
         locationRegion,
         locationPostalCode: job.locationPostalCode ?? null, latitude: job.latitude ?? null, longitude: job.longitude ?? null,
         salaryMin: job.salaryMin ?? null, salaryMax: job.salaryMax ?? null,

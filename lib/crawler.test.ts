@@ -8192,6 +8192,48 @@ We are an equal opportunity employer.`;
     }));
   });
 
+  it("persists the requested non-US Workday country when cards only say multiple locations", async () => {
+    const requestBodies: Array<{ appliedFacets: Record<string, string[]> }> = [];
+    const result = await crawlSource({
+      id: "singapore-workday",
+      company: "Acme Singapore",
+      postingUrl: "https://acme.wd1.myworkdayjobs.com/Careers?country=Singapore",
+      adapter: "workday",
+    }, async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as { appliedFacets: Record<string, string[]> };
+      requestBodies.push(body);
+      if (Object.keys(body.appliedFacets).length === 0) return Response.json({
+        total: 100,
+        facets: [{
+          facetParameter: "locationCountry",
+          descriptor: "Country",
+          values: [{ descriptor: "Singapore", id: "sg-country-id", count: 1 }],
+        }],
+        jobPostings: [{ title: "Global Role", externalPath: "/job/Paris/Global_R0", locationsText: "Paris" }],
+      });
+      return Response.json({
+        total: 1,
+        facets: [],
+        jobPostings: [{
+          title: "Software Engineer",
+          externalPath: "/job/Singapore/Software-Engineer_R1",
+          locationsText: "3 Locations",
+        }],
+      });
+    }, new Date("2026-08-31T00:00:00Z"));
+
+    expect(requestBodies).toEqual([
+      { appliedFacets: {}, limit: 20, offset: 0, searchText: "" },
+      { appliedFacets: { locationCountry: ["sg-country-id"] }, limit: 20, offset: 0, searchText: "" },
+    ]);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      title: "Software Engineer",
+      location: "3 Locations",
+      locationCountry: "Singapore",
+    })]);
+  });
+
   it("requests only the United States facet for configured large Workday catalogs", async () => {
     const requestBodies: Array<{
       appliedFacets: Record<string, string[]>;
@@ -8252,7 +8294,7 @@ We are an equal opportunity employer.`;
     }));
     expect(result.jobs).toHaveLength(21);
     expect(result.jobs.every((job) => job.location?.includes("United States"))).toBe(true);
-    expect(result.jobs.every((job) => job.locationCountry === "US")).toBe(true);
+    expect(result.jobs.every((job) => job.locationCountry === "United States")).toBe(true);
   });
 
   it("uses the stable Siemens Healthineers Workday requisition across ATS migrations", async () => {
@@ -8306,7 +8348,7 @@ We are an equal opportunity employer.`;
     expect(result.jobs).toEqual([expect.objectContaining({
       externalId: "R-30036",
       requisitionId: "R-30036",
-      locationCountry: "US",
+      locationCountry: "United States",
       officialUrl: "https://onehealthineers.wd3.myworkdayjobs.com/SHSJB/job/Malvern/AI-Software-Engineer_R-30036-1",
       applyUrl: "https://onehealthineers.wd3.myworkdayjobs.com/SHSJB/job/Malvern/AI-Software-Engineer_R-30036-1/apply",
     })]);
@@ -16578,5 +16620,29 @@ Hybrid - New York, NY`;
       pagination: { nextPage: 5, cycleComplete: false, totalPages: 13 },
     }));
     expect(result.jobs).toHaveLength(50);
+  });
+
+  it("retries a transient pending Graphistry careers page before parsing", async () => {
+    let calls = 0;
+    const result = await crawlSource({
+      id: "p2-0196-graphistry",
+      company: "Graphistry",
+      postingUrl: "https://www.graphistry.com/careers",
+      adapter: "custom",
+    }, async () => {
+      calls += 1;
+      if (calls === 1) return new Response("preparing", { status: 202 });
+      return new Response(`<h4 class="ui-accordion-header">Forward Deployed Engineer</h4>
+        <div>Remote role working with customers on graph analytics.
+          <a href="https://graphistry.com/apply/fde">Apply now</a>
+        </div>`, { status: 200 });
+    }, new Date("2026-09-01T00:00:00Z"));
+
+    expect(calls).toBe(2);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      title: "Forward Deployed Engineer",
+      arrangement: "remote",
+    })]);
   });
 });

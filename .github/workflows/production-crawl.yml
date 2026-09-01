@@ -137,13 +137,16 @@ jobs:
           # therefore rotates fairly without a run-number offset that could
           # skip sources as the queue shrinks.
           # The iframe-aware extractor can safely drain a larger slice while
-          # staying below the 25-minute job timeout (10 browser workers).
+          # staying below the 25-minute job timeout (12 browser workers).
           BROWSER_FALLBACK_LIMIT: "160"
-          BROWSER_FALLBACK_CONCURRENCY: "10"
+          BROWSER_FALLBACK_CONCURRENCY: "12"
+          # Fail one pathological page promptly instead of letting it consume
+          # a worker lane for a full minute. The next hourly run retries it.
+          BROWSER_FALLBACK_SOURCE_TIMEOUT_MS: "45000"
           # Browser inspection and D1 persistence are separate bounded pools.
-          # Four writers remove the previous 160-result serial tail while
+          # Six writers remove the previous 160-result serial tail while
           # preserving headroom for normal public API traffic.
-          BROWSER_FALLBACK_INGEST_CONCURRENCY: "4"
+          BROWSER_FALLBACK_INGEST_CONCURRENCY: "6"
           # Sources whose official boards require client rendering, protected
           # egress, or a browser-established session must not sit behind the
           # generic recovery queue. The script still validates the official

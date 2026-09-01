@@ -38,6 +38,34 @@ const companyFilterValues = (values: string[] | undefined): string[] =>
     companyFilterAliases.get(value.trim().toLocaleLowerCase()) ?? [value]
   ));
 
+const normalizedCountryKey = (value: string): string => value.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "");
+
+const countryPredicate = (country: string): { sql: string; bindings: string[] } => {
+  const key = normalizedCountryKey(country);
+  const aliases = key === "singapore" || key === "sg"
+    ? ["Singapore", "SG"]
+    : ["unitedkingdom", "uk", "greatbritain", "england", "scotland", "wales", "northernireland"].includes(key)
+      ? ["United Kingdom", "UK", "Great Britain", "England", "Scotland", "Wales", "Northern Ireland"]
+      : [country];
+  const clauses = aliases.map(() => "j.location_country = ? COLLATE NOCASE");
+  if (key === "singapore" || key === "sg") {
+    clauses.push(
+      "lower(trim(coalesce(j.location, ''))) = 'singapore'",
+      "instr(lower(coalesce(j.location, '')), 'singapore') > 0",
+      "EXISTS (SELECT 1 FROM json_each(coalesce(j.secondary_locations, '[]')) AS country_location WHERE instr(lower(country_location.value), 'singapore') > 0)",
+      "instr(lower(coalesce(j.official_url, '')), '/job/singapore/') > 0",
+    );
+  } else if (["unitedkingdom", "uk", "greatbritain", "england", "scotland", "wales", "northernireland"].includes(key)) {
+    const countryTerms = ["united kingdom", "great britain", "england", "scotland", "wales", "northern ireland"];
+    clauses.push(
+      `(${countryTerms.map((term) => `instr(lower(coalesce(j.location, '')), '${term}') > 0`).join(" OR ")})`,
+      `EXISTS (SELECT 1 FROM json_each(coalesce(j.secondary_locations, '[]')) AS country_location WHERE ${countryTerms.map((term) => `instr(lower(country_location.value), '${term}') > 0`).join(" OR ")})`,
+      "(lower(trim(coalesce(j.location, ''))) = 'london' AND instr(lower(coalesce(j.official_url, '')), '/job/london/') > 0)",
+    );
+  }
+  return { sql: `(${clauses.join(" OR ")})`, bindings: aliases };
+};
+
 const validPageSize = (value: number | undefined): number =>
   Number.isSafeInteger(value) && value! >= 1 && value! <= 100 ? value! : 50;
 
@@ -219,7 +247,11 @@ JOIN job_matches resume_match
 
   addAnyEquals("j.location_city", filters.cities);
   addAnyEquals("j.location_state", filters.states);
-  addAnyEquals("j.location_country", filters.countries);
+  const countries = asValues(filters.countries);
+  if (countries.length > 0) {
+    const predicates = countries.map(countryPredicate);
+    add(`(${predicates.map((predicate) => predicate.sql).join(" OR ")})`, predicates.flatMap((predicate) => predicate.bindings));
+  }
   if (filters.arrangement && filters.arrangement !== "all") add("j.arrangement = ?", [filters.arrangement]);
   addAnyEquals("j.employment_type", filters.employmentTypes);
 

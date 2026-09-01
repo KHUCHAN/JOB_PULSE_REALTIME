@@ -31,6 +31,12 @@ const executePlan = (sql: string, bindings: unknown[], limit?: number, offset?: 
       );`,
       "CREATE TABLE job_topics (job_id TEXT, topic_key TEXT, PRIMARY KEY(job_id, topic_key));",
       "INSERT INTO jobs (id, company, official_url, status, first_seen_at, published_at, valid_through) VALUES ('older-duplicate', 'Acme, Inc.', 'https://acme.example/jobs/1', 'open', '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z', NULL), ('newer-duplicate', 'Acme, Inc.', 'https://acme.example/jobs/1', 'open', '2026-08-03T00:00:00.000Z', '2026-08-01T00:00:00.000Z', NULL), ('second-page', 'Acme, Inc.', 'https://acme.example/jobs/2', 'open', '2026-08-02T00:00:00.000Z', '2026-08-10T00:00:00.000Z', NULL), ('not-a-match', 'Acme', 'https://acme.example/jobs/3', 'open', '2026-08-04T00:00:00.000Z', '2026-08-04T00:00:00.000Z', NULL), ('expired', 'Acme, Inc.', 'https://acme.example/jobs/4', 'open', '2026-08-11T00:00:00.000Z', '2026-08-11T00:00:00.000Z', '2000-01-01'), ('known-posted-date', 'Date Order Inc.', 'https://date.example/jobs/known', 'open', '2026-08-01T00:00:00.000Z', '2026-08-14T00:00:00.000Z', NULL), ('unknown-posted-date', 'Date Order Inc.', 'https://date.example/jobs/unknown', 'open', '2026-08-15T00:00:00.000Z', NULL, NULL);",
+      `INSERT INTO jobs (id, company, title, location, secondary_locations, location_country, official_url, status, first_seen_at, published_at)
+       VALUES
+         ('pimco-sg', 'PIMCO', '2027 Summer Internship', '4 Locations', '["Hong Kong"]', NULL, 'https://pimco.wd1.myworkdayjobs.com/Careers/job/Singapore/Role_R1', 'open', '2026-08-15', '2026-08-15'),
+         ('capital-london', 'Capital Group', '2027 Summer Associate', 'London', '[]', NULL, 'https://capgroup.wd1.myworkdayjobs.com/Careers/job/London/Role_R2', 'open', '2026-08-15', '2026-08-15'),
+         ('canada-london', 'Canada Co', 'Analyst', 'London, ON', '[]', NULL, 'https://canada.wd1.myworkdayjobs.com/Careers/job/London/Role_R3', 'open', '2026-08-15', '2026-08-15'),
+         ('secondary-sg', 'APAC Co', 'Analyst', '4 Locations', '["Singapore, Marina Bay"]', NULL, 'https://jobs.example.com/role', 'open', '2026-08-15', '2026-08-15');`,
       ".parameter init",
       parameters,
       `${sql};`,
@@ -191,6 +197,19 @@ describe("parameterized job search SQL", () => {
     expect(plan.bindings).toEqual(["Acme", "Globex", "Seattle", 100_000, 160_000]);
     expect(plan.limit).toBe(25);
     expect(plan.offset).toBe(50);
+  });
+
+  it("does not lose exact Singapore and United Kingdom rows when an ATS omits location_country", () => {
+    const singapore = buildJobSearchPlan({ ...defaultJobFilters, countries: ["Singapore"] });
+    const unitedKingdom = buildJobSearchPlan({ ...defaultJobFilters, countries: ["United Kingdom"] });
+
+    expect(executePlan(singapore.pageSql, singapore.bindings, singapore.limit, singapore.offset))
+      .toMatchObject([{ id: "secondary-sg" }, { id: "pimco-sg" }]);
+    expect(executePlan(unitedKingdom.pageSql, unitedKingdom.bindings, unitedKingdom.limit, unitedKingdom.offset))
+      .toMatchObject([{ id: "capital-london" }]);
+    expect(unitedKingdom.bindings).toEqual([
+      "United Kingdom", "UK", "Great Britain", "England", "Scotland", "Wales", "Northern Ireland",
+    ]);
   });
 
   it("freezes a multi-page result set at its first-page snapshot", () => {

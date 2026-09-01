@@ -39,6 +39,10 @@ const outputPath = resolve(projectRoot, "output/playwright/browser-fallback/resu
 const sqlPath = resolve(projectRoot, ".codex_tmp/browser-fallback.sql");
 const concurrency = Math.max(1, Number.parseInt(process.env.BROWSER_FALLBACK_CONCURRENCY ?? "12", 10));
 const ingestConcurrency = Math.max(1, Number.parseInt(process.env.BROWSER_FALLBACK_INGEST_CONCURRENCY ?? "4", 10));
+const configuredSourceTimeoutMs = Number.parseInt(process.env.BROWSER_FALLBACK_SOURCE_TIMEOUT_MS ?? "45000", 10);
+const sourceTimeoutMs = Number.isFinite(configuredSourceTimeoutMs)
+  ? Math.min(60_000, Math.max(10_000, configuredSourceTimeoutMs))
+  : 45_000;
 const limit = Number.parseInt(process.env.BROWSER_FALLBACK_LIMIT ?? "500", 10);
 const headless = process.env.BROWSER_FALLBACK_HEADFUL !== "1";
 const forceAll = process.env.BROWSER_FALLBACK_ALL === "1";
@@ -110,6 +114,36 @@ const githubOidcToken = async (): Promise<string | null> => {
   if (typeof claims.exp !== "number") throw new Error("GitHub Actions OIDC token expiry was missing.");
   cachedOidc = { value: payload.value, expiresAt: claims.exp * 1_000 };
   return payload.value;
+};
+
+const recordProductionBrowserResult = async (body: Record<string, unknown>): Promise<Response> => {
+  let response: Response | null = null;
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const bearer = await githubOidcToken();
+      if (!bearer) throw new Error("Production browser ingest authorization is unavailable.");
+      response = await fetch(productionIngestUrl!, {
+        method: "POST",
+        headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30_000),
+      });
+    } catch (error) {
+      lastError = error;
+      if (attempt === 3) throw error;
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 250 * attempt));
+      continue;
+    }
+    if (response.ok) return response;
+    const retryable = [401, 403, 408, 425, 429].includes(response.status) || response.status >= 500;
+    if (!retryable || attempt === 3) return response;
+    await response.body?.cancel().catch(() => undefined);
+    if (response.status === 401 || response.status === 403) cachedOidc = { value: "", expiresAt: 0 };
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 250 * attempt));
+  }
+  if (!response && lastError) throw lastError;
+  return response!;
 };
 
 const d1 = async (args: string[]): Promise<string> => {
@@ -682,8 +716,8 @@ const inspectWithDeadline = async (page: Page, source: CrawlSource): Promise<Bro
       new Promise<BrowserFallbackResult>((resolveResult) => {
         timeout = setTimeout(() => {
           void page.close({ runBeforeUnload: false }).catch(() => undefined);
-          resolveResult({ source, status: null, finalUrl: null, jobs: [], error: "Browser fallback exceeded 60 seconds." });
-        }, 60_000);
+          resolveResult({ source, status: null, finalUrl: null, jobs: [], error: `Browser fallback exceeded ${Math.round(sourceTimeoutMs / 1_000)} seconds.` });
+        }, sourceTimeoutMs);
       }),
     ]);
   } finally {
@@ -819,25 +853,20 @@ async function main(): Promise<void> {
   });
   let persistenceFailures = 0;
   if (!dryRun && productionIngestUrl) {
-    const bearer = await githubOidcToken();
-    if (!bearer) throw new Error("Production browser ingest authorization is unavailable.");
+    if (!await githubOidcToken()) throw new Error("Production browser ingest authorization is unavailable.");
     let persistenceCursor = 0;
     await Promise.all(Array.from({ length: Math.min(ingestConcurrency, results.length) }, async () => {
       while (persistenceCursor < results.length) {
         const result = results[persistenceCursor++];
         const classification = browserResultClassification(result);
         if (classification.status !== "succeeded" || classification.code === "empty_board") {
-          const response = await fetch(productionIngestUrl, {
-            method: "POST",
-            headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
-            body: JSON.stringify({
-              action: "recordBrowserCrawlResult",
-              sourceId: result.source.id,
-              status: classification.status,
-              responseStatus: result.status,
-              jobsSeen: result.jobs.length,
-              code: classification.code,
-            }),
+          const response = await recordProductionBrowserResult({
+            action: "recordBrowserCrawlResult",
+            sourceId: result.source.id,
+            status: classification.status,
+            responseStatus: result.status,
+            jobsSeen: result.jobs.length,
+            code: classification.code,
           });
           if (!response.ok) {
             persistenceFailures += 1;
@@ -858,7 +887,11 @@ async function main(): Promise<void> {
         try {
           await ingestJobSnapshotInChunks({
             allowedOrigins: [...new Set(allowedOrigins)].slice(0, 5),
-            authorization: async () => bearer,
+            authorization: async () => {
+              const bearer = await githubOidcToken();
+              if (!bearer) throw new Error("Production browser ingest authorization is unavailable.");
+              return bearer;
+            },
             completeListing: result.completeListing === true,
             endpoint: productionIngestUrl,
             jobs: result.jobs,
@@ -868,17 +901,13 @@ async function main(): Promise<void> {
         } catch (error) {
           persistenceFailures += 1;
           result.error = error instanceof Error ? error.message : "Production browser ingest failed.";
-          const retry = await fetch(productionIngestUrl, {
-            method: "POST",
-            headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
-            body: JSON.stringify({
-              action: "recordBrowserCrawlResult",
-              sourceId: result.source.id,
-              status: "failed",
-              responseStatus: null,
-              jobsSeen: 0,
-              code: "ingest_error",
-            }),
+          const retry = await recordProductionBrowserResult({
+            action: "recordBrowserCrawlResult",
+            sourceId: result.source.id,
+            status: "failed",
+            responseStatus: null,
+            jobsSeen: 0,
+            code: "ingest_error",
           });
           if (!retry.ok) result.error += ` Result recording returned HTTP ${retry.status}.`;
         }

@@ -35,7 +35,16 @@ const repairedOfficialBoards: Record<string, [string, string]> = {
   "p2-0179-us-attorney-s-office": ["https://www.justice.gov/usao/career-center/job-openings/attorneys", "custom"],
 };
 
-const expectedOfficialBoards = { ...previousOfficialBoards, ...currentOfficialBoards, ...repairedOfficialBoards };
+const latestRepairedOfficialBoards: Record<string, [string, string]> = {
+  "p2-0183-webster-bank": ["https://websteronline.wd12.myworkdayjobs.com/WebsterExternalCareerSite", "workday"],
+};
+
+const expectedOfficialBoards = {
+  ...previousOfficialBoards,
+  ...currentOfficialBoards,
+  ...repairedOfficialBoards,
+  ...latestRepairedOfficialBoards,
+};
 
 describe("verified official source catalog", () => {
   it("uses the first-party ATS boards instead of stale corporate landing pages", () => {
@@ -141,5 +150,12 @@ describe("verified official source catalog", () => {
     const repairedMigration = readFileSync(join(process.cwd(), "drizzle/0133_refresh_sources_20260831192633.sql"), "utf8");
     for (const id of Object.keys(repairedOfficialBoards)) expect(repairedMigration).toContain(`'${id}'`);
     expect(repairedMigration).toContain("SET `next_crawl_at` = CURRENT_TIMESTAMP");
+
+    const latestMigrationName = readdirSync(join(process.cwd(), "drizzle"))
+      .find((name) => /^0136_refresh_sources_\d+\.sql$/.test(name));
+    expect(latestMigrationName).toBeTruthy();
+    const latestMigration = readFileSync(join(process.cwd(), "drizzle", latestMigrationName!), "utf8");
+    for (const id of Object.keys(latestRepairedOfficialBoards)) expect(latestMigration).toContain(`'${id}'`);
+    expect(latestMigration).toContain("SET `next_crawl_at` = CURRENT_TIMESTAMP");
   });
 });

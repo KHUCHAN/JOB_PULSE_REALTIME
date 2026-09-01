@@ -446,6 +446,33 @@ describe("D1CrawlStore enriched job persistence", () => {
     ]);
   });
 
+  it("recovers Singapore and London countries from direct Workday job evidence", async () => {
+    const { db, calls } = fakeDb();
+    const store = new D1CrawlStore(db);
+    const jobs = [{
+      externalId: "R106818", title: "2027 Software Engineering Internship", company: "PIMCO",
+      location: "Singapore", arrangement: "onsite" as const, employmentType: "Internship",
+      summary: "Build data products.",
+      officialUrl: "https://pimco.wd1.myworkdayjobs.com/pimco-careers/job/Singapore/Intern_R106818",
+      publishedAt: "2026-08-31T00:00:00.000Z",
+    }, {
+      externalId: "JR7201", title: "2027 Data Analyst Internship", company: "Capital Group",
+      location: "London", arrangement: "onsite" as const, employmentType: "Internship",
+      summary: "Analyze investment data.",
+      officialUrl: "https://capgroup.wd1.myworkdayjobs.com/capitalgroupcareers/job/London/Intern_JR7201",
+      publishedAt: "2026-08-31T00:00:00.000Z",
+    }] as CrawledJob[];
+
+    await store.syncJobs("source-1", jobs, false);
+
+    const jobsInsert = calls.find((call) => call.sql.includes("INSERT INTO jobs"));
+    const records = JSON.parse(String(jobsInsert?.values[0]));
+    expect(records).toEqual([
+      expect.objectContaining({ locationCountry: "Singapore", locationRegion: "non_us" }),
+      expect.objectContaining({ locationCountry: "United Kingdom", locationRegion: "non_us" }),
+    ]);
+  });
+
   it("prioritizes co-op over a title that also says intern", async () => {
     const { db, calls } = fakeDb();
     const store = new D1CrawlStore(db);
