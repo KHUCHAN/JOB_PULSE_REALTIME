@@ -239,6 +239,25 @@ describe("parameterized job search SQL", () => {
     expect(plan.bindings).toEqual(['"fraud"* AND "risk"*', "saved"]);
   });
 
+  it("routes co-op text through the program index instead of broad two-letter FTS prefixes", () => {
+    const plan = buildJobSearchPlan({
+      ...defaultJobFilters,
+      query: "2027 engineering co-op",
+      companies: ["Caterpillar"],
+    });
+
+    for (const sql of [plan.pageSql, plan.countSql]) {
+      expect(sql).toContain("program:coop");
+      expect(sql).toContain("jobs_fts MATCH ?");
+    }
+    expect(plan.bindings).toEqual(['"2027"* AND "engineering"*', "Caterpillar"]);
+
+    const coopOnly = buildJobSearchPlan({ ...defaultJobFilters, query: "co op" });
+    expect(coopOnly.pageSql).toContain("program:coop");
+    expect(coopOnly.pageSql).not.toContain("jobs_fts MATCH ?");
+    expect(coopOnly.bindings).toEqual([]);
+  });
+
   it("deduplicates before filtering and uses an explicit projection", () => {
     const plan = buildJobSearchPlan(defaultJobFilters);
 

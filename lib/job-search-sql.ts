@@ -201,7 +201,17 @@ export function buildJobSearchPlan(filters: JobFilters): JobSearchPlan {
     }
   };
 
-  const query = ftsQuery(filters.query ?? "");
+  const rawQuery = filters.query ?? "";
+  const searchesForCoop = /\b(?:co[\s-]?op|coop)\b/iu.test(rawQuery);
+  // SQLite FTS expands the two short prefixes produced by `co-op` (`co*`
+  // and `op*`) across most of the catalog before intersecting other terms.
+  // On D1 that can exhaust the query memory budget. Use the indexed program
+  // membership predicate for co-op semantics and leave only meaningful text
+  // terms for FTS.
+  if (searchesForCoop) add(jobHasCoopSql("j"));
+  const query = ftsQuery(searchesForCoop
+    ? rawQuery.replace(/\b(?:co[\s-]?op|coop)\b/giu, " ")
+    : rawQuery);
   if (query) add("j.rowid IN (SELECT rowid FROM jobs_fts WHERE jobs_fts MATCH ?)", [query]);
 
   const topics = asNormalizedValues(filters.topics).filter((topic) => topic === "ai-data");
