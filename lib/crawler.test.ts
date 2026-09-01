@@ -6465,6 +6465,42 @@ We are an equal opportunity employer.`;
     ]);
   });
 
+  it("reads Bank of America's complete official Workday catalog above the normal 2,000-row cap", async () => {
+    const total = 2_094;
+    const offsets: number[] = [];
+    const result = await crawlSource({
+      id: "p2-0027-bank-of-america",
+      company: "Bank of America",
+      postingUrl: "https://ghr.wd1.myworkdayjobs.com/lateral-us",
+      adapter: "workday",
+    }, async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as { offset: number };
+      offsets.push(body.offset);
+      const count = Math.min(20, total - body.offset);
+      return Response.json({
+        total,
+        jobPostings: Array.from({ length: count }, (_, index) => {
+          const id = body.offset + index + 1;
+          return {
+            title: `Banking Role ${id}`,
+            externalPath: `/job/Charlotte/Banking-Role-${id}_REQ-${id}`,
+            locationsText: "Charlotte, NC",
+            postedOn: "Posted Today",
+          };
+        }),
+      });
+    }, new Date("2026-09-01T12:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      jobs: expect.any(Array),
+    }));
+    expect(result.jobs).toHaveLength(total);
+    expect(offsets).toHaveLength(Math.ceil(total / 20));
+    expect(offsets).toContain(2_080);
+  });
+
   it("uses McKinsey's public job API instead of the edge-blocked careers HTML", async () => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input) => {

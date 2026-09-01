@@ -20232,7 +20232,12 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
         ? "Cisco's official Workday catalog returned no usable jobs."
         : `Workday's ${requestedCountry} country catalog returned no usable jobs.`,
     };
-    const totalPages = Math.max(1, Math.ceil(Math.min(total, 2_000) / 20));
+    // Bank of America's official catalog currently sits just above the normal
+    // 2,000-row safety ceiling. The independent browser runner has enough
+    // memory and request budget for its bounded 2,500-row board, and a full
+    // pass prevents the older 2,000-row checkpoint from hiding new tail jobs.
+    const maximumSupportedJobs = source.id === "p2-0027-bank-of-america" ? 2_500 : 2_000;
+    const totalPages = Math.max(1, Math.ceil(Math.min(total, maximumSupportedJobs) / 20));
     const isIntel = source.id === "p5-0947-intel" || source.company === "Intel";
     // Resolving a country facet costs one global discovery request. General
     // Workday tenants can use thirty listing requests while retaining ample
@@ -20240,7 +20245,9 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
     // checkpoint window because it deliberately rotates through a very large
     // catalog across scheduled runs.
     const scopedDiscoveryRequests = Object.keys(activeFacets).length > 0 ? 1 : 0;
-    const maximumCatalogPages = (isCisco ? 20 : 30) - scopedDiscoveryRequests;
+    const maximumCatalogPages = (source.id === "p2-0027-bank-of-america"
+      ? 125
+      : isCisco ? 20 : 30) - scopedDiscoveryRequests;
     const isCheckpointed = isCisco || (totalPages > maximumCatalogPages && !isIntel);
     const startPage = isCheckpointed ? Math.min(Math.max(source.crawlPageCursor ?? 1, 1), totalPages) : 1;
     const endPage = isCheckpointed
@@ -20383,13 +20390,13 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
     return {
       status: "succeeded",
       responseStatus: first.status,
-      completeListing: !isCheckpointed && firstFailedPage === null && total <= 2_000 && rawJobs.length === total,
+      completeListing: !isCheckpointed && firstFailedPage === null && total <= maximumSupportedJobs && rawJobs.length === total,
       jobs,
       ...(facets.length > 0 ? { facets } : {}),
       ...(isCheckpointed ? {
         pagination: {
           nextPage: firstFailedPage ?? (endPage === totalPages ? 1 : endPage),
-          cycleComplete: firstFailedPage === null && endPage === totalPages && total <= 2_000,
+          cycleComplete: firstFailedPage === null && endPage === totalPages && total <= maximumSupportedJobs,
           totalPages,
         },
       } : {}),
@@ -25471,7 +25478,9 @@ const withLargeCatalogRequestScope = (source: CrawlSource): CrawlSource => (
 );
 
 export async function crawlSource(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
-  const budgetedFetcher = crawlBudgetedFetcher(fetcher);
+  const budgetedFetcher = crawlBudgetedFetcher(fetcher, source.id === "p2-0027-bank-of-america"
+    ? { maxRequests: 130, deadlineMs: 45_000 }
+    : undefined);
   const requestScopedSource = withLargeCatalogRequestScope(source);
   const scoped = applyLargeCatalogRegionScope(await crawlSourceBase(requestScopedSource, budgetedFetcher, now), source);
   const enriched = await enrichProgramJobDetails(scoped, source, budgetedFetcher, now);

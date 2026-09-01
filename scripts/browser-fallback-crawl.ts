@@ -717,27 +717,32 @@ export const recoverNativeOutsideWorker = async (
     || (result.jobs.length === 0 && !result.completeListing))) {
     result = await crawlSource(source, curlNativeFetch, now);
   }
-  if (source.id === "legacy-row-864"
+  if ((source.id === "legacy-row-864" || source.id === "p2-0027-bank-of-america")
     && result.status === "succeeded"
     && !result.error
     && result.pagination
     && !result.pagination.cycleComplete) {
-    // Southern's first-party Jobsyn API is available to the independent
-    // runner but its 273+ jobs exceed the Worker's 20-page checkpoint window.
-    // Finish the one remaining window in the same stable recovery snapshot so
-    // production can close identities that disappeared upstream instead of
-    // accumulating stale sitemap-only rows forever.
-    const continuation = await crawlSource({
-      ...source,
-      crawlPageCursor: result.pagination.nextPage,
-    }, fetcher, now);
-    if (continuation.status === "succeeded"
-      && !continuation.error
-      && continuation.pagination?.cycleComplete
-      && continuation.pagination.totalPages === result.pagination.totalPages) {
-      const jobs = new Map(result.jobs.map((job) => [job.externalId ?? job.officialUrl, job]));
+    // These first-party APIs are available to the independent runner but
+    // exceed one Worker's checkpoint window. Finish the remaining windows in
+    // one stable recovery session so production can close identities that
+    // disappeared upstream instead of accumulating stale partial snapshots.
+    const totalPages = result.pagination.totalPages;
+    const jobs = new Map(result.jobs.map((job) => [job.externalId ?? job.officialUrl, job]));
+    let nextPage = result.pagination.nextPage;
+    for (let pass = 0; pass < 4 && !result.pagination?.cycleComplete; pass += 1) {
+      const continuation = await crawlSource({ ...source, crawlPageCursor: nextPage }, fetcher, now);
+      if (continuation.status !== "succeeded"
+        || continuation.error
+        || !continuation.pagination
+        || continuation.pagination.totalPages !== totalPages) break;
       for (const job of continuation.jobs) jobs.set(job.externalId ?? job.officialUrl, job);
-      result = { ...continuation, jobs: [...jobs.values()], completeListing: true };
+      result = { ...continuation, jobs: [...jobs.values()] };
+      if (continuation.pagination.cycleComplete) {
+        result.completeListing = true;
+        break;
+      }
+      if (continuation.pagination.nextPage === nextPage) break;
+      nextPage = continuation.pagination.nextPage;
     }
   }
   if (result.status === "blocked"
