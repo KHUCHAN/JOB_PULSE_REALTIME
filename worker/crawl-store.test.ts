@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CrawledJob } from "../lib/crawler";
-import { boundedJobRecord, compactRecord, D1CrawlStore, chunksByJsonBytes, chunksOf } from "./crawl-store";
+import { boundedJobRecord, compactRecord, D1CrawlStore, chunksByJsonBytes, chunksOf, nativeCrawlExcludedSourceIds } from "./crawl-store";
 
 describe("chunksOf", () => {
   it("keeps D1 write batches within the configured limit", () => {
@@ -837,6 +837,8 @@ describe("D1CrawlStore source leasing", () => {
 
     expect(sources).toHaveLength(1);
     expect(calls[0].sql).toContain("UPDATE sources");
+    expect(calls[0].sql).toContain("AND id NOT IN");
+    for (const sourceId of nativeCrawlExcludedSourceIds) expect(calls[0].sql).toContain(`'${sourceId}'`);
     expect(calls[0].sql).toContain("RETURNING id, company, posting_url, adapter, next_crawl_at");
     expect(calls[0].values).toEqual(["2026-08-09T12:10:00.000Z", "2026-08-09T12:00:00.000Z", 16]);
   });

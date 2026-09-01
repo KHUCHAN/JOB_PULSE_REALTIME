@@ -46,6 +46,26 @@ type PagedCrawlState = {
   adapter: PersistedSource["adapter"];
 };
 
+// These sources have a dedicated independent-runner lane because their
+// official endpoints reject Sites Worker egress. Leasing them in the native
+// queue only burns the source timeout and serializes the request-recovery job
+// behind work that cannot succeed from that network. sourcesByIds deliberately
+// remains unrestricted so an explicit repair can still target any source.
+export const nativeCrawlExcludedSourceIds = [
+  "p4-0241-cgi",
+  "p5-1018-penn-medicine",
+  "legacy-row-826",
+  "p2-0075-american-family-insurance",
+  "legacy-row-102",
+  // Tesla's Akamai policy blocks both Worker and generic server egress. Keep
+  // it isolated in the browser recovery lane so it cannot delay other firms.
+  "p5-1077-tesla",
+] as const;
+
+const nativeCrawlExclusionsSql = nativeCrawlExcludedSourceIds
+  .map((sourceId) => `'${sourceId}'`)
+  .join(", ");
+
 const pagedCrawlStateKey = (sourceId: string): string => `crawl_page_checkpoint:${sourceId}`;
 const catalogVolumeQuarantineKey = (sourceId: string): string => `catalog_volume_quarantine:${sourceId}`;
 
@@ -400,6 +420,7 @@ export class D1CrawlStore implements CrawlStore {
         SELECT id FROM sources
         WHERE enabled = 1
           AND posting_url IS NOT NULL
+          AND id NOT IN (${nativeCrawlExclusionsSql})
           AND (next_crawl_at IS NULL OR next_crawl_at <= ?)
         ORDER BY COALESCE(next_crawl_at, '') ASC, company ASC
         LIMIT ?

@@ -497,14 +497,46 @@ describe("repaired source adapters", () => {
     }));
   });
 
-  it("classifies browser-verification shells as blocked instead of authoritative zero", async () => {
+  it("bypasses Nubank's challenged landing page and accepts its authoritative empty Greenhouse board", async () => {
     const source = { id: "p4-0317-nubank", company: "Nubank", postingUrl: "https://international.nubank.com.br/careers/", adapter: "custom" as const };
-    const result = await crawlSource(source, async () => new Response('<title>Checking your browser…</title><script src="/__challenge/check.js"></script><p>Javascript required to continue</p>'), new Date());
+    const requests: string[] = [];
+    const result = await crawlSource(source, async (input) => {
+      requests.push(String(input));
+      return Response.json({ jobs: [], meta: { total: 0 } });
+    }, new Date());
+    expect(requests).toEqual(["https://boards-api.greenhouse.io/v1/boards/nubank/jobs?content=true"]);
     expect(result).toEqual(expect.objectContaining({
-      status: "blocked",
+      status: "succeeded",
       responseStatus: 200,
-      completeListing: false,
+      completeListing: true,
       jobs: [],
+      resolvedListingUrl: "https://job-boards.greenhouse.io/nubank",
+    }));
+  });
+
+  it("bypasses Semtech's slow landing page through its complete Workday feed", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p5-0726-semtech",
+      company: "Semtech",
+      postingUrl: "https://www.semtech.com/careers",
+      adapter: "custom",
+    }, async (input) => {
+      requests.push(String(input));
+      return Response.json({ total: 1, jobPostings: [{
+        title: "Product Engineering Intern",
+        externalPath: "/job/Camarillo/Product-Engineering-Intern_REQ-101",
+        locationsText: "Camarillo, CA",
+        postedOn: "Posted Today",
+      }] });
+    }, new Date("2026-08-31T12:00:00Z"));
+    expect(requests[0]).toBe("https://semtech.wd1.myworkdayjobs.com/wday/cxs/semtech/SemtechCareers/jobs");
+    expect(requests).not.toContain("https://www.semtech.com/careers");
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://semtech.wd1.myworkdayjobs.com/SemtechCareers",
+      jobs: [expect.objectContaining({ title: "Product Engineering Intern" })],
     }));
   });
 

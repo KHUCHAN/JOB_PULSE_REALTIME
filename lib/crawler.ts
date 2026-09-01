@@ -439,6 +439,17 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
     listingUrl: "https://careers.pennmedicine.org/search/jobs/in/country/united-states",
     adapter: "custom",
   },
+  "p5-0726-semtech": {
+    // The corporate landing page regularly consumes the entire source
+    // timeout. Its linked first-party Workday CXS feed returns the complete
+    // catalog in roughly one second.
+    discovered: {
+      kind: "workday",
+      endpoint: "https://semtech.wd1.myworkdayjobs.com/wday/cxs/semtech/SemtechCareers/jobs",
+    },
+    listingUrl: "https://semtech.wd1.myworkdayjobs.com/SemtechCareers",
+    adapter: "workday",
+  },
   "p4-0289-hcltech": {
     listingUrl: "https://careers.hcltech.com/search/?locale=en_US",
     adapter: "custom",
@@ -451,6 +462,17 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
   "p4-0329-point-b": {
     listingUrl: "https://careers.pointb.com/job-search-results/",
     adapter: "custom",
+  },
+  "p4-0317-nubank": {
+    // The corporate careers page is protected by a JavaScript challenge.
+    // Its linked Greenhouse board is authoritative and can explicitly report
+    // a verified zero-job state without waiting on Chrome.
+    discovered: {
+      kind: "greenhouse",
+      endpoint: "https://boards-api.greenhouse.io/v1/boards/nubank/jobs?content=true",
+    },
+    listingUrl: "https://job-boards.greenhouse.io/nubank",
+    adapter: "greenhouse",
   },
   "legacy-row-103": { listingUrl: "https://careers.jetblue.com/search/?q=&locationsearch=&sortColumn=referencedate&sortDirection=desc", adapter: "custom" },
   "legacy-row-110": { listingUrl: "https://jobs.nscorp.com/search/?q=&locationsearch=&sortColumn=referencedate&sortDirection=desc", adapter: "custom" },

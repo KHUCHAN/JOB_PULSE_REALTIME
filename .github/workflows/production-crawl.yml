@@ -42,7 +42,6 @@ permissions:
 
 jobs:
   crawl:
-    needs: request-recovery
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -57,13 +56,18 @@ jobs:
           # Each request atomically leases one source. Six independent workers
           # preserve API headroom while materially improving source throughput.
           JOB_PULSE_REQUEST_CONCURRENCY: "6"
+          # A repair deployment verifies the three remediated official feeds
+          # before the normal oldest-first drain. Two matching observations
+          # let the catalog-volume guard safely confirm Nubank's current zero.
+          JOB_PULSE_TARGETED_RECRAWL_SOURCE_IDS: ${{ github.event_name == 'push' && 'p4-0317-nubank,p4-0386-whatnot,p5-0726-semtech' || '' }}
+          JOB_PULSE_TARGETED_RECRAWL_ATTEMPTS: "2"
         run: node scripts/run-production-crawl.mjs
 
   request-recovery:
     # These exact sources expose validated first-party APIs that work from the
-    # independent runner but reject Sites Worker egress. Recover them before
-    # the native drain so its new next-crawl timestamp prevents a same-run
-    # Worker-egress retry from overwriting the successful health result.
+    # independent runner but reject Sites Worker egress. The native source
+    # lease excludes these IDs, so this job can run in parallel with the main
+    # drain without duplicate ingestion or a ten-minute serial dependency.
     if: ${{ github.event_name != 'push' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -127,15 +131,19 @@ jobs:
           # Repair pushes verify the exact affected sources immediately. The
           # scheduled run leaves this empty and continues rotating through the
           # full browser-recovery queue below.
-          BROWSER_FALLBACK_SOURCE_IDS: ${{ github.event_name == 'push' && 'p2-0076-ameriprise-financial,p2-0034-coast-central-cu,p4-0390-84-51,p5-0653-linkedin,p5-0850-ciena,p5-1028-progressive-insurance,legacy-row-807,p5-1106-wcg,legacy-row-126,p2-0179-us-attorney-s-office' || '' }}
+          BROWSER_FALLBACK_SOURCE_IDS: ${{ github.event_name == 'push' && 'p4-0317-nubank,p4-0386-whatnot,p5-0726-semtech,p5-1077-tesla,p2-0076-ameriprise-financial,p2-0034-coast-central-cu,p4-0390-84-51,p5-0653-linkedin,p5-0850-ciena,p5-1028-progressive-insurance,legacy-row-807,p5-1106-wcg,legacy-row-126,p2-0179-us-attorney-s-office' || '' }}
           # The browser action records every empty/failed/blocked result in
           # crawl_runs and advances next_crawl_at. Selecting the oldest rows
           # therefore rotates fairly without a run-number offset that could
           # skip sources as the queue shrinks.
           # The iframe-aware extractor can safely drain a larger slice while
-          # staying below the 25-minute job timeout (8 browser workers).
+          # staying below the 25-minute job timeout (10 browser workers).
           BROWSER_FALLBACK_LIMIT: "160"
-          BROWSER_FALLBACK_CONCURRENCY: "8"
+          BROWSER_FALLBACK_CONCURRENCY: "10"
+          # Browser inspection and D1 persistence are separate bounded pools.
+          # Four writers remove the previous 160-result serial tail while
+          # preserving headroom for normal public API traffic.
+          BROWSER_FALLBACK_INGEST_CONCURRENCY: "4"
           # Sources whose official boards require client rendering, protected
           # egress, or a browser-established session must not sit behind the
           # generic recovery queue. The script still validates the official

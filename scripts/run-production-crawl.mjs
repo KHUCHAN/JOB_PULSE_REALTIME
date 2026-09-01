@@ -8,6 +8,13 @@ const maximumMinutes = boundedInteger(process.env.JOB_PULSE_MAX_RUN_MINUTES, 20,
 // independent requests here raises throughput without letting one slow or
 // malformed source consume a multi-company Worker request.
 const requestConcurrency = boundedInteger(process.env.JOB_PULSE_REQUEST_CONCURRENCY, 6, 1, 8);
+const targetedSourceIds = [...new Set((process.env.JOB_PULSE_TARGETED_RECRAWL_SOURCE_IDS || "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean))].slice(0, 4);
+const targetedRecrawlAttempts = targetedSourceIds.length > 0
+  ? boundedInteger(process.env.JOB_PULSE_TARGETED_RECRAWL_ATTEMPTS, 1, 1, 2)
+  : 0;
 const apiUrl = `${siteUrl}/api/pulse`;
 const audience = "job-pulse-realtime";
 const startedAt = Date.now();
@@ -70,6 +77,7 @@ const summary = {
   stopReason: null,
   staleRunsFinalized: 0,
   requestConcurrency,
+  targetedRecrawls: 0,
 };
 
 const number = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
@@ -88,7 +96,7 @@ const retry = async (operation, attempts = 3, delayMs = 1_000) => {
   throw lastError;
 };
 
-const postAction = async (action, timeoutMs) => {
+const postAction = async (action, timeoutMs, values = {}) => {
   const token = await oidcToken();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(new Error(`${action} exceeded ${Math.round(timeoutMs / 1_000)} seconds.`)), timeoutMs);
@@ -100,7 +108,7 @@ const postAction = async (action, timeoutMs) => {
         authorization: `Bearer ${token}`,
         "content-type": "application/json",
       },
-      body: JSON.stringify({ action, ...(action === "scheduledCrawlBatch" ? { limit: 1 } : {}) }),
+      body: JSON.stringify({ action, ...(action === "scheduledCrawlBatch" ? { limit: 1 } : {}), ...values }),
       signal: controller.signal,
     });
     const text = await response.text();
@@ -111,6 +119,19 @@ const postAction = async (action, timeoutMs) => {
     clearTimeout(timeout);
   }
 };
+
+// Source URL repairs should not wait behind the oldest entries in the normal
+// queue. A second bounded observation is useful for an authoritative large
+// catalog drop: D1's volume quarantine accepts the closure only when both
+// independently fetched snapshots match.
+for (let attempt = 0; attempt < targetedRecrawlAttempts; attempt += 1) {
+  const targeted = await postAction("recrawlSources", 55_000, { sourceIds: targetedSourceIds });
+  summary.targetedRecrawls += 1;
+  summary.requests += 1;
+  for (const key of ["attempted", "succeeded", "failed", "blocked", "created", "updated", "closed"]) {
+    summary[key] += number(targeted[key]);
+  }
+}
 
 // The prior 42-second client abort canceled otherwise healthy Sites Workers
 // at 41-42 seconds. Source fetches are already internally bounded, so leave
@@ -240,6 +261,7 @@ if (process.env.GITHUB_STEP_SUMMARY) {
     `- Jobs created / updated / closed: ${result.created} / ${result.updated} / ${result.closed}`,
     `- Runtime: ${result.elapsedMinutes} minutes`,
     `- Independent request concurrency: ${result.requestConcurrency}`,
+    `- Targeted repair passes: ${result.targetedRecrawls}`,
     `- Stop reason: ${result.stopReason || "queue drained or time limit reached"}`,
     `- Stale crawl rows finalized: ${result.staleRunsFinalized}`,
     `- Current source health: ${result.sourceHealthAvailable ? JSON.stringify(result.sourceCounts) : "detailed view timed out; overview remained healthy"}`,

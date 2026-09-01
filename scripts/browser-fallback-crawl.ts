@@ -38,6 +38,7 @@ const wrangler = resolve(projectRoot, "node_modules/.bin/wrangler");
 const outputPath = resolve(projectRoot, "output/playwright/browser-fallback/results.json");
 const sqlPath = resolve(projectRoot, ".codex_tmp/browser-fallback.sql");
 const concurrency = Math.max(1, Number.parseInt(process.env.BROWSER_FALLBACK_CONCURRENCY ?? "12", 10));
+const ingestConcurrency = Math.max(1, Number.parseInt(process.env.BROWSER_FALLBACK_INGEST_CONCURRENCY ?? "4", 10));
 const limit = Number.parseInt(process.env.BROWSER_FALLBACK_LIMIT ?? "500", 10);
 const headless = process.env.BROWSER_FALLBACK_HEADFUL !== "1";
 const forceAll = process.env.BROWSER_FALLBACK_ALL === "1";
@@ -818,72 +819,71 @@ async function main(): Promise<void> {
   });
   let persistenceFailures = 0;
   if (!dryRun && productionIngestUrl) {
-    for (const result of results) {
-      const bearer = await githubOidcToken();
-      if (!bearer) throw new Error("Production browser ingest authorization is unavailable.");
-      const classification = browserResultClassification(result);
-      if (classification.status !== "succeeded" || classification.code === "empty_board") {
-        const response = await fetch(productionIngestUrl, {
-          method: "POST",
-          headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
-          body: JSON.stringify({
-            action: "recordBrowserCrawlResult",
-            sourceId: result.source.id,
-            status: classification.status,
-            responseStatus: result.status,
-            jobsSeen: result.jobs.length,
-            code: classification.code,
-          }),
-        });
-        if (!response.ok) {
-          persistenceFailures += 1;
-          result.error = `Production browser result returned HTTP ${response.status}.`;
+    const bearer = await githubOidcToken();
+    if (!bearer) throw new Error("Production browser ingest authorization is unavailable.");
+    let persistenceCursor = 0;
+    await Promise.all(Array.from({ length: Math.min(ingestConcurrency, results.length) }, async () => {
+      while (persistenceCursor < results.length) {
+        const result = results[persistenceCursor++];
+        const classification = browserResultClassification(result);
+        if (classification.status !== "succeeded" || classification.code === "empty_board") {
+          const response = await fetch(productionIngestUrl, {
+            method: "POST",
+            headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
+            body: JSON.stringify({
+              action: "recordBrowserCrawlResult",
+              sourceId: result.source.id,
+              status: classification.status,
+              responseStatus: result.status,
+              jobsSeen: result.jobs.length,
+              code: classification.code,
+            }),
+          });
+          if (!response.ok) {
+            persistenceFailures += 1;
+            result.error = `Production browser result returned HTTP ${response.status}.`;
+          }
+          continue;
         }
-        continue;
-      }
-      const listingUrl = result.finalUrl;
-      if (!listingUrl) {
-        result.error = "Production browser ingest was missing the verified listing URL.";
-        continue;
-      }
-      const allowedOrigins = [listingUrl, ...result.jobs.flatMap((job) => [job.officialUrl, job.applyUrl ?? ""])]
-        .flatMap((value) => {
-          try { return value ? [new URL(value).origin] : []; } catch { return []; }
-        });
-      try {
-        await ingestJobSnapshotInChunks({
-          allowedOrigins: [...new Set(allowedOrigins)].slice(0, 5),
-          authorization: async () => {
-            const token = await githubOidcToken();
-            if (!token) throw new Error("Production browser ingest authorization is unavailable.");
-            return token;
-          },
-          completeListing: result.completeListing === true,
-          endpoint: productionIngestUrl,
-          jobs: result.jobs,
-          listingUrl,
-          sourceId: result.source.id,
-        });
-      } catch (error) {
-        persistenceFailures += 1;
-        result.error = error instanceof Error ? error.message : "Production browser ingest failed.";
-        const failureBearer = await githubOidcToken();
-        if (!failureBearer) throw new Error("Production browser result authorization is unavailable.");
-        const retry = await fetch(productionIngestUrl, {
-          method: "POST",
-          headers: { authorization: `Bearer ${failureBearer}`, "content-type": "application/json" },
-          body: JSON.stringify({
-            action: "recordBrowserCrawlResult",
+        const listingUrl = result.finalUrl;
+        if (!listingUrl) {
+          persistenceFailures += 1;
+          result.error = "Production browser ingest was missing the verified listing URL.";
+          continue;
+        }
+        const allowedOrigins = [listingUrl, ...result.jobs.flatMap((job) => [job.officialUrl, job.applyUrl ?? ""])]
+          .flatMap((value) => {
+            try { return value ? [new URL(value).origin] : []; } catch { return []; }
+          });
+        try {
+          await ingestJobSnapshotInChunks({
+            allowedOrigins: [...new Set(allowedOrigins)].slice(0, 5),
+            authorization: async () => bearer,
+            completeListing: result.completeListing === true,
+            endpoint: productionIngestUrl,
+            jobs: result.jobs,
+            listingUrl,
             sourceId: result.source.id,
-            status: "failed",
-            responseStatus: null,
-            jobsSeen: 0,
-            code: "ingest_error",
-          }),
-        });
-        if (!retry.ok) result.error += ` Result recording returned HTTP ${retry.status}.`;
+          });
+        } catch (error) {
+          persistenceFailures += 1;
+          result.error = error instanceof Error ? error.message : "Production browser ingest failed.";
+          const retry = await fetch(productionIngestUrl, {
+            method: "POST",
+            headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
+            body: JSON.stringify({
+              action: "recordBrowserCrawlResult",
+              sourceId: result.source.id,
+              status: "failed",
+              responseStatus: null,
+              jobsSeen: 0,
+              code: "ingest_error",
+            }),
+          });
+          if (!retry.ok) result.error += ` Result recording returned HTTP ${retry.status}.`;
+        }
       }
-    }
+    }));
   } else if (!dryRun && successful.length > 0) {
     await writeFile(sqlPath, persistenceSql(successful));
     await d1(["--file", sqlPath]);

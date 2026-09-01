@@ -1,7 +1,12 @@
 {
   "generatedAt": "2026-08-31",
-  "version": "v2:sha256:bcf60567072725f67b788198646b800db234e8f7bc8899fd1277ca1b783927e2",
+  "version": "v2:sha256:9d5dbbfa7d4d1af2fd573464ed8fe41c0d1a274458191b5eb8515391b29adb87",
   "incrementalSourceIdsByPreviousVersion": {
+    "v2:sha256:bcf60567072725f67b788198646b800db234e8f7bc8899fd1277ca1b783927e2": [
+      "p4-0317-nubank",
+      "p4-0386-whatnot",
+      "p5-0726-semtech"
+    ],
     "v2:sha256:38d0db6929f4f89503a62b3a9b2f0b0359349f1576117229c2abdec73e7ac8c1": [
       "legacy-row-126",
       "p2-0179-us-attorney-s-office",
@@ -433,15 +438,15 @@
       "id": "p4-0317-nubank",
       "masterRow": 227,
       "company": "Nubank",
-      "postingUrl": "https://international.nubank.com.br/careers/",
+      "postingUrl": "https://job-boards.greenhouse.io/nubank",
       "talentUrl": null,
-      "channel": "공식 채용공고 검색·지원",
-      "adapter": "custom",
-      "verification": "official_challenged_careers",
-      "confidence": "medium",
+      "channel": "공식 Greenhouse 채용공고 검색·지원",
+      "adapter": "greenhouse",
+      "verification": "valid_posting_feed",
+      "confidence": "high",
       "resumeUpload": "job_only",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-25",
+      "checkedAt": "2026-08-31",
       "enabled": true
     },
     {
@@ -823,15 +828,15 @@
       "id": "p5-0726-semtech",
       "masterRow": 254,
       "company": "Semtech",
-      "postingUrl": "https://www.semtech.com/careers",
+      "postingUrl": "https://semtech.wd1.myworkdayjobs.com/SemtechCareers",
       "talentUrl": null,
-      "channel": "공식 채용공고 검색·지원",
-      "adapter": "custom",
-      "verification": "career_only",
-      "confidence": "medium",
+      "channel": "공식 Workday 채용공고 검색·지원",
+      "adapter": "workday",
+      "verification": "valid_posting_feed",
+      "confidence": "high",
       "resumeUpload": "job_only",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-08",
+      "checkedAt": "2026-08-31",
       "enabled": true
     },
     {
@@ -17608,15 +17613,15 @@
       "id": "p4-0386-whatnot",
       "masterRow": 3015,
       "company": "Whatnot",
-      "postingUrl": "https://jobs.whatnot.com/",
+      "postingUrl": "https://www.whatnot.com/careers/discover",
       "talentUrl": "https://careers.whatnot.com/",
       "channel": "공식 Career Portal",
       "adapter": "custom",
-      "verification": "career_page_only",
+      "verification": "valid_posting_feed",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05",
+      "checkedAt": "2026-08-31",
       "enabled": true
     },
     {
