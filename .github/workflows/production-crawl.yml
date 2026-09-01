@@ -59,7 +59,7 @@ jobs:
           # A repair deployment verifies the remediated official feeds
           # before the normal oldest-first drain. Two matching observations
           # let the catalog-volume guard safely confirm Nubank's current zero.
-          JOB_PULSE_TARGETED_RECRAWL_SOURCE_IDS: ${{ github.event_name == 'push' && 'p4-0317-nubank,p4-0386-whatnot,p5-0726-semtech,p5-0755-tower-semiconductor,p2-0183-webster-bank,p2-0196-graphistry' || '' }}
+          JOB_PULSE_TARGETED_RECRAWL_SOURCE_IDS: ${{ github.event_name == 'push' && 'p2-0183-webster-bank,p2-0196-graphistry' || '' }}
           JOB_PULSE_TARGETED_RECRAWL_ATTEMPTS: "2"
         run: node scripts/run-production-crawl.mjs
 
