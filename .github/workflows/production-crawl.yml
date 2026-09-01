@@ -56,10 +56,10 @@ jobs:
           # Each request atomically leases one source. Six independent workers
           # preserve API headroom while materially improving source throughput.
           JOB_PULSE_REQUEST_CONCURRENCY: "6"
-          # A repair deployment verifies the three remediated official feeds
+          # A repair deployment verifies the remediated official feeds
           # before the normal oldest-first drain. Two matching observations
           # let the catalog-volume guard safely confirm Nubank's current zero.
-          JOB_PULSE_TARGETED_RECRAWL_SOURCE_IDS: ${{ github.event_name == 'push' && 'p4-0317-nubank,p4-0386-whatnot,p5-0726-semtech' || '' }}
+          JOB_PULSE_TARGETED_RECRAWL_SOURCE_IDS: ${{ github.event_name == 'push' && 'p4-0317-nubank,p4-0386-whatnot,p5-0726-semtech,p5-0755-tower-semiconductor' || '' }}
           JOB_PULSE_TARGETED_RECRAWL_ATTEMPTS: "2"
         run: node scripts/run-production-crawl.mjs
 
@@ -131,7 +131,7 @@ jobs:
           # Repair pushes verify the exact affected sources immediately. The
           # scheduled run leaves this empty and continues rotating through the
           # full browser-recovery queue below.
-          BROWSER_FALLBACK_SOURCE_IDS: ${{ github.event_name == 'push' && 'p4-0317-nubank,p4-0386-whatnot,p5-0726-semtech,p5-1077-tesla,p2-0076-ameriprise-financial,p2-0034-coast-central-cu,p4-0390-84-51,p5-0653-linkedin,p5-0850-ciena,p5-1028-progressive-insurance,legacy-row-807,p5-1106-wcg,legacy-row-126,p2-0179-us-attorney-s-office' || '' }}
+          BROWSER_FALLBACK_SOURCE_IDS: ${{ github.event_name == 'push' && 'p4-0317-nubank,p4-0386-whatnot,p5-0726-semtech,p5-0755-tower-semiconductor,p5-1077-tesla,p2-0076-ameriprise-financial,p2-0034-coast-central-cu,p4-0390-84-51,p5-0653-linkedin,p5-0850-ciena,p5-1028-progressive-insurance,legacy-row-807,p5-1106-wcg,legacy-row-126,p2-0179-us-attorney-s-office' || '' }}
           # The browser action records every empty/failed/blocked result in
           # crawl_runs and advances next_crawl_at. Selecting the oldest rows
           # therefore rotates fairly without a run-number offset that could
@@ -154,5 +154,5 @@ jobs:
           # and HTTP/1.1 clients. Validate them every recovery run so a stale
           # healthy partial snapshot or a long failure backoff cannot hide a
           # data regression.
-          BROWSER_FALLBACK_FORCE_NATIVE_SOURCE_IDS: p2-0076-ameriprise-financial,p2-0034-coast-central-cu,p4-0390-84-51,p5-0850-ciena,p5-1028-progressive-insurance,legacy-row-807,p5-1106-wcg,p5-0588-edwards-lifesciences,p4-0241-cgi,legacy-row-777,legacy-row-811,legacy-row-846,audit-row-392,audit-row-411,p5-1072-tampa-general-hospital,legacy-row-803,legacy-row-118,legacy-row-794,legacy-row-835,legacy-row-876,p5-0699-pepsico,p2-0196-graphistry,p2-0058-royal-business-bank,p5-0810-atrium-health,p4-0236-cathay-bank,p4-0259-dow-jones-risk-compliance,p2-0035-coinbase,audit-row-350,p2-0036-evercore,p5-0931-henry-ford-health,p4-0290-honor,p5-0616-hca-healthcare,p5-0644-kratos-defense,p4-0302-l-e-k-consulting,p2-0044-loandepot,p4-0349-slalom,p4-0384-veriff,p4-0448-improving,p4-0458-mclagan,p4-0463-nardello-co,p5-0545-anduril-industries,p5-0763-walmart,p5-1052-sarcos-robotics,p5-1039-revolut,p5-0722-saic,p5-0747-teradata,p5-0806-ase-group,p5-0857-closedloop,p5-0890-emory-healthcare,p2-0167-state-attorneys-general,legacy-row-867,p5-1077-tesla,p2-0179-us-attorney-s-office,p2-0180-valley-national-bancorp,p5-1104-wayfair,p4-0386-whatnot,audit-row-440,p5-0623-ibis-ai
+          BROWSER_FALLBACK_FORCE_NATIVE_SOURCE_IDS: p2-0076-ameriprise-financial,p2-0034-coast-central-cu,p4-0390-84-51,p5-0850-ciena,p5-1028-progressive-insurance,legacy-row-807,p5-1106-wcg,p5-0588-edwards-lifesciences,p4-0241-cgi,legacy-row-777,legacy-row-811,legacy-row-846,audit-row-392,audit-row-411,p5-1072-tampa-general-hospital,legacy-row-803,legacy-row-118,legacy-row-794,legacy-row-835,legacy-row-876,p5-0699-pepsico,p2-0196-graphistry,p2-0058-royal-business-bank,p5-0810-atrium-health,p4-0236-cathay-bank,p4-0259-dow-jones-risk-compliance,p2-0035-coinbase,audit-row-350,p2-0036-evercore,p5-0931-henry-ford-health,p4-0290-honor,p5-0616-hca-healthcare,p5-0644-kratos-defense,p5-0755-tower-semiconductor,p4-0302-l-e-k-consulting,p2-0044-loandepot,p4-0349-slalom,p4-0384-veriff,p4-0448-improving,p4-0458-mclagan,p4-0463-nardello-co,p5-0545-anduril-industries,p5-0763-walmart,p5-1052-sarcos-robotics,p5-1039-revolut,p5-0722-saic,p5-0747-teradata,p5-0806-ase-group,p5-0857-closedloop,p5-0890-emory-healthcare,p2-0167-state-attorneys-general,legacy-row-867,p5-1077-tesla,p2-0179-us-attorney-s-office,p2-0180-valley-national-bancorp,p5-1104-wayfair,p4-0386-whatnot,audit-row-440,p5-0623-ibis-ai
         run: npm run crawler:fallback:browser

@@ -1,7 +1,10 @@
 {
   "generatedAt": "2026-08-31",
-  "version": "v2:sha256:9d5dbbfa7d4d1af2fd573464ed8fe41c0d1a274458191b5eb8515391b29adb87",
+  "version": "v2:sha256:77c5ddcda4852fe896955c5e95a8d3cda23f644882446156053b2b41831f87b3",
   "incrementalSourceIdsByPreviousVersion": {
+    "v2:sha256:9d5dbbfa7d4d1af2fd573464ed8fe41c0d1a274458191b5eb8515391b29adb87": [
+      "p5-0755-tower-semiconductor"
+    ],
     "v2:sha256:bcf60567072725f67b788198646b800db234e8f7bc8899fd1277ca1b783927e2": [
       "p4-0317-nubank",
       "p4-0386-whatnot",
@@ -13323,15 +13326,15 @@
       "id": "p5-0755-tower-semiconductor",
       "masterRow": 2718,
       "company": "Tower Semiconductor",
-      "postingUrl": "https://secure4.entertimeonline.com/ta/6083095.jobs?JobsSearch=1",
-      "talentUrl": "https://towersemi.com/tpsco-join-us/",
-      "channel": "공식 Career Portal",
+      "postingUrl": "https://careers.towersemi.com/",
+      "talentUrl": "https://careers.towersemi.com/subscribe-to-job-alerts/",
+      "channel": "공식 채용공고·Job Alerts",
       "adapter": "custom",
-      "verification": "career_page_only",
+      "verification": "valid_posting_feed",
       "confidence": "high",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-25",
+      "checkedAt": "2026-08-31",
       "enabled": true
     },
     {
@@ -23421,7 +23424,7 @@
       "officialUrl": "https://jobs.coreandmain.com/p/coreandmain/jobs",
       "resumeUpload": "available",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-08"
+      "checkedAt": "2026-08-25"
     },
     {
       "id": "talent-legacy-row-88",
@@ -26194,10 +26197,10 @@
     {
       "id": "talent-p5-0755-tower-semiconductor",
       "sourceId": "p5-0755-tower-semiconductor",
-      "officialUrl": "https://towersemi.com/tpsco-join-us/",
+      "officialUrl": "https://careers.towersemi.com/subscribe-to-job-alerts/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-25"
+      "checkedAt": "2026-08-31"
     },
     {
       "id": "talent-p5-0757-turquoise-health",
@@ -28477,7 +28480,7 @@
       "officialUrl": "https://careers.whatnot.com/",
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-31"
     },
     {
       "id": "talent-p4-0389-ziprecruiter",
@@ -30229,7 +30232,7 @@
       "officialUrl": "https://www.disneycareers.com/en/",
       "resumeUpload": "unknown",
       "jobAlerts": "available",
-      "checkedAt": "2026-08-05"
+      "checkedAt": "2026-08-25"
     },
     {
       "id": "talent-p5-0525-abbvie",

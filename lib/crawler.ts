@@ -23711,29 +23711,104 @@ const crawlKratosCareers = async (source: CrawlSource, fetcher: typeof fetch): P
   }
 };
 
-const TOWER_LISTING_URL = "https://secure4.entertimeonline.com/ta/6083095.jobs?JobsSearch=1";
-const TOWER_API_URL = "https://secure4.entertimeonline.com/ta/rest/ui/recruitment/companies/%7C6083095/job-requisitions?offset=1&size=20&sort=desc&ein_id=&lang=null";
+const TOWER_LISTING_URL = "https://careers.towersemi.com/";
+const TOWER_CATEGORY_URLS = [
+  "https://careers.towersemi.com/career-opportunities/engineering/",
+  "https://careers.towersemi.com/career-opportunities/equipment-technicians/",
+  "https://careers.towersemi.com/career-opportunities/manufacturing-operators/",
+  "https://careers.towersemi.com/career-opportunities/corporate-functions/",
+  "https://careers.towersemi.com/career-opportunities/students-internship/",
+] as const;
+
+const towerCategoryJobs = (markdown: string, expectedUrl: string, source: CrawlSource): CrawledJob[] => {
+  const sourceUrl = markdown.match(/^URL Source:\s*(\S+)\s*$/mi)?.[1] ?? null;
+  try {
+    const actual = sourceUrl ? new URL(sourceUrl) : null;
+    const expected = new URL(expectedUrl);
+    if (!actual || actual.hostname !== expected.hostname || actual.pathname !== expected.pathname) {
+      throw new Error("Tower Semiconductor reader returned an unexpected source URL.");
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Tower Semiconductor")) throw error;
+    throw new Error("Tower Semiconductor reader omitted its official source URL.");
+  }
+
+  const content = markdown.split(/^Markdown Content:\s*$/mi)[1] ?? "";
+  const advertised = Number(content.match(/\*\*([\d,]+) results\*\*/i)?.[1]?.replaceAll(",", ""));
+  if (!Number.isInteger(advertised) || advertised < 0 || advertised > 1_000) {
+    throw new Error("Tower Semiconductor category returned an invalid advertised count.");
+  }
+
+  const category = new URL(expectedUrl).pathname.split("/").filter(Boolean).at(-1) ?? "unknown";
+  const rows = [...content.matchAll(/^\|\s*\[([^\]\n]+)\]\((https?:\/\/careers\.towersemi\.com\/job-description\/\?job_id=(\d+))\)\s*\|\s*([^|\n]+?)\s*\|\s*([^|\n]+?)\s*\|\s*$/gmi)];
+  const jobs = rows.flatMap((match): CrawledJob[] => {
+    const title = decodeHtmlAttribute(match[1]).replace(/\\([\\`*{}\[\]()#+.!_-])/g, "$1").trim();
+    const location = decodeHtmlAttribute(match[4]).trim();
+    const division = decodeHtmlAttribute(match[5]).trim();
+    if (!title || !location || !division) return [];
+    const officialUrl = `https://careers.towersemi.com/job-description/?job_id=${match[3]}`;
+    const parts = location.split(",").map((value) => value.trim()).filter(Boolean);
+    const country = parts.at(-2) === "USA" ? "United States" : parts.at(-2) === "ISR" ? "Israel" : parts.at(-2) ?? null;
+    return [{
+      externalId: match[3],
+      requisitionId: match[3],
+      title,
+      company: source.company,
+      location,
+      locationCity: parts[0] ?? null,
+      locationState: parts.at(-3) ?? null,
+      locationCountry: country,
+      locationPostalCode: parts.at(-1) ?? null,
+      arrangement: "onsite",
+      employmentType: classifyJobPrograms(title).keys.some((key) => key === "internship" || key === "coop") ? "Internship" : null,
+      summary: division,
+      businessUnit: division,
+      applyUrl: officialUrl,
+      officialUrl,
+      publishedAt: null,
+      rawPayload: { provider: "tower-careers-reader", category, division },
+    }];
+  });
+  if (jobs.length !== advertised || new Set(jobs.map((job) => job.externalId)).size !== jobs.length) {
+    throw new Error(`Tower Semiconductor category cardinality mismatch (${jobs.length}/${advertised}).`);
+  }
+  return jobs;
+};
 
 const crawlTowerSemiconductorCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
-  let responseStatus: number | null = null;
-  try {
-    const response = await fetchWithTimeout(fetcher, TOWER_API_URL, {
-      headers: { accept: "application/json", referer: TOWER_LISTING_URL },
-    }, true, { attempts: 2, timeoutMs: 12_000 });
-    responseStatus = response.status;
-    if (!response.ok) throw new Error(`Tower Semiconductor official UKG board returned HTTP ${response.status}.`);
-    const payload = await response.json() as { job_requisitions?: unknown; _paging?: { offset?: unknown; size?: unknown; total?: unknown } };
-    if (!Array.isArray(payload.job_requisitions)
-      || payload.job_requisitions.length !== 0
-      || payload._paging?.offset !== 1
-      || payload._paging?.size !== 20
-      || payload._paging?.total !== 0) {
-      throw new Error("Tower Semiconductor official UKG board no longer exposes its verified authoritative-empty catalog.");
-    }
-    return { status: "succeeded", responseStatus, completeListing: true, jobs: [], resolvedListingUrl: TOWER_LISTING_URL, error: null };
-  } catch (error) {
-    return { status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed", responseStatus, completeListing: false, jobs: [], resolvedListingUrl: TOWER_LISTING_URL, error: error instanceof Error ? error.message : "Unknown Tower Semiconductor careers crawler error." };
+  const results = await Promise.allSettled(TOWER_CATEGORY_URLS.map(async (categoryUrl) => {
+    const readerUrl = `https://r.jina.ai/http://${new URL(categoryUrl).host}${new URL(categoryUrl).pathname}`;
+    const response = await fetchWithTimeout(fetcher, readerUrl, {
+      headers: { accept: "text/plain", "x-retain-links": "all" },
+    }, false, { attempts: 1, timeoutMs: 15_000 });
+    if (!response.ok) throw Object.assign(new Error(`Tower Semiconductor category reader returned HTTP ${response.status}.`), { responseStatus: response.status });
+    return towerCategoryJobs(await response.text(), categoryUrl, source);
+  }));
+  const jobs = uniqueJobs(results.flatMap((result) => result.status === "fulfilled" ? result.value : []));
+  if (jobs.length > 0) {
+    return {
+      status: "succeeded",
+      responseStatus: 200,
+      // Reader snapshots are cardinality checked for safe additions, but are
+      // never authoritative evidence for stale-job closure.
+      completeListing: false,
+      jobs,
+      resolvedListingUrl: TOWER_LISTING_URL,
+      error: null,
+    };
   }
+  const errors = results.flatMap((result) => result.status === "rejected"
+    ? [result.reason instanceof Error ? result.reason.message : "Unknown category failure."] : []);
+  const responseStatus = results.flatMap((result) => result.status === "rejected" && result.reason && typeof result.reason === "object"
+    && "responseStatus" in result.reason ? [Number(result.reason.responseStatus)] : []).find(Number.isFinite) ?? null;
+  return {
+    status: isBlockedHttpStatus(responseStatus) ? "blocked" : "failed",
+    responseStatus,
+    completeListing: false,
+    jobs: [],
+    resolvedListingUrl: TOWER_LISTING_URL,
+    error: errors[0] ?? "Tower Semiconductor's official category pages returned no usable jobs.",
+  };
 };
 
 const VENTURE_GLOBAL_LISTING_URL = "https://ventureglobal.com/careers/";

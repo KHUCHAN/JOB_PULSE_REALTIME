@@ -477,13 +477,30 @@ describe("repaired source adapters", () => {
     })]);
   });
 
-  it("distinguishes Tower Semiconductor's verified zero-job UKG catalog from a parser failure", async () => {
-    const source = { id: "p5-0755-tower-semiconductor", company: "Tower Semiconductor", postingUrl: "https://secure4.entertimeonline.com/ta/6083095.jobs?JobsSearch=1", adapter: "custom" as const };
-    const result = await crawlSource(source, async () => Response.json({
-      job_requisitions: [],
-      _paging: { offset: 1, size: 20, total: 0 },
-    }), new Date());
-    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true, jobs: [], error: null }));
+  it("loads Tower Semiconductor's replacement careers catalog through five parallel official categories", async () => {
+    const source = { id: "p5-0755-tower-semiconductor", company: "Tower Semiconductor", postingUrl: "https://careers.towersemi.com/", adapter: "custom" as const };
+    const requested: string[] = [];
+    const result = await crawlSource(source, async (input) => {
+      const readerUrl = String(input);
+      requested.push(readerUrl);
+      const category = new URL(readerUrl.replace("https://r.jina.ai/http://", "https://")).pathname.split("/").filter(Boolean).at(-1)!;
+      const jobId = String(["engineering", "equipment-technicians", "manufacturing-operators", "corporate-functions", "students-internship"].indexOf(category) + 100);
+      const official = `http://careers.towersemi.com/career-opportunities/${category}/`;
+      return new Response(`Title: ${category}\n\nURL Source: ${official}\n\nMarkdown Content:\n**1 results**\n\n| Title | Location | Division |\n| --- | --- | --- |\n| [${category === "students-internship" ? "Environmental Specialist Intern" : `${category} Engineer`}](http://careers.towersemi.com/job-description/?job_id=${jobId}) | Newport Beach, CA, USA, 92660 | Corporate Quality |`);
+    }, new Date());
+    expect(requested).toHaveLength(5);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: false,
+      resolvedListingUrl: "https://careers.towersemi.com/",
+      error: null,
+    }));
+    expect(result.jobs).toHaveLength(5);
+    expect(result.jobs).toContainEqual(expect.objectContaining({
+      title: "Environmental Specialist Intern",
+      locationCountry: "United States",
+      officialUrl: "https://careers.towersemi.com/job-description/?job_id=104",
+    }));
   });
 
   it("classifies HTTP-200 TAL access challenges as blocked", async () => {

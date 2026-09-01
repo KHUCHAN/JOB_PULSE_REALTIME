@@ -14,6 +14,8 @@ export interface AuditSourceRecord {
   evidenceNote: string;
   checkedAt: string;
   adapter?: NormalizedSourceRecord["adapter"];
+  /** Preserve an explicit catalog disablement when an audit artifact is refreshed. */
+  enabled?: boolean;
 }
 
 export interface NormalizedSourceRecord {
@@ -87,6 +89,6 @@ export function normalizeAuditRecord(record: AuditSourceRecord): NormalizedSourc
     // A source without a posting endpoint cannot be crawled even if it keeps
     // a separate Talent Community URL for reference. Mark it inactive so the
     // health view does not misclassify an acquired or retired board as healthy.
-    enabled: Boolean(postingUrl) && !["NO_ACTIVE_CAREERS", "UNRESOLVED"].includes(record.verification),
+    enabled: record.enabled ?? (Boolean(postingUrl) && !["NO_ACTIVE_CAREERS", "UNRESOLVED"].includes(record.verification)),
   };
 }
