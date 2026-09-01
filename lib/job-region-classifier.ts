@@ -141,9 +141,14 @@ export function classifyJobRegion(input: JobRegionInput): JobRegion {
   };
 
   add(structuredCountry(input.locationCountry));
-  if (!input.locationCountry && input.locationCity && input.locationState) {
-    const state = input.locationState.trim().toLocaleUpperCase();
-    if (usStateCodes.has(state)) add("us");
+  if (!input.locationCountry && input.locationState) {
+    const stateCode = input.locationState.trim().toLocaleUpperCase();
+    const stateName = normalize(input.locationState);
+    // Structured ATS subdivision fields are stronger evidence than a bare
+    // raw-location token. Accept both postal codes and full state names even
+    // when the feed omits city/country, so St. Louis, MO and O Fallon,
+    // Missouri cannot fall out of the U.S. review scan.
+    if (usStateCodes.has(stateCode) || usStateNames.includes(stateName)) add("us");
   }
   add(rawLocation(input.location));
   for (const location of input.secondaryLocations ?? []) add(rawLocation(location));

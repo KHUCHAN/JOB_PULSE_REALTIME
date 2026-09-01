@@ -36,4 +36,12 @@ describe("inferJobLocationCountry", () => {
       officialUrl: "https://jobs.example.com/role",
     })).toBe("Singapore");
   });
+
+  it.each([
+    { location: "St. Louis, MO", locationState: null },
+    { location: "O Fallon", locationState: "Missouri" },
+    { location: null, locationState: "CA" },
+  ])("recovers the United States from state evidence: $location / $locationState", (input) => {
+    expect(inferJobLocationCountry(input)).toBe("United States");
+  });
 });

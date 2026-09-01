@@ -620,10 +620,10 @@ describe("large catalog content", () => {
       "legacy-row-102",
       "p5-0687-northrop-grumman",
       "p5-0773-rtx",
-      "audit-row-3447",
+      "p2-0046-mastercard",
     ]));
-    expect(crawlerModule.LARGE_CATALOG_US_SCOPE_POLICY_VERSION).toBe("large-us-v7");
-    expect(crawlerModule.LARGE_CATALOG_US_SCOPE_POLICY_REQUEUE_SOURCE_IDS).toEqual(["audit-row-3447"]);
+    expect(crawlerModule.LARGE_CATALOG_US_SCOPE_POLICY_VERSION).toBe("large-us-v8");
+    expect(crawlerModule.LARGE_CATALOG_US_SCOPE_POLICY_REQUEUE_SOURCE_IDS).toEqual(["p2-0046-mastercard"]);
   });
 });
 
@@ -8969,6 +8969,59 @@ We are an equal opportunity employer.`;
         title: "AI Software Engineering Intern",
         locationCountry: "United States of America",
       })]),
+    }));
+  });
+
+  it("uses Mastercard's bounded U.S. Phenom slice and canonical direct detail URL", async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const job = {
+      title: "Data Scientist Intern, Summer 2027 – St. Louis, MO, US",
+      jobId: "R-284879",
+      reqId: "R-284879",
+      location: "O Fallon, United States of America, 63368-7263",
+      city: "O Fallon",
+      state: "Missouri",
+      country: "United States of America",
+      type: "Full time",
+      postedDate: "2026-08-31T00:00:00.000+0000",
+      applyUrl: "https://mastercard.wd1.myworkdayjobs.com/Campus/job/OFallon-Missouri/Data-Scientist-Intern--Summer-2027---St-Louis--MO--US_R-284879/apply",
+    };
+    const fetcher: typeof fetch = async (input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      calls.push({ url: String(input), body });
+      return Response.json({ refineSearch: {
+        status: 200,
+        hits: 1,
+        totalHits: 1,
+        data: { jobs: [job] },
+      } });
+    };
+
+    const result = await crawlSource({
+      id: "p2-0046-mastercard",
+      company: "Mastercard",
+      postingUrl: "https://careers.mastercard.com/us/en/",
+      adapter: "phenom",
+    }, fetcher, new Date("2026-09-01T12:00:00Z"));
+
+    expect(calls).toHaveLength(2);
+    expect(calls.every(({ url }) => url === "https://careers.mastercard.com/widgets")).toBe(true);
+    expect(calls.every(({ body }) => JSON.stringify(body.selected_fields) === JSON.stringify({
+      country: ["United States of America", "United States", "USA", "US"],
+    }))).toBe(true);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      jobs: [expect.objectContaining({
+        externalId: "R-284879",
+        requisitionId: "R-284879",
+        locationState: "Missouri",
+        locationCountry: "United States of America",
+        sourcePostedText: "2026-08-31T00:00:00.000+0000",
+        publishedAt: "2026-08-31T00:00:00.000Z",
+        officialUrl: "https://careers.mastercard.com/us/en/job/R-284879/data-scientist-intern-summer-2027-st-louis-mo-us",
+        applyUrl: job.applyUrl,
+      })],
     }));
   });
 

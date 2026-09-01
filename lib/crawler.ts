@@ -118,10 +118,10 @@ const isEightfoldListingUrl = (value: string): boolean => {
 // checkpoint segments, and changing scope between segments would make stale
 // closure nondeterministic. Unknown and mixed/global roles remain visible so
 // an incomplete location never causes a potentially relevant US role to drop.
-export const LARGE_CATALOG_US_SCOPE_POLICY_VERSION = "large-us-v7";
+export const LARGE_CATALOG_US_SCOPE_POLICY_VERSION = "large-us-v8";
 // Only sources newly added in this revision need an immediate checkpoint
 // reset and cleanup. The full membership set below still controls every crawl.
-export const LARGE_CATALOG_US_SCOPE_POLICY_REQUEUE_SOURCE_IDS = ["audit-row-3447"] as const;
+export const LARGE_CATALOG_US_SCOPE_POLICY_REQUEUE_SOURCE_IDS = ["p2-0046-mastercard"] as const;
 export const US_SCOPED_LARGE_CATALOGS = new Set([
   "audit-row-3447", // TD Bank global Workday catalog
   "audit-row-319", // Baker Hughes
@@ -142,6 +142,7 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
   "p2-0039-goldman-sachs",
   "p2-0040-jefferies",
   "p2-0041-jpmorgan-chase",
+  "p2-0046-mastercard",
   "p2-0048-metlife",
   "p2-0050-morgan-stanley",
   "p4-0353-standard-chartered",
@@ -1191,6 +1192,7 @@ type PhenomJob = {
   jobUrl?: string;
   workplaceType?: string;
   postedDate?: string;
+  jobUpdatedDate?: string;
   reqId?: string;
   category?: string;
   multi_category?: string[];
@@ -2880,15 +2882,20 @@ const phenomJobs = (html: string, source: CrawlSource): PhenomPage | null => {
     const localeRoot = listing.pathname.replace(/\/(?:search-results|jobs?)(?:\/.*)?$/i, "").replace(/\/$/, "");
     const titleSlug = job.title.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
       .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-    // Prefer an explicit first-party detail/apply URL from the payload.  A
-    // generated Phenom detail path is only a fallback: several tenants expose
-    // the real Workday requisition in `applyUrl`, and using the guessed path
-    // both loses the canonical posting URL and prevents optional Workday
-    // detail enrichment from running.
+    const generatedDetailUrl = externalId
+      ? `${listing.origin}${localeRoot}/job/${encodeURIComponent(externalId)}/${titleSlug}`
+      : null;
+    // Prefer an explicit first-party detail/apply URL from the payload. A
+    // generated Phenom detail path is normally only a fallback because some
+    // tenants expose their real posting exclusively through Workday. Mastercard
+    // is the opposite: its payload omits jobUrl but its canonical direct detail
+    // route is live, while applyUrl is intentionally only the application form.
+    const isMastercard = listing.hostname.toLocaleLowerCase() === "careers.mastercard.com";
     const officialUrl = asText(job.jobUrl)
+      ?? (isMastercard ? generatedDetailUrl : null)
       ?? asText(job.applyUrl)
       ?? asText(job.actionUrl)
-      ?? (externalId ? `${listing.origin}${localeRoot}/job/${encodeURIComponent(externalId)}/${titleSlug}` : null);
+      ?? generatedDetailUrl;
     if (!officialUrl) return [];
     const workplace = `${job.checkRemote ?? ""} ${job.workplaceType ?? ""} ${job.location ?? ""}`.toLowerCase();
     const latitude = typeof job.latitude === "number" ? job.latitude : Number.parseFloat(job.latitude ?? "");
@@ -2915,6 +2922,8 @@ const phenomJobs = (html: string, source: CrawlSource): PhenomPage | null => {
       ...(Number.isFinite(longitude) ? { longitude } : {}),
       ...(job.reqId || job.jobId ? { requisitionId: job.reqId ?? job.jobId } : {}),
       ...(asText(job.applyUrl) || asText(job.actionUrl) ? { applyUrl: asText(job.applyUrl) ?? asText(job.actionUrl) } : {}),
+      ...(asText(job.postedDate) ? { sourcePostedText: asText(job.postedDate) } : {}),
+      ...(normalizedDate(job.jobUpdatedDate) ? { sourceUpdatedAt: normalizedDate(job.jobUpdatedDate) } : {}),
       officialUrl,
       publishedAt: normalizedDate(job.postedDate),
     }];

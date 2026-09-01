@@ -62,6 +62,13 @@ describe("classifyJobRegion", () => {
     })).toBe("us");
   });
 
+  it.each(["MO", "Missouri", "New York", "DC"])(
+    "recognizes a structured U.S. state without requiring country or city: %s",
+    (locationState) => {
+      expect(classifyJobRegion({ locationState })).toBe("us");
+    },
+  );
+
   it("does not let generic raw text override a structured country", () => {
     expect(classifyJobRegion({ locationCountry: "Canada", location: "Remote" })).toBe("non_us");
   });

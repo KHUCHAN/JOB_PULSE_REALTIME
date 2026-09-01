@@ -65,6 +65,10 @@ export const nativeCrawlExcludedSourceIds = [
   "legacy-row-84",
   "audit-row-342",
   "p5-0842-carefirst-bluecross-blueshield",
+  // Mastercard's first-party Phenom widget returns the exact U.S. slice in a
+  // single bounded page. Keep it in the independent request lane instead of
+  // repeatedly leasing its much larger global catalog in the Worker.
+  "p2-0046-mastercard",
   // Tesla's Akamai policy blocks both Worker and generic server egress. Keep
   // it isolated in the browser recovery lane so it cannot delay other firms.
   "p5-1077-tesla",

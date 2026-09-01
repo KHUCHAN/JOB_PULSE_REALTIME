@@ -1,5 +1,9 @@
+import { classifyJobRegion } from "./job-region-classifier";
+
 export type JobCountryInferenceInput = {
   location?: string | null;
+  locationCity?: string | null;
+  locationState?: string | null;
   locationCountry?: string | null;
   secondaryLocations?: string[] | null;
   officialUrl?: string | null;
@@ -61,6 +65,16 @@ export function inferJobLocationCountry(input: JobCountryInferenceInput): string
   if (locations.some((location) => [
     "united states", "united states of america", "usa",
   ].some((country) => containsPhrase(location, country)))) return "United States";
+
+  // Preserve a canonical country alongside the region classification when an
+  // ATS supplies only a U.S. state. This keeps both `region=us` and exact
+  // country filters consistent for feeds such as Phenom and Workday.
+  if (classifyJobRegion({
+    location: input.location,
+    locationCity: input.locationCity,
+    locationState: input.locationState,
+    secondaryLocations: input.secondaryLocations,
+  }) === "us") return "United States";
 
   const pathLocation = officialWorkdayLocation(input.officialUrl);
   if (pathLocation === "singapore") return "Singapore";
