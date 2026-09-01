@@ -59,7 +59,7 @@ jobs:
           # A repair deployment verifies the remediated official feeds
           # before the normal oldest-first drain. Two matching observations
           # let the catalog-volume guard safely confirm Nubank's current zero.
-          JOB_PULSE_TARGETED_RECRAWL_SOURCE_IDS: ${{ github.event_name == 'push' && 'p4-0369-tigerconnect,audit-row-3447,audit-row-3448' || '' }}
+          JOB_PULSE_TARGETED_RECRAWL_SOURCE_IDS: ${{ github.event_name == 'push' && 'p4-0369-tigerconnect,audit-row-3447,audit-row-3448,p5-0846-caterpillar' || '' }}
           JOB_PULSE_TARGETED_RECRAWL_ATTEMPTS: "2"
         run: node scripts/run-production-crawl.mjs
 
