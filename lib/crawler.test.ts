@@ -16631,14 +16631,14 @@ Hybrid - New York, NY`;
       adapter: "custom",
     }, async () => {
       calls += 1;
-      if (calls === 1) return new Response("preparing", { status: 202 });
+      if (calls <= 2) return new Response("preparing", { status: 202 });
       return new Response(`<h4 class="ui-accordion-header">Forward Deployed Engineer</h4>
         <div>Remote role working with customers on graph analytics.
           <a href="https://graphistry.com/apply/fde">Apply now</a>
         </div>`, { status: 200 });
     }, new Date("2026-09-01T00:00:00Z"));
 
-    expect(calls).toBe(2);
+    expect(calls).toBe(3);
     expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
     expect(result.jobs).toEqual([expect.objectContaining({
       title: "Forward Deployed Engineer",

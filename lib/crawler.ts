@@ -23163,10 +23163,10 @@ const fetchVerifiedStaticCareerHtml = async (
   // Some static career hosts briefly return HTTP 202 while their edge cache
   // prepares the rendered page. A 202 is technically successful, so the
   // generic HTTP retry policy cannot distinguish it from a valid API reply.
-  // Retry it once here before the parser sees an empty placeholder document.
-  if (response.status === 202) {
+  // Retry it twice here before the parser sees an empty placeholder document.
+  for (let pendingAttempt = 1; response.status === 202 && pendingAttempt <= 2; pendingAttempt += 1) {
     await response.body?.cancel().catch(() => undefined);
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 250 * pendingAttempt));
     response = await fetchWithTimeout(fetcher, expected, undefined, true, { attempts: 1, timeoutMs: 12_000 });
   }
   if (response.status === 202) throw Object.assign(new Error("Official careers page remained pending after a bounded retry."), { responseStatus: response.status });
