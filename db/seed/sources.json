@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-09-01",
-  "version": "v2:sha256:74fb574f9ac21f60c31256870aaf1aea0972af4914c666c986700e3c20d85bc2",
+  "generatedAt": "2026-09-02",
+  "version": "v2:sha256:333ffa3b859e3c86ee7959b167dd80ec26b8318a1edfa51d5257e7d537bb1895",
   "incrementalSourceIdsByPreviousVersion": {
     "v2:sha256:9d5dbbfa7d4d1af2fd573464ed8fe41c0d1a274458191b5eb8515391b29adb87": [
       "p5-0755-tower-semiconductor"
@@ -56,6 +56,9 @@
       "p4-0369-tigerconnect",
       "audit-row-3447",
       "audit-row-3448"
+    ],
+    "v2:sha256:74fb574f9ac21f60c31256870aaf1aea0972af4914c666c986700e3c20d85bc2": [
+      "audit-row-3449"
     ]
   },
   "sources": [
@@ -21913,6 +21916,21 @@
       "jobAlerts": "unknown",
       "checkedAt": "2026-09-01",
       "enabled": true
+    },
+    {
+      "id": "audit-row-3449",
+      "masterRow": 3449,
+      "company": "Bell Textron",
+      "postingUrl": "https://textron.taleo.net/careersection/bell/jobsearch.ftl?lang=en",
+      "talentUrl": "https://www.bellflight.com/company/careers",
+      "channel": "Official Bell Textron Taleo job board",
+      "adapter": "custom",
+      "verification": "valid_posting_feed",
+      "confidence": "high",
+      "resumeUpload": "job_only",
+      "jobAlerts": "unknown",
+      "checkedAt": "2026-09-02",
+      "enabled": true
     }
   ],
   "talentTargets": [
@@ -30771,6 +30789,14 @@
       "resumeUpload": "unknown",
       "jobAlerts": "unknown",
       "checkedAt": "2026-08-05"
+    },
+    {
+      "id": "talent-audit-row-3449",
+      "sourceId": "audit-row-3449",
+      "officialUrl": "https://www.bellflight.com/company/careers",
+      "resumeUpload": "job_only",
+      "jobAlerts": "unknown",
+      "checkedAt": "2026-09-02"
     }
   ]
 }

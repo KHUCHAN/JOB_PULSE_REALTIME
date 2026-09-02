@@ -16011,6 +16011,73 @@ We are an equal opportunity employer.`;
     }));
   });
 
+  it("collects Bell Textron's official Taleo catalog", async () => {
+    const boardUrl = "https://textron.taleo.net/careersection/bell/jobsearch.ftl?lang=en";
+    const searchUrl = "https://textron.taleo.net/careersection/rest/jobboard/searchjobs?lang=en&portal=20140753014";
+    const visibleFilters = ["POSTING_DATE", "LOCATION", "JOB_FIELD", "JOB_TYPE", "JOB_SCHEDULE", "JOB_LEVEL"];
+    const requestFilters = [...visibleFilters, "JOB_LOCALE"];
+    const requisition = {
+      jobId: "344800",
+      contestNo: "329914",
+      column: [
+        "2027 Winter Internship - Industrial Engineer",
+        "329914",
+        JSON.stringify(["CA-Quebec-Mirabel"]),
+      ],
+      linkedColumn: 0,
+      locationsColumns: [2],
+    };
+    const facets = requestFilters.map((id) => ({
+      id,
+      facetValueResults: [{ id: "1", text: id, quantity: "1" }],
+    }));
+    const requests = { board: 0, search: 0, detail: 0 };
+
+    const result = await crawlSource({
+      id: "audit-row-3449",
+      company: "Bell Textron",
+      postingUrl: boardUrl,
+      adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      if (url === boardUrl) {
+        requests.board += 1;
+        return new Response(`<script>portalNo: '20140753014', urlCode: 'bell'</script>
+          ${visibleFilters.map((id) => `<div id="filter-${id}"></div>`).join("")}`);
+      }
+      if (url === searchUrl) {
+        requests.search += 1;
+        return Response.json({
+          requisitionList: [requisition],
+          facetResults: facets,
+          pagingData: { currentPageNo: 1, pageSize: 25, totalCount: 1 },
+          careerSectionUnAvailable: false,
+        });
+      }
+      requests.detail += 1;
+      return new Response("detail unavailable", { status: 404 });
+    }, new Date("2026-09-02T08:00:00Z"));
+
+    expect(requests).toEqual({ board: 1, search: 2, detail: 1 });
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: boardUrl,
+      error: null,
+    }));
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "344800",
+      requisitionId: "329914",
+      title: "2027 Winter Internship - Industrial Engineer",
+      employmentType: "Internship",
+      locationCity: "Mirabel",
+      locationState: "Quebec",
+      locationCountry: "CA",
+      officialUrl: "https://textron.taleo.net/careersection/bell/jobdetail.ftl?job=329914&lang=en",
+    })]);
+    expect(result.facets?.map(({ key }) => key)).toEqual(requestFilters.map((id) => id.toLocaleLowerCase()));
+  });
+
   it("fails generic classic Taleo closed when two catalog snapshots disagree", async () => {
     const boardUrl = "https://valero.taleo.net/careersection/2/jobsearch.ftl?lang=en";
     const searchUrl = "https://valero.taleo.net/careersection/rest/jobboard/searchjobs?lang=en&portal=101430233";

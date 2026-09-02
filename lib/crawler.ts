@@ -16267,6 +16267,15 @@ const CINCINNATI_TALEO_SEARCH_URL = "https://cinfin.taleo.net/careersection/rest
 const TAMPA_GENERAL_TALEO_LISTING_URL = "https://tgh.taleo.net/careersection/ex/jobsearch.ftl?lang=en";
 const TAMPA_GENERAL_TALEO_SEARCH_URL = "https://tgh.taleo.net/careersection/rest/jobboard/searchjobs?lang=en&portal=101430233";
 const GENERIC_CLASSIC_TALEO_BOARDS: Record<string, GenericClassicTaleoConfig> = {
+  "audit-row-3449": {
+    label: "Bell Textron",
+    listingUrl: "https://textron.taleo.net/careersection/bell/jobsearch.ftl?lang=en",
+    origin: "https://textron.taleo.net",
+    section: "bell",
+    portal: "20140753014",
+    visibleFilters: ["POSTING_DATE", "LOCATION", "JOB_FIELD", "JOB_TYPE", "JOB_SCHEDULE", "JOB_LEVEL"],
+    requestFilters: ["POSTING_DATE", "LOCATION", "JOB_FIELD", "JOB_TYPE", "JOB_SCHEDULE", "JOB_LEVEL", "JOB_LOCALE"],
+  },
   "audit-row-355": {
     label: "Equitable",
     listingUrl: "https://equitable.taleo.net/careersection/eqh_1/jobsearch.ftl?lang=en&portal=36105020509",

@@ -42,11 +42,16 @@ const latestRepairedOfficialBoards: Record<string, [string, string]> = {
   "audit-row-3448": ["https://careers-springswindowfashions.icims.com/jobs/search?ss=1&in_iframe=1", "icims"],
 };
 
+const newestRepairedOfficialBoards: Record<string, [string, string]> = {
+  "audit-row-3449": ["https://textron.taleo.net/careersection/bell/jobsearch.ftl?lang=en", "custom"],
+};
+
 const expectedOfficialBoards = {
   ...previousOfficialBoards,
   ...currentOfficialBoards,
   ...repairedOfficialBoards,
   ...latestRepairedOfficialBoards,
+  ...newestRepairedOfficialBoards,
 };
 
 describe("verified official source catalog", () => {
@@ -55,7 +60,7 @@ describe("verified official source catalog", () => {
       generatedAt: string;
       incrementalSourceIdsByPreviousVersion: Record<string, string[]>;
     };
-    expect(seed.generatedAt).toBe("2026-09-01");
+    expect(seed.generatedAt).toBe("2026-09-02");
     expect(seed.incrementalSourceIdsByPreviousVersion[
       "v2:sha256:835306aa88bf670a9266a8abb509471bf5ac9d7170dcabdee2ff62f70cf66e25"
     ]).toEqual([
@@ -67,6 +72,9 @@ describe("verified official source catalog", () => {
       "audit-row-3447",
       "audit-row-3448",
     ]);
+    expect(seed.incrementalSourceIdsByPreviousVersion[
+      "v2:sha256:74fb574f9ac21f60c31256870aaf1aea0972af4914c666c986700e3c20d85bc2"
+    ]).toEqual(["audit-row-3449"]);
   });
 
   it("uses the first-party ATS boards instead of stale corporate landing pages", () => {
@@ -179,5 +187,12 @@ describe("verified official source catalog", () => {
     const latestMigration = readFileSync(join(process.cwd(), "drizzle", latestMigrationName!), "utf8");
     for (const id of Object.keys(latestRepairedOfficialBoards)) expect(latestMigration).toContain(`'${id}'`);
     expect(latestMigration).toContain("SET `next_crawl_at` = CURRENT_TIMESTAMP");
+
+    const newestMigrationName = readdirSync(join(process.cwd(), "drizzle"))
+      .find((name) => /^0139_refresh_sources_\d+\.sql$/.test(name));
+    expect(newestMigrationName).toBeTruthy();
+    const newestMigration = readFileSync(join(process.cwd(), "drizzle", newestMigrationName!), "utf8");
+    for (const id of Object.keys(newestRepairedOfficialBoards)) expect(newestMigration).toContain(`'${id}'`);
+    expect(newestMigration).toContain("INSERT INTO sources");
   });
 });
