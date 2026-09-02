@@ -25,8 +25,11 @@ const base = {
 describe("Chanyoung resume matcher", () => {
   it.each([
     ["LLM Evaluation Intern", ["Python", "NLP"], "role:llm-nlp"],
+    ["Embedding Classification Research Intern", ["Python", "FAISS"], "role:llm-nlp"],
     ["Data Engineering Co-op", ["SQL", "PySpark"], "role:data-engineering"],
     ["Software Developer Intern", ["JavaScript"], "role:software-engineering"],
+    ["Forward Deployed Engineer Intern", ["Python", "Docker", "Kubernetes"], "role:fde"],
+    ["Business Analyst Intern", ["SQL", "Tableau"], "role:data-analytics"],
     ["Fraud Analytics Internship", ["Python", "SQL"], "domain:aml-risk"],
   ])("matches %s with stable evidence", (title, skills, evidence) => {
     const result = evaluateResumeMatch({ ...base, title, skills });
@@ -96,6 +99,22 @@ describe("Chanyoung resume matcher", () => {
 
     expect(result.eligible).toBe(true);
     expect(result.evidence.map((item) => item.code)).toContain("role:ai-ml");
+  });
+
+  it("recognizes the updated resume's vector and platform stack", () => {
+    const result = evaluateResumeMatch({
+      ...base,
+      title: "Applied AI Software Engineering Intern",
+      skills: ["Python", "FAISS", "Semantic Search", "Docker", "Kubernetes"],
+    });
+
+    expect(result.eligible).toBe(true);
+    expect(result.evidence.map((item) => item.code)).toEqual(expect.arrayContaining([
+      "role:ai-ml",
+      "skill:python",
+      "skill:language-systems",
+      "skill:platform",
+    ]));
   });
 
   it("does not approve a direct role from gate points alone", () => {

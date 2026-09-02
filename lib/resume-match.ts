@@ -35,7 +35,7 @@ export interface ResumeMatchDecision {
 export const CHANYOUNG_RESUME_PROFILE = {
   id: "chanyoung-resume",
   keywordId: "resume-keyword-chanyoung",
-  ruleVersion: "resume-v1",
+  ruleVersion: "resume-v2",
   minScore: 60,
 } as const;
 
@@ -61,10 +61,11 @@ const NON_PHD_ELIGIBLE_DEGREE = /(?:bachelor(?: s)?|college|university|undergrad
 const roleEvidence = (value: string): ResumeMatchEvidence | null => {
   const rules: Array<[RegExp, ResumeMatchEvidence]> = [
     [/(?:applied scientist|research scientist)/, { code: "role:applied-science", label: "Applied or research scientist role", points: 35 }],
-    [/(?:\bllm\b|large language model|natural language|\bnlp\b|retrieval augmented|\brag\b|knowledge graph|agentic|ai evaluation)/, { code: "role:llm-nlp", label: "LLM, NLP, RAG, or knowledge systems", points: 35 }],
+    [/(?:forward deployed engineer|forward-deployed engineer|\bfde\b)/, { code: "role:fde", label: "Forward deployed engineering role", points: 35 }],
+    [/(?:\bllm\b|large language model|natural language|\bnlp\b|retrieval augmented|\brag\b|knowledge graph|agentic|ai evaluation|\bembeddings?\b|semantic search|vector database|\bfaiss\b|prompt engineering)/, { code: "role:llm-nlp", label: "LLM, NLP, RAG, embedding, or knowledge systems", points: 35 }],
     [/(?:machine learning|artificial intelligence|\bai\b|deep learning|applied ai)/, { code: "role:ai-ml", label: "AI or machine learning role", points: 35 }],
     [/(?:data engineer|analytics engineer|etl engineer|data platform)/, { code: "role:data-engineering", label: "Data engineering role", points: 35 }],
-    [/(?:data scien|data analy|business intelligence|quantitative|\bbi\b)/, { code: "role:data-analytics", label: "Data science or analytics role", points: 35 }],
+    [/(?:data scien|data analy|business analy|decision analy|business intelligence|quantitative|\bbi\b)/, { code: "role:data-analytics", label: "Data science, business analysis, or analytics role", points: 35 }],
     [/(?:computer vision|image processing|\bocr\b)/, { code: "role:computer-vision", label: "Computer vision or OCR role", points: 35 }],
     [/(?:software (?:engineer|engineering|developer|development)|application developer|backend developer|frontend developer|full.?stack developer)/, { code: "role:software-engineering", label: "Direct software engineering role", points: 35 }],
     [/(?:fraud|anti money laundering|\baml\b|risk analy|regtech|data quality)/, { code: "role:data-analytics", label: "Risk or fraud analytics role", points: 30 }],
@@ -85,10 +86,11 @@ const skillEvidence = (input: ResumeMatchInput): ResumeMatchEvidence[] => {
   ].filter(Boolean).join(" "));
   const groups: Array<[RegExp, ResumeMatchEvidence]> = [
     [/(?:^|\s)(?:python|pyspark|pandas)(?:\s|$)/, { code: "skill:python", label: "Python, PySpark, or Pandas", points: 10 }],
-    [/(?:^|\s)(?:sql|database|data warehouse|etl|hadoop|mongodb)(?:\s|$)/, { code: "skill:sql", label: "SQL and data systems", points: 10 }],
+    [/(?:^|\s)(?:sql|postgresql|database|data warehouse|etl|spark|hadoop|mongodb)(?:\s|$)/, { code: "skill:sql", label: "SQL and data systems", points: 10 }],
     [/(?:machine learning|deep learning|scikit|pytorch|tensorflow)/, { code: "skill:ml", label: "Machine-learning stack", points: 7 }],
-    [/(?:\bnlp\b|large language model|\bllm\b|\brag\b|neo4j|knowledge graph|model evaluation)/, { code: "skill:language-systems", label: "Language or knowledge systems", points: 10 }],
+    [/(?:\bnlp\b|large language model|\bllm\b|\brag\b|neo4j|knowledge graph|model evaluation|\bembeddings?\b|semantic search|vector database|\bfaiss\b|prompt engineering)/, { code: "skill:language-systems", label: "Language, embedding, or knowledge systems", points: 10 }],
     [/(?:javascript|typescript|java|c\+\+|react|node\.js)/, { code: "skill:software", label: "Software development stack", points: 25 }],
+    [/(?:docker|kubernetes|container|\bk8s\b|\bgit\b)/, { code: "skill:platform", label: "Container and delivery tooling", points: 10 }],
     [/(?:tableau|business intelligence|analytics)/, { code: "skill:analytics", label: "Analytics tooling", points: 5 }],
     [/(?:opencv|computer vision|image processing|\bocr\b|multimodal)/, { code: "skill:vision", label: "Computer vision or OCR stack", points: 8 }],
   ];
