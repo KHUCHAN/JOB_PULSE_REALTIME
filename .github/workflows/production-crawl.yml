@@ -96,7 +96,7 @@ jobs:
           # bounded catalog pass rotates by production slot on this runner.
           # Mastercard's U.S. Phenom slice is 268 rows versus 1,000+ global
           # rows and includes Campus requisitions absent from CorporateCareers.
-          REQUEST_FALLBACK_SOURCE_IDS: ${{ github.event_name == 'push' && 'p2-0046-mastercard,p4-0285-google,legacy-row-84,audit-row-342,p5-0842-carefirst-bluecross-blueshield' || 'p2-0046-mastercard,p4-0241-cgi,p5-1018-penn-medicine,legacy-row-826,p2-0075-american-family-insurance,legacy-row-102,p4-0285-google,legacy-row-84,audit-row-342,p5-0842-carefirst-bluecross-blueshield' }}
+          REQUEST_FALLBACK_SOURCE_IDS: ${{ github.event_name == 'push' && 'p2-0062-stripe,p2-0046-mastercard,p4-0285-google,legacy-row-84,audit-row-342,p5-0842-carefirst-bluecross-blueshield' || 'p2-0046-mastercard,p4-0241-cgi,p5-1018-penn-medicine,legacy-row-826,p2-0075-american-family-insurance,legacy-row-102,p4-0285-google,legacy-row-84,audit-row-342,p5-0842-carefirst-bluecross-blueshield' }}
         run: node scripts/request-fallback-crawl.ts
 
   browser-recovery:
