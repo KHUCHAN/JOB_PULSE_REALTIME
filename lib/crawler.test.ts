@@ -6984,6 +6984,68 @@ We are an equal opportunity employer.`;
     }));
   });
 
+  it("reads Stripe's complete first-party index and enriches internship details", async () => {
+    const requests: string[] = [];
+    const detailUrl = "https://stripe.com/careers/listing/software-engineer-intern-summer-or-winter/8128745";
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === "https://stripe.com/careers/search") return new Response(`
+        <script id="__NEXT_DATA__" type="application/json">${JSON.stringify({
+          props: { pageProps: { jobIndexData: {
+            filters: {
+              locations: [{ name: "New York", countryCode: "US" }, { name: "Remote in US", countryCode: "US", remote: true }],
+              tags: [{ name: "University" }],
+              teams: [{ name: "Engineering" }],
+            },
+            listings: [
+              { greenhouseId: 8128745, title: "Software Engineer, Intern (Summer or Winter)", slug: "software-engineer-intern-summer-or-winter", locationIndices: [0, 1], tagIndices: [0], teamIndices: [0], employmentType: "Intern" },
+              { greenhouseId: 8146159, title: "AMER Analytical Lead", slug: "amer-analytical-lead", locationIndices: [0], tagIndices: [], teamIndices: [0], employmentType: "Full time" },
+            ],
+          } } },
+        })}</script>
+      `, { status: 200 });
+      if (url === detailUrl) return new Response(`
+        <script type="application/ld+json">${JSON.stringify({
+          "@context": "https://schema.org",
+          "@type": "JobPosting",
+          title: "Software Engineer, Intern (Summer or Winter)",
+          description: "<p>Build reliable software and data infrastructure.</p>",
+          datePosted: "2026-09-01T17:32:15.172Z",
+          employmentType: "INTERN",
+          identifier: { "@type": "PropertyValue", name: "Stripe", value: "8128745" },
+          url: detailUrl,
+          jobLocation: [{ "@type": "Place", address: { "@type": "PostalAddress", addressLocality: "New York", addressCountry: "US" } }],
+        })}</script>
+      `, { status: 200 });
+      return new Response("unexpected", { status: 500 });
+    };
+
+    const result = await crawlSource({
+      id: "p2-0062-stripe",
+      company: "Stripe",
+      postingUrl: "https://stripe.com/careers/search",
+      adapter: "custom",
+    }, fetcher, new Date("2026-09-02T08:00:00Z"));
+
+    expect(requests).toEqual(["https://stripe.com/careers/search", detailUrl]);
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true }));
+    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      externalId: "8128745",
+      requisitionId: "8128745",
+      title: "Software Engineer, Intern (Summer or Winter)",
+      location: "New York, US",
+      locationCountry: "US",
+      arrangement: "remote",
+      employmentType: "Internship",
+      team: "Engineering",
+      publishedAt: "2026-09-01T17:32:15.172Z",
+      description: "Build reliable software and data infrastructure.",
+      officialUrl: detailUrl,
+    }));
+  });
+
   it("paginates Amazon's public search JSON and retains structured posting fields", async () => {
     const requests: string[] = [];
     const firstJobs = Array.from({ length: 100 }, (_, index) => ({

@@ -11921,6 +11921,104 @@ const crawlAtlassian = async (source: CrawlSource, fetcher: typeof fetch): Promi
   }
 };
 
+type StripeCareerLocation = {
+  name?: string;
+  remote?: boolean;
+  countryCode?: string;
+};
+
+type StripeCareerListing = {
+  greenhouseId?: number | string;
+  title?: string;
+  slug?: string;
+  locationIndices?: number[];
+  tagIndices?: number[];
+  teamIndices?: number[];
+  employmentType?: string;
+};
+
+const crawlStripeCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  const listingUrl = "https://stripe.com/careers/search";
+  try {
+    const response = await fetchWithTimeout(fetcher, listingUrl, undefined, true);
+    if (!response.ok) return {
+      status: isBlockedHttpStatus(response.status) ? "blocked" : "failed",
+      responseStatus: response.status,
+      completeListing: false,
+      jobs: [],
+      error: `Stripe careers catalog returned HTTP ${response.status}.`,
+    };
+    const html = await response.text();
+    const nextData = html.match(/<script\b[^>]*\bid=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i)?.[1];
+    if (!nextData) throw new Error("Stripe careers catalog did not expose its first-party job index.");
+    const payload = JSON.parse(nextData) as {
+      props?: { pageProps?: { jobIndexData?: {
+        filters?: {
+          locations?: StripeCareerLocation[];
+          tags?: Array<{ name?: string }>;
+          teams?: Array<{ name?: string }>;
+        };
+        listings?: StripeCareerListing[];
+      } } };
+    };
+    const index = payload.props?.pageProps?.jobIndexData;
+    const listings = index?.listings;
+    const locations = index?.filters?.locations ?? [];
+    const tags = index?.filters?.tags ?? [];
+    const teams = index?.filters?.teams ?? [];
+    if (!Array.isArray(listings) || listings.length === 0) {
+      throw new Error("Stripe careers catalog returned no job listings.");
+    }
+    const jobs = listings.flatMap((listing): CrawledJob[] => {
+      const externalId = listing.greenhouseId == null ? null : String(listing.greenhouseId);
+      if (!externalId || !listing.title || !listing.slug) return [];
+      const jobLocations = (listing.locationIndices ?? []).flatMap((value) => locations[value] ?? []);
+      const locationNames = jobLocations.map(({ name }) => name?.trim()).filter((value): value is string => Boolean(value));
+      const countryCodes = [...new Set(jobLocations.map(({ countryCode }) => countryCode?.trim()).filter((value): value is string => Boolean(value)))];
+      const tagNames = (listing.tagIndices ?? []).map((value) => tags[value]?.name).filter((value): value is string => Boolean(value));
+      const teamNames = (listing.teamIndices ?? []).map((value) => teams[value]?.name).filter((value): value is string => Boolean(value));
+      const location = locationNames.join("; ") || null;
+      const employmentType = /^intern$/i.test(listing.employmentType ?? "")
+        ? "Internship"
+        : listing.employmentType?.trim() || null;
+      return [{
+        externalId,
+        title: listing.title,
+        company: source.company,
+        location,
+        arrangement: jobLocations.some(({ remote }) => remote) ? "remote" : "unknown",
+        employmentType,
+        summary: null,
+        ...(teamNames.length ? { team: teamNames.join("; ") } : {}),
+        ...(countryCodes.length === 1 ? { locationCountry: countryCodes[0] } : {}),
+        requisitionId: externalId,
+        officialUrl: `https://stripe.com/careers/listing/${encodeURIComponent(listing.slug)}/${encodeURIComponent(externalId)}`,
+        publishedAt: null,
+        rawPayload: { tags: tagNames, countryCodes },
+      }];
+    });
+    if (jobs.length !== listings.length) {
+      throw new Error("Stripe careers catalog contained malformed job records.");
+    }
+    return {
+      status: "succeeded",
+      responseStatus: response.status,
+      completeListing: true,
+      resolvedListingUrl: listingUrl,
+      jobs: uniqueJobs(jobs),
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: "failed",
+      responseStatus: null,
+      completeListing: false,
+      jobs: [],
+      error: error instanceof Error ? error.message : "Unknown Stripe careers crawler error.",
+    };
+  }
+};
+
 type AmazonJob = {
   id?: string;
   id_icims?: string;
@@ -24448,6 +24546,9 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
     source = { ...source, postingUrl: originalPage.href };
   }
   const sourcePage = new URL(source.postingUrl);
+  if (source.id === "p2-0062-stripe" || sourcePage.hostname === "stripe.com") {
+    return crawlStripeCareers(source, fetcher);
+  }
   if (source.id === "p5-0992-neogenomics") {
     return crawlJobviteBoard(source, "https://jobs.jobvite.com/neogenomics/search", "neogenomics", fetcher);
   }
@@ -24884,6 +24985,7 @@ const VERIFIED_JSON_LD_DETAIL_HOSTS = new Set([
   "careers.fedex.com",
   "jobs.citi.com",
   "search.jobs.barclays",
+  "stripe.com",
 ]);
 
 const supportsJsonLdDetailEnrichment = (jobUrl: string): boolean => {
