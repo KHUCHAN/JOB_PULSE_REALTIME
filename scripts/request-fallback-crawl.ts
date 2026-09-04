@@ -17,6 +17,7 @@ type RecoverySummary = {
   jobs: number;
   created: number;
   updated: number;
+  elapsedMs: number;
   error: string | null;
 };
 
@@ -24,7 +25,7 @@ const siteUrl = (process.env.REQUEST_FALLBACK_LIVE_URL
   ?? "https://job-pulse-realtime.autodev61.chatgpt.site").replace(/\/$/, "");
 const ingestUrl = process.env.REQUEST_FALLBACK_INGEST_URL?.trim() || `${siteUrl}/api/pulse`;
 const sourceIds = [...new Set((process.env.REQUEST_FALLBACK_SOURCE_IDS ?? "legacy-row-826,p2-0075-american-family-insurance")
-  .split(",").map((value) => value.trim()).filter(Boolean))].slice(0, 48);
+  .split(",").map((value) => value.trim()).filter(Boolean))].slice(0, 64);
 const forcedSourceIds = new Set((process.env.REQUEST_FALLBACK_FORCE_SOURCE_IDS ?? "")
   .split(",").map((value) => value.trim()).filter(Boolean));
 const concurrency = Math.max(1, Math.min(8,
@@ -90,6 +91,7 @@ const liveSources = async (): Promise<CrawlSource[]> => {
 };
 
 const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
+  const startedAt = Date.now();
   try {
     // The independent Node.js runner has a much larger execution envelope
     // than one Sites Worker request. Drain every paged official catalog here;
@@ -97,7 +99,11 @@ const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
     // repeatedly ingesting page one for a newly promoted priority source.
     let result: Awaited<ReturnType<typeof recoverCheckpointedCatalog>>;
     try {
-      result = await recoverCheckpointedCatalog(source, fetch, crawlSource, { maxPasses: 60, maxStalls: 0 });
+      result = await recoverCheckpointedCatalog(source, fetch, crawlSource, {
+        maxPasses: 60,
+        maxStalls: 2,
+        stallDelayMs: 1_500,
+      });
     } catch (firstError) {
       // Retry the complete source once. Official Workday and sitemap edges can
       // change a page count or reject one burst even though the next bounded
@@ -105,7 +111,11 @@ const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
       // affecting the other seven worker lanes.
       await new Promise((resolve) => setTimeout(resolve, 2_000));
       try {
-        result = await recoverCheckpointedCatalog(source, fetch, crawlSource, { maxPasses: 60, maxStalls: 0 });
+        result = await recoverCheckpointedCatalog(source, fetch, crawlSource, {
+          maxPasses: 60,
+          maxStalls: 2,
+          stallDelayMs: 1_500,
+        });
       } catch (secondError) {
         const firstMessage = firstError instanceof Error ? firstError.message : "unknown first attempt";
         const secondMessage = secondError instanceof Error ? secondError.message : "unknown retry";
@@ -144,6 +154,7 @@ const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
       jobs: payload.jobs,
       created: payload.created,
       updated: payload.updated,
+      elapsedMs: Date.now() - startedAt,
       error: null,
     };
   } catch (error) {
@@ -153,6 +164,7 @@ const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
       jobs: 0,
       created: 0,
       updated: 0,
+      elapsedMs: Date.now() - startedAt,
       error: error instanceof Error ? error.message : "Unknown request-fallback error.",
     };
   }
@@ -166,6 +178,10 @@ async function main(): Promise<void> {
     while (cursor < sources.length) {
       const index = cursor++;
       summaries[index] = await recover(sources[index]);
+      // Emit each company as soon as it finishes. A later source failure no
+      // longer hides which official catalogs were already verified, and the
+      // elapsed time makes a newly slow board immediately actionable.
+      process.stdout.write(`${JSON.stringify(summaries[index])}\n`);
     }
   }));
   process.stdout.write(`${JSON.stringify({ attempted: summaries.length, summaries })}\n`);

@@ -65,7 +65,14 @@ export const recoverCheckpointedCatalog = async (
       }
       throw new Error(result.error ?? `${result.status} checkpoint result with ${result.jobs.length} jobs.`);
     }
-    for (const job of result.jobs) jobs.set(job.externalId ?? job.officialUrl, job);
+    // Checkpoint adapters deliberately overlap their boundary page so a
+    // changing catalog cannot silently skip rows. Keep the first observation
+    // from this recovery cycle: later overlaps must not discard detail fields
+    // already enriched on the earlier pass.
+    for (const job of result.jobs) {
+      const identity = job.externalId ?? job.officialUrl;
+      if (!jobs.has(identity)) jobs.set(identity, job);
+    }
     if (!result.pagination) return { ...result, jobs: [...jobs.values()] };
     if (totalPages == null) totalPages = result.pagination.totalPages;
     if (result.pagination.totalPages !== totalPages) {

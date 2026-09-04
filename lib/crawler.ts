@@ -12233,15 +12233,21 @@ const crawlIbm = async (source: CrawlSource, fetcher: typeof fetch): Promise<Sou
   const usableIbmIds = (hits: IbmJob[]): string[] => hits.flatMap((hit) => (
     hit._id && hit._source?.title && hit._source.url ? [hit._id] : []
   ));
-  const seenIdentities = new Set<string>();
-  let firstFailedPage: number | null = claimPageIdentities(
-    usableIbmIds(first.hits), firstExpected, seenIdentities,
-  ) ? null : 1;
+  // IBM orders equal-score rows by a live page-view signal, so a job can
+  // legitimately cross a page boundary while this bounded scan is running.
+  // Validate every page locally and deduplicate the merged snapshot, but do
+  // not treat a cross-page overlap as a transport failure. This recovery is
+  // intentionally non-authoritative and therefore never closes unseen rows.
+  const validIbmPage = (hits: IbmJob[], expected: number): boolean => {
+    const identities = usableIbmIds(hits);
+    return identities.length === expected && new Set(identities).size === identities.length;
+  };
+  let firstFailedPage: number | null = validIbmPage(first.hits, firstExpected) ? null : 1;
   for (let index = 0; index < pages.length && firstFailedPage === null; index += 1) {
     const page = pages[index];
     const pageNumber = pagesToFetch[index];
     const expected = Math.min(pageSize, Math.max(0, first.total - (pageNumber - 1) * pageSize));
-    if (!page || !claimPageIdentities(usableIbmIds(page.hits), expected, seenIdentities)) {
+    if (!page || page.total !== first.total || !validIbmPage(page.hits, expected)) {
       firstFailedPage = pageNumber;
       break;
     }
@@ -12275,7 +12281,14 @@ const crawlIbm = async (source: CrawlSource, fetcher: typeof fetch): Promise<Sou
       ? date.toISOString()
       : null;
   };
-  const detailCandidates = raw.filter((hit) => hit._id && hit._source?.url
+  // Every checkpoint pass re-reads page one to verify the catalog identity.
+  // Enrich it only on the first pass; later passes enrich their new window.
+  // The request recovery merger keeps the first page-one observation, which
+  // avoids repeating up to 24 slow reader requests on every IBM window.
+  const detailWindow = startPage === 1
+    ? raw
+    : pages.filter((page): page is NonNullable<typeof page> => page !== null).flatMap((page) => page.hits);
+  const detailCandidates = detailWindow.filter((hit) => hit._id && hit._source?.url
     && /\b2027\b/i.test(hit._source.title ?? "")
     && /\b(?:intern(?:ship)?|co[\s-]?op|coop)\b/i.test(hit._source.title ?? ""))
     // IBM's catalog is relevance-sorted rather than freshness-sorted. Give
@@ -12283,8 +12296,11 @@ const crawlIbm = async (source: CrawlSource, fetcher: typeof fetch): Promise<Sou
     // fixed-term co-op cannot inherit the list feed's generic Intern label.
     .sort((left, right) => numericIbmJobId(right) - numericIbmJobId(left))
     .slice(0, 24);
-  for (let index = 0; index < detailCandidates.length; index += 4) {
-    const details = await Promise.all(detailCandidates.slice(index, index + 4).map(async (hit) => {
+  // The independent request runner has ample outbound concurrency. Twelve
+  // details per wave bounds the reader load while reducing the old six
+  // serial timeout waves to at most two for each checkpoint window.
+  for (let index = 0; index < detailCandidates.length; index += 12) {
+    const details = await Promise.all(detailCandidates.slice(index, index + 12).map(async (hit) => {
       try {
         const markdown = await readerMarkdown(hit._source!.url!, fetcher, {
           maxConcurrent: 2,

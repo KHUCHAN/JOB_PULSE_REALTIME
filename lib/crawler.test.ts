@@ -5259,7 +5259,7 @@ HUMAN RESOURCES Posted Date
     expect(result.jobs).toHaveLength(600);
   });
 
-  it("does not advance IBM when a full page partially overlaps or contains unusable jobs", async () => {
+  it("does not advance IBM when a full page contains unusable jobs", async () => {
     const fetcher: typeof fetch = async (_input, init) => {
       const body = JSON.parse(String(init?.body)) as { from?: number };
       const from = body.from ?? 0;
@@ -5279,6 +5279,28 @@ HUMAN RESOURCES Posted Date
       postingUrl: "https://www.ibm.com/careers/search", adapter: "custom", crawlPageCursor: 23,
     }, fetcher, new Date());
     expect(result.pagination).toEqual({ nextPage: 23, cycleComplete: false, totalPages: 41 });
+  });
+
+  it("advances IBM across a valid cross-page overlap from its live ranking", async () => {
+    const fetcher: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as { from?: number };
+      const from = body.from ?? 0;
+      return Response.json({ hits: {
+        total: { value: 1_230 },
+        hits: Array.from({ length: 30 }, (_, index) => {
+          const id = from === 660 && index === 0 ? 1 : from + index + 1;
+          return { _id: `hash-${id}`, _source: {
+            title: `IBM Role ${id}`,
+            url: `https://careers.ibm.com/careers/JobDetail?jobId=${id}`,
+          } };
+        }),
+      } });
+    };
+    const result = await crawlSource({
+      id: "p5-0624-ibm", company: "IBM",
+      postingUrl: "https://www.ibm.com/careers/search", adapter: "custom", crawlPageCursor: 23,
+    }, fetcher, new Date());
+    expect(result.pagination).toEqual({ nextPage: 1, cycleComplete: true, totalPages: 41 });
   });
 
   it("collects every EPAM page from its public Next.js job payload", async () => {

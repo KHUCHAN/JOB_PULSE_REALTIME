@@ -59,14 +59,12 @@ jobs:
         run: node scripts/run-production-crawl.mjs
 
   request-recovery:
-    # These exact sources expose validated first-party APIs that work from the
-    # independent runner but reject Sites Worker egress. The native source
-    # lease excludes these IDs, so this job can run in parallel with the main
-    # drain without duplicate ingestion or a ten-minute serial dependency.
-    # Run after the Worker drain finalizes abandoned crawl rows. Running these
-    # lanes concurrently let that finalizer misclassify a still-streaming
-    # large-company snapshot as a disconnected client. Forty + thirty-five
-    # minutes still leaves ample room for browser recovery inside two hours.
+    # Large and high-priority first-party catalogs run in an independent Node
+    # process after the Worker drain. This avoids the edge request deadline;
+    # the forced set is verified every workflow, while ordinary recovery IDs
+    # run only when due. Sequential ordering also prevents the native stale-run
+    # finalizer from misclassifying a streaming snapshot as disconnected.
+    # Forty + thirty-five + twenty-five minutes remains below two hours.
     needs: [crawl]
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
@@ -100,10 +98,10 @@ jobs:
           # TypeScript lane instead of inside a 55-second Worker request. Eight
           # crawlers operate independently, then D1 ingestion uses bounded
           # chunks; one slow board cannot cancel the other company snapshots.
-          REQUEST_FALLBACK_SOURCE_IDS: audit-row-3449,p2-0062-stripe,p2-0046-mastercard,p4-0285-google,p4-0219-apple,p4-0319-nvidia,p4-0308-meta,p4-0394-amazon,p5-0538-amazon-2,p5-0540-amazon-robotics,p4-0309-microsoft,p4-0204-palantir,p4-0256-databricks,p5-0733-snowflake,p5-1086-tsmc-arizona,p5-0563-broadcom,p5-0793-amd,p5-0798-applied-materials,p5-0804-arm,p5-0916-globalfoundries,p5-0947-intel,p5-0643-kla-corporation,p5-0960-lam-research,p5-0984-micron-technology,p5-0550-asml,p5-0709-qualcomm,p5-1050-samsung-semiconductor,p5-1008-onsemi,p5-0755-tower-semiconductor,p5-0726-semtech,p5-0543-amgen,p5-1018-penn-medicine,legacy-row-826,p2-0075-american-family-insurance,legacy-row-102,legacy-row-84,p5-0842-carefirst-bluecross-blueshield
+          REQUEST_FALLBACK_SOURCE_IDS: audit-row-3449,p2-0062-stripe,p2-0046-mastercard,p4-0285-google,p4-0219-apple,p4-0319-nvidia,p4-0308-meta,p4-0394-amazon,p5-0538-amazon-2,p5-0540-amazon-robotics,p4-0309-microsoft,p4-0204-palantir,p4-0256-databricks,p5-0733-snowflake,p5-1086-tsmc-arizona,p5-0563-broadcom,p5-0793-amd,p5-0798-applied-materials,p5-0804-arm,p5-0916-globalfoundries,p5-0947-intel,p5-0643-kla-corporation,p5-0960-lam-research,p5-0984-micron-technology,p5-0550-asml,p5-0709-qualcomm,p5-1050-samsung-semiconductor,p5-1008-onsemi,p5-0755-tower-semiconductor,p5-0726-semtech,p5-0543-amgen,p4-0210-adobe,p5-0547-anthropic,p4-0245-cisco,p5-0624-ibm,p5-0692-openai,p4-0325-oracle,p4-0340-salesforce,p4-0347-servicenow,p5-0736-spacex,p5-0752-tiktok,p5-0758-uber,p5-0767-xai,p5-0796-analog-devices,p5-0839-cadence-design-systems,p5-0940-infineon,p5-0659-marvell-technology,p5-0663-mediatek,p5-0999-nxp-semiconductors,p5-1038-renesas,p5-0740-stmicroelectronics,p5-1071-synopsys,p5-1078-texas-instruments,p5-1018-penn-medicine,legacy-row-826,p2-0075-american-family-insurance,legacy-row-102,legacy-row-84,p5-0842-carefirst-bluecross-blueshield
           # The critical employer set runs every two-hour workflow even when
           # an off-schedule repair shifted next_crawl_at past the due horizon.
-          REQUEST_FALLBACK_FORCE_SOURCE_IDS: audit-row-3449,p2-0062-stripe,p2-0046-mastercard,p4-0285-google,p4-0219-apple,p4-0319-nvidia,p4-0308-meta,p4-0394-amazon,p5-0538-amazon-2,p5-0540-amazon-robotics,p4-0309-microsoft,p4-0204-palantir,p4-0256-databricks,p5-0733-snowflake,p5-1086-tsmc-arizona,p5-0563-broadcom,p5-0793-amd,p5-0798-applied-materials,p5-0804-arm,p5-0916-globalfoundries,p5-0947-intel,p5-0643-kla-corporation,p5-0960-lam-research,p5-0984-micron-technology,p5-0550-asml,p5-0709-qualcomm,p5-1050-samsung-semiconductor,p5-1008-onsemi,p5-0755-tower-semiconductor,p5-0726-semtech,p5-0543-amgen
+          REQUEST_FALLBACK_FORCE_SOURCE_IDS: audit-row-3449,p2-0062-stripe,p2-0046-mastercard,p4-0285-google,p4-0219-apple,p4-0319-nvidia,p4-0308-meta,p4-0394-amazon,p5-0538-amazon-2,p5-0540-amazon-robotics,p4-0309-microsoft,p4-0204-palantir,p4-0256-databricks,p5-0733-snowflake,p5-1086-tsmc-arizona,p5-0563-broadcom,p5-0793-amd,p5-0798-applied-materials,p5-0804-arm,p5-0916-globalfoundries,p5-0947-intel,p5-0643-kla-corporation,p5-0960-lam-research,p5-0984-micron-technology,p5-0550-asml,p5-0709-qualcomm,p5-1050-samsung-semiconductor,p5-1008-onsemi,p5-0755-tower-semiconductor,p5-0726-semtech,p4-0210-adobe,p5-0547-anthropic,p4-0245-cisco,p5-0624-ibm,p5-0692-openai,p4-0325-oracle,p4-0340-salesforce,p4-0347-servicenow,p5-0736-spacex,p5-0752-tiktok,p5-0758-uber,p5-0767-xai,p5-0796-analog-devices,p5-0839-cadence-design-systems,p5-0940-infineon,p5-0659-marvell-technology,p5-0663-mediatek,p5-0999-nxp-semiconductors,p5-1038-renesas,p5-0740-stmicroelectronics,p5-1071-synopsys,p5-1078-texas-instruments
         run: node scripts/request-fallback-crawl.ts
 
   browser-recovery:

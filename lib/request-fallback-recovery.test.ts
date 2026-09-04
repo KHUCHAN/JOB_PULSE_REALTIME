@@ -92,4 +92,23 @@ describe("request fallback checkpoint recovery", () => {
     expect(result.completeListing).toBe(false);
     expect(result.pagination).toBeUndefined();
   });
+
+  it("keeps enriched fields from the first observation across overlapping windows", async () => {
+    const crawl = vi.fn(async (requested: CrawlSource): Promise<SourceCrawlResult> => {
+      if (requested.crawlPageCursor === 1) return {
+        status: "succeeded", responseStatus: 200, completeListing: false,
+        jobs: [{ ...job("a"), description: "enriched detail" }],
+        pagination: { nextPage: 2, cycleComplete: false, totalPages: 2 }, error: null,
+      };
+      return {
+        status: "succeeded", responseStatus: 200, completeListing: false,
+        jobs: [job("a"), job("b")],
+        pagination: { nextPage: 1, cycleComplete: true, totalPages: 2 }, error: null,
+      };
+    });
+
+    const result = await recoverCheckpointedCatalog(source, fetch, crawl);
+    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs.find((value) => value.externalId === "a")?.description).toBe("enriched detail");
+  });
 });
