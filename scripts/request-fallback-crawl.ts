@@ -30,7 +30,34 @@ const forcedSourceIds = new Set((process.env.REQUEST_FALLBACK_FORCE_SOURCE_IDS ?
   .split(",").map((value) => value.trim()).filter(Boolean));
 const concurrency = Math.max(1, Math.min(8,
   Number.parseInt(process.env.REQUEST_FALLBACK_CONCURRENCY ?? "4", 10) || 4));
+const ingestConcurrency = Math.max(1, Math.min(4,
+  Number.parseInt(process.env.REQUEST_FALLBACK_INGEST_CONCURRENCY ?? "2", 10) || 2));
 let cachedOidc = { value: "", expiresAt: 0 };
+let activeIngests = 0;
+const ingestWaiters: Array<() => void> = [];
+
+const acquireIngestSlot = async (): Promise<void> => {
+  if (activeIngests < ingestConcurrency) {
+    activeIngests += 1;
+    return;
+  }
+  await new Promise<void>((resolve) => ingestWaiters.push(resolve));
+};
+
+const releaseIngestSlot = (): void => {
+  const next = ingestWaiters.shift();
+  if (next) next();
+  else activeIngests -= 1;
+};
+
+const withIngestSlot = async <T>(operation: () => Promise<T>): Promise<T> => {
+  await acquireIngestSlot();
+  try {
+    return await operation();
+  } finally {
+    releaseIngestSlot();
+  }
+};
 
 const githubOidcToken = async (): Promise<string> => {
   const staticSecret = process.env.REQUEST_FALLBACK_INGEST_SECRET?.trim();
@@ -138,7 +165,11 @@ const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
           return [];
         }
       });
-    const payload = await ingestJobSnapshotInChunks({
+    // Official catalogs are fetched eight at a time, but D1 snapshot writes
+    // are intentionally narrower. Eight simultaneous multi-chunk ingests
+    // saturated the Worker/D1 path and made otherwise valid late sources time
+    // out; two lanes retain throughput without write contention.
+    const payload = await withIngestSlot(() => ingestJobSnapshotInChunks({
       allowedOrigins: [...new Set(allowedOrigins)].slice(0, 5),
       authorization: githubOidcToken,
       completeListing: result.completeListing,
@@ -147,7 +178,7 @@ const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
       listingUrl,
       sourceId: source.id,
       timeoutMs: 120_000,
-    });
+    }));
     return {
       sourceId: source.id,
       status: "succeeded",
