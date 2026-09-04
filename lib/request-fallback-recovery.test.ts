@@ -31,6 +31,11 @@ describe("request fallback checkpoint recovery", () => {
     expect(isRequestFallbackDue("2026-08-25T17:00:00.000Z", now)).toBe(false);
   });
 
+  it("runs an explicitly forced priority source on every workflow", () => {
+    const now = new Date("2026-08-25T15:00:00.000Z");
+    expect(isRequestFallbackDue("2026-08-25T17:00:00.000Z", now, true)).toBe(true);
+  });
+
   it("joins bounded windows and removes the repeated page-one jobs", async () => {
     const crawl = vi.fn(async (requested: CrawlSource): Promise<SourceCrawlResult> => {
       if (requested.crawlPageCursor === 1) return {

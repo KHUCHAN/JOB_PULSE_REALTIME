@@ -24,7 +24,9 @@ const siteUrl = (process.env.REQUEST_FALLBACK_LIVE_URL
   ?? "https://job-pulse-realtime.autodev61.chatgpt.site").replace(/\/$/, "");
 const ingestUrl = process.env.REQUEST_FALLBACK_INGEST_URL?.trim() || `${siteUrl}/api/pulse`;
 const sourceIds = [...new Set((process.env.REQUEST_FALLBACK_SOURCE_IDS ?? "legacy-row-826,p2-0075-american-family-insurance")
-  .split(",").map((value) => value.trim()).filter(Boolean))].slice(0, 10);
+  .split(",").map((value) => value.trim()).filter(Boolean))].slice(0, 16);
+const forcedSourceIds = new Set((process.env.REQUEST_FALLBACK_FORCE_SOURCE_IDS ?? "")
+  .split(",").map((value) => value.trim()).filter(Boolean));
 const concurrency = Math.max(1, Math.min(8,
   Number.parseInt(process.env.REQUEST_FALLBACK_CONCURRENCY ?? "4", 10) || 4));
 const checkpointedSourceIds = new Set([
@@ -74,7 +76,7 @@ const liveSources = async (): Promise<CrawlSource[]> => {
   return sourceIds.flatMap((sourceId): CrawlSource[] => {
     const source = byId.get(sourceId);
     if (!source?.postingUrl) throw new Error(`Request-fallback source ${sourceId} is unavailable.`);
-    if (!isRequestFallbackDue(source.nextRunAt, now)) return [];
+    if (!isRequestFallbackDue(source.nextRunAt, now, forcedSourceIds.has(source.id))) return [];
     return [{
       id: source.id,
       company: source.company,

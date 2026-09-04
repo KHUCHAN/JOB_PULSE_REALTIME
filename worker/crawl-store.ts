@@ -62,6 +62,12 @@ export const nativeCrawlExcludedSourceIds = [
   // independent request runner. Keeping them out of Worker leases prevents
   // repeated 2,500-row persistence timeouts and egress-specific failures.
   "p4-0285-google",
+  // These high-priority first-party catalogs run in the independent request
+  // lane on every workflow. Excluding them here prevents a duplicate native
+  // lease from racing the same D1 snapshot while that lane is in progress.
+  "p4-0219-apple",
+  "audit-row-3449",
+  "p2-0062-stripe",
   "legacy-row-84",
   "audit-row-342",
   "p5-0842-carefirst-bluecross-blueshield",

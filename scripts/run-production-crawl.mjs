@@ -11,7 +11,7 @@ const requestConcurrency = boundedInteger(process.env.JOB_PULSE_REQUEST_CONCURRE
 const targetedSourceIds = [...new Set((process.env.JOB_PULSE_TARGETED_RECRAWL_SOURCE_IDS || "")
   .split(",")
   .map((value) => value.trim())
-  .filter(Boolean))].slice(0, 8);
+  .filter(Boolean))].slice(0, 32);
 const targetedRecrawlAttempts = targetedSourceIds.length > 0
   ? boundedInteger(process.env.JOB_PULSE_TARGETED_RECRAWL_ATTEMPTS, 1, 1, 2)
   : 0;

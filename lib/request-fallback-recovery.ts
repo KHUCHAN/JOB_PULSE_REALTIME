@@ -22,7 +22,9 @@ const REQUEST_RECOVERY_DUE_HORIZON_MS = 5 * 60 * 1_000;
 export const isRequestFallbackDue = (
   nextRunAt: string | null | undefined,
   now = new Date(),
+  force = false,
 ): boolean => {
+  if (force) return true;
   if (!nextRunAt) return true;
   const scheduledTime = Date.parse(nextRunAt);
   if (!Number.isFinite(scheduledTime)) return true;
