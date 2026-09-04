@@ -73,4 +73,23 @@ describe("request fallback checkpoint recovery", () => {
     )).rejects.toThrow("did not advance");
     expect(wait).toHaveBeenCalledOnce();
   });
+
+  it("keeps a non-authoritative tail snapshot when Workday page one drifts", async () => {
+    const crawl = vi.fn(async (requested: CrawlSource): Promise<SourceCrawlResult> => {
+      if (requested.crawlPageCursor === 1) return {
+        status: "succeeded", responseStatus: 200, completeListing: false,
+        jobs: [job("a")], pagination: { nextPage: 70, cycleComplete: false, totalPages: 100 }, error: null,
+      };
+      return {
+        status: "succeeded", responseStatus: 200, completeListing: false,
+        jobs: [job("b")], pagination: { nextPage: 1, cycleComplete: false, totalPages: 100 }, error: null,
+      };
+    });
+
+    const result = await recoverCheckpointedCatalog(source, fetch, crawl, { maxStalls: 0 });
+    expect(crawl.mock.calls.map(([requested]) => requested.crawlPageCursor)).toEqual([1, 70]);
+    expect(result.jobs.map((value) => value.externalId)).toEqual(["a", "b"]);
+    expect(result.completeListing).toBe(false);
+    expect(result.pagination).toBeUndefined();
+  });
 });

@@ -80,6 +80,23 @@ export const recoverCheckpointedCatalog = async (
         error: null,
       };
     }
+    // Some large Workday tenants return a valid final tail window while page
+    // one changes during that same pass. Their adapter conservatively reports
+    // nextPage=1 with cycleComplete=false so the snapshot cannot close jobs.
+    // The request runner is non-authoritative anyway; once the cursor is in
+    // the bounded tail window, retain the collected rows and finish without
+    // turning a harmless head-page drift into a permanent stale source.
+    if (result.pagination.nextPage === 1
+      && cursor > 1
+      && cursor >= Math.max(1, result.pagination.totalPages - 40)) {
+      return {
+        ...result,
+        completeListing: false,
+        jobs: [...jobs.values()],
+        pagination: undefined,
+        error: null,
+      };
+    }
     if (result.pagination.nextPage <= cursor) {
       if (stalls < maxStalls) {
         stalls += 1;

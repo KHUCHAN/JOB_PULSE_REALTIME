@@ -95,7 +95,23 @@ const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
     // than one Sites Worker request. Drain every paged official catalog here;
     // non-paged sources return immediately from the same helper. This avoids
     // repeatedly ingesting page one for a newly promoted priority source.
-    const result = await recoverCheckpointedCatalog(source, fetch, crawlSource, { maxPasses: 40 });
+    let result: Awaited<ReturnType<typeof recoverCheckpointedCatalog>>;
+    try {
+      result = await recoverCheckpointedCatalog(source, fetch, crawlSource, { maxPasses: 60, maxStalls: 0 });
+    } catch (firstError) {
+      // Retry the complete source once. Official Workday and sitemap edges can
+      // change a page count or reject one burst even though the next bounded
+      // pass is healthy; isolating the retry here prevents that source from
+      // affecting the other seven worker lanes.
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+      try {
+        result = await recoverCheckpointedCatalog(source, fetch, crawlSource, { maxPasses: 60, maxStalls: 0 });
+      } catch (secondError) {
+        const firstMessage = firstError instanceof Error ? firstError.message : "unknown first attempt";
+        const secondMessage = secondError instanceof Error ? secondError.message : "unknown retry";
+        throw new Error(`${firstMessage}; retry: ${secondMessage}`);
+      }
+    }
     if (result.status !== "succeeded" || result.jobs.length === 0) {
       throw new Error(result.error ?? `${result.status} crawler result with ${result.jobs.length} jobs.`);
     }
