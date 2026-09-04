@@ -52,7 +52,7 @@ jobs:
           JOB_PULSE_SITE_URL: https://job-pulse-realtime.autodev61.chatgpt.site
           # A repair push needs a bounded smoke drain before its targeted
           # recovery pass; the recurring schedule retains the full drain.
-          JOB_PULSE_MAX_RUN_MINUTES: ${{ github.event_name == 'push' && '2' || '50' }}
+          JOB_PULSE_MAX_RUN_MINUTES: ${{ github.event_name == 'push' && '2' || '40' }}
           # Each request atomically leases one source. Eight independent workers
           # preserve API headroom while materially improving source throughput.
           JOB_PULSE_REQUEST_CONCURRENCY: "8"
@@ -63,6 +63,11 @@ jobs:
     # independent runner but reject Sites Worker egress. The native source
     # lease excludes these IDs, so this job can run in parallel with the main
     # drain without duplicate ingestion or a ten-minute serial dependency.
+    # Run after the Worker drain finalizes abandoned crawl rows. Running these
+    # lanes concurrently let that finalizer misclassify a still-streaming
+    # large-company snapshot as a disconnected client. Forty + thirty-five
+    # minutes still leaves ample room for browser recovery inside two hours.
+    needs: [crawl]
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
