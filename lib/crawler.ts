@@ -20419,6 +20419,12 @@ async function crawlTesla(source: CrawlSource, fetcher: typeof fetch): Promise<S
     };
     const payload = await response.json() as TeslaState;
     const jobs = jobsFromTeslaState(source, payload);
+    // Empty/malformed geography or a changed state schema must not close
+    // existing US inventory as an authoritative empty catalog.
+    if (!jobs.length) return {
+      status: "failed", responseStatus: response.status, completeListing: false,
+      jobs: [], error: "Tesla state did not yield verifiable US job listings; preserving existing inventory.",
+    };
     return { status: "succeeded", responseStatus: response.status, completeListing: true, jobs, error: null };
   } catch (error) {
     return {

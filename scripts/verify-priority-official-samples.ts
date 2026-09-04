@@ -4,19 +4,10 @@
 import { readFile } from "node:fs/promises";
 import { verifySourceSnapshot } from "../lib/source-snapshot-verification.ts";
 import type { CrawledJob } from "../lib/crawler.ts";
+import { auditWorkdayFacets, type AuditFacet } from "../lib/workday-audit-facets.ts";
 
-type Facet = { facetParameter?: string; descriptor?: string; id?: string; values?: Facet[] };
+type Facet = AuditFacet;
 type WorkdayResponse = { total: number; facets?: Facet[]; jobPostings?: Array<{ title: string; externalPath: string }> };
-const usFacet = (facets: Facet[]): { key: string; id: string } | null => {
-  for (const facet of facets) {
-    const us = facet.values?.find(v => /^United States(?: of America)?$/i.test(v.descriptor ?? ""));
-    if (facet.facetParameter && us?.id) return { key: facet.facetParameter, id: us.id };
-    const nested = usFacet(facet.values ?? []);
-    if (nested) return nested;
-  }
-  return null;
-};
-
 // Compatibility audit before deploying the new exact-identity endpoint.
 // This reads a frozen company inventory without FTS; it never triggers a crawl.
 const verifyInventory = async (company: string, jobs: CrawledJob[]) => {
@@ -56,18 +47,27 @@ await Promise.all(Array.from({ length: 3 }, async () => {
         const tenant = url.hostname.split(".")[0];
         const board = url.pathname.split("/").filter(Boolean).at(-1)!;
         const endpoint = `${url.origin}/wday/cxs/${tenant}/${board}/jobs`;
-        const request = async (appliedFacets: Record<string, string[]>) => {
+        const request = async (appliedFacets: Record<string, string[]>, offset = 0) => {
           const response = await fetch(endpoint, { method: "POST", signal: AbortSignal.timeout(20_000),
-            headers: { "content-type": "application/json" }, body: JSON.stringify({ limit: 20, offset: 0, searchText: "intern", appliedFacets }) });
+            headers: { "content-type": "application/json" }, body: JSON.stringify({ limit: 20, offset, searchText: "intern", appliedFacets }) });
           if (!response.ok) throw new Error(`Official Workday HTTP ${response.status}`);
           return response.json() as Promise<WorkdayResponse>;
         };
         let data = await request({});
-        const us = usFacet(data.facets ?? []);
-        if (!us) throw new Error("Official query did not expose a verifiable United States facet; no coverage claim made.");
-        data = await request({ [us.key]: [us.id] });
+        const scope = auditWorkdayFacets(data.facets ?? []);
+        if (!scope) throw new Error("Official query did not expose verifiable United States country/location facets; no coverage claim made.");
+        data = await request(scope);
         officialTotal = data.total;
-        jobs = (data.jobPostings ?? []).filter((j: { title: string }) => /\bintern(?:ship)?\b|\bco[ -]?op\b/i.test(j.title)).slice(0, 3)
+        const isProgram = (j: { title: string }) => /\bintern(?:ship)?\b|\bco[ -]?op\b/i.test(j.title);
+        const cards = [...(data.jobPostings ?? [])];
+        // Search may return "internal" roles first. Read at most 100 official
+        // cards, stopping after three program samples; never ingest here.
+        for (let offset = 20; offset < Math.min(officialTotal, 100) && cards.filter(isProgram).length < 3; offset += 20) {
+          const next = await request(scope, offset);
+          if (!next.jobPostings?.length) break;
+          cards.push(...next.jobPostings);
+        }
+        jobs = cards.filter(isProgram).slice(0, 3)
           .map((j) => ({ title: j.title, company: source.company, officialUrl: `${url.origin}/${board}${j.externalPath}` } as CrawledJob));
       } else {
         const endpoint = new URL("/api/pcsx/search", url.origin);
