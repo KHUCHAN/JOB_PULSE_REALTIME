@@ -16982,4 +16982,61 @@ Hybrid - New York, NY`;
       arrangement: "remote",
     })]);
   });
+
+  it("reads Apple's structured U.S. catalog instead of navigation and media links", async () => {
+    const appleRecord = (index: number) => ({
+      id: `200700${index}-0157`,
+      reqId: `200700${index}-0157`,
+      positionId: `200700${index}`,
+      postingTitle: index === 1 ? "Applied Data Solutions Internship – Summer 2027" : `Software Engineer ${index}`,
+      transformedPostingTitle: index === 1
+        ? "applied-data-solutions-internship-summer-2027"
+        : index === 21 ? "%EF%A3%BF-software-engineer-21" : `software-engineer-${index}`,
+      postingDate: "Sep 04, 2026",
+      postDateInGMT: "2026-09-04T16:20:00.000Z",
+      jobSummary: "Build data products with Python and SQL.",
+      locations: [{ name: index % 2 ? "Austin" : "Cupertino", countryName: "United States of America", countryID: "iso-country-USA" }],
+      team: { teamName: "Software and Services", teamCode: "SFTWR" },
+      homeOffice: false,
+    });
+    const hydration = (page: number, total: number, records: unknown[]) => {
+      const payload = JSON.stringify({ loaderData: { search: { searchResults: records, totalRecords: total, page } } });
+      return `<html><a href="/careers/global/media/movie.mp4">Watch the film</a><script>window.__staticRouterHydrationData = JSON.parse(${JSON.stringify(payload)});</script></html>`;
+    };
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p4-0219-apple",
+      company: "Apple",
+      postingUrl: "https://jobs.apple.com/en-us/search?location=united-states-USA",
+      adapter: "custom",
+    }, async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.href);
+      if (url.searchParams.has("search")) return new Response(hydration(1, 0, []));
+      const page = Number(url.searchParams.get("page") ?? 1);
+      const start = (page - 1) * 20 + 1;
+      return new Response(hydration(page, 40, Array.from({ length: 20 }, (_, index) => appleRecord(start + index))));
+    }, new Date("2026-09-04T18:00:00Z"));
+
+    expect(requests).toContain("https://jobs.apple.com/en-us/search?location=united-states-USA&page=2");
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: "https://jobs.apple.com/en-us/search?location=united-states-USA",
+      error: null,
+    }));
+    expect(result.jobs).toHaveLength(40);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      title: "Applied Data Solutions Internship – Summer 2027",
+      location: "Austin",
+      locationCountry: "United States",
+      employmentType: "Internship",
+      requisitionId: "2007001-0157",
+      officialUrl: "https://jobs.apple.com/en-us/details/2007001-0157/applied-data-solutions-internship-summer-2027?team=SFTWR",
+      publishedAt: "2026-09-04T16:20:00.000Z",
+    }));
+    expect(result.jobs.some((job) => /\.mp4$/i.test(job.officialUrl))).toBe(false);
+    expect(result.jobs.find((job) => job.externalId === "20070021-0157")?.officialUrl)
+      .toContain("/%EF%A3%BF-software-engineer-21");
+  });
 });

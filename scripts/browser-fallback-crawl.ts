@@ -287,6 +287,41 @@ const anchorsOnPage = async (page: Page): Promise<BrowserAnchor[]> => {
 };
 
 export const browserJobsForSource = (source: CrawlSource, jobs: CrawledJob[]): CrawledJob[] => {
+  if (source.id === "p4-0219-apple") return jobs.flatMap((job) => {
+    try {
+      const url = new URL(job.officialUrl);
+      if (url.hostname !== "jobs.apple.com"
+        || !/^\/en-us\/details\/[a-z0-9-]+\/(?:[a-z0-9-]|%[0-9a-f]{2})+\/?$/i.test(url.pathname)) return [];
+      url.hash = "";
+      return [{ ...job, officialUrl: url.href }];
+    } catch {
+      return [];
+    }
+  });
+  if (source.id === "p4-0285-google") return jobs.flatMap((job) => {
+    try {
+      const url = new URL(job.officialUrl);
+      const identity = url.pathname.match(/^\/about\/careers\/applications\/jobs\/results\/(\d+)-/i)?.[1];
+      if (url.hostname !== "www.google.com" || !identity) return [];
+      url.search = "";
+      url.hash = "";
+      return [{ ...job, externalId: identity, requisitionId: identity, officialUrl: url.href }];
+    } catch {
+      return [];
+    }
+  });
+  if (source.id === "p4-0309-microsoft") return jobs.flatMap((job) => {
+    try {
+      const url = new URL(job.officialUrl);
+      const identity = url.pathname.match(/^\/careers\/job\/(\d+)\/?$/i)?.[1];
+      if (url.hostname !== "apply.careers.microsoft.com" || !identity) return [];
+      url.search = "";
+      url.hash = "";
+      return [{ ...job, externalId: identity, requisitionId: identity, officialUrl: url.href }];
+    } catch {
+      return [];
+    }
+  });
   if (source.id !== "p5-0653-linkedin") return jobs;
   const verified = jobs.flatMap((job) => {
     let url: URL;
@@ -911,7 +946,11 @@ const inspect = async (page: Page, source: CrawlSource): Promise<BrowserFallback
         if (jobs.length > 0) break;
       }
     }
-    return { source, status: response?.status() ?? null, finalUrl: page.url(), jobs, error: null };
+    const finalUrl = jobs.length > 0
+      && isSafeCareerListingUrl(source.company, source.postingUrl, source.postingUrl)
+      ? source.postingUrl
+      : page.url();
+    return { source, status: response?.status() ?? null, finalUrl, jobs, error: null };
   } catch (error) {
     return { source, status: null, finalUrl: null, jobs: [], error: error instanceof Error ? error.message : "Unknown browser fallback error." };
   }
@@ -1060,7 +1099,11 @@ async function main(): Promise<void> {
     if (!safe) result.error = `Rejected unsafe browser listing candidate: ${result.finalUrl}`;
     return safe;
   });
-  let persistenceFailures = 0;
+  const persistenceFailureIds = new Set<string>();
+  const markPersistenceFailure = (result: BrowserFallbackResult, message: string): void => {
+    persistenceFailureIds.add(result.source.id);
+    result.error = result.error ? `${result.error} ${message}` : message;
+  };
   if (!dryRun && productionIngestUrl) {
     if (!await githubOidcToken()) throw new Error("Production browser ingest authorization is unavailable.");
     let persistenceCursor = 0;
@@ -1069,24 +1112,29 @@ async function main(): Promise<void> {
         const result = results[persistenceCursor++];
         const classification = browserResultClassification(result);
         if (classification.status !== "succeeded" || classification.code === "empty_board") {
-          const response = await recordProductionBrowserResult({
-            action: "recordBrowserCrawlResult",
-            sourceId: result.source.id,
-            status: classification.status,
-            responseStatus: result.status,
-            jobsSeen: result.jobs.length,
-            code: classification.code,
-          });
-          if (!response.ok) {
-            persistenceFailures += 1;
-            result.error = `Production browser result returned HTTP ${response.status}.`;
+          try {
+            const response = await recordProductionBrowserResult({
+              action: "recordBrowserCrawlResult",
+              sourceId: result.source.id,
+              status: classification.status,
+              responseStatus: result.status,
+              jobsSeen: result.jobs.length,
+              code: classification.code,
+            });
+            if (!response.ok) markPersistenceFailure(
+              result,
+              `Production browser result returned HTTP ${response.status}.`,
+            );
+          } catch (error) {
+            markPersistenceFailure(result, error instanceof Error
+              ? `Production browser result recording failed: ${error.message}`
+              : "Production browser result recording failed.");
           }
           continue;
         }
         const listingUrl = result.finalUrl;
         if (!listingUrl) {
-          persistenceFailures += 1;
-          result.error = "Production browser ingest was missing the verified listing URL.";
+          markPersistenceFailure(result, "Production browser ingest was missing the verified listing URL.");
           continue;
         }
         const allowedOrigins = [listingUrl, ...result.jobs.flatMap((job) => [job.officialUrl, job.applyUrl ?? ""])]
@@ -1108,17 +1156,22 @@ async function main(): Promise<void> {
             sourceId: result.source.id,
           });
         } catch (error) {
-          persistenceFailures += 1;
-          result.error = error instanceof Error ? error.message : "Production browser ingest failed.";
-          const retry = await recordProductionBrowserResult({
-            action: "recordBrowserCrawlResult",
-            sourceId: result.source.id,
-            status: "failed",
-            responseStatus: null,
-            jobsSeen: 0,
-            code: "ingest_error",
-          });
-          if (!retry.ok) result.error += ` Result recording returned HTTP ${retry.status}.`;
+          markPersistenceFailure(result, error instanceof Error ? error.message : "Production browser ingest failed.");
+          try {
+            const retry = await recordProductionBrowserResult({
+              action: "recordBrowserCrawlResult",
+              sourceId: result.source.id,
+              status: "failed",
+              responseStatus: null,
+              jobsSeen: 0,
+              code: "ingest_error",
+            });
+            if (!retry.ok) markPersistenceFailure(result, `Result recording returned HTTP ${retry.status}.`);
+          } catch (recordError) {
+            markPersistenceFailure(result, recordError instanceof Error
+              ? `Result recording failed: ${recordError.message}`
+              : "Result recording failed.");
+          }
         }
       }
     }));
@@ -1130,7 +1183,7 @@ async function main(): Promise<void> {
     attempted: results.length,
     recovered: successful.length,
     jobs: successful.reduce((sum, result) => sum + result.jobs.length, 0),
-    persistenceFailures,
+    persistenceFailures: persistenceFailureIds.size,
     unresolved: results.flatMap((result) => {
       const classification = browserResultClassification(result);
       return classification.status === "succeeded" && classification.code !== "empty_board"
@@ -1146,7 +1199,7 @@ async function main(): Promise<void> {
           }];
     }),
   })}\n`);
-  if (persistenceFailures > 0) process.exitCode = 1;
+  if (persistenceFailureIds.size > 0) process.exitCode = 1;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();

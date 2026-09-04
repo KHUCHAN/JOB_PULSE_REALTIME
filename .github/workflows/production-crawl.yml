@@ -24,10 +24,10 @@ on:
       - db/schema.ts
       - drizzle/**
   schedule:
-    # GitHub scheduled events may be delayed during queue pressure. An hourly
-    # watchdog gives a missed event a second chance; the production D1 due
-    # timestamp and source lease still enforce each source's two-hour cadence.
-    - cron: "17 * * * *"
+    # One bounded workflow owns each two-hour collection window. The native
+    # drain finishes first and leaves enough time for targeted browser repair
+    # without the next scheduled run canceling it midway.
+    - cron: "17 */2 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -44,7 +44,7 @@ jobs:
   crawl:
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
       - name: Drain due production sources
@@ -52,10 +52,10 @@ jobs:
           JOB_PULSE_SITE_URL: https://job-pulse-realtime.autodev61.chatgpt.site
           # A repair push needs a bounded smoke drain before its targeted
           # recovery pass; the recurring schedule retains the full drain.
-          JOB_PULSE_MAX_RUN_MINUTES: ${{ github.event_name == 'push' && '2' || '20' }}
-          # Each request atomically leases one source. Six independent workers
+          JOB_PULSE_MAX_RUN_MINUTES: ${{ github.event_name == 'push' && '2' || '50' }}
+          # Each request atomically leases one source. Eight independent workers
           # preserve API headroom while materially improving source throughput.
-          JOB_PULSE_REQUEST_CONCURRENCY: "6"
+          JOB_PULSE_REQUEST_CONCURRENCY: "8"
           # A repair deployment verifies the remediated official feeds
           # before the normal oldest-first drain. Two matching observations
           # let the catalog-volume guard safely confirm Nubank's current zero.
@@ -96,7 +96,7 @@ jobs:
           # bounded catalog pass rotates by production slot on this runner.
           # Mastercard's U.S. Phenom slice is 268 rows versus 1,000+ global
           # rows and includes Campus requisitions absent from CorporateCareers.
-          REQUEST_FALLBACK_SOURCE_IDS: ${{ github.event_name == 'push' && 'audit-row-3449,p2-0062-stripe,p2-0046-mastercard,p4-0285-google,legacy-row-84,audit-row-342,p5-0842-carefirst-bluecross-blueshield' || 'p2-0046-mastercard,p4-0241-cgi,p5-1018-penn-medicine,legacy-row-826,p2-0075-american-family-insurance,legacy-row-102,p4-0285-google,legacy-row-84,audit-row-342,p5-0842-carefirst-bluecross-blueshield' }}
+          REQUEST_FALLBACK_SOURCE_IDS: ${{ github.event_name == 'push' && 'audit-row-3449,p2-0062-stripe,p2-0046-mastercard,p4-0285-google,p4-0219-apple,legacy-row-84,p5-0842-carefirst-bluecross-blueshield' || 'p2-0046-mastercard,p5-1018-penn-medicine,legacy-row-826,p2-0075-american-family-insurance,legacy-row-102,p4-0285-google,p4-0219-apple,legacy-row-84,p5-0842-carefirst-bluecross-blueshield' }}
         run: node scripts/request-fallback-crawl.ts
 
   browser-recovery:
@@ -143,12 +143,12 @@ jobs:
           BROWSER_FALLBACK_LIMIT: "160"
           BROWSER_FALLBACK_CONCURRENCY: "12"
           # Fail one pathological page promptly instead of letting it consume
-          # a worker lane for a full minute. The next hourly run retries it.
+          # a worker lane for a full minute. The next scheduled run retries it.
           BROWSER_FALLBACK_SOURCE_TIMEOUT_MS: "45000"
           # Browser inspection and D1 persistence are separate bounded pools.
-          # Six writers remove the previous 160-result serial tail while
-          # preserving headroom for normal public API traffic.
-          BROWSER_FALLBACK_INGEST_CONCURRENCY: "6"
+          # Three writers avoid saturating the Worker/D1 path; each writer
+          # still transports chunks concurrently with ongoing inspections.
+          BROWSER_FALLBACK_INGEST_CONCURRENCY: "3"
           # Sources whose official boards require client rendering, protected
           # egress, or a browser-established session must not sit behind the
           # generic recovery queue. The script still validates the official

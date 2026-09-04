@@ -31,8 +31,8 @@ const checkpointedSourceIds = new Set([
   "p4-0241-cgi",
   "p5-1018-penn-medicine",
   "p4-0285-google",
+  "p4-0219-apple",
   "legacy-row-84",
-  "audit-row-342",
 ]);
 let cachedOidc = { value: "", expiresAt: 0 };
 

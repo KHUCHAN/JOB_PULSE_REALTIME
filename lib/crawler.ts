@@ -18854,6 +18854,213 @@ const decodeEmbeddedString = (value: string): string => {
   }
 };
 
+type AppleCareerLocation = {
+  city?: string | null;
+  stateProvince?: string | null;
+  countryName?: string | null;
+  name?: string | null;
+  countryID?: string | null;
+};
+
+type AppleCareerJob = {
+  id?: string | null;
+  jobSummary?: string | null;
+  locations?: AppleCareerLocation[] | null;
+  positionId?: string | null;
+  postingDate?: string | null;
+  postingTitle?: string | null;
+  postDateInGMT?: string | null;
+  transformedPostingTitle?: string | null;
+  reqId?: string | null;
+  standardWeeklyHours?: number | null;
+  team?: { teamName?: string | null; teamCode?: string | null } | null;
+  homeOffice?: boolean | null;
+};
+
+type AppleSearchPayload = {
+  loaderData?: {
+    search?: {
+      searchResults?: AppleCareerJob[] | null;
+      totalRecords?: number | null;
+      page?: number | null;
+    } | null;
+  } | null;
+};
+
+const appleSearchData = (
+  html: string,
+  source: CrawlSource,
+): { jobs: CrawledJob[]; total: number; page: number; exact: boolean } | null => {
+  const match = html.match(/window\.__staticRouterHydrationData\s*=\s*JSON\.parse\(("(?:\\.|[^"\\])*")\);/);
+  if (!match) return null;
+  let payload: AppleSearchPayload;
+  try {
+    payload = JSON.parse(JSON.parse(match[1])) as AppleSearchPayload;
+  } catch {
+    return null;
+  }
+  const search = payload.loaderData?.search;
+  const records = Array.isArray(search?.searchResults) ? search.searchResults : null;
+  const total = search?.totalRecords;
+  const page = search?.page;
+  if (!records || !Number.isSafeInteger(total) || total == null || total < records.length || total > 100_000
+    || !Number.isSafeInteger(page) || page == null || page < 1) return null;
+
+  let validRecords = 0;
+  const jobs = records.flatMap((record): CrawledJob[] => {
+    const externalId = asText(record.reqId ?? record.id);
+    const positionId = asText(record.positionId);
+    const title = asText(record.postingTitle);
+    const slug = asText(record.transformedPostingTitle);
+    const publishedAt = normalizedDate(record.postDateInGMT);
+    if (!externalId || !positionId || !title || !slug || !publishedAt
+      || !/^[a-z0-9-]+$/i.test(externalId) || !/^\d+$/.test(positionId)
+      || !/^(?:[a-z0-9-]|%[0-9a-f]{2})+$/i.test(slug)) return [];
+    const locations = (record.locations ?? []).filter((location) =>
+      location.countryID === "iso-country-USA" || /^United States(?: of America)?$/i.test(location.countryName ?? ""));
+    if (locations.length === 0) return [];
+    const locationNames = [...new Set(locations.map((location) => asText(location.name)).filter((value): value is string => Boolean(value)))];
+    const secondaryLocations = locationNames.slice(1);
+    const official = new URL(`/en-us/details/${externalId}/${slug}`, "https://jobs.apple.com");
+    const teamCode = asText(record.team?.teamCode);
+    if (teamCode && /^[a-z0-9-]+$/i.test(teamCode)) official.searchParams.set("team", teamCode);
+    const programs = classifyJobPrograms(title);
+    const summary = plainText(record.jobSummary);
+    validRecords += 1;
+    return [{
+      externalId,
+      requisitionId: externalId,
+      title,
+      company: source.company,
+      location: locationNames.join("; ") || "United States",
+      ...(secondaryLocations.length > 0 ? { secondaryLocations } : {}),
+      locationCity: locationNames.length === 1 ? locationNames[0] : null,
+      locationCountry: "United States",
+      arrangement: record.homeOffice ? "remote" : "unknown",
+      employmentType: programs.keys.some((key) => key === "internship" || key === "coop") ? "Internship" : null,
+      summary,
+      description: summary,
+      department: asText(record.team?.teamName),
+      sourcePostedText: asText(record.postingDate),
+      publishedAt,
+      officialUrl: official.href,
+    }];
+  });
+  const unique = uniqueJobs(jobs);
+  return {
+    jobs: unique,
+    total,
+    page,
+    exact: validRecords === records.length && unique.length === records.length,
+  };
+};
+
+const crawlAppleCareers = async (
+  source: CrawlSource,
+  fetcher: typeof fetch,
+): Promise<SourceCrawlResult> => {
+  const listingUrl = "https://jobs.apple.com/en-us/search?location=united-states-USA";
+  const fetchPage = async (page: number, query?: string) => {
+    const endpoint = new URL(listingUrl);
+    if (query) endpoint.searchParams.set("search", query);
+    if (page > 1) endpoint.searchParams.set("page", String(page));
+    try {
+      const response = await fetchWithTimeout(fetcher, endpoint, {
+        headers: {
+          accept: "text/html,application/xhtml+xml",
+          "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36",
+        },
+      }, true, { attempts: 2, timeoutMs: 15_000 });
+      if (!response.ok) return null;
+      const parsed = appleSearchData(await response.text(), source);
+      return parsed ? { status: response.status, ...parsed } : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const first = await fetchPage(1);
+  if (!first || first.jobs.length === 0 || !first.exact) return {
+    status: "failed",
+    responseStatus: first?.status ?? null,
+    completeListing: false,
+    jobs: [],
+    resolvedListingUrl: listingUrl,
+    error: "Apple Careers did not return a valid structured U.S. catalog page.",
+  };
+  const pageSize = Math.max(first.jobs.length, 1);
+  const totalPages = Math.ceil(first.total / pageSize);
+  const boundedPages = Math.min(totalPages, 500);
+  const checkpointed = totalPages > 32;
+  const startPage = checkpointed
+    ? Math.min(Math.max(source.crawlPageCursor ?? 1, 1), boundedPages)
+    : 1;
+  const endPage = checkpointed ? Math.min(startPage + 31, boundedPages) : boundedPages;
+  const jobsByUrl = new Map(first.jobs.map((job) => [job.officialUrl, job]));
+  let firstFailedPage: number | null = null;
+  let catalogChanged = false;
+  const firstRequestedPage = Math.max(startPage, 2);
+  // Apple's edge starts returning sparse pages when eight HTML requests land
+  // together. Four-wide windows remain fast while preserving every page.
+  for (let page = firstRequestedPage; page <= endPage; page += 4) {
+    const requested = Array.from({ length: Math.min(4, endPage - page + 1) }, (_, index) => page + index);
+    const pages = await Promise.all(requested.map((pageNumber) => fetchPage(pageNumber)));
+    for (const [index, initialResult] of pages.entries()) {
+      const pageNumber = requested[index];
+      const expected = Math.min(pageSize, Math.max(0, first.total - (pageNumber - 1) * pageSize));
+      // Apple's edge occasionally returns one empty/sparse page only while a
+      // parallel window is in flight. Retry that page by itself before
+      // preserving the checkpoint, so a transient response cannot strand the
+      // 4,000+ row catalog at the same cursor every scheduled run.
+      let result = initialResult;
+      if (!result || result.page !== pageNumber || !result.exact || result.jobs.length !== expected) {
+        result = await fetchPage(pageNumber);
+      }
+      if (!result || result.page !== pageNumber || !result.exact || result.jobs.length !== expected) {
+        firstFailedPage ??= pageNumber;
+        continue;
+      }
+      // A role can be published while the page window is in flight. Keep the
+      // usable overlapping page, but withhold authoritative closure until a
+      // later pass observes one stable total throughout the final window.
+      if (result.total !== first.total) catalogChanged = true;
+      for (const job of result.jobs) jobsByUrl.set(job.officialUrl, job);
+    }
+  }
+
+  // Apple has more than 4,000 U.S. rows. Read the two small official 2027
+  // search slices on every checkpoint so a new internship never waits behind
+  // the full catalog rotation.
+  for (const query of ["2027 internship", "2027 co-op"]) {
+    const priorityFirst = await fetchPage(1, query);
+    if (!priorityFirst || !priorityFirst.exact) continue;
+    const priorityPages = Math.min(Math.ceil(priorityFirst.total / Math.max(priorityFirst.jobs.length, 1)), 10);
+    const remaining = await Promise.all(Array.from({ length: Math.max(0, priorityPages - 1) }, (_, index) =>
+      fetchPage(index + 2, query)));
+    const priorityResults = [priorityFirst, ...remaining.filter((value): value is NonNullable<typeof value> => Boolean(value))];
+    if (priorityResults.length !== priorityPages
+      || priorityResults.some((result) => result.total !== priorityFirst.total || !result.exact)) continue;
+    for (const result of priorityResults) for (const job of result.jobs) jobsByUrl.set(job.officialUrl, job);
+  }
+
+  const cycleComplete = firstFailedPage === null && !catalogChanged && endPage === boundedPages && totalPages <= 500;
+  return {
+    status: "succeeded",
+    responseStatus: first.status,
+    completeListing: !checkpointed && cycleComplete && jobsByUrl.size === first.total,
+    jobs: [...jobsByUrl.values()],
+    resolvedListingUrl: listingUrl,
+    ...(checkpointed ? {
+      pagination: {
+        nextPage: firstFailedPage ?? (cycleComplete ? 1 : endPage + 1),
+        cycleComplete,
+        totalPages,
+      },
+    } : {}),
+    error: null,
+  };
+};
+
 type BlockJob = {
   id: number | string;
   requisitionId?: string | null;
@@ -24555,6 +24762,9 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
     source = { ...source, postingUrl: originalPage.href };
   }
   const sourcePage = new URL(source.postingUrl);
+  if (source.id === "p4-0219-apple" || sourcePage.hostname === "jobs.apple.com") {
+    return crawlAppleCareers(source, fetcher);
+  }
   if (source.id === "p2-0062-stripe" || sourcePage.hostname === "stripe.com") {
     return crawlStripeCareers(source, fetcher);
   }

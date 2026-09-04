@@ -488,6 +488,63 @@ describe("browser fallback result classification", () => {
     })]);
   });
 
+  it("rejects Apple media and Google navigation links from browser recovery", () => {
+    const job = (company: string, title: string, officialUrl: string): CrawledJob => ({
+      externalId: null,
+      title,
+      company,
+      location: null,
+      arrangement: "unknown",
+      employmentType: null,
+      summary: null,
+      officialUrl,
+      publishedAt: null,
+    });
+    expect(browserJobsForSource({
+      id: "p4-0219-apple", company: "Apple",
+      postingUrl: "https://jobs.apple.com/en-us/search?location=united-states-USA", adapter: "custom",
+    }, [
+      job("Apple", "Watch the film", "https://jobs.apple.com/careers/global/media/careers.mp4"),
+      job("Apple", "Data Science Intern", "https://jobs.apple.com/en-us/details/200673612-0157/data-science-intern?team=CORSV"),
+      job("Apple", " ML Engineer", "https://jobs.apple.com/en-us/details/200680823-0836/%EF%A3%BF-ml-engineer?team=MLAI"),
+    ])).toEqual([
+      expect.objectContaining({ title: "Data Science Intern" }),
+      expect.objectContaining({ title: " ML Engineer" }),
+    ]);
+    expect(browserJobsForSource({
+      id: "p4-0285-google", company: "Google / Alphabet",
+      postingUrl: "https://www.google.com/about/careers/applications/jobs/results/", adapter: "custom",
+    }, [
+      job("Google / Alphabet", "Job search", "https://www.google.com/about/careers/applications/jobs/results/jobs/results"),
+      job("Google / Alphabet", "Software Engineering Intern", "https://www.google.com/about/careers/applications/jobs/results/94172495052972742-software-engineering-intern/?q=intern"),
+    ])).toEqual([expect.objectContaining({
+      externalId: "94172495052972742",
+      officialUrl: "https://www.google.com/about/careers/applications/jobs/results/94172495052972742-software-engineering-intern/",
+    })]);
+  });
+
+  it("canonicalizes Microsoft browser job identities", () => {
+    const result = browserJobsForSource({
+      id: "p4-0309-microsoft", company: "Microsoft",
+      postingUrl: "https://apply.careers.microsoft.com/careers?domain=microsoft.com", adapter: "custom",
+    }, [{
+      externalId: null,
+      title: "Software Engineer Intern",
+      company: "Microsoft",
+      location: "Redmond, WA",
+      arrangement: "unknown",
+      employmentType: "Internship",
+      summary: null,
+      officialUrl: "https://apply.careers.microsoft.com/careers/job/1970393556951150?domain=microsoft.com",
+      publishedAt: null,
+    }]);
+    expect(result).toEqual([expect.objectContaining({
+      externalId: "1970393556951150",
+      requisitionId: "1970393556951150",
+      officialUrl: "https://apply.careers.microsoft.com/careers/job/1970393556951150",
+    })]);
+  });
+
   it("keeps a 2xx page with no verified jobs retryable instead of healthy", () => {
     expect(browserResultClassification({
       source: {

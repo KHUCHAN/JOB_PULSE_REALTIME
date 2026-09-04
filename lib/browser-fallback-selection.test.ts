@@ -83,11 +83,19 @@ describe("browser recovery queue timing", () => {
     }, now)).toBe(false);
   });
 
-  it.each(["stale", "empty"])("queues a due %s source", (health) => {
+  it("queues a due empty source", () => {
     expect(browserRecoveryDue({
-      health, currentJobs: health === "empty" ? 0 : 12,
+      health: "empty", currentJobs: 0,
       lastCheckedAt: "2026-08-14T20:00:00.000Z",
       nextRunAt: "2026-08-15T02:19:00.000Z",
     }, now)).toBe(true);
+  });
+
+  it("leaves stale-only sources to the native backlog drain", () => {
+    expect(browserRecoveryDue({
+      health: "stale", currentJobs: 12,
+      lastCheckedAt: "2026-08-14T20:00:00.000Z",
+      nextRunAt: "2026-08-15T02:19:00.000Z",
+    }, now)).toBe(false);
   });
 });

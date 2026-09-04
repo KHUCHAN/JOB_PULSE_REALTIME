@@ -3,11 +3,11 @@ const boundedInteger = (value, fallback, minimum, maximum) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.max(minimum, Math.min(maximum, Math.trunc(parsed))) : fallback;
 };
-const maximumMinutes = boundedInteger(process.env.JOB_PULSE_MAX_RUN_MINUTES, 20, 1, 20);
+const maximumMinutes = boundedInteger(process.env.JOB_PULSE_MAX_RUN_MINUTES, 45, 1, 50);
 // Each API call still leases and crawls exactly one company. Parallelizing
 // independent requests here raises throughput without letting one slow or
 // malformed source consume a multi-company Worker request.
-const requestConcurrency = boundedInteger(process.env.JOB_PULSE_REQUEST_CONCURRENCY, 6, 1, 8);
+const requestConcurrency = boundedInteger(process.env.JOB_PULSE_REQUEST_CONCURRENCY, 8, 1, 12);
 const targetedSourceIds = [...new Set((process.env.JOB_PULSE_TARGETED_RECRAWL_SOURCE_IDS || "")
   .split(",")
   .map((value) => value.trim())

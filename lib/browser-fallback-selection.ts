@@ -18,8 +18,14 @@ export const browserRecoveryDue = (
   source: BrowserRecoveryQueueSource,
   now = Date.now(),
 ): boolean => {
+  // `stale` means the normal oldest-first queue is behind, not that the
+  // official board needs a browser. Sending hundreds of merely overdue
+  // sources through Chrome duplicated native work, repeatedly restarted
+  // checkpointed catalogs at page one, and made this recovery job hit its
+  // 25-minute ceiling. Leave stale-only rows to the longer native drain and
+  // reserve browser capacity for observed source failures and empty boards.
   const problem = source.health === "failed" || source.health === "blocked"
-    || source.health === "inactive" || source.health === "stale" || source.health === "empty"
+    || source.health === "inactive" || source.health === "empty"
     || (source.health === "healthy" && source.currentJobs === 0);
   if (!problem) return false;
   const next = Date.parse(source.nextRunAt ?? "");
