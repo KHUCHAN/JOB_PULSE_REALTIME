@@ -10,6 +10,7 @@ type CheckpointRecoveryOptions = {
   maxPasses?: number;
   maxStalls?: number;
   stallDelayMs?: number;
+  retainPartialAtPassLimit?: boolean;
   wait?: (milliseconds: number) => Promise<void>;
 };
 
@@ -114,6 +115,16 @@ export const recoverCheckpointedCatalog = async (
     }
     cursor = result.pagination.nextPage;
     stalls = 0;
+  }
+
+  if (options.retainPartialAtPassLimit && lastResult && jobs.size > 0) {
+    return {
+      ...lastResult,
+      completeListing: false,
+      jobs: [...jobs.values()],
+      pagination: undefined,
+      error: null,
+    };
   }
 
   throw new Error(lastResult?.error ?? `Checkpointed catalog exceeded ${maxPasses} recovery passes.`);

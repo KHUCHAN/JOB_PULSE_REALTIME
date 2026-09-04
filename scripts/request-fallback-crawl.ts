@@ -125,12 +125,17 @@ const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
     // non-paged sources return immediately from the same helper. This avoids
     // repeatedly ingesting page one for a newly promoted priority source.
     let result: Awaited<ReturnType<typeof recoverCheckpointedCatalog>>;
+    // Jacobs publishes more than 7,000 official identities. Its adapter already
+    // returns one safely rotating sitemap segment plus a bounded Jobsyn window.
+    // Replaying the entire sitemap on every checkpoint pass used to consume the
+    // remainder of this job after all priority employers had finished. Persist
+    // exactly one non-authoritative segment per two-hour run; the native cursor
+    // and deterministic production slot cover the remaining segments over time.
+    const recoveryOptions = source.id === "legacy-row-102"
+      ? { maxPasses: 1, maxStalls: 0, retainPartialAtPassLimit: true }
+      : { maxPasses: 60, maxStalls: 2, stallDelayMs: 1_500 };
     try {
-      result = await recoverCheckpointedCatalog(source, fetch, crawlSource, {
-        maxPasses: 60,
-        maxStalls: 2,
-        stallDelayMs: 1_500,
-      });
+      result = await recoverCheckpointedCatalog(source, fetch, crawlSource, recoveryOptions);
     } catch (firstError) {
       // Retry the complete source once. Official Workday and sitemap edges can
       // change a page count or reject one burst even though the next bounded
@@ -138,11 +143,7 @@ const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
       // affecting the other seven worker lanes.
       await new Promise((resolve) => setTimeout(resolve, 2_000));
       try {
-        result = await recoverCheckpointedCatalog(source, fetch, crawlSource, {
-          maxPasses: 60,
-          maxStalls: 2,
-          stallDelayMs: 1_500,
-        });
+        result = await recoverCheckpointedCatalog(source, fetch, crawlSource, recoveryOptions);
       } catch (secondError) {
         const firstMessage = firstError instanceof Error ? firstError.message : "unknown first attempt";
         const secondMessage = secondError instanceof Error ? secondError.message : "unknown retry";

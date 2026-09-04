@@ -111,4 +111,23 @@ describe("request fallback checkpoint recovery", () => {
     expect(result.jobs).toHaveLength(2);
     expect(result.jobs.find((value) => value.externalId === "a")?.description).toBe("enriched detail");
   });
+
+  it("retains one non-authoritative segment for an intentionally rotating giant catalog", async () => {
+    const crawl = vi.fn(async (): Promise<SourceCrawlResult> => ({
+      status: "succeeded", responseStatus: 200, completeListing: false,
+      jobs: [job("a"), job("b")],
+      pagination: { nextPage: 20, cycleComplete: false, totalPages: 360 }, error: null,
+    }));
+
+    const result = await recoverCheckpointedCatalog(source, fetch, crawl, {
+      maxPasses: 1,
+      maxStalls: 0,
+      retainPartialAtPassLimit: true,
+    });
+
+    expect(crawl).toHaveBeenCalledOnce();
+    expect(result.jobs.map((value) => value.externalId)).toEqual(["a", "b"]);
+    expect(result.completeListing).toBe(false);
+    expect(result.pagination).toBeUndefined();
+  });
 });
