@@ -58,12 +58,22 @@ const liveSources = async (): Promise<CrawlSource[]> => {
   // The full source-health view joins every historical crawl run. Request
   // recovery needs only this small explicit set, so keep startup independent
   // of the size of production history.
-  const response = await fetch(`${siteUrl}/api/pulse?resource=sources&ids=${encodeURIComponent(sourceIds.join(","))}`, {
-    headers: { accept: "application/json" },
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!response.ok) throw new Error(`Live source inventory returned HTTP ${response.status}.`);
-  const inventory = await response.json() as LiveSource[];
+  // Read in 20-ID windows as well as accepting the newer wider API limit. A
+  // workflow can begin while a just-pushed Sites version is still publishing;
+  // this keeps the runner compatible with either side of that deployment
+  // boundary instead of mistaking the omitted tail for missing sources.
+  const sourceWindows = Array.from(
+    { length: Math.ceil(sourceIds.length / 20) },
+    (_, index) => sourceIds.slice(index * 20, index * 20 + 20),
+  );
+  const inventory = (await Promise.all(sourceWindows.map(async (window) => {
+    const response = await fetch(`${siteUrl}/api/pulse?resource=sources&ids=${encodeURIComponent(window.join(","))}`, {
+      headers: { accept: "application/json" },
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) throw new Error(`Live source inventory returned HTTP ${response.status}.`);
+    return response.json() as Promise<LiveSource[]>;
+  }))).flat();
   const byId = new Map(inventory.map((source) => [source.id, source]));
   const now = new Date();
   return sourceIds.flatMap((sourceId): CrawlSource[] => {
