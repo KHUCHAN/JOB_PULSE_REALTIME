@@ -24,18 +24,11 @@ const siteUrl = (process.env.REQUEST_FALLBACK_LIVE_URL
   ?? "https://job-pulse-realtime.autodev61.chatgpt.site").replace(/\/$/, "");
 const ingestUrl = process.env.REQUEST_FALLBACK_INGEST_URL?.trim() || `${siteUrl}/api/pulse`;
 const sourceIds = [...new Set((process.env.REQUEST_FALLBACK_SOURCE_IDS ?? "legacy-row-826,p2-0075-american-family-insurance")
-  .split(",").map((value) => value.trim()).filter(Boolean))].slice(0, 16);
+  .split(",").map((value) => value.trim()).filter(Boolean))].slice(0, 48);
 const forcedSourceIds = new Set((process.env.REQUEST_FALLBACK_FORCE_SOURCE_IDS ?? "")
   .split(",").map((value) => value.trim()).filter(Boolean));
 const concurrency = Math.max(1, Math.min(8,
   Number.parseInt(process.env.REQUEST_FALLBACK_CONCURRENCY ?? "4", 10) || 4));
-const checkpointedSourceIds = new Set([
-  "p4-0241-cgi",
-  "p5-1018-penn-medicine",
-  "p4-0285-google",
-  "p4-0219-apple",
-  "legacy-row-84",
-]);
 let cachedOidc = { value: "", expiresAt: 0 };
 
 const githubOidcToken = async (): Promise<string> => {
@@ -88,9 +81,11 @@ const liveSources = async (): Promise<CrawlSource[]> => {
 
 const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
   try {
-    const result = checkpointedSourceIds.has(source.id)
-      ? await recoverCheckpointedCatalog(source, fetch, crawlSource)
-      : await crawlSource(source, fetch, new Date());
+    // The independent Node.js runner has a much larger execution envelope
+    // than one Sites Worker request. Drain every paged official catalog here;
+    // non-paged sources return immediately from the same helper. This avoids
+    // repeatedly ingesting page one for a newly promoted priority source.
+    const result = await recoverCheckpointedCatalog(source, fetch, crawlSource, { maxPasses: 40 });
     if (result.status !== "succeeded" || result.jobs.length === 0) {
       throw new Error(result.error ?? `${result.status} crawler result with ${result.jobs.length} jobs.`);
     }

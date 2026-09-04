@@ -599,7 +599,10 @@ export async function GET(request: Request): Promise<Response> {
         .split(",")
         .map((value) => value.trim())
         .filter(Boolean))]
-        .slice(0, 20);
+        // The independent priority runner reads one bounded inventory for the
+        // critical-employer lane. Sixty-four IDs stays far below D1 limits
+        // while avoiding partial inventories once that lane exceeds 20 firms.
+        .slice(0, 64);
       const sources = await listSources(sourceIds);
       return json(health ? sources.filter((source) => source.health === health) : sources);
     }
