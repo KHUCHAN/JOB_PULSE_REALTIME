@@ -61,7 +61,9 @@ const chunks = <T>(items: T[], size: number): T[][] => {
 };
 
 const CATALOG_SYNC_LOCK_KEY = "sources_sync_lock_v1";
-const catalogSyncs = new WeakMap<object, Promise<CatalogSeedResult>>();
+const CATALOG_SYNC_MEMORY_LEASE_MS = 5_000;
+type ActiveCatalogSync = { promise: Promise<CatalogSeedResult>; startedAt: number };
+const catalogSyncs = new WeakMap<object, ActiveCatalogSync>();
 const delay = (milliseconds: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 const catalogStatus = async (database: CatalogDb): Promise<CatalogStatus> => (
@@ -330,10 +332,17 @@ export function ensureCatalogSeeded(
 ): Promise<CatalogSeedResult> {
   const key = database as object;
   const active = catalogSyncs.get(key);
-  if (active) return active;
+  // A client-aborted Worker invocation can leave its unresolved promise in a
+  // warm isolate even after the database-visible sync completed. Never let
+  // that process-local cache become an indefinite gate for every later API
+  // request. The D1 lock remains the cross-request authority; after this
+  // short coalescing lease a new request re-checks the durable version marker.
+  if (active && Date.now() - active.startedAt < CATALOG_SYNC_MEMORY_LEASE_MS) return active.promise;
+  if (active) catalogSyncs.delete(key);
+  const startedAt = Date.now();
   const sync = ensureCatalogSeededOnce(database, seed, crawlPolicy).finally(() => {
-    if (catalogSyncs.get(key) === sync) catalogSyncs.delete(key);
+    if (catalogSyncs.get(key)?.promise === sync) catalogSyncs.delete(key);
   });
-  catalogSyncs.set(key, sync);
+  catalogSyncs.set(key, { promise: sync, startedAt });
   return sync;
 }

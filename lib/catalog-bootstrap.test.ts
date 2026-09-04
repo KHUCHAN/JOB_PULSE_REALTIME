@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ensureCatalogSeeded, type CatalogSeed } from "./catalog-bootstrap";
 
 const seed: CatalogSeed = {
@@ -124,6 +124,47 @@ describe("runtime catalog bootstrap", () => {
     expect(writes.filter((write) => write.kind === "state")).toEqual([
       { kind: "state", values: ["sources", seed.version] },
     ]);
+  });
+
+  it("abandons a stale in-memory sync promise after a canceled request", async () => {
+    const clock = vi.spyOn(Date, "now");
+    clock.mockReturnValue(1_000);
+    let statusReads = 0;
+    const never = new Promise<never>(() => undefined);
+    const readStatus = async () => {
+      statusReads += 1;
+      if (statusReads === 1) return never;
+      return {
+        count: 1458,
+        version: seed.version,
+        crawl_policy_version: null,
+        lock_owner: null,
+      };
+    };
+    const db = {
+      prepare() {
+        return {
+          first: readStatus,
+          bind() {
+            return {
+              first: readStatus,
+              run: async () => ({ success: true }),
+            };
+          },
+        };
+      },
+    };
+
+    void ensureCatalogSeeded(db, seed);
+    await Promise.resolve();
+    clock.mockReturnValue(6_001);
+    await expect(ensureCatalogSeeded(db, seed)).resolves.toEqual({
+      seeded: false,
+      sources: 1458,
+      talentTargets: 0,
+    });
+    expect(statusReads).toBe(2);
+    clock.mockRestore();
   });
 
   it("executes the bootstrap statements against SQLite", async () => {
