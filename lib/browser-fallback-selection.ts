@@ -48,6 +48,9 @@ export const shouldRecordBrowserResult = (
   browserStatus: Exclude<LatestCrawlSummary["status"], "running" | null>,
 ): boolean => browserStatus === "succeeded"
   || (browserStatus === "blocked" && previousStatus === "failed")
+  // A repeated confirmed challenge is still a new attempt. Suppressing it
+  // forever left lastCheckedAt/nextRunAt days behind (notably Tesla).
+  || (browserStatus === "blocked" && previousStatus === "blocked")
   || previousStatus === null;
 
 export const browserResultError = (

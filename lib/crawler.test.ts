@@ -4416,6 +4416,9 @@ HUMAN RESOURCES Posted Date
     }).join("");
     const fetcher: typeof fetch = async (input) => {
       const url = new URL(String(input));
+      if (url.pathname.includes("94172495052972742-")) {
+        return new Response(`<div data-id="94172495052972742"><div><h2>Software Engineering Intern, MS, Summer 2027</h2><span class="r0wTof">Mountain View, CA, USA</span><h3>Minimum qualifications:</h3><p>MS student with Python experience.</p></div></div></c-wiz>`);
+      }
       const pageNumber = Number(url.searchParams.get("page") ?? 1);
       requests.push(pageNumber);
       if (url.searchParams.get("q") === "2027 internship") {
@@ -4443,6 +4446,8 @@ HUMAN RESOURCES Posted Date
     expect(result.jobs).toHaveLength(42);
     expect(result.jobs).toContainEqual(expect.objectContaining({
       externalId: "94172495052972742",
+      location: "Mountain View, CA, USA",
+      description: expect.stringContaining("Python"),
       officialUrl: "https://www.google.com/about/careers/applications/jobs/results/94172495052972742-software-engineering-intern-ms-summer-2027",
     }));
   });

@@ -24,6 +24,9 @@ describe("needsBrowserFallback", () => {
 });
 
 describe("browser fallback result precedence", () => {
+  it("records a repeated confirmed challenge so attempt time and backoff advance", () => {
+    expect(shouldRecordBrowserResult("blocked", "blocked")).toBe(true);
+  });
   it.each(["failed", "blocked"] as const)("does not let a %s browser observation downgrade a successful crawl", (status) => {
     expect(shouldRecordBrowserResult("succeeded", status)).toBe(false);
   });

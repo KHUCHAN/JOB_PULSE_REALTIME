@@ -20538,7 +20538,17 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
       .includes(normalizedRequestedCountry);
     if (requestedCountry) {
       const countryFacet = flattenedWorkdayFacets(first.payload.facets)
-        .find((facet) => facet.facetParameter?.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "") === "locationcountry");
+        .find((facet) => {
+          // NVIDIA names its nested country facet locationHierarchy1;
+          // other tenants use Country. Ignoring these silently falls back
+          // to the capped global catalog and misses US internship rows.
+          const key = facet.facetParameter?.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "");
+          return ["locationcountry", "country", "locationhierarchy1"].includes(key ?? "")
+            && (facet.values ?? []).some(value => {
+              const descriptor = value.descriptor?.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "") ?? "";
+              return requestedIsUs ? ["unitedstates", "unitedstatesofamerica"].includes(descriptor) : descriptor === normalizedRequestedCountry;
+            });
+        });
       const countryValue = (countryFacet?.values ?? []).find((value) => {
         const descriptor = value.descriptor?.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "") ?? "";
         return requestedIsUs
@@ -25171,6 +25181,29 @@ const matchingJsonLdDetail = (html: string, source: CrawlSource, job: CrawledJob
   )) ?? details.find((detail) => jobIdentityText(detail.title) === jobIdentityText(job.title)) ?? null;
 };
 
+// Google does not publish JobPosting JSON-LD. Read only the identity-bound
+// detail panel, never the surrounding search results or navigation locations.
+export const googleCareerDetail = (html: string, job: CrawledJob): Partial<CrawledJob> | null => {
+  const id = new URL(job.officialUrl).pathname.match(/\/jobs\/results\/(\d+)-/)?.[1];
+  if (!id) return null;
+  const start = html.search(new RegExp(`<div\\b[^>]*data-id=["']${id}["'][^>]*>\\s*<div[^>]*>\\s*<h2\\b`));
+  if (start < 0) return null;
+  const tail = html.slice(start);
+  const end = tail.indexOf("</c-wiz>");
+  const panel = end >= 0 ? tail.slice(0, end) : tail;
+  const title = plainText(panel.match(/<h2\b[^>]*>([\s\S]*?)<\/h2>/i)?.[1]);
+  if (!title || jobIdentityText(title) !== jobIdentityText(job.title)) return null;
+  const locations = [...new Set([...panel.matchAll(/<span\b[^>]*class=["'][^"']*\br0wTof\b[^"']*["'][^>]*>([^<]+)<\/span>/gi)]
+    .flatMap((match) => plainText(match[1])?.replace(/^[;\s]+/, "") ?? []))];
+  const descriptionStart = panel.indexOf("<h3>Minimum qualifications:");
+  const description = descriptionStart >= 0 ? plainText(panel.slice(descriptionStart)) : null;
+  if (!locations.length || !description) return null;
+  return {
+    requisitionId: id, location: locations[0], secondaryLocations: locations.slice(1), description,
+    // No publication timestamp is exposed. Do not substitute crawl time.
+  };
+};
+
 const officialApplyUrl = (html: string, pageUrl: string): string | null => anchorsFromHtml(html)
   .flatMap(({ href, text }) => {
     try {
@@ -25606,6 +25639,16 @@ const enrichProgramJobDetails = async (
 
   const enrichOne = async ({ index, candidates }: { index: number; candidates: string[] }): Promise<void> => {
     const job = enriched[index];
+    if (new URL(job.officialUrl).hostname === "www.google.com") {
+      try {
+        const response = await fetchWithTimeout(fetcher, job.officialUrl, undefined, true, { attempts: 1, timeoutMs: 4_000 });
+        if (response.ok) {
+          const detail = googleCareerDetail(await response.text(), job);
+          if (detail) enriched[index] = mergeProgramJobDetail(job, detail);
+        }
+      } catch { /* Preserve the listing if the optional detail is unavailable. */ }
+      return;
+    }
     const isBarclaysDetail = (() => {
       try {
         return new URL(job.officialUrl).hostname.toLocaleLowerCase() === "search.jobs.barclays";

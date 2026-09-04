@@ -2,6 +2,7 @@ import { crawlSource, type CrawlSource } from "../lib/crawler.ts";
 import { ingestJobSnapshotInChunks } from "../lib/job-snapshot-transport.ts";
 import { isRequestFallbackDue, recoverCheckpointedCatalog } from "../lib/request-fallback-recovery.ts";
 import { isSafeCareerListingUrl } from "../lib/url-remediation.ts";
+import { verifySourceSnapshot } from "../lib/source-snapshot-verification.ts";
 
 type LiveSource = {
   id: string;
@@ -19,6 +20,7 @@ type RecoverySummary = {
   updated: number;
   elapsedMs: number;
   error: string | null;
+  verifiedDbSamples?: number;
 };
 
 const siteUrl = (process.env.REQUEST_FALLBACK_LIVE_URL
@@ -170,22 +172,29 @@ const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
     // are intentionally narrower. Eight simultaneous multi-chunk ingests
     // saturated the Worker/D1 path and made otherwise valid late sources time
     // out; two lanes retain throughput without write contention.
-    const payload = await withIngestSlot(() => ingestJobSnapshotInChunks({
-      allowedOrigins: [...new Set(allowedOrigins)].slice(0, 5),
-      authorization: githubOidcToken,
-      completeListing: result.completeListing,
-      endpoint: ingestUrl,
-      jobs: result.jobs,
-      listingUrl,
-      sourceId: source.id,
-      timeoutMs: 120_000,
-    }));
+    const payload = await withIngestSlot(async () => {
+      const ingested = await ingestJobSnapshotInChunks({
+        allowedOrigins: [...new Set(allowedOrigins)].slice(0, 5),
+        authorization: githubOidcToken,
+        completeListing: result.completeListing,
+        endpoint: ingestUrl,
+        jobs: result.jobs,
+        listingUrl,
+        sourceId: source.id,
+        timeoutMs: 120_000,
+      });
+      const verifiedDbSamples = forcedSourceIds.has(source.id)
+        ? await verifySourceSnapshot(siteUrl, source.id, result.jobs)
+        : 0;
+      return { ...ingested, verifiedDbSamples };
+    });
     return {
       sourceId: source.id,
       status: "succeeded",
       jobs: payload.jobs,
       created: payload.created,
       updated: payload.updated,
+      verifiedDbSamples: payload.verifiedDbSamples,
       elapsedMs: Date.now() - startedAt,
       error: null,
     };

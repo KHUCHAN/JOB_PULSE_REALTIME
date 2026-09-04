@@ -587,6 +587,18 @@ export async function GET(request: Request): Promise<Response> {
     if (resource === "jobs") return json(await jobsFor(url));
     if (resource === "jobFilterOptions") return json(await availableFilterOptions());
     if (resource === "job") {
+      const sourceId = url.searchParams.get("sourceId");
+      const officialUrl = url.searchParams.get("officialUrl");
+      if (!url.searchParams.get("id") && sourceId && officialUrl) {
+        // Exact indexed identity lookup for post-ingestion verification. Do
+        // not use FTS: it can omit recently changed titles and is expensive
+        // for generic job-title terms across the complete catalog.
+        const row = await db().prepare(`
+          SELECT ${jobDetailProjection("j")}
+          FROM jobs j WHERE j.source_id = ? AND j.official_url = ? AND j.status = 'open'
+        `).bind(sourceId, officialUrl).first<JobViewRow>();
+        return json(row ? mapJob(row) : null, row ? 200 : 404);
+      }
       const row = await db().prepare(`
         SELECT ${jobDetailProjection("j")}
         FROM jobs j WHERE j.id = ?
