@@ -1,7 +1,7 @@
 import type { JobFilters } from "./domain";
 import { canonicalOpenJobNotExists } from "./job-canonical";
 import { postingIdentityHistoryMatchSql } from "./job-posting-identity";
-import { ftsQuery } from "./job-search";
+import { ftsQuery, jobIdentifierQuery } from "./job-search";
 import { titleTokensSql } from "./job-title-tokens";
 import { jobHasCoopSql } from "./job-program-policy";
 
@@ -202,6 +202,7 @@ export function buildJobSearchPlan(filters: JobFilters): JobSearchPlan {
   };
 
   const rawQuery = filters.query ?? "";
+  const identifiers = jobIdentifierQuery(rawQuery);
   const searchesForCoop = /\b(?:co[\s-]?op|coop)\b/iu.test(rawQuery);
   // SQLite FTS expands the two short prefixes produced by `co-op` (`co*`
   // and `op*`) across most of the catalog before intersecting other terms.
@@ -209,9 +210,14 @@ export function buildJobSearchPlan(filters: JobFilters): JobSearchPlan {
   // membership predicate for co-op semantics and leave only meaningful text
   // terms for FTS.
   if (searchesForCoop) add(jobHasCoopSql("j"));
-  const query = ftsQuery(searchesForCoop
+  const query = identifiers ? "" : ftsQuery(searchesForCoop
     ? rawQuery.replace(/\b(?:co[\s-]?op|coop)\b/giu, " ")
     : rawQuery);
+  if (identifiers) {
+    const lookups = ["requisition_id", "external_id"].flatMap((column) =>
+      identifiers.map(() => `SELECT id FROM jobs WHERE ${column} = ? COLLATE NOCASE`));
+    add(`j.id IN (${lookups.join(" UNION ")})`, [...identifiers, ...identifiers]);
+  }
   if (query) add("j.rowid IN (SELECT rowid FROM jobs_fts WHERE jobs_fts MATCH ?)", [query]);
 
   const topics = asNormalizedValues(filters.topics).filter((topic) => topic === "ai-data");

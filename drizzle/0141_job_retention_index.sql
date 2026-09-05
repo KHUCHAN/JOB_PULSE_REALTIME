@@ -1,0 +1,1 @@
+CREATE INDEX `jobs_retention_published_idx` ON `jobs` (julianday("published_at"),`id`);

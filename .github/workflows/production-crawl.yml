@@ -32,9 +32,9 @@ on:
 
 concurrency:
   group: job-pulse-production-crawl
-  # A newer repair commit must not wait behind a stale 20-minute drain. The
-  # next run safely resumes leased sources after their bounded lease expires.
-  cancel-in-progress: true
+  # Finish the bounded collection/recovery/retention pipeline before admitting
+  # the next owner run. Scheduled ticks and repair pushes must not cancel it.
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -47,6 +47,9 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
       - name: Drain due production sources
         env:
           JOB_PULSE_SITE_URL: https://job-pulse-realtime.autodev61.chatgpt.site

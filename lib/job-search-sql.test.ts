@@ -46,6 +46,28 @@ const executePlan = (sql: string, bindings: unknown[], limit?: number, offset?: 
 };
 
 describe("parameterized job search SQL", () => {
+  it.each(["R-284879", "94172495052972742"])("looks up identifier %s with exact indexed predicates, not FTS", (query) => {
+    const plan = buildJobSearchPlan({ ...defaultJobFilters, query });
+    expect(plan.pageSql).not.toContain("jobs_fts");
+    expect(plan.countSql).not.toContain("jobs_fts");
+    expect(plan.pageSql).toContain("requisition_id = ? COLLATE NOCASE");
+    const parameters = plan.bindings.map((value, index) =>
+      `.parameter set ?${index + 1} ${sqliteLiteral(value)}`).join("\n");
+    const output = execFileSync("sqlite3", ["-json", "-batch", ":memory:"], {
+      encoding: "utf8",
+      input: [
+        "CREATE TABLE jobs (id TEXT PRIMARY KEY, requisition_id TEXT, external_id TEXT, status TEXT, valid_through TEXT, official_url TEXT, first_seen_at TEXT, company TEXT);",
+        "CREATE INDEX jobs_requisition_id_nocase_idx ON jobs(requisition_id COLLATE NOCASE);",
+        "CREATE INDEX jobs_external_id_nocase_idx ON jobs(external_id COLLATE NOCASE);",
+        "INSERT INTO jobs VALUES ('mastercard','r-284879',NULL,'open',NULL,'https://e/1','2026-09-01','Mastercard'), ('google',NULL,'94172495052972742','open',NULL,'https://e/2','2026-09-01','Google');",
+        ".parameter init", parameters,
+        `${plan.countSql};`, `EXPLAIN QUERY PLAN ${plan.countSql};`,
+      ].join("\n"),
+    });
+    expect(output).toContain('"total":1');
+    expect(output).toContain("jobs_requisition_id_nocase_idx");
+    expect(output).toContain("jobs_external_id_nocase_idx");
+  });
   it("uses the topic membership index and composes with 2027 internship filters", () => {
     const plan = buildJobSearchPlan({
       ...defaultJobFilters,

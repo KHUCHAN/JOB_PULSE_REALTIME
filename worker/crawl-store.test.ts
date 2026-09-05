@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CrawledJob } from "../lib/crawler";
 import { boundedJobRecord, compactRecord, D1CrawlStore, chunksByJsonBytes, chunksOf, nativeCrawlExcludedSourceIds } from "./crawl-store";
 
@@ -58,6 +58,8 @@ describe("chunksByJsonBytes", () => {
 });
 
 describe("D1CrawlStore enriched job persistence", () => {
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime("2026-08-31T12:00:00.000Z"); });
+  afterEach(() => vi.useRealTimers());
   const fakeDb = (options: {
     duplicateFacetConstraint?: boolean;
     failFacetInsert?: boolean;
@@ -116,7 +118,7 @@ describe("D1CrawlStore enriched job persistence", () => {
       externalId: "REQ-42", title: "Data Engineer", company: "Acme", location: "San Francisco, CA",
       arrangement: "hybrid", employmentType: "Full-time", summary: "Build data.", description: "Build trusted data products.",
       department: "Data Platform", skills: ["SQL", "Python"], salaryMin: 120000, salaryMax: 160000,
-      salaryCurrency: "USD", salaryInterval: "year", officialUrl: "https://jobs.example/42", publishedAt: "2026-08-01T00:00:00.000Z",
+      salaryCurrency: "USD", salaryInterval: "year", officialUrl: "https://jobs.example/42", publishedAt: "2026-08-10T00:00:00.000Z",
     } as CrawledJob;
 
     await store.syncJobs("source-1", [job], true);
@@ -206,7 +208,7 @@ describe("D1CrawlStore enriched job persistence", () => {
     }], true);
 
     const insert = calls.find((call) => call.sql.includes("INSERT INTO jobs"));
-    expect(JSON.parse(String(insert?.values[0]))[0].alertDiscoveredAfterBaseline).toBe(0);
+    expect(insert).toBeUndefined(); // 30-day retention also excludes repaired old inventory.
   });
 
   it("repairs a changed canonical URL in place when the ATS external ID is stable", async () => {

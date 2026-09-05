@@ -21,4 +21,15 @@ describe("post-ingestion exact public DB verification", () => {
     await expect(verifySourceSnapshot("https://site.test", "source-1", [job],
       (async () => new Response("unavailable", { status: 503 })) as typeof fetch)).rejects.toThrow("HTTP 503");
   });
+  it("does not report deliberately expired postings as missing", async () => {
+    expect(await verifySourceSnapshot("https://site.test", "source-1", [{ ...job, publishedAt: "2000-01-01" }],
+      (async () => { throw new Error("should not fetch"); }) as typeof fetch)).toBe(0);
+  });
+  it("accepts only a matching durable retention response, not arbitrary HTTP 410", async () => {
+    const response = { reason: "expired_posting_retention", sourceId: "source-1", officialUrl: job.officialUrl };
+    expect(await verifySourceSnapshot("https://site.test", "source-1", [job],
+      (async () => Response.json(response, { status: 410 })) as typeof fetch)).toBe(0);
+    await expect(verifySourceSnapshot("https://site.test", "source-1", [job],
+      (async () => Response.json({ ...response, sourceId: "wrong" }, { status: 410 })) as typeof fetch)).rejects.toThrow("Unverified retention");
+  });
 });

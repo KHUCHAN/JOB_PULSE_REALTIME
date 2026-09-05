@@ -1,3 +1,5 @@
+import { drainExpiredJobs } from "../lib/job-retention-drain.ts";
+
 const siteUrl = (process.env.JOB_PULSE_SITE_URL || "https://job-pulse-realtime.autodev61.chatgpt.site").replace(/\/$/, "");
 const boundedInteger = (value, fallback, minimum, maximum) => {
   const parsed = Number(value);
@@ -18,7 +20,7 @@ const targetedRecrawlAttempts = targetedSourceIds.length > 0
 const apiUrl = `${siteUrl}/api/pulse`;
 const audience = "job-pulse-realtime";
 const startedAt = Date.now();
-const deadline = startedAt + maximumMinutes * 60_000;
+let deadline = startedAt + maximumMinutes * 60_000;
 
 const oidcRequestUrl = process.env.ACTIONS_ID_TOKEN_REQUEST_URL;
 const oidcRequestToken = process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
@@ -46,6 +48,7 @@ const oidcToken = async () => {
     tokenUrl.searchParams.set("audience", audience);
     const tokenResponse = await fetch(tokenUrl, {
       headers: { authorization: `Bearer ${oidcRequestToken}` },
+      signal: AbortSignal.timeout(10_000),
     });
     if (!tokenResponse.ok) throw new Error(`GitHub Actions OIDC returned HTTP ${tokenResponse.status}.`);
     const tokenPayload = await tokenResponse.json();
@@ -97,10 +100,10 @@ const retry = async (operation, attempts = 3, delayMs = 1_000) => {
 };
 
 const postAction = async (action, timeoutMs, values = {}) => {
-  const token = await oidcToken();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(new Error(`${action} exceeded ${Math.round(timeoutMs / 1_000)} seconds.`)), timeoutMs);
   try {
+    const token = await oidcToken();
     const response = await fetch(apiUrl, {
       method: "POST",
       headers: {
@@ -119,6 +122,22 @@ const postAction = async (action, timeoutMs, values = {}) => {
     clearTimeout(timeout);
   }
 };
+
+let retention = { deleted: 0, batches: 0, hasMore: true, error: null };
+try {
+  retention = { ...await drainExpiredJobs(() => postAction("purgeExpiredJobs", 20_000), Date.now, 120_000,
+    (progress) => Object.assign(retention, progress)), error: null };
+  console.log(JSON.stringify({ retention }));
+  if (retention.hasMore) console.error("Retention backlog remains; the next owner batch will continue.");
+} catch (error) {
+  retention.error = error instanceof Error ? error.message : String(error);
+  console.error(`Retention failed: ${retention.error}`);
+}
+// Cleanup failures remain visible without suppressing source collection.
+if (retention.error || retention.hasMore) process.exitCode = 1;
+// Keep the normal crawl window intact; maintenance adds at most two minutes,
+// keeping 40 + 2 + 35 + 25 comfortably inside the two-hour owner workflow.
+deadline = Date.now() + maximumMinutes * 60_000;
 
 // Source URL repairs should not wait behind the oldest entries in the normal
 // queue. A second bounded observation is useful for an authoritative large
@@ -239,6 +258,7 @@ const suspiciousClosures = (Array.isArray(runStatus.recent) ? runStatus.recent :
     && number(run.jobsSeen) <= Math.max(5, Math.floor(number(run.jobsClosed) * 0.1)))
   .map((run) => ({ sourceId: run.sourceId, jobsSeen: number(run.jobsSeen), jobsClosed: number(run.jobsClosed) }));
 const result = {
+  retention,
   ...summary,
   elapsedMinutes: Math.round((Date.now() - startedAt) / 600) / 100,
   overview: {
@@ -274,6 +294,7 @@ if (process.env.GITHUB_STEP_SUMMARY) {
     `- Targeted repair requests: ${result.targetedRecrawls}`,
     `- Stop reason: ${result.stopReason || "queue drained or time limit reached"}`,
     `- Stale crawl rows finalized: ${result.staleRunsFinalized}`,
+    `- 30-day retention: ${retention.deleted} deleted; ${retention.batches} batches; backlog: ${retention.hasMore}; error: ${retention.error || "none"}`,
     `- Current source health: ${result.sourceHealthAvailable ? JSON.stringify(result.sourceCounts) : "detailed view timed out; overview remained healthy"}`,
     `- Successful empty sources (${result.healthyZeroSources.length}): ${result.healthyZeroSources.join(", ") || "none"}`,
     `- Suspicious recent closure runs: ${result.suspiciousClosures.length ? JSON.stringify(result.suspiciousClosures) : "none"}`,

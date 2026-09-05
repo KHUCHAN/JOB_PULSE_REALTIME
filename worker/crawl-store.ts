@@ -9,6 +9,7 @@ import { classifyRecruitingYears } from "../lib/job-recruiting-year-classifier";
 import { inferEmploymentTypeFromPrograms, isCoopEmploymentType, normalizeEmploymentType } from "../lib/employment-type";
 import { jobPostingIdentityKeys } from "../lib/job-posting-identity";
 import { syncResumeMatchesForUrls } from "../lib/resume-match-store";
+import { retainIncomingJobs } from "../lib/job-retention";
 
 type SourceRow = {
   id: string;
@@ -785,7 +786,8 @@ export class D1CrawlStore implements CrawlStore {
     // 1,250 keeps the worst-case working set at half its former size while a
     // 10k catalog still fits inside D1's 50-query invocation budget. External
     // browser/request recovery is bounded more tightly at 100 jobs per POST.
-    for (const jobsChunk of chunksOf(jobs, 1_250)) {
+    const retainedJobs = await retainIncomingJobs(this.db, sourceId, jobs, now);
+    for (const jobsChunk of chunksOf(retainedJobs, 1_250)) {
       const records = await Promise.all(jobsChunk.map(recordFor));
       const urlRepairs = records.flatMap((record) => {
         const externalId = typeof record.externalId === "string" ? record.externalId : null;
@@ -906,7 +908,11 @@ export class D1CrawlStore implements CrawlStore {
           json_extract(value, '$.alertDiscoveredAfterBaseline'),
           json_extract(value, '$.resumeMatchHash')
         FROM json_each(?)
-        WHERE true
+        WHERE NOT EXISTS (SELECT 1 FROM expired_job_archive a
+          WHERE a.source_id = json_extract(value, '$.sourceId') AND a.official_url = json_extract(value, '$.officialUrl'))
+          AND NOT EXISTS (SELECT 1 FROM expired_job_archive a WHERE a.requisition_identity_key = json_extract(value, '$.requisitionIdentityKey'))
+          AND NOT EXISTS (SELECT 1 FROM expired_job_archive a WHERE a.external_identity_key = json_extract(value, '$.externalIdentityKey'))
+          AND NOT EXISTS (SELECT 1 FROM expired_job_archive a WHERE a.url_identity_key = json_extract(value, '$.urlIdentityKey'))
         ON CONFLICT(source_id, official_url) DO UPDATE SET
           external_id = COALESCE(excluded.external_id, jobs.external_id),
           title = excluded.title,
@@ -1246,8 +1252,8 @@ export class D1CrawlStore implements CrawlStore {
       `).bind(now, sourceId, JSON.stringify(urlsChunk)).run();
     }
 
-    const created = jobs.filter((job) => !existingByUrl.has(job.officialUrl)).length;
-    return { created, updated: jobs.length - created, closed: closedUrls.length + duplicateJobIds.size };
+    const created = retainedJobs.filter((job) => !existingByUrl.has(job.officialUrl)).length;
+    return { created, updated: retainedJobs.length - created, closed: closedUrls.length + duplicateJobIds.size };
   }
 
   async finishRun(runId: string, values: Record<string, unknown>): Promise<void> {

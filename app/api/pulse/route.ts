@@ -25,6 +25,7 @@ import { browserResultError, shouldRecordBrowserResult } from "../../../lib/brow
 import { ensureCatalogSeeded, type CatalogSeed } from "../../../lib/catalog-bootstrap";
 import { crawlBatchOptions, jobAreaRegionBackfillLimit, jobProgramBackfillLimit, jobTopicBackfillLimit, recrawlSourceIds } from "../../../lib/crawl-batch-options";
 import { finalizeStaleCrawlRuns } from "../../../lib/crawl-run-repair";
+import { findArchivedJob, purgeExpiredJobs } from "../../../lib/job-retention";
 import { backfillJobAreasAndRegions } from "../../../lib/job-area-region-backfill";
 import { parseJobFilterParams } from "../../../lib/job-filter-query";
 import {
@@ -597,6 +598,11 @@ export async function GET(request: Request): Promise<Response> {
           SELECT ${jobDetailProjection("j")}
           FROM jobs j WHERE j.source_id = ? AND j.official_url = ? AND j.status = 'open'
         `).bind(sourceId, officialUrl).first<JobViewRow>();
+        if (!row) {
+          const archived = await findArchivedJob(db(), { sourceId, officialUrl,
+            requisitionId: url.searchParams.get("requisitionId"), externalId: url.searchParams.get("externalId") });
+          if (archived) return json({ reason: "expired_posting_retention", sourceId, officialUrl }, 410);
+        }
         return json(row ? mapJob(row) : null, row ? 200 : 404);
       }
       const row = await db().prepare(`
@@ -643,8 +649,19 @@ export async function GET(request: Request): Promise<Response> {
 
 export async function POST(request: Request): Promise<Response> {
   try {
-    await ensureCatalogSeeded(db(), catalogSeed as CatalogSeed, largeCatalogCrawlPolicy);
     const body = await request.json() as Record<string, unknown>;
+    // Maintenance must not seed/rewrite the catalog, especially on dry runs
+    // or unauthorized requests.
+    if (body.action === "purgeExpiredJobs") {
+      if (!codexReviewAuthorized(request) && !await verifyGithubActionsOidc(request.headers.get("authorization"))) {
+        return json({ error: "Crawler maintenance authorization is required." }, 401);
+      }
+      // Fixed server-owned 30 days and 100 rows; callers cannot broaden deletion.
+      const result = await purgeExpiredJobs(db(), new Date().toISOString(), body.dryRun === true);
+      filterOptionsCache = null;
+      return json(result);
+    }
+    await ensureCatalogSeeded(db(), catalogSeed as CatalogSeed, largeCatalogCrawlPolicy);
     if (body.action === "updateJobState") {
       const state = body.state as JobState;
       if (!["new", "saved", "hidden", "applied"].includes(state)) return json({ error: "Invalid review state." }, 400);

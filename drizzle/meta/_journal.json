@@ -981,6 +981,27 @@
       "when": 1788340952834,
       "tag": "0139_refresh_sources_20260902092232",
       "breakpoints": true
+    },
+    {
+      "idx": 140,
+      "version": "6",
+      "when": 1788575239330,
+      "tag": "0140_job_retention_archive",
+      "breakpoints": true
+    },
+    {
+      "idx": 141,
+      "version": "6",
+      "when": 1788575250163,
+      "tag": "0141_job_retention_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 142,
+      "version": "6",
+      "when": 1788578956464,
+      "tag": "0142_job_identifier_search",
+      "breakpoints": true
     }
   ]
 }

@@ -112,6 +112,9 @@ export const jobs = sqliteTable("jobs", {
   index("jobs_status_arrangement_idx").on(table.status, table.arrangement),
   index("jobs_status_employment_type_idx").on(table.status, table.employmentType),
   index("jobs_status_published_at_idx").on(table.status, table.publishedAt),
+  index("jobs_retention_published_idx").on(sql`julianday(${table.publishedAt})`, table.id),
+  index("jobs_requisition_id_nocase_idx").on(sql`${table.requisitionId} COLLATE NOCASE`),
+  index("jobs_external_id_nocase_idx").on(sql`${table.externalId} COLLATE NOCASE`),
   index("jobs_status_location_region_seen_idx").on(table.status, table.locationRegion, table.firstSeenAt),
   index("jobs_status_region_published_seen_idx").on(
     table.status,
@@ -274,6 +277,25 @@ export const jobMatches = sqliteTable("job_matches", {
     table.jobId,
     table.openGeneration,
   ),
+]);
+
+// No job/source foreign keys: retention must not erase delivery/review audit.
+// Deliberately excludes descriptions and raw ATS payloads.
+export const expiredJobArchive = sqliteTable("expired_job_archive", {
+  jobId: text("job_id").primaryKey(),
+  sourceId: text("source_id").notNull(),
+  officialUrl: text("official_url").notNull(),
+  requisitionIdentityKey: text("requisition_identity_key"),
+  externalIdentityKey: text("external_identity_key"),
+  urlIdentityKey: text("url_identity_key"),
+  publishedAt: text("published_at").notNull(),
+  archivedAt: text("archived_at").notNull(),
+  audit: text("audit").notNull(),
+}, (table) => [
+  index("expired_job_archive_source_url_idx").on(table.sourceId, table.officialUrl),
+  index("expired_job_archive_req_idx").on(table.requisitionIdentityKey),
+  index("expired_job_archive_ext_idx").on(table.externalIdentityKey),
+  index("expired_job_archive_url_idx").on(table.urlIdentityKey),
 ]);
 
 export const codexReviews = sqliteTable("codex_reviews", {

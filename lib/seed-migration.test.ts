@@ -311,7 +311,7 @@ describe("large catalog US scope migration", () => {
       idx: 128,
       tag: "0128_add_resume_alert_recipients",
     });
-    expect(currentJournal.entries.at(-1)).toMatchObject({
+    expect(currentJournal.entries.find((entry: { idx: number }) => entry.idx === 139)).toMatchObject({
       idx: 139,
       tag: "0139_refresh_sources_20260902092232",
     });
