@@ -13,6 +13,9 @@ await cp(resolve(projectRoot, ".openai"), resolve(outputRoot, ".openai"), { recu
 
 const drizzleDirectory = resolve(outputRoot, "dist", ".openai", "drizzle");
 const migrations = (await readdir(drizzleDirectory)).filter((name) => name.endsWith(".sql"));
+for (const required of ["0140_job_retention_archive.sql", "0141_job_retention_index.sql", "0142_job_identifier_search.sql"]) {
+  if (!migrations.includes(required)) throw new Error(`Sites package is missing required migration: ${required}`);
+}
 const catalogMigrations = migrations.filter((name) =>
   name === "0001_seed_sources.sql" || /^\d{4}_refresh_sources_.+\.sql$/.test(name));
 if (catalogMigrations.length > 0) {

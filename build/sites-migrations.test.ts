@@ -12,6 +12,9 @@ describe("Sites migration packaging", () => {
     expect(sitesSchemaMigrationFiles).toContain("0039_job_filter_options_cache.sql");
     expect(sitesSchemaMigrationFiles).toContain("0040_indexed_job_programs.sql");
     expect(sitesSchemaMigrationFiles).toContain("0129_repair_crawler_sources_and_query_indexes.sql");
+    expect(sitesSchemaMigrationFiles).toContain("0140_job_retention_archive.sql");
+    expect(sitesSchemaMigrationFiles).toContain("0141_job_retention_index.sql");
+    expect(sitesSchemaMigrationFiles).toContain("0142_job_identifier_search.sql");
     expect(sitesSchemaMigrationFiles.some((file) => file.includes("refresh_sources"))).toBe(false);
   });
 
