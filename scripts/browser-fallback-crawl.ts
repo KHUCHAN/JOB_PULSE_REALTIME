@@ -1174,6 +1174,7 @@ async function main(): Promise<void> {
           });
         try {
           await ingestJobSnapshotInChunks({
+            retentionNow: new Date().toISOString(),
             allowedOrigins: [...new Set(allowedOrigins)].slice(0, 5),
             authorization: async () => {
               const bearer = await githubOidcToken();

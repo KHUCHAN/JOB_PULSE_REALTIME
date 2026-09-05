@@ -4,6 +4,7 @@ import { isRequestFallbackDue, recoverCheckpointedCatalog } from "../lib/request
 import { isSafeCareerListingUrl } from "../lib/url-remediation.ts";
 import { verifySourceSnapshot } from "../lib/source-snapshot-verification.ts";
 import { deferRecovery } from "../lib/recovery-policy.ts";
+import { createFifoLimiter } from "../lib/fifo-limiter.ts";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
@@ -43,31 +44,7 @@ const concurrency = Math.max(1, Math.min(8,
 const ingestConcurrency = Math.max(1, Math.min(4,
   Number.parseInt(process.env.REQUEST_FALLBACK_INGEST_CONCURRENCY ?? "2", 10) || 2));
 let cachedOidc = { value: "", expiresAt: 0 };
-let activeIngests = 0;
-const ingestWaiters: Array<() => void> = [];
-
-const acquireIngestSlot = async (): Promise<void> => {
-  if (activeIngests < ingestConcurrency) {
-    activeIngests += 1;
-    return;
-  }
-  await new Promise<void>((resolve) => ingestWaiters.push(resolve));
-};
-
-const releaseIngestSlot = (): void => {
-  const next = ingestWaiters.shift();
-  if (next) next();
-  else activeIngests -= 1;
-};
-
-const withIngestSlot = async <T>(operation: () => Promise<T>): Promise<T> => {
-  await acquireIngestSlot();
-  try {
-    return await operation();
-  } finally {
-    releaseIngestSlot();
-  }
-};
+const withIngestSlot = createFifoLimiter(ingestConcurrency);
 
 const githubOidcToken = async (): Promise<string> => {
   const staticSecret = process.env.REQUEST_FALLBACK_INGEST_SECRET?.trim();
@@ -185,26 +162,40 @@ const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
     // saturated the Worker/D1 path and made otherwise valid late sources time
     // out; two lanes retain throughput without write contention.
     const fetchedAt = Date.now();
-    let acquiredAt = fetchedAt, ingestedAt = fetchedAt, verifiedAt = fetchedAt;
-    const payload = await withIngestSlot(async () => {
-      acquiredAt = Date.now();
-      const ingested = await ingestJobSnapshotInChunks({
-        allowedOrigins: [...new Set(allowedOrigins)].slice(0, 5),
-        authorization: githubOidcToken,
-        completeListing: result.completeListing,
-        endpoint: ingestUrl,
-        jobs: result.jobs,
-        listingUrl,
-        sourceId: source.id,
-        timeoutMs: 120_000,
+    let ingestWaitMs = 0, ingestMs = 0;
+    // Lease one HTTP chunk, not an entire company's snapshot. Large catalogs
+    // used to monopolize both writers for 50-100 seconds while every other
+    // source waited. FIFO chunk leases preserve the two-writer D1 limit.
+    const fairFetch: typeof fetch = async (input, init) => {
+      const queuedAt = Date.now();
+      return withIngestSlot(async () => {
+        const acquiredAt = Date.now();
+        ingestWaitMs += acquiredAt - queuedAt;
+        try {
+          const response = await fetch(input, init);
+          const body = await response.arrayBuffer();
+          return new Response(body, { status: response.status, headers: response.headers });
+        } finally { ingestMs += Date.now() - acquiredAt; }
       });
-      ingestedAt = Date.now();
-      const verifiedDbSamples = forcedSourceIds.has(source.id)
-        ? await verifySourceSnapshot(siteUrl, source.id, result.jobs)
-        : 0;
-      verifiedAt = Date.now();
-      return { ...ingested, verifiedDbSamples };
+    };
+    const ingested = await ingestJobSnapshotInChunks({
+      allowedOrigins: [...new Set(allowedOrigins)].slice(0, 5),
+      authorization: githubOidcToken,
+      completeListing: result.completeListing,
+      endpoint: ingestUrl,
+      jobs: result.jobs,
+      listingUrl,
+      sourceId: source.id,
+      timeoutMs: 120_000,
+      fetcher: fairFetch,
+      retentionNow: new Date().toISOString(),
     });
+    const verifyStartedAt = Date.now();
+    const verifiedDbSamples = forcedSourceIds.has(source.id)
+      ? await verifySourceSnapshot(siteUrl, source.id, result.jobs)
+      : 0;
+    const verifyMs = Date.now() - verifyStartedAt;
+    const payload = { ...ingested, verifiedDbSamples };
     return {
       sourceId: source.id,
       status: "succeeded",
@@ -214,9 +205,9 @@ const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
       verifiedDbSamples: payload.verifiedDbSamples,
       elapsedMs: Date.now() - startedAt,
       fetchMs: fetchedAt - startedAt,
-      ingestWaitMs: acquiredAt - fetchedAt,
-      ingestMs: ingestedAt - acquiredAt,
-      verifyMs: verifiedAt - ingestedAt,
+      ingestWaitMs,
+      ingestMs,
+      verifyMs,
       error: null,
     };
   } catch (error) {

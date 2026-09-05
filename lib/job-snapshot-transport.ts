@@ -1,4 +1,5 @@
 import type { CrawledJob } from "./crawler";
+import { isExpiredPosting } from "./job-retention.ts";
 
 type SnapshotChunkOptions = {
   maxBytes?: number;
@@ -17,6 +18,8 @@ type SnapshotTransportOptions = SnapshotChunkOptions & {
   attempts?: number;
   retryDelayMs?: number;
   timeoutMs?: number;
+  /** Apply the same official-publication retention rule before network transfer. */
+  retentionNow?: string;
 };
 
 export type SnapshotTransportSummary = {
@@ -99,7 +102,14 @@ export const ingestJobSnapshotInChunks = async (
   if (!Number.isInteger(attempts) || attempts < 1 || attempts > 5) {
     throw new Error("Snapshot transport attempts must be between 1 and 5.");
   }
-  const chunks = browserIngestChunks(options.jobs, options);
+  const retained = options.retentionNow
+    ? options.jobs.filter(job => !isExpiredPosting(job.publishedAt, options.retentionNow!))
+    : options.jobs;
+  // An all-expired catalog still needs one bounded transport to record the
+  // observation/finalizer. The server rechecks retention and stores none of it.
+  const transported = retained.length === 0 && options.jobs.length > 0
+    ? options.jobs.slice(0, 1) : retained;
+  const chunks = browserIngestChunks(transported, options);
   if (chunks.length === 0) throw new Error("Browser snapshot contained no jobs to transport.");
   const snapshotStartedAt = new Date().toISOString();
   const summary: SnapshotTransportSummary = {

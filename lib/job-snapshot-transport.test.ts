@@ -16,6 +16,29 @@ const job = (index: number, extra: Partial<CrawledJob> = {}): CrawledJob => ({
 });
 
 describe("browser job snapshot transport", () => {
+  it("does not transport already-expired official postings; retains unknown dates", async () => {
+    const bodies: Array<{ jobs: Array<{ externalId: string }>; finalizeSnapshot: boolean }> = [];
+    await ingestJobSnapshotInChunks({
+      allowedOrigins: ["https://jobs.example.com"], authorization: async () => "token",
+      completeListing: true, endpoint: "https://pulse.example/api/pulse", listingUrl: "https://jobs.example.com", sourceId: "a",
+      retentionNow: "2026-09-05T08:00:00Z", maxJobs: 1,
+      jobs: [job(0, { publishedAt: "2026-08-01T00:00:00Z", sourceUpdatedAt: "2026-09-05T00:00:00Z" }), job(1), job(2, { publishedAt: null })],
+      fetcher: async (_input, init) => { bodies.push(JSON.parse(String(init?.body))); return Response.json({ jobs: 1 }); },
+    });
+    expect(bodies.flatMap(body => body.jobs.map(row => row.externalId))).toEqual(["job-1", "job-2"]);
+    expect(bodies.map(body => body.finalizeSnapshot)).toEqual([false, true]);
+  });
+  it("sends one sentinel for all-expired snapshots so the server records completion", async () => {
+    const fetcher = vi.fn(async () => Response.json({ jobs: 0 }));
+    const result = await ingestJobSnapshotInChunks({
+      allowedOrigins: ["https://jobs.example.com"], authorization: async () => "token",
+      completeListing: true, endpoint: "https://pulse.example/api/pulse", listingUrl: "https://jobs.example.com", sourceId: "a",
+      retentionNow: "2026-09-05T08:00:00Z", jobs: [job(0, { publishedAt: "2026-07-01" }), job(1, { publishedAt: "2026-07-02" })],
+      fetcher,
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(result.jobs).toBe(0);
+  });
   it("drops unused raw payloads and bounds accepted rich text", () => {
     const record = browserIngestRecord(job(1, {
       description: "d".repeat(120_000),
