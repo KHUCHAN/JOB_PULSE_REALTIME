@@ -1,8 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import type { CrawledJob } from "../lib/crawler";
 import { boundedJobRecord, compactRecord, D1CrawlStore, chunksByJsonBytes, chunksOf, nativeCrawlExcludedSourceIds } from "./crawl-store";
 
 describe("chunksOf", () => {
+  it("keeps all forced request-recovery employers out of the native queue", () => {
+    const workflow = readFileSync(".github/workflows/production-crawl.yml", "utf8");
+    const forced = workflow.match(/REQUEST_FALLBACK_FORCE_SOURCE_IDS: (.+)/)![1].split(",");
+    expect(forced.length).toBeGreaterThan(40);
+    for (const sourceId of forced) expect(nativeCrawlExcludedSourceIds).toContain(sourceId);
+  });
   it("keeps D1 write batches within the configured limit", () => {
     const values = Array.from({ length: 121 }, (_, index) => index);
     expect(chunksOf(values, 50).map((chunk) => chunk.length)).toEqual([50, 50, 21]);
@@ -73,6 +80,7 @@ describe("D1CrawlStore enriched job persistence", () => {
     catalogState?: Record<string, string>;
   } = {}) => {
     const calls: Array<{ sql: string; values: unknown[] }> = [];
+    const batches: number[] = [];
     const catalogState = options.catalogState ?? {};
     const db = {
       prepare(sql: string) {
@@ -105,11 +113,29 @@ describe("D1CrawlStore enriched job persistence", () => {
         };
       },
       batch: async (statements: Array<{ run: () => Promise<unknown> }>) => {
+        batches.push(statements.length);
         for (const statement of statements) if (typeof statement.run === "function") await statement.run();
       },
     };
-    return { db: db as unknown as D1Database, calls };
+    return { db: db as unknown as D1Database, calls, batches };
   };
+
+  it("batches parent and topic writes without exceeding twelve statements per round trip", async () => {
+    const { db, calls, batches } = fakeDb();
+    await new D1CrawlStore(db).syncJobs("source-1", [{
+      externalId: "intern-1", title: "Data Science Intern Summer 2027", company: "Acme",
+      officialUrl: "https://careers.example/jobs/intern-1", location: "Austin, TX",
+      arrangement: "onsite", employmentType: "Internship", summary: "Python SQL machine learning",
+      publishedAt: null,
+    }], false);
+    expect(batches.some(size => size >= 8)).toBe(true);
+    expect(batches.every(size => size <= 12)).toBe(true);
+    const sql = calls.map(call => call.sql);
+    expect(sql.findIndex(s => s.includes("INSERT INTO jobs")))
+      .toBeLessThan(sql.findIndex(s => s.includes("INSERT INTO job_topics")));
+    expect(sql.some(s => s.includes("program:"))).toBe(true);
+    expect(sql.some(s => s.includes("year:"))).toBe(true);
+  });
 
   it("writes structured filter fields instead of dropping them from the job payload", async () => {
     const { db, calls } = fakeDb();

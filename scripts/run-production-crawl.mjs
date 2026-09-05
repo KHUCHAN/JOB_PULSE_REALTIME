@@ -1,5 +1,5 @@
 import { drainExpiredJobs } from "../lib/job-retention-drain.ts";
-import { crawlPressure } from "../lib/crawl-pressure.ts";
+import { drainCrawlPool } from "../lib/crawl-pool.ts";
 
 const siteUrl = (process.env.JOB_PULSE_SITE_URL || "https://job-pulse-realtime.autodev61.chatgpt.site").replace(/\/$/, "");
 const boundedInteger = (value, fallback, minimum, maximum) => {
@@ -11,7 +11,6 @@ const maximumMinutes = boundedInteger(process.env.JOB_PULSE_MAX_RUN_MINUTES, 45,
 // independent requests here raises throughput without letting one slow or
 // malformed source consume a multi-company Worker request.
 const requestConcurrency = boundedInteger(process.env.JOB_PULSE_REQUEST_CONCURRENCY, 4, 1, 12);
-const pressure = crawlPressure(requestConcurrency);
 const targetedSourceIds = [...new Set((process.env.JOB_PULSE_TARGETED_RECRAWL_SOURCE_IDS || "")
   .split(",")
   .map((value) => value.trim())
@@ -68,7 +67,6 @@ const oidcToken = async () => {
 };
 
 const summary = {
-  rounds: 0,
   requests: 0,
   attempted: 0,
   succeeded: 0,
@@ -174,45 +172,29 @@ const isRecoverableRequestError = (error) => {
   return /aborted|abort|exceeded|timed out|fetch failed|network|socket|ECONN|HTTP 5\d\d/i.test(message);
 };
 
-let consecutiveRequestErrorRounds = 0;
-while (Date.now() < deadline) {
-  summary.rounds += 1;
-  const roundConcurrency = pressure.concurrency;
-  const settled = await Promise.allSettled(Array.from({ length: roundConcurrency }, () => crawlOne()));
-  summary.requests += settled.length;
-  const fulfilled = settled.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
-  const rejected = settled.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
-  summary.requestErrors += rejected.length;
-  for (const error of rejected) console.error(error instanceof Error ? error.message : String(error));
-  for (const result of fulfilled) {
+const pool = await drainCrawlPool({
+  crawl: crawlOne,
+  concurrency: requestConcurrency,
+  deadline,
+  recoverable: isRecoverableRequestError,
+  onResult(result) {
+    summary.requests += 1;
     for (const key of ["attempted", "succeeded", "failed", "blocked", "created", "updated", "closed"]) {
       summary[key] += number(result[key]);
     }
-  }
-  if (fulfilled.length === roundConcurrency && fulfilled.every((result) => number(result.attempted) === 0)) {
-    summary.drained = true;
-    break;
-  }
-  if (rejected.some((error) => !isRecoverableRequestError(error))) {
-    throw new Error("Production crawl API authorization or configuration failed.");
-  }
-  // A single transient edge failure must not stop the other healthy workers.
-  // Count only rounds where every independent request failed.
-  const cooldownMs = pressure.observe(rejected.length);
-  if (cooldownMs && Date.now() < deadline) {
-    console.warn(`Crawl backpressure: concurrency=${pressure.concurrency}, cooldownMs=${cooldownMs}`);
-    await new Promise((resolve) => setTimeout(resolve, Math.min(cooldownMs, deadline - Date.now())));
-  }
-  consecutiveRequestErrorRounds = rejected.length === roundConcurrency ? consecutiveRequestErrorRounds + 1 : 0;
-  if (consecutiveRequestErrorRounds >= 5) {
-    // Browser recovery is the independent safety net for slow/edge-blocked
-    // sources. Stop this bounded native drain cleanly so the recovery job can
-    // run instead of marking the whole scheduled workflow as a hard failure.
-    summary.stopReason = "consecutive-request-errors";
-    process.exitCode = 1;
-    break;
-  }
-}
+  },
+  onError(error) {
+    summary.requests += 1;
+    summary.requestErrors += 1;
+    console.error(error instanceof Error ? error.message : String(error));
+  },
+  onPressure(concurrency, cooldownMs) {
+    console.warn(`Crawl backpressure: concurrency=${concurrency}, cooldownMs=${cooldownMs}`);
+  },
+});
+summary.drained = pool.drained;
+summary.stopReason = pool.stopReason;
+if (pool.stopReason === "consecutive-request-errors") process.exitCode = 1;
 
 // Edge capacity can remain briefly saturated after the final parallel round.
 // Retry only the compact finalization and verification calls; never repeat a

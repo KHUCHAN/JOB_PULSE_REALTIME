@@ -54,6 +54,30 @@ type PagedCrawlState = {
 // behind work that cannot succeed from that network. sourcesByIds deliberately
 // remains unrestricted so an explicit repair can still target any source.
 export const nativeCrawlExcludedSourceIds = [
+  // Every forced request-lane source has one owner. Do not collect and write
+  // these catalogs twice in the same workflow (native then request recovery).
+  "p4-0210-adobe",
+  "p5-0547-anthropic",
+  "p4-0245-cisco",
+  "p5-0624-ibm",
+  "p5-0692-openai",
+  "p4-0325-oracle",
+  "p4-0340-salesforce",
+  "p4-0347-servicenow",
+  "p5-0736-spacex",
+  "p5-0752-tiktok",
+  "p5-0758-uber",
+  "p5-0767-xai",
+  "p5-0796-analog-devices",
+  "p5-0839-cadence-design-systems",
+  "p5-0940-infineon",
+  "p5-0659-marvell-technology",
+  "p5-0663-mediatek",
+  "p5-0999-nxp-semiconductors",
+  "p5-1038-renesas",
+  "p5-0740-stmicroelectronics",
+  "p5-1071-synopsys",
+  "p5-1078-texas-instruments",
   "p4-0241-cgi",
   "p5-1018-penn-medicine",
   "legacy-row-826",
@@ -866,8 +890,11 @@ export class D1CrawlStore implements CrawlStore {
           resumeTouchedUrls.add(officialUrl);
         }
       }
+      // One bounded D1 transaction replaces serial network round trips.
+      // Keep parent upserts before dependent topics and settle before matching.
+      const writes: D1PreparedStatement[] = [];
       for (const recordsChunk of chunksByJsonBytes(records, 1_500_000)) {
-        await this.db.prepare(`
+        writes.push(this.db.prepare(`
         INSERT INTO jobs (
           id, source_id, external_id, title, company, location, arrangement,
           employment_type, summary, description_hash, official_url, status,
@@ -979,7 +1006,7 @@ export class D1CrawlStore implements CrawlStore {
           area_classified_at = excluded.area_classified_at,
           closed_at = NULL,
           updated_at = CURRENT_TIMESTAMP
-        `).bind(JSON.stringify(recordsChunk)).run();
+        `).bind(JSON.stringify(recordsChunk)));
 
         const topicMatches = recordsChunk
           .filter((record) => record.aiDataMatched === true)
@@ -991,7 +1018,7 @@ export class D1CrawlStore implements CrawlStore {
             classifiedAt: record.topicClassifiedAt,
           }));
         if (topicMatches.length > 0) {
-          await this.db.prepare(`
+          writes.push(this.db.prepare(`
             INSERT INTO job_topics (job_id, topic_key, score, evidence, classified_at)
             SELECT jobs.id, 'ai-data', json_extract(value, '$.score'),
                    json_extract(value, '$.evidence'), json_extract(value, '$.classifiedAt')
@@ -1003,14 +1030,14 @@ export class D1CrawlStore implements CrawlStore {
               score = excluded.score,
               evidence = excluded.evidence,
               classified_at = excluded.classified_at
-          `).bind(JSON.stringify(topicMatches)).run();
+          `).bind(JSON.stringify(topicMatches)));
         }
 
         const topicNonmatches = recordsChunk
           .filter((record) => record.aiDataMatched !== true)
           .map((record) => ({ sourceId: record.sourceId, officialUrl: record.officialUrl }));
         if (topicNonmatches.length > 0) {
-          await this.db.prepare(`
+          writes.push(this.db.prepare(`
             DELETE FROM job_topics
             WHERE topic_key = 'ai-data'
               AND job_id IN (
@@ -1019,14 +1046,14 @@ export class D1CrawlStore implements CrawlStore {
                 JOIN jobs ON jobs.source_id = json_extract(value, '$.sourceId')
                          AND jobs.official_url = json_extract(value, '$.officialUrl')
               )
-          `).bind(JSON.stringify(topicNonmatches)).run();
+          `).bind(JSON.stringify(topicNonmatches)));
         }
 
         const processedAreas = recordsChunk.map((record) => ({
           sourceId: record.sourceId,
           officialUrl: record.officialUrl,
         }));
-        await this.db.prepare(`
+        writes.push(this.db.prepare(`
           DELETE FROM job_topics
           WHERE topic_key LIKE 'area:%' AND job_id IN (
             SELECT jobs.id
@@ -1034,7 +1061,7 @@ export class D1CrawlStore implements CrawlStore {
             JOIN jobs ON jobs.source_id = json_extract(value, '$.sourceId')
                      AND jobs.official_url = json_extract(value, '$.officialUrl')
           )
-        `).bind(JSON.stringify(processedAreas)).run();
+        `).bind(JSON.stringify(processedAreas)));
         const areaMemberships = recordsChunk.flatMap((record) =>
           (record.areaMemberships as Array<{ topicKey: string; score: number; evidence: string[] }>).map((area) => ({
             sourceId: record.sourceId,
@@ -1046,7 +1073,7 @@ export class D1CrawlStore implements CrawlStore {
           })),
         );
         for (const membershipChunk of chunksByJsonBytes(areaMemberships, 1_500_000)) {
-          await this.db.prepare(`
+          writes.push(this.db.prepare(`
             INSERT INTO job_topics (job_id, topic_key, score, evidence, classified_at)
             SELECT jobs.id, 'area:' || json_extract(value, '$.areaKey'),
                    json_extract(value, '$.score'), json_extract(value, '$.evidence'),
@@ -1059,7 +1086,7 @@ export class D1CrawlStore implements CrawlStore {
               score = excluded.score,
               evidence = excluded.evidence,
               classified_at = excluded.classified_at
-          `).bind(JSON.stringify(membershipChunk)).run();
+          `).bind(JSON.stringify(membershipChunk)));
         }
       }
 
@@ -1068,7 +1095,7 @@ export class D1CrawlStore implements CrawlStore {
         officialUrl: record.officialUrl,
       }));
       for (const chunk of chunksByJsonBytes(processedPrograms, 1_500_000)) {
-        await this.db.prepare(`
+        writes.push(this.db.prepare(`
           DELETE FROM job_topics
           WHERE topic_key LIKE 'program:%' AND job_id IN (
             SELECT jobs.id
@@ -1076,7 +1103,7 @@ export class D1CrawlStore implements CrawlStore {
             JOIN jobs ON jobs.source_id = json_extract(value, '$.sourceId')
                      AND jobs.official_url = json_extract(value, '$.officialUrl')
           )
-        `).bind(JSON.stringify(chunk)).run();
+        `).bind(JSON.stringify(chunk)));
       }
       const programMemberships = records.flatMap((record) =>
         (record.programKeys as string[]).map((programKey) => ({
@@ -1088,7 +1115,7 @@ export class D1CrawlStore implements CrawlStore {
         }))
       );
       for (const chunk of chunksByJsonBytes(programMemberships, 1_500_000)) {
-        await this.db.prepare(`
+        writes.push(this.db.prepare(`
           INSERT INTO job_topics (job_id, topic_key, score, evidence, classified_at)
           SELECT jobs.id, 'program:' || json_extract(value, '$.programKey'), 1,
                  json_array(json_extract(value, '$.evidence')), json_extract(value, '$.classifiedAt')
@@ -1100,7 +1127,7 @@ export class D1CrawlStore implements CrawlStore {
             score = excluded.score,
             evidence = excluded.evidence,
             classified_at = excluded.classified_at
-        `).bind(JSON.stringify(chunk)).run();
+        `).bind(JSON.stringify(chunk)));
       }
 
       const processedYears = records.map((record) => ({
@@ -1108,7 +1135,7 @@ export class D1CrawlStore implements CrawlStore {
         officialUrl: record.officialUrl,
       }));
       for (const chunk of chunksByJsonBytes(processedYears, 1_500_000)) {
-        await this.db.prepare(`
+        writes.push(this.db.prepare(`
           DELETE FROM job_topics
           WHERE topic_key LIKE 'year:%' AND job_id IN (
             SELECT jobs.id
@@ -1116,7 +1143,7 @@ export class D1CrawlStore implements CrawlStore {
             JOIN jobs ON jobs.source_id = json_extract(value, '$.sourceId')
                      AND jobs.official_url = json_extract(value, '$.officialUrl')
           )
-        `).bind(JSON.stringify(chunk)).run();
+        `).bind(JSON.stringify(chunk)));
       }
       const yearMemberships = records.flatMap((record) =>
         (record.recruitingYears as number[]).map((year) => ({
@@ -1128,7 +1155,7 @@ export class D1CrawlStore implements CrawlStore {
         }))
       );
       for (const chunk of chunksByJsonBytes(yearMemberships, 1_500_000)) {
-        await this.db.prepare(`
+        writes.push(this.db.prepare(`
           INSERT INTO job_topics (job_id, topic_key, score, evidence, classified_at)
           SELECT jobs.id, 'year:' || json_extract(value, '$.year'), 1,
                  json_array(json_extract(value, '$.evidence')), json_extract(value, '$.classifiedAt')
@@ -1140,8 +1167,9 @@ export class D1CrawlStore implements CrawlStore {
             score = excluded.score,
             evidence = excluded.evidence,
             classified_at = excluded.classified_at
-        `).bind(JSON.stringify(chunk)).run();
+        `).bind(JSON.stringify(chunk)));
       }
+      for (const batch of chunksOf(writes, 12)) await this.db.batch(batch);
     }
 
     await syncResumeMatchesForUrls(
