@@ -88,7 +88,7 @@ describe("30-day job retention", () => {
     expect(await purgeExpiredJobs(db, NOW)).toMatchObject({ deleted: 3, hasMore: false });
     expect(sqlite.prepare("SELECT id FROM jobs ORDER BY id").all().map((row) => row.id)).toEqual(["future", "invalid", "new", "unknown"]);
     expect(sqlite.prepare("SELECT count(*) AS n FROM expired_job_archive").get()?.n).toBe(3);
-    expect(sqlite.prepare("SELECT count(*) AS n FROM job_filter_options_cache").get()?.n).toBe(0);
+    expect(sqlite.prepare("SELECT count(*) AS n FROM job_filter_options_cache").get()?.n).toBe(1);
     expect(await purgeExpiredJobs(db, NOW)).toMatchObject({ deleted: 0, hasMore: false });
     sqlite.close();
   });
@@ -162,6 +162,10 @@ describe("30-day job retention", () => {
 });
 
 describe("owner workflow retention drain", () => {
+  it("caps fast maintenance at 1000 deletions without pretending the backlog is empty", async () => {
+    expect(await drainExpiredJobs(async () => ({ deleted: 100, hasMore: true }), () => 0))
+      .toEqual({ deleted: 1000, batches: 10, hasMore: true });
+  });
   it("drains sequentially until empty", async () => {
     let calls = 0;
     expect(await drainExpiredJobs(async () => ({ deleted: ++calls === 1 ? 100 : 2, hasMore: calls === 1 }), () => 0))

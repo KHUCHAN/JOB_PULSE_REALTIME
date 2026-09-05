@@ -157,15 +157,9 @@ const runResumeAlerts = async (database: D1Database, exactJobIds: string[] | nul
 
 const runCrawlBatch = async (requested: number | undefined) => {
   const database = db();
-  const result = await runDueCrawls(new D1CrawlStore(database), fetch, new Date(), crawlBatchOptions(requested));
-  if (result.attempted === 0) {
-    const refreshed = await refreshJobFilterOptions(database, {
-      force: true,
-      filterKeys: rotatingJobFilterOptionKeys(new Date()),
-    });
-    if (refreshed.refreshed) filterOptionsCache = null;
-  }
-  return result;
+  // An empty lease is a cheap queue signal, not a reason for each concurrent
+  // request to force the same full-catalog facet aggregation.
+  return runDueCrawls(new D1CrawlStore(database), fetch, new Date(), crawlBatchOptions(requested));
 };
 
 const parseJsonArray = (value: string | null): string[] => {
@@ -658,7 +652,6 @@ export async function POST(request: Request): Promise<Response> {
       }
       // Fixed server-owned 30 days and 100 rows; callers cannot broaden deletion.
       const result = await purgeExpiredJobs(db(), new Date().toISOString(), body.dryRun === true);
-      filterOptionsCache = null;
       return json(result);
     }
     await ensureCatalogSeeded(db(), catalogSeed as CatalogSeed, largeCatalogCrawlPolicy);
@@ -935,7 +928,7 @@ export async function POST(request: Request): Promise<Response> {
     if (body.action === "refreshJobFilterOptions") {
       const result = await refreshJobFilterOptions(db(), {
         force: true,
-        filterKeys: jobFilterOptionRefreshKeys(body.filterKeys),
+        filterKeys: body.rotating === true ? rotatingJobFilterOptionKeys(new Date()) : jobFilterOptionRefreshKeys(body.filterKeys),
       });
       filterOptionsCache = null;
       return json(result);

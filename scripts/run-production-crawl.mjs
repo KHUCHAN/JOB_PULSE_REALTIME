@@ -1,4 +1,5 @@
 import { drainExpiredJobs } from "../lib/job-retention-drain.ts";
+import { crawlPressure } from "../lib/crawl-pressure.ts";
 
 const siteUrl = (process.env.JOB_PULSE_SITE_URL || "https://job-pulse-realtime.autodev61.chatgpt.site").replace(/\/$/, "");
 const boundedInteger = (value, fallback, minimum, maximum) => {
@@ -9,7 +10,8 @@ const maximumMinutes = boundedInteger(process.env.JOB_PULSE_MAX_RUN_MINUTES, 45,
 // Each API call still leases and crawls exactly one company. Parallelizing
 // independent requests here raises throughput without letting one slow or
 // malformed source consume a multi-company Worker request.
-const requestConcurrency = boundedInteger(process.env.JOB_PULSE_REQUEST_CONCURRENCY, 8, 1, 12);
+const requestConcurrency = boundedInteger(process.env.JOB_PULSE_REQUEST_CONCURRENCY, 4, 1, 12);
+const pressure = crawlPressure(requestConcurrency);
 const targetedSourceIds = [...new Set((process.env.JOB_PULSE_TARGETED_RECRAWL_SOURCE_IDS || "")
   .split(",")
   .map((value) => value.trim())
@@ -134,7 +136,7 @@ try {
   console.error(`Retention failed: ${retention.error}`);
 }
 // Cleanup failures remain visible without suppressing source collection.
-if (retention.error || retention.hasMore) process.exitCode = 1;
+if (retention.error) process.exitCode = 1;
 // Keep the normal crawl window intact; maintenance adds at most two minutes,
 // keeping 40 + 2 + 35 + 25 comfortably inside the two-hour owner workflow.
 deadline = Date.now() + maximumMinutes * 60_000;
@@ -175,7 +177,8 @@ const isRecoverableRequestError = (error) => {
 let consecutiveRequestErrorRounds = 0;
 while (Date.now() < deadline) {
   summary.rounds += 1;
-  const settled = await Promise.allSettled(Array.from({ length: requestConcurrency }, () => crawlOne()));
+  const roundConcurrency = pressure.concurrency;
+  const settled = await Promise.allSettled(Array.from({ length: roundConcurrency }, () => crawlOne()));
   summary.requests += settled.length;
   const fulfilled = settled.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
   const rejected = settled.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
@@ -186,7 +189,7 @@ while (Date.now() < deadline) {
       summary[key] += number(result[key]);
     }
   }
-  if (fulfilled.length === requestConcurrency && fulfilled.every((result) => number(result.attempted) === 0)) {
+  if (fulfilled.length === roundConcurrency && fulfilled.every((result) => number(result.attempted) === 0)) {
     summary.drained = true;
     break;
   }
@@ -195,12 +198,18 @@ while (Date.now() < deadline) {
   }
   // A single transient edge failure must not stop the other healthy workers.
   // Count only rounds where every independent request failed.
-  consecutiveRequestErrorRounds = rejected.length === requestConcurrency ? consecutiveRequestErrorRounds + 1 : 0;
-  if (consecutiveRequestErrorRounds >= 3) {
+  const cooldownMs = pressure.observe(rejected.length);
+  if (cooldownMs && Date.now() < deadline) {
+    console.warn(`Crawl backpressure: concurrency=${pressure.concurrency}, cooldownMs=${cooldownMs}`);
+    await new Promise((resolve) => setTimeout(resolve, Math.min(cooldownMs, deadline - Date.now())));
+  }
+  consecutiveRequestErrorRounds = rejected.length === roundConcurrency ? consecutiveRequestErrorRounds + 1 : 0;
+  if (consecutiveRequestErrorRounds >= 5) {
     // Browser recovery is the independent safety net for slow/edge-blocked
     // sources. Stop this bounded native drain cleanly so the recovery job can
     // run instead of marking the whole scheduled workflow as a hard failure.
     summary.stopReason = "consecutive-request-errors";
+    process.exitCode = 1;
     break;
   }
 }
@@ -208,8 +217,24 @@ while (Date.now() < deadline) {
 // Edge capacity can remain briefly saturated after the final parallel round.
 // Retry only the compact finalization and verification calls; never repeat a
 // completed source crawl just because post-drain observability was delayed.
-const staleRunRepair = await retry(() => postAction("finalizeStaleCrawlRuns", 15_000));
-summary.staleRunsFinalized = number(staleRunRepair.finalized);
+try {
+  const staleRunRepair = await retry(() => postAction("finalizeStaleCrawlRuns", 15_000), 3, 5_000);
+  summary.staleRunsFinalized = number(staleRunRepair.finalized);
+} catch (error) {
+  summary.finalizationError = error instanceof Error ? error.message : String(error);
+  process.exitCode = 1;
+  console.error(summary.finalizationError);
+}
+
+// Only the owner performs one bounded facet refresh. An empty source queue
+// must not fan out expensive identical queries from every idle worker.
+if (summary.drained && summary.requestErrors === 0) {
+  try {
+    await postAction("refreshJobFilterOptions", 20_000, { rotating: true });
+  } catch (error) {
+    console.warn(`Facet refresh deferred: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
 
 const getJson = async (resource, timeoutMs) => {
   const controller = new AbortController();

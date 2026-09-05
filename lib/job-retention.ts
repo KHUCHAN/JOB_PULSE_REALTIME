@@ -112,7 +112,9 @@ export async function purgeExpiredJobs(database: D1Database, now: string, dryRun
       AND EXISTS (SELECT 1 FROM expired_job_archive a WHERE a.job_id = j.id AND a.archived_at = ?)
       RETURNING id
     `).bind(ids, cutoff, now),
-    database.prepare("DELETE FROM job_filter_options_cache"),
+    // Keep the last usable facet cache. Clearing it on every 100-row purge
+    // makes public reads recompute all facets while maintenance is writing.
+    // The owner refreshes rotating facets once after a successful drain.
   ]);
   const more = await database.prepare(`SELECT id FROM jobs WHERE ${expiredJobsPredicate} LIMIT 1`).bind(cutoff).first();
   // D1 meta.changes includes trigger/cascade changes (including FTS), not

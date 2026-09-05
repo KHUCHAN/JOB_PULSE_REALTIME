@@ -9,7 +9,9 @@ export async function drainExpiredJobs(
   let deleted = 0;
   let batches = 0;
   let hasMore = true;
-  while (clock() + 20_000 < deadline && batches < 500) {
+  // A time limit alone allowed 23,300 deletes in 100 seconds on production.
+  // Limit write volume as well, leaving D1 capacity for ingestion and review.
+  while (clock() + 20_000 < deadline && batches < 10) {
     const result = await purge();
     if (!Number.isInteger(result.deleted) || result.deleted < 0 || result.deleted > 100 || typeof result.hasMore !== "boolean") {
       throw new Error("Invalid retention response.");
