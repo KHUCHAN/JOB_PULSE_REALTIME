@@ -5754,6 +5754,30 @@ HUMAN RESOURCES Posted Date
     expect(result.jobs).toHaveLength(total);
   });
 
+  it("stops Talemetry windows after a rate-limited gap without claiming completeness", async () => {
+    const requestedPages: number[] = [];
+    const fetcher: typeof fetch = async input => {
+      const url = String(input);
+      if (!url.startsWith("https://r.jina.ai/")) return new Response("blocked", { status: 403 });
+      const target = new URL(url.slice("https://r.jina.ai/".length));
+      const page = Number(target.searchParams.get("page"));
+      if (!page) return new Response("blocked", { status: 403 });
+      requestedPages.push(page);
+      if (page >= 5) return new Response("rate limited", { status: 429 });
+      return Response.json({ current_page: page, per_page: 100, total_entries: 5000,
+        entries: Array.from({ length: 100 }, (_, i) => ({ id: String((page-1)*100+i+1),
+          title: `Role ${(page-1)*100+i+1}`, permalink: `role-${(page-1)*100+i+1}` })) });
+    };
+    const result = await crawlSource({ id: "talemetry-gap", company: "Acme",
+      postingUrl: "https://careers.acme.example/search/jobs", adapter: "custom" }, fetcher,
+      new Date("2026-09-05T12:00:00Z"));
+    expect(Math.max(...requestedPages)).toBe(5);
+    expect(result.jobs).toHaveLength(400);
+    expect(result.completeListing).toBe(false);
+    expect(result.pagination?.nextPage).toBe(5);
+    expect(result.error).toContain("429");
+  });
+
   it("recovers Penn Medicine's US catalog from its compact Talemetry map feed and enriches internship details", async () => {
     const requests: string[] = [];
     const listingUrl = "https://careers.pennmedicine.org/search/jobs/in/country/united-states";

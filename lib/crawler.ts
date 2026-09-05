@@ -7362,6 +7362,10 @@ const crawlTalemetryJson = async (
     const batch = pagesToFetch.slice(index, index + 4);
     const fetched = await Promise.all(batch.map((page) => fetchPage(page)));
     batch.forEach((page, offset) => pages.set(page, fetched[offset] ?? null));
+    // A failed page prevents advancing the contiguous checkpoint. Do not
+    // spend the rest of the source budget fetching unusable later windows,
+    // especially after the reader has explicitly rate limited this source.
+    if (fetched.some((page) => page === null)) break;
   }
   const jobsFromEntries = (entries: TalemetryEntry[]): CrawledJob[] => entries.flatMap((job): CrawledJob[] => {
     const externalId = asText(job.talemetry_job_id) ?? asText(job.id);

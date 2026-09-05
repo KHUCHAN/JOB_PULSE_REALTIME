@@ -13,7 +13,7 @@ await cp(resolve(projectRoot, ".openai"), resolve(outputRoot, ".openai"), { recu
 
 const drizzleDirectory = resolve(outputRoot, "dist", ".openai", "drizzle");
 const migrations = (await readdir(drizzleDirectory)).filter((name) => name.endsWith(".sql"));
-for (const required of ["0143_retention_deployment_repair.sql"]) {
+for (const required of ["0143_retention_deployment_repair.sql", "0144_job_fts_changed_content.sql"]) {
   if (!migrations.includes(required)) throw new Error(`Sites package is missing required migration: ${required}`);
 }
 const catalogMigrations = migrations.filter((name) =>

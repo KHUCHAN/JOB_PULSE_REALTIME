@@ -13,6 +13,7 @@ type CheckpointRecoveryOptions = {
   stallDelayMs?: number;
   retainPartialAtPassLimit?: boolean;
   wait?: (milliseconds: number) => Promise<void>;
+  checkBudget?: () => void;
 };
 
 const defaultWait = (milliseconds: number): Promise<void> => new Promise((resolve) => {
@@ -57,7 +58,9 @@ export const recoverCheckpointedCatalog = async (
   let lastResult: SourceCrawlResult | null = null;
 
   for (let pass = 0; pass < maxPasses; pass += 1) {
+    options.checkBudget?.();
     const result = await crawl({ ...source, crawlPageCursor: cursor }, fetcher, new Date());
+    options.checkBudget?.();
     lastResult = result;
     if (result.status !== "succeeded" || result.jobs.length === 0) {
       if (deferRecovery(result.error ?? "")) throw new Error(result.error!);

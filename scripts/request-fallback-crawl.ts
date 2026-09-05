@@ -5,6 +5,7 @@ import { isSafeCareerListingUrl } from "../lib/url-remediation.ts";
 import { verifySourceSnapshot } from "../lib/source-snapshot-verification.ts";
 import { deferRecovery } from "../lib/recovery-policy.ts";
 import { createFifoLimiter } from "../lib/fifo-limiter.ts";
+import { sourceFetchBudget } from "../lib/source-fetch-budget.ts";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
@@ -43,6 +44,8 @@ const concurrency = Math.max(1, Math.min(8,
   Number.parseInt(process.env.REQUEST_FALLBACK_CONCURRENCY ?? "4", 10) || 4));
 const ingestConcurrency = Math.max(1, Math.min(4,
   Number.parseInt(process.env.REQUEST_FALLBACK_INGEST_CONCURRENCY ?? "2", 10) || 2));
+const sourceTimeoutMs = Math.max(30_000, Math.min(300_000,
+  Number.parseInt(process.env.REQUEST_FALLBACK_SOURCE_TIMEOUT_MS ?? "180000", 10) || 180_000));
 let cachedOidc = { value: "", expiresAt: 0 };
 const withIngestSlot = createFifoLimiter(ingestConcurrency);
 
@@ -109,6 +112,7 @@ const liveSources = async (): Promise<CrawlSource[]> => {
 
 const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
   const startedAt = Date.now();
+  const budget = sourceFetchBudget(sourceTimeoutMs);
   try {
     // The independent Node.js runner has a much larger execution envelope
     // than one Sites Worker request. Drain every paged official catalog here;
@@ -121,12 +125,13 @@ const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
     // remainder of this job after all priority employers had finished. Persist
     // exactly one non-authoritative segment per two-hour run; the native cursor
     // and deterministic production slot cover the remaining segments over time.
-    const recoveryOptions = source.id === "legacy-row-102"
+    const recoveryOptions = { ...(source.id === "legacy-row-102"
       ? { maxPasses: 1, maxStalls: 0, retainPartialAtPassLimit: true }
-      : { maxPasses: 60, maxStalls: 2, stallDelayMs: 1_500 };
+      : { maxPasses: 60, maxStalls: 2, stallDelayMs: 1_500 }), checkBudget: budget.check };
     try {
-      result = await recoverCheckpointedCatalog(source, fetch, crawlSource, recoveryOptions);
+      result = await recoverCheckpointedCatalog(source, budget.fetch, crawlSource, recoveryOptions);
     } catch (firstError) {
+      budget.check();
       if (deferRecovery(firstError instanceof Error ? firstError.message : "")) throw firstError;
       // Retry the complete source once. Official Workday and sitemap edges can
       // change a page count or reject one burst even though the next bounded
@@ -134,13 +139,17 @@ const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
       // affecting the other seven worker lanes.
       await new Promise((resolve) => setTimeout(resolve, 2_000));
       try {
-        result = await recoverCheckpointedCatalog(source, fetch, crawlSource, recoveryOptions);
+        result = await recoverCheckpointedCatalog(source, budget.fetch, crawlSource, recoveryOptions);
       } catch (secondError) {
         const firstMessage = firstError instanceof Error ? firstError.message : "unknown first attempt";
         const secondMessage = secondError instanceof Error ? secondError.message : "unknown retry";
         throw new Error(`${firstMessage}; retry: ${secondMessage}`);
       }
     }
+    budget.check();
+    // The deadline bounds upstream collection only; queued, already verified
+    // snapshots keep their independent transport timeout and are never cut off.
+    budget.dispose();
     if (result.status !== "succeeded" || result.jobs.length === 0) {
       throw new Error(result.error ?? `${result.status} crawler result with ${result.jobs.length} jobs.`);
     }
@@ -220,6 +229,8 @@ const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
       elapsedMs: Date.now() - startedAt,
       error: error instanceof Error ? error.message : "Unknown request-fallback error.",
     };
+  } finally {
+    budget.dispose();
   }
 };
 

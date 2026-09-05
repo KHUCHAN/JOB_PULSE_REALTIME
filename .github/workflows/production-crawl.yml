@@ -82,6 +82,9 @@ jobs:
           REQUEST_FALLBACK_LIVE_URL: https://job-pulse-realtime.autodev61.chatgpt.site
           REQUEST_FALLBACK_INGEST_URL: https://job-pulse-realtime.autodev61.chatgpt.site/api/pulse
           REQUEST_FALLBACK_CONCURRENCY: "8"
+          # One company cannot consume the whole recovery job by restarting
+          # per-request timeouts across pages/retries. Valid ingests are separate.
+          REQUEST_FALLBACK_SOURCE_TIMEOUT_MS: "180000"
           REQUEST_FALLBACK_INGEST_CONCURRENCY: "2"
           REQUEST_FALLBACK_RESULT_PATH: output/request-recovery/results.json
           # Penn Medicine's official Talemetry map feed is available from the

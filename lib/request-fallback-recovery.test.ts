@@ -22,6 +22,17 @@ const job = (id: string): SourceCrawlResult["jobs"][number] => ({
 });
 
 describe("request fallback checkpoint recovery", () => {
+  it("checks the shared budget even when an adapter swallows a fetch abort", async () => {
+    let expired = false;
+    const checkBudget = () => { if (expired) throw new Error("source deadline"); };
+    const crawl = vi.fn(async (): Promise<SourceCrawlResult> => {
+      expired = true;
+      return { status: "succeeded", jobs: [job("a")], completeListing: false,
+        responseStatus: 200, error: null, pagination: { nextPage: 2, totalPages: 3, cycleComplete: false } };
+    });
+    await expect(recoverCheckpointedCatalog(source, fetch, crawl, { checkBudget })).rejects.toThrow("source deadline");
+    expect(crawl).toHaveBeenCalledOnce();
+  });
   it("skips a source already scheduled beyond the bounded handoff horizon", () => {
     const now = new Date("2026-08-25T15:00:00.000Z");
     expect(isRequestFallbackDue(null, now)).toBe(true);

@@ -33,6 +33,7 @@ export const sitesSchemaMigrationFiles = [
   // The initial rollout partially applied 0140-0142. Preserve those source
   // migrations, but ship their additive, retry-safe repair to Sites.
   "0143_retention_deployment_repair.sql",
+  "0144_job_fts_changed_content.sql",
 ] as const;
 
 // Packages Sites metadata and migrations after Vite finishes compiling.
