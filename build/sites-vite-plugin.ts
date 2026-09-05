@@ -30,9 +30,9 @@ export const sitesSchemaMigrationFiles = [
   "0039_job_filter_options_cache.sql",
   "0040_indexed_job_programs.sql",
   "0129_repair_crawler_sources_and_query_indexes.sql",
-  "0140_job_retention_archive.sql",
-  "0141_job_retention_index.sql",
-  "0142_job_identifier_search.sql",
+  // The initial rollout partially applied 0140-0142. Preserve those source
+  // migrations, but ship their additive, retry-safe repair to Sites.
+  "0143_retention_deployment_repair.sql",
 ] as const;
 
 // Packages Sites metadata and migrations after Vite finishes compiling.

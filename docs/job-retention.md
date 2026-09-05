@@ -37,8 +37,9 @@ no eligible rows remain. This does not promise an unbounded one-request purge.
 
 ## Rollout order
 
-1. Apply generated migrations `0140_job_retention_archive` and
-   `0141_job_retention_index` with the matching Worker deployment. Do not deploy
+1. Sites ships the additive, retry-safe `0143_retention_deployment_repair`,
+   which covers the schema from immutable migrations 0140-0142 after the first
+   rollout partially applied and failed on an existing index. Do not deploy
    the runner before the API/schema. Keep the site's public access unchanged.
 2. Authenticated POST `purgeExpiredJobs` with `dryRun: true` is read-only and
    reports up to 100 eligible candidates, not total database size.

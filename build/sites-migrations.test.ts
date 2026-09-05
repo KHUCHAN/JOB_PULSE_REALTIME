@@ -1,4 +1,5 @@
 import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -6,15 +7,28 @@ import { buildSitesMigrations } from "./sites-migrations";
 import { sitesSchemaMigrationFiles } from "./sites-vite-plugin";
 
 describe("Sites migration packaging", () => {
+  it("repairs fresh, partially applied and completed retention DDL without data loss", async () => {
+    const initial = await Promise.all(["0140_job_retention_archive.sql", "0141_job_retention_index.sql", "0142_job_identifier_search.sql"].map(file => readFile(join(process.cwd(), "drizzle", file), "utf8")));
+    const repair = await readFile(join(process.cwd(), "drizzle/0143_retention_deployment_repair.sql"), "utf8");
+    for (const applied of [0, 1, 2, 3]) {
+      const output = execFileSync("sqlite3", ["-json", "-batch", ":memory:"], {encoding:"utf8", input: [
+        "CREATE TABLE jobs(id TEXT PRIMARY KEY, published_at TEXT, requisition_id TEXT, external_id TEXT);",
+        "INSERT INTO jobs VALUES ('preserve','2026-09-01','R-284879','94172495052972742');",
+        ...initial.slice(0, applied), repair, repair,
+        "SELECT count(*) AS jobs FROM jobs;",
+        "SELECT count(*) AS indexes FROM sqlite_master WHERE type='index' AND (name LIKE 'expired_job_archive_%_idx' OR name IN ('jobs_retention_published_idx','jobs_requisition_id_nocase_idx','jobs_external_id_nocase_idx'));",
+      ].join("\n")});
+      expect(output).toContain('"jobs":1');
+      expect(output).toContain('"indexes":7');
+    }
+  });
   it("ships the AI/data topic schema without catalog refresh data migrations", () => {
     expect(sitesSchemaMigrationFiles).toContain("0037_ai_data_job_topics.sql");
     expect(sitesSchemaMigrationFiles).toContain("0038_job_topic_backfill_index.sql");
     expect(sitesSchemaMigrationFiles).toContain("0039_job_filter_options_cache.sql");
     expect(sitesSchemaMigrationFiles).toContain("0040_indexed_job_programs.sql");
     expect(sitesSchemaMigrationFiles).toContain("0129_repair_crawler_sources_and_query_indexes.sql");
-    expect(sitesSchemaMigrationFiles).toContain("0140_job_retention_archive.sql");
-    expect(sitesSchemaMigrationFiles).toContain("0141_job_retention_index.sql");
-    expect(sitesSchemaMigrationFiles).toContain("0142_job_identifier_search.sql");
+    expect(sitesSchemaMigrationFiles).toContain("0143_retention_deployment_repair.sql");
     expect(sitesSchemaMigrationFiles.some((file) => file.includes("refresh_sources"))).toBe(false);
   });
 
