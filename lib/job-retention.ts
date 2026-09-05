@@ -110,9 +110,12 @@ export async function purgeExpiredJobs(database: D1Database, now: string, dryRun
     `).bind(ids, cutoff),
     database.prepare(`DELETE FROM jobs AS j WHERE ${target}
       AND EXISTS (SELECT 1 FROM expired_job_archive a WHERE a.job_id = j.id AND a.archived_at = ?)
+      RETURNING id
     `).bind(ids, cutoff, now),
     database.prepare("DELETE FROM job_filter_options_cache"),
   ]);
   const more = await database.prepare(`SELECT id FROM jobs WHERE ${expiredJobsPredicate} LIMIT 1`).bind(cutoff).first();
-  return { cutoff, dryRun, selected: selected.results.length, deleted: results[2].meta.changes, hasMore: Boolean(more) };
+  // D1 meta.changes includes trigger/cascade changes (including FTS), not
+  // just jobs. RETURNING counts only the actual top-level rows deleted.
+  return { cutoff, dryRun, selected: selected.results.length, deleted: results[2].results.length, hasMore: Boolean(more) };
 }

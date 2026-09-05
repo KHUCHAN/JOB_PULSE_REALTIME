@@ -35,7 +35,13 @@ const fixture = () => {
       all: async () => ({ results: sqlite.prepare(sql).all(...values as never[]) }),
       first: async () => sqlite.prepare(sql).get(...values as never[]) ?? null,
       run: async () => ({ meta: { changes: Number(sqlite.prepare(sql).run(...values as never[]).changes) } }),
-      execute: () => ({ meta: { changes: Number(sqlite.prepare(sql).run(...values as never[]).changes) } }),
+      execute: () => {
+        const before = Number(sqlite.prepare("SELECT total_changes() AS n").get()?.n);
+        const results = sqlite.prepare(sql).all(...values as never[]);
+        // Model D1's trigger/cascade-inclusive change metadata, not SQLite's
+        // top-level statement .changes shortcut.
+        return { results, meta: { changes: Number(sqlite.prepare("SELECT total_changes() AS n").get()?.n) - before } };
+      },
     });
     return { ...bound([]), bind: (...values: unknown[]) => bound(values) };
   };
@@ -58,6 +64,12 @@ const fixture = () => {
 };
 
 describe("30-day job retention", () => {
+  it("drains chunks using job counts even when FTS triggers inflate D1 changes", async () => {
+    const { db, sqlite, add } = fixture();
+    for (let i = 0; i < 105; i++) add(`old${i}`, "2020-01-01");
+    expect(await drainExpiredJobs(() => purgeExpiredJobs(db, NOW), () => 0)).toEqual({deleted:105, batches:2, hasMore:false});
+    sqlite.close();
+  });
   it("uses the exact 30-day UTC boundary", () => {
     expect(retentionCutoff(NOW)).toBe(CUTOFF);
     expect(isExpiredPosting(CUTOFF, NOW)).toBe(true);
