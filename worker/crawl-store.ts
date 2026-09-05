@@ -1030,6 +1030,8 @@ export class D1CrawlStore implements CrawlStore {
               score = excluded.score,
               evidence = excluded.evidence,
               classified_at = excluded.classified_at
+            WHERE job_topics.score IS NOT excluded.score
+               OR job_topics.evidence IS NOT excluded.evidence
           `).bind(JSON.stringify(topicMatches)));
         }
 
@@ -1049,17 +1051,28 @@ export class D1CrawlStore implements CrawlStore {
           `).bind(JSON.stringify(topicNonmatches)));
         }
 
+        // Reconcile managed memberships, not delete/reinsert every confirmed
+        // row. Unchanged crawls must produce zero topic writes; jobs already
+        // records last_seen_at and the current classification marker above.
         const processedAreas = recordsChunk.map((record) => ({
           sourceId: record.sourceId,
           officialUrl: record.officialUrl,
+          topicKeys: (record.areaMemberships as Array<{ topicKey: string }>).map(area => area.topicKey),
         }));
         writes.push(this.db.prepare(`
           DELETE FROM job_topics
           WHERE topic_key LIKE 'area:%' AND job_id IN (
             SELECT jobs.id
-            FROM json_each(?)
+            FROM json_each(?1)
             JOIN jobs ON jobs.source_id = json_extract(value, '$.sourceId')
                      AND jobs.official_url = json_extract(value, '$.officialUrl')
+          )
+          AND (job_id, topic_key) NOT IN (
+            SELECT jobs.id, topic.value
+            FROM json_each(?1) incoming
+            JOIN jobs ON jobs.source_id = json_extract(incoming.value, '$.sourceId')
+                     AND jobs.official_url = json_extract(incoming.value, '$.officialUrl')
+            JOIN json_each(incoming.value, '$.topicKeys') topic
           )
         `).bind(JSON.stringify(processedAreas)));
         const areaMemberships = recordsChunk.flatMap((record) =>
@@ -1086,6 +1099,8 @@ export class D1CrawlStore implements CrawlStore {
               score = excluded.score,
               evidence = excluded.evidence,
               classified_at = excluded.classified_at
+            WHERE job_topics.score IS NOT excluded.score
+               OR job_topics.evidence IS NOT excluded.evidence
           `).bind(JSON.stringify(membershipChunk)));
         }
       }
@@ -1093,15 +1108,23 @@ export class D1CrawlStore implements CrawlStore {
       const processedPrograms = records.map((record) => ({
         sourceId: record.sourceId,
         officialUrl: record.officialUrl,
+        topicKeys: (record.programKeys as string[]).map(key => `program:${key}`),
       }));
       for (const chunk of chunksByJsonBytes(processedPrograms, 1_500_000)) {
         writes.push(this.db.prepare(`
           DELETE FROM job_topics
           WHERE topic_key LIKE 'program:%' AND job_id IN (
             SELECT jobs.id
-            FROM json_each(?)
+            FROM json_each(?1)
             JOIN jobs ON jobs.source_id = json_extract(value, '$.sourceId')
                      AND jobs.official_url = json_extract(value, '$.officialUrl')
+          )
+          AND (job_id, topic_key) NOT IN (
+            SELECT jobs.id, topic.value
+            FROM json_each(?1) incoming
+            JOIN jobs ON jobs.source_id = json_extract(incoming.value, '$.sourceId')
+                     AND jobs.official_url = json_extract(incoming.value, '$.officialUrl')
+            JOIN json_each(incoming.value, '$.topicKeys') topic
           )
         `).bind(JSON.stringify(chunk)));
       }
@@ -1127,21 +1150,31 @@ export class D1CrawlStore implements CrawlStore {
             score = excluded.score,
             evidence = excluded.evidence,
             classified_at = excluded.classified_at
+          WHERE job_topics.score IS NOT excluded.score
+             OR job_topics.evidence IS NOT excluded.evidence
         `).bind(JSON.stringify(chunk)));
       }
 
       const processedYears = records.map((record) => ({
         sourceId: record.sourceId,
         officialUrl: record.officialUrl,
+        topicKeys: (record.recruitingYears as number[]).map(year => `year:${year}`),
       }));
       for (const chunk of chunksByJsonBytes(processedYears, 1_500_000)) {
         writes.push(this.db.prepare(`
           DELETE FROM job_topics
           WHERE topic_key LIKE 'year:%' AND job_id IN (
             SELECT jobs.id
-            FROM json_each(?)
+            FROM json_each(?1)
             JOIN jobs ON jobs.source_id = json_extract(value, '$.sourceId')
                      AND jobs.official_url = json_extract(value, '$.officialUrl')
+          )
+          AND (job_id, topic_key) NOT IN (
+            SELECT jobs.id, topic.value
+            FROM json_each(?1) incoming
+            JOIN jobs ON jobs.source_id = json_extract(incoming.value, '$.sourceId')
+                     AND jobs.official_url = json_extract(incoming.value, '$.officialUrl')
+            JOIN json_each(incoming.value, '$.topicKeys') topic
           )
         `).bind(JSON.stringify(chunk)));
       }
@@ -1167,6 +1200,8 @@ export class D1CrawlStore implements CrawlStore {
             score = excluded.score,
             evidence = excluded.evidence,
             classified_at = excluded.classified_at
+          WHERE job_topics.score IS NOT excluded.score
+             OR job_topics.evidence IS NOT excluded.evidence
         `).bind(JSON.stringify(chunk)));
       }
       for (const batch of chunksOf(writes, 12)) await this.db.batch(batch);

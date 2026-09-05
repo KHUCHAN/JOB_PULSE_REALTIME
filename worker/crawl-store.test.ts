@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
+import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import type { CrawledJob } from "../lib/crawler";
 import { boundedJobRecord, compactRecord, D1CrawlStore, chunksByJsonBytes, chunksOf, nativeCrawlExcludedSourceIds } from "./crawl-store";
 
@@ -119,6 +120,59 @@ describe("D1CrawlStore enriched job persistence", () => {
     };
     return { db: db as unknown as D1Database, calls, batches };
   };
+
+  it("reconciles managed topics without rewriting unchanged rows or touching other jobs", async () => {
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec(`CREATE TABLE jobs (id TEXT PRIMARY KEY, source_id TEXT, official_url TEXT,
+      UNIQUE(source_id, official_url));
+      CREATE TABLE job_topics (job_id TEXT, topic_key TEXT, score REAL, evidence TEXT,
+      classified_at TEXT, PRIMARY KEY(job_id, topic_key));
+      INSERT INTO jobs VALUES ('target','source-1','https://careers.example/1'),
+        ('other','source-2','https://careers.example/2');
+      INSERT INTO job_topics VALUES ('target','manual:keep',1,'[]','old'),
+        ('other','program:internship',1,'[]','old');`);
+    const job: CrawledJob = {
+      externalId: "1", title: "Data Science Intern Summer 2027", company: "Acme",
+      officialUrl: "https://careers.example/1", location: "Austin, TX",
+      arrangement: "onsite", employmentType: "Internship", summary: "Python SQL machine learning",
+      publishedAt: null,
+    };
+    const sync = async (value: CrawledJob) => {
+      const { db, calls } = fakeDb();
+      await new D1CrawlStore(db).syncJobs("source-1", [value], false);
+      let changes = 0;
+      for (const call of calls.filter(c => /(?:INSERT INTO|DELETE FROM) job_topics/.test(c.sql))) {
+        const stmt = sqlite.prepare(call.sql);
+        // node:sqlite treats numbered ?1 as named, whereas D1 bind is positional.
+        const result = call.sql.includes("?1")
+          ? stmt.run({ "1": call.values[0] as SQLInputValue })
+          : stmt.run(...call.values as SQLInputValue[]);
+        changes += Number(result.changes);
+      }
+      return changes;
+    };
+    try {
+      expect(await sync(job)).toBeGreaterThan(0);
+      const initial = sqlite.prepare("SELECT * FROM job_topics ORDER BY job_id, topic_key").all();
+      vi.setSystemTime("2026-08-31T14:00:00Z");
+      expect(await sync(job)).toBe(0);
+      expect(sqlite.prepare("SELECT * FROM job_topics ORDER BY job_id, topic_key").all()).toEqual(initial);
+      sqlite.exec("UPDATE job_topics SET score=-1, evidence='[\"stale\"]' WHERE job_id='target' AND topic_key='ai-data'");
+      expect(await sync(job)).toBe(1);
+      expect(await sync({ ...job, title: "Marketing Co-op Spring 2028", employmentType: "Co-op", summary: null })).toBeGreaterThan(0);
+      const keys = sqlite.prepare("SELECT topic_key FROM job_topics WHERE job_id='target'").all().map(r => r.topic_key);
+      expect(keys).toContain("program:coop");
+      expect(keys).toContain("year:2028");
+      expect(keys).not.toContain("program:internship");
+      expect(keys).not.toContain("year:2027");
+      expect(keys).not.toContain("ai-data");
+      expect(keys).not.toContain("area:data-science");
+      expect(keys).toContain("manual:keep");
+      expect(await sync({ ...job, title: "General Assistant", employmentType: "Full-time", summary: null })).toBeGreaterThan(0);
+      expect(sqlite.prepare("SELECT topic_key FROM job_topics WHERE job_id='target'").all()).toEqual([{ topic_key: "manual:keep" }]);
+      expect(sqlite.prepare("SELECT * FROM job_topics WHERE job_id='other'").get()!.classified_at).toBe("old");
+    } finally { sqlite.close(); }
+  });
 
   it("batches parent and topic writes without exceeding twelve statements per round trip", async () => {
     const { db, calls, batches } = fakeDb();
