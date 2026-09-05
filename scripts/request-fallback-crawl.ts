@@ -3,6 +3,9 @@ import { ingestJobSnapshotInChunks } from "../lib/job-snapshot-transport.ts";
 import { isRequestFallbackDue, recoverCheckpointedCatalog } from "../lib/request-fallback-recovery.ts";
 import { isSafeCareerListingUrl } from "../lib/url-remediation.ts";
 import { verifySourceSnapshot } from "../lib/source-snapshot-verification.ts";
+import { deferRecovery } from "../lib/recovery-policy.ts";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 
 type LiveSource = {
   id: string;
@@ -10,6 +13,7 @@ type LiveSource = {
   postingUrl: string | null;
   adapter: CrawlSource["adapter"];
   nextRunAt: string | null;
+  currentJobs?: number;
 };
 
 type RecoverySummary = {
@@ -21,6 +25,10 @@ type RecoverySummary = {
   elapsedMs: number;
   error: string | null;
   verifiedDbSamples?: number;
+  fetchMs?: number;
+  ingestWaitMs?: number;
+  ingestMs?: number;
+  verifyMs?: number;
 };
 
 const siteUrl = (process.env.REQUEST_FALLBACK_LIVE_URL
@@ -106,7 +114,9 @@ const liveSources = async (): Promise<CrawlSource[]> => {
   }))).flat();
   const byId = new Map(inventory.map((source) => [source.id, source]));
   const now = new Date();
-  return sourceIds.flatMap((sourceId): CrawlSource[] => {
+  // Start large catalogs early so they overlap the many short fetches instead
+  // of becoming a serial tail. This does not increase D1 writer concurrency.
+  return [...sourceIds].sort((a, b) => (byId.get(b)?.currentJobs ?? 0) - (byId.get(a)?.currentJobs ?? 0)).flatMap((sourceId): CrawlSource[] => {
     const source = byId.get(sourceId);
     if (!source?.postingUrl) throw new Error(`Request-fallback source ${sourceId} is unavailable.`);
     if (!isRequestFallbackDue(source.nextRunAt, now, forcedSourceIds.has(source.id))) return [];
@@ -115,6 +125,7 @@ const liveSources = async (): Promise<CrawlSource[]> => {
       company: source.company,
       postingUrl: source.postingUrl,
       adapter: source.adapter,
+      ...(source.id === "p4-0394-amazon" ? { requestPageWindow: 12 } : {}),
     }];
   });
 };
@@ -139,6 +150,7 @@ const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
     try {
       result = await recoverCheckpointedCatalog(source, fetch, crawlSource, recoveryOptions);
     } catch (firstError) {
+      if (deferRecovery(firstError instanceof Error ? firstError.message : "")) throw firstError;
       // Retry the complete source once. Official Workday and sitemap edges can
       // change a page count or reject one burst even though the next bounded
       // pass is healthy; isolating the retry here prevents that source from
@@ -172,7 +184,10 @@ const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
     // are intentionally narrower. Eight simultaneous multi-chunk ingests
     // saturated the Worker/D1 path and made otherwise valid late sources time
     // out; two lanes retain throughput without write contention.
+    const fetchedAt = Date.now();
+    let acquiredAt = fetchedAt, ingestedAt = fetchedAt, verifiedAt = fetchedAt;
     const payload = await withIngestSlot(async () => {
+      acquiredAt = Date.now();
       const ingested = await ingestJobSnapshotInChunks({
         allowedOrigins: [...new Set(allowedOrigins)].slice(0, 5),
         authorization: githubOidcToken,
@@ -183,9 +198,11 @@ const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
         sourceId: source.id,
         timeoutMs: 120_000,
       });
+      ingestedAt = Date.now();
       const verifiedDbSamples = forcedSourceIds.has(source.id)
         ? await verifySourceSnapshot(siteUrl, source.id, result.jobs)
         : 0;
+      verifiedAt = Date.now();
       return { ...ingested, verifiedDbSamples };
     });
     return {
@@ -196,6 +213,10 @@ const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
       updated: payload.updated,
       verifiedDbSamples: payload.verifiedDbSamples,
       elapsedMs: Date.now() - startedAt,
+      fetchMs: fetchedAt - startedAt,
+      ingestWaitMs: acquiredAt - fetchedAt,
+      ingestMs: ingestedAt - acquiredAt,
+      verifyMs: verifiedAt - ingestedAt,
       error: null,
     };
   } catch (error) {
@@ -225,7 +246,12 @@ async function main(): Promise<void> {
       process.stdout.write(`${JSON.stringify(summaries[index])}\n`);
     }
   }));
-  process.stdout.write(`${JSON.stringify({ attempted: summaries.length, summaries })}\n`);
+  const summary = { attempted: summaries.length, summaries };
+  if (process.env.REQUEST_FALLBACK_RESULT_PATH) {
+    await mkdir(dirname(process.env.REQUEST_FALLBACK_RESULT_PATH), { recursive: true });
+    await writeFile(process.env.REQUEST_FALLBACK_RESULT_PATH, JSON.stringify(summary));
+  }
+  process.stdout.write(`${JSON.stringify(summary)}\n`);
   if (summaries.some((summary) => summary.status === "failed")) process.exitCode = 1;
 }
 

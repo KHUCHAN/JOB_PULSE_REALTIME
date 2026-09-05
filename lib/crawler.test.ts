@@ -16320,7 +16320,8 @@ We are an equal opportunity employer.`;
       return new Response("missing", { status: 404 });
     }, new Date("2026-08-24T07:00:00Z"));
 
-    expect(requests).toEqual([primaryReader, fallbackReader, workdayEndpoint]);
+    expect(requests).toEqual([primaryReader, workdayEndpoint]);
+    expect(requests).not.toContain(fallbackReader);
     expect(result).toEqual(expect.objectContaining({
       status: "succeeded",
       responseStatus: 200,

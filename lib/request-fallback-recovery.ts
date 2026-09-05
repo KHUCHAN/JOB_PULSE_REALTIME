@@ -1,4 +1,5 @@
 import type { CrawlSource, SourceCrawlResult } from "./crawler.ts";
+import { deferRecovery } from "./recovery-policy.ts";
 
 type CrawlFunction = (
   source: CrawlSource,
@@ -59,6 +60,7 @@ export const recoverCheckpointedCatalog = async (
     const result = await crawl({ ...source, crawlPageCursor: cursor }, fetcher, new Date());
     lastResult = result;
     if (result.status !== "succeeded" || result.jobs.length === 0) {
+      if (deferRecovery(result.error ?? "")) throw new Error(result.error!);
       if (stalls < maxStalls) {
         stalls += 1;
         await wait(stallDelayMs);

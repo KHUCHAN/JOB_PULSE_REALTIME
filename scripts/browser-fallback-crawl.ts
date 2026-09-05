@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { failedRecoveryIds } from "../lib/recovery-policy.ts";
 import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -54,6 +55,7 @@ const productionIngestUrl = process.env.BROWSER_FALLBACK_INGEST_URL?.trim() || n
 const productionIngestSecret = process.env.BROWSER_FALLBACK_INGEST_SECRET?.trim() || null;
 const liveUrl = process.env.BROWSER_FALLBACK_LIVE_URL?.trim().replace(/\/$/, "") || null;
 const dryRun = process.env.BROWSER_FALLBACK_DRY_RUN === "1";
+const handedOffSourceIds = new Set<string>();
 
 let cachedOidc = { value: "", expiresAt: 0 };
 const catalogPinnedBrowserSourceIds = new Set([
@@ -160,12 +162,17 @@ const problemSources = async (): Promise<BrowserRecoverySource[]> => {
     // snapshot. Source repairs can update posting_url (Delta's keyword route
     // is one example), and replaying the stale seed would recover the wrong
     // page and re-ingest navigation links.
-    const response = await fetch(`${liveUrl}/api/pulse?resource=sources&ids=${encodeURIComponent([...targetSourceIds].join(","))}`, { headers: { accept: "application/json" } });
-    if (!response.ok) throw new Error(`Live source inventory returned HTTP ${response.status}.`);
-    const sources = await response.json() as Array<{
+    const ids = [...targetSourceIds];
+    const sources: Array<{
       id: string; company: string; postingUrl: string | null; adapter: CrawlSource["adapter"];
       health: string; currentJobs: number; lastError: string | null;
-    }>;
+    }> = [];
+    for (let offset = 0; offset < ids.length; offset += 20) {
+      const response = await fetch(`${liveUrl}/api/pulse?resource=sources&ids=${encodeURIComponent(ids.slice(offset, offset + 20).join(","))}`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(30_000) });
+      if (!response.ok) throw new Error(`Live source inventory returned HTTP ${response.status}.`);
+      sources.push(...await response.json() as typeof sources);
+    }
+    sources.sort((a, b) => Number(handedOffSourceIds.has(b.id)) - Number(handedOffSourceIds.has(a.id)));
     return sources.flatMap((source): BrowserRecoverySource[] => targetSourceIds.has(source.id) && source.postingUrl
       ? [browserListingSource({
           id: source.id,
@@ -226,7 +233,8 @@ const problemSources = async (): Promise<BrowserRecoverySource[]> => {
         attemptNativeRecovery: nativeRunnerRecoveryEligible(source, prioritySourceIds.has(source.id) || forceNativeSourceIds.has(source.id)),
       }))
       .filter((source) => source.candidateUrl && (forceNativeSourceIds.has(source.id) || browserRecoveryDue(source)))
-      .sort((left, right) => Number(forceNativeSourceIds.has(right.id)) - Number(forceNativeSourceIds.has(left.id))
+      .sort((left, right) => Number(handedOffSourceIds.has(right.id)) - Number(handedOffSourceIds.has(left.id))
+        || Number(forceNativeSourceIds.has(right.id)) - Number(forceNativeSourceIds.has(left.id))
         || Number(prioritySourceIds.has(right.id)) - Number(prioritySourceIds.has(left.id))
         || Number(right.attemptNativeRecovery) - Number(left.attemptNativeRecovery)
         || healthRank(left) - healthRank(right)
@@ -747,11 +755,21 @@ export const recoverNativeOutsideWorker = async (
 ): Promise<BrowserFallbackResult | null> => {
   if (!source.attemptNativeRecovery && source.adapter !== "workday") return null;
   let result = await crawlSource(source, fetcher, now);
+  // Provider maintenance is not a browser challenge. Do not spend a second
+  // HTTP retry and a rendered browser slot on the same published outage.
+  if (/upstream maintenance/i.test(result.error ?? "")) return {
+    source, status: result.responseStatus, finalUrl: source.postingUrl,
+    jobs: [], completeListing: false, error: result.error,
+  };
   if (fetcher === fetch && (result.status !== "succeeded"
     || Boolean(result.error)
     || (result.jobs.length === 0 && !result.completeListing))) {
     result = await crawlSource(source, curlNativeFetch, now);
   }
+  if (/upstream maintenance/i.test(result.error ?? "")) return {
+    source, status: result.responseStatus, finalUrl: source.postingUrl,
+    jobs: [], completeListing: false, error: result.error,
+  };
   if ((source.id === "legacy-row-864" || source.id === "p2-0027-bank-of-america")
     && result.status === "succeeded"
     && !result.error
@@ -1067,7 +1085,20 @@ export const persistenceSql = (results: BrowserFallbackResult[]): string => {
 };
 
 async function main(): Promise<void> {
+  if (process.env.BROWSER_FALLBACK_REQUEST_RESULT_PATH) {
+    const handoff = JSON.parse(await readFile(process.env.BROWSER_FALLBACK_REQUEST_RESULT_PATH, "utf8"));
+    for (const id of failedRecoveryIds(handoff)) {
+      handedOffSourceIds.add(id);
+      prioritySourceIds.add(id);
+      forceNativeSourceIds.add(id);
+      // Repair pushes use an explicit target set; scheduled runs use the
+      // due queue with forced failed IDs. Preserve both selection modes.
+      if (targetSourceIds.size > 0) targetSourceIds.add(id);
+    }
+  }
   const sources = await problemSources();
+  const omitted = [...handedOffSourceIds].filter(id => !sources.some(source => source.id === id));
+  if (omitted.length) throw new Error(`Failed request sources omitted from recovery: ${omitted.join(",")}`);
   const browser = await chromium.launch({ channel: "chrome", headless }).catch(() => chromium.launch({ headless }));
   const context = await browser.newContext();
   const results: BrowserFallbackResult[] = new Array(sources.length);
@@ -1179,6 +1210,8 @@ async function main(): Promise<void> {
     await writeFile(sqlPath, persistenceSql(successful));
     await d1(["--file", sqlPath]);
   }
+  // Persist the final outcome, including ingest failures added after inspection.
+  await writeFile(outputPath, JSON.stringify({ generatedAt: new Date().toISOString(), results }));
   process.stdout.write(`${JSON.stringify({
     attempted: results.length,
     recovered: successful.length,
@@ -1199,7 +1232,8 @@ async function main(): Promise<void> {
           }];
     }),
   })}\n`);
-  if (persistenceFailureIds.size > 0) process.exitCode = 1;
+  if (persistenceFailureIds.size > 0
+    || results.some(result => browserResultClassification(result).status !== "succeeded")) process.exitCode = 1;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();

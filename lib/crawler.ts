@@ -1,4 +1,5 @@
 import { jobsFromBrowserAnchors, type BrowserAnchor } from "./browser-job-extractor.ts";
+import { workdayMaintenance } from "./recovery-policy.ts";
 import { normalizeEmploymentType, workdayBulletFields } from "./employment-type.ts";
 import { classifyJobPrograms } from "./job-program-classifier.ts";
 import { classifyJobRegion } from "./job-region-classifier.ts";
@@ -15,6 +16,8 @@ export type CrawlSource = {
   discoveryDepth?: number;
   /** Ephemeral request scope; never persisted as part of the official URL. */
   regionScope?: "us";
+  /** Independent runner only; bounded larger windows avoid repeated head reads. */
+  requestPageWindow?: number;
 };
 
 export type CrawledJob = {
@@ -5411,7 +5414,8 @@ const coastCentralOpenings = (html: string): CoastCentralOpening[] | null => {
     const pathIdentity = officialUrl.pathname.match(/^\/wp-content\/uploads\/(\d{4})\/(\d{2})\/([^/]+)\.pdf$/i);
     if (!pathIdentity || officialUrl.origin !== "https://www.coastccu.org" || officialUrl.search || officialUrl.hash) return null;
     const locationCity = coastCentralCity(description);
-    if (!locationCity && !/\b(?:relief position|outlying locations|various locations|various departments)\b/i.test(description)) return null;
+    // A new office name must not discard every valid posting in the catalog.
+    // Keep its location unverified instead of inventing a city or country.
     const deadline = description.match(/\bDeadline to apply is\b[^.]*?\b(\d{1,2})\/(\d{1,2})\b/i);
     const validThrough = deadline
       ? new Date(Date.UTC(Number(pathIdentity[1]), Number(deadline[1]) - 1, Number(deadline[2]))).toISOString()
@@ -5438,11 +5442,13 @@ const coastCentralJob = (
 ): CrawledJob => {
   const programs = classifyJobPrograms(opening.title).keys;
   const benefits = opening.description.match(/\bBenefits include\s+([^.]*)/i)?.[1]?.trim() ?? null;
+  const knownRegion = Boolean(opening.locationCity)
+    || /\b(?:relief position|outlying locations|various locations|various departments)\b/i.test(opening.description);
   return {
     externalId: opening.externalId,
     title: opening.title,
     company: source.company,
-    location: opening.locationCity ? `${opening.locationCity}, CA` : "Northern California",
+    location: opening.locationCity ? `${opening.locationCity}, CA` : knownRegion ? "Northern California" : "Location not stated; verify office",
     arrangement: "onsite",
     employmentType: programs.includes("coop")
       ? "Co-op"
@@ -5453,8 +5459,7 @@ const coastCentralJob = (
     summary: opening.description.slice(0, 1_200),
     description: opening.description,
     ...(opening.locationCity ? { locationCity: opening.locationCity } : {}),
-    locationState: "CA",
-    locationCountry: "United States",
+    ...(knownRegion ? { locationState: "CA", locationCountry: "United States" } : {}),
     ...coastCentralSalaryFields(opening.description),
     ...(benefits ? { benefits } : {}),
     requisitionId: opening.externalId,
@@ -12600,7 +12605,9 @@ const crawlAmazonJobs = async (source: CrawlSource, fetcher: typeof fetch): Prom
     ? Math.min(Math.max(source.crawlPageCursor ?? 1, 1), totalPages)
     : 1;
   const endPage = isCheckpointedCatalog
-    ? Math.min(startPage + (startPage === 1 ? 3 : 2), totalPages)
+    ? Math.min(startPage + (source.requestPageWindow
+      ? Math.max(2, Math.min(12, Math.floor(source.requestPageWindow))) - 1
+      : startPage === 1 ? 3 : 2), totalPages)
     : totalPages;
   const jobsByUrl = new Map(first.jobs.map((job) => [job.officialUrl, job]));
   const seenIdentities = new Set<string>();
@@ -12609,16 +12616,21 @@ const crawlAmazonJobs = async (source: CrawlSource, fetcher: typeof fetch): Prom
     Math.min(pageSize, total),
     seenIdentities,
   ) ? null : 1;
-  for (let page = Math.max(startPage, 2); page <= endPage; page += 1) {
-    const result = await fetchPage((page - 1) * pageSize);
-    const expected = Math.min(pageSize, Math.max(0, total - (page - 1) * pageSize));
-    if (!result || !claimPageIdentities(
-      result.jobs.map((job) => job.externalId ?? job.officialUrl), expected, seenIdentities,
-    )) {
-      firstFailedPage ??= page;
-      continue;
+  const pageConcurrency = source.requestPageWindow ? 3 : 1;
+  for (let start = Math.max(startPage, 2); start <= endPage; start += pageConcurrency) {
+    const pages = Array.from({ length: Math.min(pageConcurrency, endPage - start + 1) }, (_, i) => start + i);
+    const fetched = await Promise.all(pages.map(async page => ({ page, result: await fetchPage((page - 1) * pageSize) })));
+    // Validate in published order even when network requests complete out of order.
+    for (const { page, result } of fetched) {
+      const expected = Math.min(pageSize, Math.max(0, total - (page - 1) * pageSize));
+      if (!result || !claimPageIdentities(
+        result.jobs.map((job) => job.externalId ?? job.officialUrl), expected, seenIdentities,
+      )) {
+        firstFailedPage ??= page;
+        continue;
+      }
+      for (const job of result.jobs) jobsByUrl.set(job.officialUrl, job);
     }
-    for (const job of result.jobs) jobsByUrl.set(job.officialUrl, job);
   }
   const jobs = [...jobsByUrl.values()];
   if (isCheckpointedCatalog) {
@@ -18437,6 +18449,9 @@ const crawlAmericanFamilyCareers = async (
       }, false, { attempts: 1, timeoutMs: 12_000 });
       responseStatus = response.status;
       lastStatus = response.status;
+      // Both reader URLs share the same rate limit. Do not immediately spend
+      // another request on a spelling variant; proceed to the official ATS.
+      if (response.status === 429) { await response.body?.cancel(); break; }
       if (!response.ok) continue;
       const parsed = americanFamilyListingPage(await response.text(), page, source, expectedTotal);
       if (parsed) return parsed;
@@ -20520,6 +20535,9 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
         throw Object.assign(new Error(`Workday returned HTTP ${response.status}.`), { responseStatus: response.status });
       }
       const text = await response.text();
+      if (workdayMaintenance(response.url, text)) {
+        throw Object.assign(new Error("Workday upstream maintenance; retained prior inventory and deferred recovery."), { responseStatus: response.status });
+      }
       try {
         return { status: response.status, payload: JSON.parse(text) as WorkdayPayload };
       } catch {
@@ -24683,6 +24701,11 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p2-0034-coast-central-cu") {
     return crawlCoastCentralCareers(source, fetcher);
+  }
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-0643-kla-corporation") {
+    const postingUrl = "https://kla.wd1.myworkdayjobs.com/Search";
+    return crawlWorkday({ ...source, postingUrl, adapter: "workday" },
+      "https://kla.wd1.myworkdayjobs.com/wday/cxs/kla/Search/jobs", fetcher, now);
   }
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p2-0089-cincinnati-financial") {
     return crawlCincinnatiTaleo(source, fetcher);

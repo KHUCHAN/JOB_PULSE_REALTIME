@@ -83,6 +83,7 @@ jobs:
           REQUEST_FALLBACK_INGEST_URL: https://job-pulse-realtime.autodev61.chatgpt.site/api/pulse
           REQUEST_FALLBACK_CONCURRENCY: "8"
           REQUEST_FALLBACK_INGEST_CONCURRENCY: "2"
+          REQUEST_FALLBACK_RESULT_PATH: output/request-recovery/results.json
           # Penn Medicine's official Talemetry map feed is available from the
           # independent runner but its edge rejects Sites Worker egress.
           # SAIC's 1,000+ row reader catalog now crosses enough pages that a
@@ -107,6 +108,15 @@ jobs:
           # an off-schedule repair shifted next_crawl_at past the due horizon.
           REQUEST_FALLBACK_FORCE_SOURCE_IDS: audit-row-3449,p2-0062-stripe,p2-0046-mastercard,p4-0285-google,p4-0219-apple,p4-0319-nvidia,p4-0308-meta,p4-0394-amazon,p5-0538-amazon-2,p5-0540-amazon-robotics,p4-0309-microsoft,p4-0204-palantir,p4-0256-databricks,p5-0733-snowflake,p5-1086-tsmc-arizona,p5-0563-broadcom,p5-0793-amd,p5-0798-applied-materials,p5-0804-arm,p5-0916-globalfoundries,p5-0947-intel,p5-0643-kla-corporation,p5-0960-lam-research,p5-0984-micron-technology,p5-0550-asml,p5-0709-qualcomm,p5-1050-samsung-semiconductor,p5-1008-onsemi,p5-0755-tower-semiconductor,p5-0726-semtech,p4-0210-adobe,p5-0547-anthropic,p4-0245-cisco,p5-0624-ibm,p5-0692-openai,p4-0325-oracle,p4-0340-salesforce,p4-0347-servicenow,p5-0736-spacex,p5-0752-tiktok,p5-0758-uber,p5-0767-xai,p5-0796-analog-devices,p5-0839-cadence-design-systems,p5-0940-infineon,p5-0659-marvell-technology,p5-0663-mediatek,p5-0999-nxp-semiconductors,p5-1038-renesas,p5-0740-stmicroelectronics,p5-1071-synopsys,p5-1078-texas-instruments
         run: node scripts/request-fallback-crawl.ts
+
+      - name: Preserve per-company recovery and timing evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: request-recovery-results
+          path: output/request-recovery/results.json
+          if-no-files-found: warn
+          retention-days: 7
 
   browser-recovery:
     needs: [crawl, request-recovery]
@@ -135,10 +145,19 @@ jobs:
           npm_config_fetch_retry_factor: "2"
           npm_config_fetch_retry_mintimeout: "1000"
           npm_config_fetch_retry_maxtimeout: "20000"
+      - name: Load this run's failed request sources
+        id: request-results
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: request-recovery-results
+          path: output/request-recovery
       - name: Recover browser-only problem sources
+        # Request failures are passed via the same workflow's artifact below.
         env:
           BROWSER_FALLBACK_LIVE_URL: https://job-pulse-realtime.autodev61.chatgpt.site
           BROWSER_FALLBACK_INGEST_URL: https://job-pulse-realtime.autodev61.chatgpt.site/api/pulse
+          BROWSER_FALLBACK_REQUEST_RESULT_PATH: ${{ steps.request-results.outcome == 'success' && 'output/request-recovery/results.json' || '' }}
           # Repair pushes verify the exact affected sources immediately. The
           # scheduled run leaves this empty and continues rotating through the
           # full browser-recovery queue below.
@@ -170,3 +189,11 @@ jobs:
           # data regression.
           BROWSER_FALLBACK_FORCE_NATIVE_SOURCE_IDS: legacy-row-864,p2-0027-bank-of-america,p2-0076-ameriprise-financial,p2-0034-coast-central-cu,p4-0390-84-51,p5-0850-ciena,p5-1028-progressive-insurance,legacy-row-807,p5-1106-wcg,p5-0588-edwards-lifesciences,p4-0241-cgi,legacy-row-777,legacy-row-811,legacy-row-846,audit-row-392,audit-row-411,p5-1072-tampa-general-hospital,legacy-row-803,legacy-row-118,legacy-row-794,legacy-row-835,legacy-row-876,p5-0699-pepsico,p2-0196-graphistry,p2-0058-royal-business-bank,p5-0810-atrium-health,p4-0236-cathay-bank,p4-0259-dow-jones-risk-compliance,p2-0035-coinbase,audit-row-350,p2-0036-evercore,p5-0931-henry-ford-health,p4-0290-honor,p5-0616-hca-healthcare,p5-0644-kratos-defense,p5-0755-tower-semiconductor,p4-0302-l-e-k-consulting,p2-0044-loandepot,p4-0349-slalom,p4-0384-veriff,p4-0448-improving,p4-0458-mclagan,p4-0463-nardello-co,p5-0545-anduril-industries,p5-0763-walmart,p5-1052-sarcos-robotics,p5-1039-revolut,p5-0722-saic,p5-0747-teradata,p5-0806-ase-group,p5-0857-closedloop,p5-0890-emory-healthcare,p2-0167-state-attorneys-general,legacy-row-867,p5-1077-tesla,p2-0179-us-attorney-s-office,p2-0180-valley-national-bancorp,p5-1104-wayfair,p4-0386-whatnot,audit-row-440,p5-0623-ibis-ai
         run: npm run crawler:fallback:browser
+      - name: Preserve unresolved company evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-recovery-results
+          path: output/playwright/browser-fallback/results.json
+          if-no-files-found: warn
+          retention-days: 7
