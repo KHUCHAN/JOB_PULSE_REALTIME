@@ -228,6 +228,18 @@ describe("resume digest reservation", () => {
     expect(claimed[0].jobs[0]?.officialUrl).toBe("https://example.com/1");
   });
 
+  it("preserves Codex rationale and work-term/visa caveats in the email", async () => {
+    const sqlite = alertDatabaseWithMatches(1);
+    const rationale = "United States; verified 2027 co-op, academic semester January-June. Python/SQL fit. Caveat: F-1/CPT/OPT not accepted; included per user preference.";
+    sqlite.prepare("UPDATE codex_reviews SET rationale = ?").run(rationale);
+    sqlite.prepare("UPDATE jobs SET employment_type = 'Co-op'").run();
+    const db = createD1ForSqlite(sqlite);
+    await planResumeDigests(db, "chanyoung-resume", "2026-08-10T12:00:00.000Z", 25);
+    const [claimed] = await claimDueNotifications(db, "chanyoung-resume", "2026-08-10T12:00:01.000Z", 1);
+    expect(claimed.jobs[0].reasons).toEqual([rationale]);
+    expect(claimed.jobs[0].scheduleNote).toBeNull();
+  });
+
   it("never reserves a URL variant after the same requisition was sent", async () => {
     const sqlite = alertDatabaseWithMatches(1);
     sqlite.prepare("UPDATE jobs SET requisition_identity_key = 'req:acme:req-42' WHERE id = 'job-1'").run();

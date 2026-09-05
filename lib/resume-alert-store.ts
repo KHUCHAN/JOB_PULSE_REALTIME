@@ -36,6 +36,7 @@ type DigestRow = {
   first_seen_at: string;
   score: number;
   matched_terms: string;
+  review_rationale: string | null;
   program: "Internship" | "Co-op";
   is_summer: number;
 };
@@ -417,6 +418,7 @@ export const claimDueNotifications = async (
   const jobs = await database.prepare(`
     SELECT DISTINCT ni.notification_id, j.company, j.title, j.location, j.official_url,
            j.published_at, j.first_seen_at, jm.score, jm.matched_terms,
+           review.rationale AS review_rationale,
            CASE WHEN ${jobHasCoopSql("j")} THEN 'Co-op' ELSE 'Internship' END AS program,
            EXISTS (
              SELECT 1 FROM job_topics summer_topic
@@ -425,9 +427,11 @@ export const claimDueNotifications = async (
     FROM notification_items ni
     JOIN job_matches jm ON jm.id = ni.job_match_id
     JOIN jobs j ON j.id = jm.job_id
+    LEFT JOIN codex_reviews review ON review.job_match_id = jm.id
+      AND review.profile_id = ? AND review.decision = 'approve'
     WHERE ni.notification_id IN (SELECT value FROM json_each(?))
     ORDER BY ni.notification_id, jm.score DESC, j.company, j.title
-  `).bind(JSON.stringify(ids)).all<DigestRow>();
+  `).bind(profileId, JSON.stringify(ids)).all<DigestRow>();
   const grouped = new Map<string, DigestJob[]>();
   for (const row of jobs.results) {
     const list = grouped.get(row.notification_id) ?? [];
@@ -437,10 +441,12 @@ export const claimDueNotifications = async (
       location: row.location || "Location not specified",
       timing: row.published_at ? `Posted ${row.published_at.slice(0, 10)}` : `First seen ${row.first_seen_at.slice(0, 10)}`,
       score: row.score,
-      reasons: evidenceLabels(row.matched_terms),
+      // The human/agent review is authoritative; preserve its country, dates,
+      // fit assessment and eligibility caveats instead of generic score tags.
+      reasons: row.review_rationale?.trim() ? [row.review_rationale.trim()] : evidenceLabels(row.matched_terms),
       officialUrl: row.official_url,
       program: row.program,
-      scheduleNote: row.program === "Co-op"
+      scheduleNote: !row.review_rationale?.trim() && row.program === "Co-op"
         ? row.is_summer === 1
           ? "Summer work term"
           : "Work-term dates not stated; verify possible semester overlap"
