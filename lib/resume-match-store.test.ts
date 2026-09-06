@@ -108,6 +108,55 @@ const migratedSqlite = (): DatabaseSync => {
 };
 
 describe("resume match persistence migration", () => {
+  it("deactivates only exact current identities using indexed probes, with no replay writes", async () => {
+    const sqlite = migratedSqlite();
+    sqlite.exec(`
+      INSERT INTO sources (id) VALUES ('source');
+      UPDATE match_profiles SET enabled = 1;
+      INSERT INTO jobs (id, source_id, title, company, official_url, first_seen_at, last_seen_at)
+      VALUES ('target', 'source', 'Engineer', 'Acme', 'https://example.com/target', '2026-09-01', '2026-09-01'),
+             ('unrelated', 'source', 'Engineer', 'Acme', 'https://example.com/other', '2026-09-01', '2026-09-01');
+      INSERT INTO keywords (id, name, include_terms, exclude_terms, locations)
+      VALUES ('other', 'Other', '[]', '[]', '[]');
+      INSERT INTO job_matches (id, job_id, keyword_id, score, matched_terms, open_generation, is_active, notification_eligible, notified_at)
+      VALUES ('current', 'target', 'resume-keyword-chanyoung', 50, '[]', 2, 1, 1, '2026-09-02'),
+             ('previous', 'target', 'resume-keyword-chanyoung', 50, '[]', 1, 1, 1, NULL),
+             ('other-keyword', 'target', 'other', 50, '[]', 2, 1, 0, NULL),
+             ('unrelated', 'unrelated', 'resume-keyword-chanyoung', 50, '[]', 2, 1, 0, NULL);
+    `);
+    const candidate: ResumeMatchCandidate = {
+      id: 'target', title: 'Engineer', company: 'Acme', locationRegion: 'us',
+      programKeys: [], summary: null, description: null, responsibilities: null,
+      qualifications: null, skills: [], jobFamily: null, jobFunction: null,
+      educationRequirements: null, experienceRequirements: null, securityClearance: null,
+      recruitingYears: [], publishedAt: null, firstSeenAt: '2026-09-01',
+      reopenedAt: null, openGeneration: 2,
+    };
+    const database = createD1(sqlite);
+    const plans: string[] = [];
+    const traced = { prepare(sql: string) {
+      if (/UPDATE job_matches/.test(sql)) {
+        const plan = sqlite.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(JSON.stringify([
+          { jobId: 'target', keywordId: 'resume-keyword-chanyoung', openGeneration: 2 },
+        ])) as Array<{ detail: string }>;
+        plans.push(...plan.map(row => row.detail));
+      }
+      return database.prepare(sql);
+    } } as D1Database;
+    await syncResumeMatches(traced, [candidate, { ...candidate, id: 'missing' }], '2026-09-06');
+    expect(plans.join('\n')).toContain('SEARCH job_matches USING INDEX job_matches_job_keyword_generation_unique');
+    expect(plans.join('\n')).not.toContain('SCAN job_matches');
+    expect(sqlite.prepare('SELECT id, is_active FROM job_matches ORDER BY id').all()).toEqual([
+      { id: 'current', is_active: 0 }, { id: 'other-keyword', is_active: 1 },
+      { id: 'previous', is_active: 1 }, { id: 'unrelated', is_active: 1 },
+    ]);
+    expect(sqlite.prepare("SELECT notification_eligible, notified_at FROM job_matches WHERE id = 'current'").get())
+      .toEqual({ notification_eligible: 1, notified_at: '2026-09-02' });
+    const before = sqlite.prepare('SELECT total_changes() AS n').get();
+    await syncResumeMatches(traced, [candidate], '2026-09-06');
+    expect(sqlite.prepare('SELECT total_changes() AS n').get()).toEqual(before);
+    sqlite.close();
+  });
   it("supports a baseline resume match and recipient-specific delivery reservation", () => {
     const sqlite = migratedSqlite();
     const columns = sqlite.prepare("PRAGMA table_info(job_matches)").all() as Array<{ name: string }>;

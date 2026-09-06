@@ -17,3 +17,13 @@ export const failedRecoveryIds = (input: unknown): string[] => {
   }
   return [...new Set(value.summaries.filter(row => row.status === "failed").map(row => row.sourceId))];
 };
+
+// A forced browser list must not replay a successfully persisted request
+// recovery from this same owner run. Conflicting duplicate outcomes remain
+// failed, so a success can never hide a failure.
+export const succeededRecoveryIds = (input: unknown): string[] => {
+  const failed = new Set(failedRecoveryIds(input));
+  return [...new Set((input as RecoveryHandoff).summaries
+    .filter(row => row.status === "succeeded" && !failed.has(row.sourceId))
+    .map(row => row.sourceId))];
+};

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deferRecovery, failedRecoveryIds, workdayMaintenance } from "./recovery-policy";
+import { deferRecovery, failedRecoveryIds, succeededRecoveryIds, workdayMaintenance } from "./recovery-policy";
 import { crawlSource, coastCentralJobsFromHtml } from "./crawler";
 import { recoverCheckpointedCatalog } from "./request-fallback-recovery";
 
@@ -29,6 +29,15 @@ describe("bounded provider recovery", () => {
     calls = 0;
     await expect(recoverCheckpointedCatalog(source, fetcher, crawlSource, { maxStalls: 2 })).rejects.toThrow("upstream maintenance");
     expect(calls).toBe(1);
+  });
+  it("excludes request successes from forced browser replay but retains conflicting failures", () => {
+    expect(succeededRecoveryIds({ attempted: 4, summaries: [
+      { sourceId: "tower", status: "succeeded" },
+      { sourceId: "conflict", status: "succeeded" },
+      { sourceId: "conflict", status: "failed" },
+      { sourceId: "penn", status: "failed" },
+    ] })).toEqual(["tower"]);
+    expect(() => succeededRecoveryIds({ attempted: 1, summaries: [] })).toThrow();
   });
   it("uses the verified KLA board without crawling a corporate landing page", async () => {
     const urls: string[] = [];

@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { failedRecoveryIds } from "../lib/recovery-policy.ts";
+import { failedRecoveryIds, succeededRecoveryIds } from "../lib/recovery-policy.ts";
 import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -1085,8 +1085,10 @@ export const persistenceSql = (results: BrowserFallbackResult[]): string => {
 };
 
 async function main(): Promise<void> {
+  const recoveredRequestIds = new Set<string>();
   if (process.env.BROWSER_FALLBACK_REQUEST_RESULT_PATH) {
     const handoff = JSON.parse(await readFile(process.env.BROWSER_FALLBACK_REQUEST_RESULT_PATH, "utf8"));
+    for (const id of succeededRecoveryIds(handoff)) recoveredRequestIds.add(id);
     for (const id of failedRecoveryIds(handoff)) {
       handedOffSourceIds.add(id);
       prioritySourceIds.add(id);
@@ -1096,7 +1098,7 @@ async function main(): Promise<void> {
       if (targetSourceIds.size > 0) targetSourceIds.add(id);
     }
   }
-  const sources = await problemSources();
+  const sources = (await problemSources()).filter(source => !recoveredRequestIds.has(source.id));
   const omitted = [...handedOffSourceIds].filter(id => !sources.some(source => source.id === id));
   if (omitted.length) throw new Error(`Failed request sources omitted from recovery: ${omitted.join(",")}`);
   const browser = await chromium.launch({ channel: "chrome", headless }).catch(() => chromium.launch({ headless }));

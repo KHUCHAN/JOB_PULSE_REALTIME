@@ -196,14 +196,18 @@ const persistDecisions = async (
     openGeneration: candidate.openGeneration,
   }));
   for (const chunk of jsonChunks(inactive)) {
+    // Materialize the incoming identities once, then probe the existing
+    // (job_id, keyword_id, open_generation) unique index. A correlated EXISTS
+    // here scanned every historical match once per incoming non-intern row.
     await database.prepare(`
       UPDATE job_matches
       SET is_active = 0
-      WHERE EXISTS (
-        SELECT 1 FROM json_each(?) record
-        WHERE job_matches.job_id = json_extract(record.value, '$.jobId')
-          AND job_matches.keyword_id = json_extract(record.value, '$.keywordId')
-          AND job_matches.open_generation = json_extract(record.value, '$.openGeneration')
+      WHERE is_active <> 0
+        AND (job_id, keyword_id, open_generation) IN (
+        SELECT json_extract(record.value, '$.jobId'),
+               json_extract(record.value, '$.keywordId'),
+               json_extract(record.value, '$.openGeneration')
+        FROM json_each(?) record
       )
     `).bind(JSON.stringify(chunk)).run();
   }
