@@ -12,7 +12,8 @@ import { classifyJobRegion } from "../lib/job-region-classifier.ts";
 import { jobsFromBrowserAnchors, type BrowserAnchor } from "../lib/browser-job-extractor.ts";
 import { browserRecoveryDue, needsBrowserFallback, type LatestCrawlSummary } from "../lib/browser-fallback-selection.ts";
 import { numericPaginationTargets } from "../lib/browser-pagination.ts";
-import { ingestJobSnapshotInChunks } from "../lib/job-snapshot-transport.ts";
+import { ingestJobSnapshotInChunks, REQUEST_SNAPSHOT_CHUNK_OPTIONS } from "../lib/job-snapshot-transport.ts";
+import { createSnapshotWriter, type SnapshotWriteTiming } from "../lib/snapshot-writer.ts";
 import { jobPostingIdentityKeys } from "../lib/job-posting-identity.ts";
 import { anchorsFromHtml, coastCentralJobsFromHtml, crawlSource, deltaInternshipListingUrl, extractJobsFromHtml, jobsFromFedExApiPayload, jobsFromTeslaState, type CrawledFacet, type CrawledJob, type CrawlSource, type TeslaState } from "../lib/crawler.ts";
 import { careerCandidates, isSafeCareerListingUrl } from "../lib/url-remediation.ts";
@@ -27,6 +28,7 @@ export type BrowserFallbackResult = {
   authoritativeEmpty?: boolean;
   browserState?: { kind: "tesla"; state: TeslaState };
   error: string | null;
+  timing?: SnapshotWriteTiming & { inspectMs: number; ingestMs: number; chunks: number };
 };
 
 type BrowserRecoverySource = CrawlSource & {
@@ -40,6 +42,8 @@ const outputPath = resolve(projectRoot, "output/playwright/browser-fallback/resu
 const sqlPath = resolve(projectRoot, ".codex_tmp/browser-fallback.sql");
 const concurrency = Math.max(1, Number.parseInt(process.env.BROWSER_FALLBACK_CONCURRENCY ?? "12", 10));
 const ingestConcurrency = Math.max(1, Number.parseInt(process.env.BROWSER_FALLBACK_INGEST_CONCURRENCY ?? "4", 10));
+const snapshotWriter = createSnapshotWriter(ingestConcurrency);
+const resultWriter = snapshotWriter();
 const configuredSourceTimeoutMs = Number.parseInt(process.env.BROWSER_FALLBACK_SOURCE_TIMEOUT_MS ?? "45000", 10);
 const sourceTimeoutMs = Number.isFinite(configuredSourceTimeoutMs)
   ? Math.min(60_000, Math.max(10_000, configuredSourceTimeoutMs))
@@ -125,7 +129,7 @@ const recordProductionBrowserResult = async (body: Record<string, unknown>): Pro
     try {
       const bearer = await githubOidcToken();
       if (!bearer) throw new Error("Production browser ingest authorization is unavailable.");
-      response = await fetch(productionIngestUrl!, {
+      response = await resultWriter(productionIngestUrl!, {
         method: "POST",
         headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
         body: JSON.stringify(body),
@@ -1020,10 +1024,10 @@ export const browserResultClassification = (result: BrowserFallbackResult): {
   // the same denial response commits. Both outcomes are upstream access
   // blocking, not a broken or empty catalog parser.
   if ((result.source.id === "p5-1077-tesla" || result.source.company === "Tesla")
-    && /exceeded 60 seconds|timeout/i.test(result.error ?? "")) {
+    && /exceeded \d+ seconds|timeout|timed out/i.test(result.error ?? "")) {
     return { status: "blocked", code: "blocked_challenge" };
   }
-  if (/exceeded 60 seconds|timeout/i.test(result.error ?? "")) return { status: "failed", code: "navigation_timeout" };
+  if (/exceeded \d+ seconds|timeout|timed out/i.test(result.error ?? "")) return { status: "failed", code: "navigation_timeout" };
   if (result.error) return { status: "failed", code: "navigation_error" };
   // A 2xx page with no verified job identity is not an authoritative empty
   // catalog. Keep it retryable and visible as a failed recovery so a transient
@@ -1110,8 +1114,10 @@ async function main(): Promise<void> {
     while (cursor < sources.length) {
       const index = cursor++;
       const page = await context.newPage();
+      const inspectStartedAt = Date.now();
       try {
         results[index] = await inspectWithDeadline(page, sources[index]);
+        results[index].timing = { inspectMs: Date.now() - inspectStartedAt, ingestMs: 0, waitMs: 0, writeMs: 0, requests: 0, chunks: 0 };
       } finally {
         if (!page.isClosed()) await Promise.race([
           page.close({ runBeforeUnload: false }).catch(() => undefined),
@@ -1140,7 +1146,9 @@ async function main(): Promise<void> {
   if (!dryRun && productionIngestUrl) {
     if (!await githubOidcToken()) throw new Error("Production browser ingest authorization is unavailable.");
     let persistenceCursor = 0;
-    await Promise.all(Array.from({ length: Math.min(ingestConcurrency, results.length) }, async () => {
+    // Keep several catalogs queued, but lease only one HTTP chunk at a time.
+    // Large catalogs and retry backoff must not monopolize all D1 writers.
+    await Promise.all(Array.from({ length: Math.min(8, results.length) }, async () => {
       while (persistenceCursor < results.length) {
         const result = results[persistenceCursor++];
         const classification = browserResultClassification(result);
@@ -1175,7 +1183,10 @@ async function main(): Promise<void> {
             try { return value ? [new URL(value).origin] : []; } catch { return []; }
           });
         try {
-          await ingestJobSnapshotInChunks({
+          const ingestStartedAt = Date.now();
+          const ingested = await ingestJobSnapshotInChunks({
+            ...REQUEST_SNAPSHOT_CHUNK_OPTIONS,
+            fetcher: snapshotWriter(result.timing),
             retentionNow: new Date().toISOString(),
             allowedOrigins: [...new Set(allowedOrigins)].slice(0, 5),
             authorization: async () => {
@@ -1189,6 +1200,11 @@ async function main(): Promise<void> {
             listingUrl,
             sourceId: result.source.id,
           });
+          if (result.timing) {
+            result.timing.ingestMs = Date.now() - ingestStartedAt;
+            result.timing.chunks = ingested.chunks;
+          }
+          process.stdout.write(`${JSON.stringify({ sourceId: result.source.id, jobs: ingested.jobs, timing: result.timing })}\n`);
         } catch (error) {
           markPersistenceFailure(result, error instanceof Error ? error.message : "Production browser ingest failed.");
           try {

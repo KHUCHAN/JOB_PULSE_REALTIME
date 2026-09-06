@@ -4,6 +4,12 @@ import type { CrawledJob, CrawlSource } from "../lib/crawler";
 import { browserChallengeHtml, browserJobsForSource, browserListingSource, browserResultClassification, calCareersBrowserJobs, curlNativeFetch, fedExBrowserApiResult, nativeRunnerRecoveryEligible, persistenceSql, recoverNativeOutsideWorker, type BrowserFallbackResult } from "./browser-fallback-crawl";
 
 describe("browser fallback Workday recovery", () => {
+  it("classifies the configured 45-second deadline as timeout instead of an unknown navigation failure", () => {
+    expect(browserResultClassification({
+      source: { id: "siemens", company: "Siemens", postingUrl: "https://jobs.siemens.com", adapter: "custom" },
+      status: null, finalUrl: null, jobs: [], error: "Browser fallback exceeded 45 seconds.",
+    })).toEqual({ status: "failed", code: "navigation_timeout" });
+  });
   it("preserves dates and durable Job Control IDs from the complete CalCareers postback", () => {
     const source = {
       id: "p2-0167-state-attorneys-general",
