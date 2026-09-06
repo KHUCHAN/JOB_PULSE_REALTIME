@@ -5163,6 +5163,39 @@ HUMAN RESOURCES Posted Date
     }));
   });
 
+  it("finishes IBM enrichment without waiting for a stalled equivalent reader", async () => {
+    let canceled = false;
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      if (url === "https://www-api.ibm.com/search/api/v2") return Response.json({hits: {total: {value: 1}, hits: [{_id: "hash-128639", _source: {
+        title: "Data Engineer Intern 2027", url: "https://careers.ibm.com/en_US/careers/JobDetail?jobId=128639", description: "Python pipelines", field_keyword_19: "Dallas, US",
+      }}]}});
+      if (url.startsWith("https://r.jina.ai/https:")) return new Response("Date posted\n\n04-Sep-2026\n\nEmployment type\n\nCo-Op (Fixed Term)");
+      return new Promise((_resolve, reject) => {
+        const abort = () => { canceled = true; reject(new Error("canceled losing reader")); };
+        if (init?.signal?.aborted) abort();
+        else init?.signal?.addEventListener("abort", abort, {once: true});
+      });
+    };
+    const result = await crawlSource({id: "p5-0624-ibm", company: "IBM", postingUrl: "https://www.ibm.com/careers/search", adapter: "custom"}, fetcher, new Date());
+    expect(canceled).toBe(true);
+    expect(result.jobs[0]).toMatchObject({employmentType: "Co-op", publishedAt: "2026-09-04T00:00:00.000Z"});
+  }, 1_000);
+
+  it.each([false, true])("preserves partial IBM metadata and ignores unusable variants (partial=%s)", async (partial) => {
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url === "https://www-api.ibm.com/search/api/v2") return Response.json({hits: {total: {value: 1}, hits: [{_id: "hash-128639", _source: {
+        title: "Data Engineer Intern 2027", url: "https://careers.ibm.com/en_US/careers/JobDetail?jobId=128639", field_keyword_19: "Dallas, US",
+      }}]}});
+      if (url.startsWith("https://r.jina.ai/https:")) return new Response(partial ? "Employment type\n\nCo-Op (Fixed Term)" : "Reader loading");
+      return new Response(partial ? "" : "Date posted\n\n04-Sep-2026\n\nEmployment type\n\nCo-Op (Fixed Term)");
+    };
+    const result = await crawlSource({id: "p5-0624-ibm", company: "IBM", postingUrl: "https://www.ibm.com/careers/search", adapter: "custom"}, fetcher, new Date());
+    expect(result.jobs[0].employmentType).toBe("Co-op");
+    if (!partial) expect(result.jobs[0].publishedAt).toBe("2026-09-04T00:00:00.000Z");
+  });
+
   it("reads IBM 2027 detail metadata so co-op roles are not labeled internships", async () => {
     const fetcher: typeof fetch = async (input, init) => {
       const url = String(input);

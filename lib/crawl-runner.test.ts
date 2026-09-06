@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { runDueCrawls, runSpecificCrawls, type CrawlStore, type PersistedSource } from "./crawl-runner";
 import type { CrawledJob } from "./crawler";
 
@@ -56,6 +56,23 @@ class MemoryStore implements CrawlStore {
 }
 
 describe("runDueCrawls", () => {
+  it.each([false, true])("prefers atomic finish/schedule, including persistence failure=%s", async (failSync) => {
+    const store = new MemoryStore([{ id: "acme", company: "Acme", postingUrl: "https://job-boards.greenhouse.io/acme", adapter: "greenhouse", nextCrawlAt: null }], failSync);
+    const atomic = vi.fn(async (id: string, values: Record<string, unknown>, sourceId: string, next: string) => {
+      await MemoryStore.prototype.finishRun.call(store, id, values);
+      await MemoryStore.prototype.scheduleNext.call(store, sourceId, next);
+    });
+    Object.assign(store, { finishRunAndSchedule: atomic });
+    const separateFinish = vi.spyOn(store, "finishRun");
+    const separateSchedule = vi.spyOn(store, "scheduleNext");
+    const fetcher: typeof fetch = async () => new Response(JSON.stringify({ jobs: [{ id: 42, title: "Data Engineer", absolute_url: "https://job-boards.greenhouse.io/acme/jobs/42" }] }));
+    await runDueCrawls(store, fetcher, new Date("2026-08-08T12:00:00Z"), { concurrency: 1 });
+    expect(atomic).toHaveBeenCalledTimes(1);
+    expect(separateFinish).not.toHaveBeenCalled();
+    expect(separateSchedule).not.toHaveBeenCalled();
+    expect(store.runs[0].status).toBe(failSync ? "failed" : "succeeded");
+    expect(store.sources[0].nextCrawlAt).toBe(failSync ? "2026-08-08T18:00:00.000Z" : "2026-08-08T14:00:00.000Z");
+  });
   it("persists a successful complete feed and schedules that source two hours later", async () => {
     const store = new MemoryStore([{
       id: "acme",

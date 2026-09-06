@@ -23,6 +23,7 @@ export interface CrawlStore {
   ): Promise<{ closed: number }>;
   updateResolvedListing(sourceId: string, previousUrl: string, postingUrl: string, adapter: CrawlSource["adapter"]): Promise<void>;
   finishRun(runId: string, values: Record<string, unknown>): Promise<void>;
+  finishRunAndSchedule?(runId: string, values: Record<string, unknown>, sourceId: string, nextCrawlAt: string): Promise<void>;
   scheduleNext(sourceId: string, nextCrawlAt: string): Promise<void>;
 }
 
@@ -122,7 +123,7 @@ const runSource = async (
   result.created += changes.created;
   result.updated += changes.updated;
   result.closed += changes.closed;
-  await store.finishRun(runId, {
+  const terminalValues = {
     status,
     responseStatus: crawl.responseStatus,
     jobsSeen: crawl.jobs.length,
@@ -131,11 +132,14 @@ const runSource = async (
     jobsClosed: changes.closed,
     error,
     finishedAt: new Date().toISOString(),
-  });
-  await store.scheduleNext(
-    source.id,
-    nextCrawlAtForStatus(now, status, Boolean(crawl.pagination && !crawl.pagination.cycleComplete)),
-  );
+  };
+  const nextCrawlAt = nextCrawlAtForStatus(now, status, Boolean(crawl.pagination && !crawl.pagination.cycleComplete));
+  if (store.finishRunAndSchedule) {
+    await store.finishRunAndSchedule(runId, terminalValues, source.id, nextCrawlAt);
+  } else {
+    await store.finishRun(runId, terminalValues);
+    await store.scheduleNext(source.id, nextCrawlAt);
+  }
 
   return result;
 };

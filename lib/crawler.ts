@@ -6605,6 +6605,7 @@ const readerMarkdown = async (
     nestedProxyFallback?: boolean;
     maxConcurrent?: number;
     timeoutMs?: number;
+    firstUsable?: (text: string) => boolean;
   } = {},
 ): Promise<string | null> => {
   const target = new URL(postingUrl);
@@ -6642,10 +6643,12 @@ const readerMarkdown = async (
     // that network without requiring browser credentials or a bypass.
     return [...direct, ...direct.map((endpoint) => `https://r.jina.ai/http://${endpoint.slice("https://".length)}`)];
   }))];
-  const readEndpoint = async (endpoint: string): Promise<string | null> => {
+  const readEndpoint = async (endpoint: string, signal?: AbortSignal): Promise<string | null> => {
     try {
       const response = await fetchWithTimeout(
-        fetcher,
+        signal ? (input, init) => fetcher(input, {
+          ...init, signal: AbortSignal.any([signal, ...(init?.signal ? [init.signal] : [])]),
+        }) : fetcher,
         endpoint,
         { headers: options.richLinks === false
           ? { accept: "text/plain", "user-agent": "Mozilla/5.0 (compatible; JobPulseCrawler/1.0)" }
@@ -6670,7 +6673,28 @@ const readerMarkdown = async (
   };
   const maxConcurrent = Math.max(1, Math.min(endpoints.length, Math.trunc(options.maxConcurrent ?? endpoints.length)));
   for (let index = 0; index < endpoints.length; index += maxConcurrent) {
-    const batch = await Promise.allSettled(endpoints.slice(index, index + maxConcurrent).map(readEndpoint));
+    const window = endpoints.slice(index, index + maxConcurrent);
+    if (options.firstUsable) {
+      // Detail enrichment needs one usable equivalent response, not the
+      // slowest HTTP/HTTPS reader variant. Cancel losing requests promptly.
+      const controller = new AbortController();
+      const partial: Array<string | null> = new Array(window.length).fill(null);
+      try {
+        return await Promise.any(window.map(async (endpoint, index) => {
+          const text = await readEndpoint(endpoint, controller.signal);
+          partial[index] = text;
+          if (!text || !options.firstUsable!(text)) throw new Error("Reader metadata unavailable");
+          return text;
+        }));
+      } catch {
+        // No complete metadata response: retain the original endpoint-order
+        // fallback rather than discarding a usable partial date/type.
+        const fallback = partial.find((text) => Boolean(text));
+        if (fallback) return fallback;
+        continue;
+      } finally { controller.abort(); }
+    }
+    const batch = await Promise.allSettled(window.map((endpoint) => readEndpoint(endpoint)));
     const result = batch.find((value): value is PromiseFulfilledResult<string> =>
       value.status === "fulfilled" && typeof value.value === "string" && value.value.length > 0,
     );
@@ -12315,6 +12339,10 @@ const crawlIbm = async (source: CrawlSource, fetcher: typeof fetch): Promise<Sou
           maxConcurrent: 2,
           richLinks: false,
           timeoutMs: 10_000,
+          firstUsable: (text) => Boolean(
+            normalizeEmploymentType(text.match(/\bEmployment type\s*\n+\s*([^\n]+)/i)?.[1]?.trim())
+            && ibmPublishedAt(text.match(/\bDate posted\s*\n+\s*([^\n]+)/i)?.[1]?.trim()),
+          ),
         });
         const value = markdown?.match(/\bEmployment type\s*\n+\s*([^\n]+)/i)?.[1]?.trim();
         const employmentType = normalizeEmploymentType(value);

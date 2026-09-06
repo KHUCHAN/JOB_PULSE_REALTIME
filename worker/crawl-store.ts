@@ -557,15 +557,16 @@ export class D1CrawlStore implements CrawlStore {
   async startRun(source: PersistedSource, scheduledFor: string): Promise<string> {
     const id = crypto.randomUUID();
     const startedAt = new Date().toISOString();
-    await this.db.prepare(`
+    // One ordered transaction instead of two serial D1 network round trips.
+    await this.db.batch([this.db.prepare(`
       UPDATE crawl_runs
       SET status = 'failed', error = 'Superseded by a later crawl attempt.', finished_at = ?
       WHERE source_id = ? AND status = 'running'
-    `).bind(startedAt, source.id).run();
-    await this.db.prepare(`
+    `).bind(startedAt, source.id),
+    this.db.prepare(`
       INSERT INTO crawl_runs (id, source_id, scheduled_for, started_at, status)
       VALUES (?, ?, ?, ?, 'running')
-    `).bind(id, source.id, scheduledFor, startedAt).run();
+    `).bind(id, source.id, scheduledFor, startedAt)]);
     return id;
   }
 
@@ -1319,8 +1320,8 @@ export class D1CrawlStore implements CrawlStore {
     return { created, updated: retainedJobs.length - created, closed: closedUrls.length + duplicateJobIds.size };
   }
 
-  async finishRun(runId: string, values: Record<string, unknown>): Promise<void> {
-    await this.db.prepare(`
+  private finishRunStatement(runId: string, values: Record<string, unknown>): D1PreparedStatement {
+    return this.db.prepare(`
       UPDATE crawl_runs
       SET status = ?, response_status = ?, jobs_seen = ?, jobs_created = ?, jobs_updated = ?, jobs_closed = ?, error = ?, finished_at = ?
       WHERE id = ?
@@ -1334,14 +1335,31 @@ export class D1CrawlStore implements CrawlStore {
       values.error,
       values.finishedAt,
       runId,
-    ).run();
+    );
   }
 
-  async scheduleNext(sourceId: string, nextCrawlAt: string): Promise<void> {
-    await this.db.prepare(`
+  private scheduleNextStatement(sourceId: string, nextCrawlAt: string): D1PreparedStatement {
+    return this.db.prepare(`
       UPDATE sources
       SET last_crawled_at = ?, next_crawl_at = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).bind(new Date().toISOString(), nextCrawlAt, sourceId).run();
+    `).bind(new Date().toISOString(), nextCrawlAt, sourceId);
+  }
+
+  async finishRun(runId: string, values: Record<string, unknown>): Promise<void> {
+    await this.finishRunStatement(runId, values).run();
+  }
+
+  async scheduleNext(sourceId: string, nextCrawlAt: string): Promise<void> {
+    await this.scheduleNextStatement(sourceId, nextCrawlAt).run();
+  }
+
+  async finishRunAndSchedule(runId: string, values: Record<string, unknown>, sourceId: string, nextCrawlAt: string): Promise<void> {
+    // A source must not appear finished while its lease remains unadvanced.
+    // D1 batch is ordered and atomic, and halves terminal persistence trips.
+    await this.db.batch([
+      this.finishRunStatement(runId, values),
+      this.scheduleNextStatement(sourceId, nextCrawlAt),
+    ]);
   }
 }

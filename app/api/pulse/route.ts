@@ -308,7 +308,7 @@ async function persistBrowserSnapshot(
     if (jobs.length > 0) {
       await database.prepare("UPDATE sources SET enabled = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(source.id).run();
     }
-    await store.finishRun(runId, {
+    await store.finishRunAndSchedule(runId, {
       status: "succeeded",
       responseStatus: 200,
       jobsSeen: jobs.length,
@@ -317,8 +317,7 @@ async function persistBrowserSnapshot(
       jobsClosed: changes.closed,
       error: null,
       finishedAt: new Date().toISOString(),
-    });
-    await store.scheduleNext(source.id, new Date(now.getTime() + 2 * 60 * 60 * 1_000).toISOString());
+    }, source.id, new Date(now.getTime() + 2 * 60 * 60 * 1_000).toISOString());
     filterOptionsCache = null;
     return { sourceId: source.id, jobs: jobs.length, ...changes };
   } catch (error) {
