@@ -240,6 +240,17 @@ describe("resume digest reservation", () => {
     expect(claimed.jobs[0].scheduleNote).toBeNull();
   });
 
+  it("emails the exact Codex-verified detail URL instead of the stored application route", async () => {
+    const sqlite = alertDatabaseWithMatches(1);
+    const detail = "https://ecolab.wd1.myworkdayjobs.com/Careers/job/US/Intern_R123";
+    sqlite.prepare("UPDATE jobs SET official_url = ?, apply_url = ?").run(detail + "/apply", detail + "/apply");
+    sqlite.prepare("UPDATE codex_reviews SET verified_url = ?").run(detail);
+    const db = createD1ForSqlite(sqlite);
+    await planResumeDigests(db, "chanyoung-resume", "2026-08-10T12:00:00.000Z", 25);
+    const [claimed] = await claimDueNotifications(db, "chanyoung-resume", "2026-08-10T12:00:01.000Z", 1);
+    expect(claimed.jobs[0].officialUrl).toBe(detail);
+  });
+
   it("never reserves a URL variant after the same requisition was sent", async () => {
     const sqlite = alertDatabaseWithMatches(1);
     sqlite.prepare("UPDATE jobs SET requisition_identity_key = 'req:acme:req-42' WHERE id = 'job-1'").run();

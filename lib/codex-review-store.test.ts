@@ -212,6 +212,21 @@ describe("Codex review persistence", () => {
     })))).rejects.toThrow("limited to 100 rows");
   });
 
+  it("accepts the same Workday detail identity while retaining the verified direct URL", async () => {
+    const sqlite = database();
+    const detail = "https://ecolab.wd1.myworkdayjobs.com/Ecolab_External/job/USA-Saint-Paul/Supply-Chain-Intern_R00304542";
+    sqlite.prepare("UPDATE jobs SET official_url = ?, apply_url = ? WHERE id = 'job-new'").run(detail + "/apply", detail + "/apply");
+    const result = await applyCodexReviews(createD1(sqlite), [{jobId:"job-new", decision:"approve", rationale:"United States; manually verified.", verifiedUrl:detail}]);
+    expect(result).toMatchObject({accepted:1, approved:1, missing:[]});
+    expect(sqlite.prepare("SELECT verified_url FROM codex_reviews").get()).toEqual({verified_url:detail});
+    expect(canonicalReviewUrl(detail + "/apply/?utm_source=Handshake")).toBe(detail);
+    for (const different of [detail.replace("R00304542", "R00304540"), detail.replace("ecolab.wd1", "other.wd1"), detail.replace("Ecolab_External", "OtherBoard"), detail + "?jobId=another"]) {
+      expect(canonicalReviewUrl(different)).not.toBe(canonicalReviewUrl(detail + "/apply"));
+    }
+    expect(canonicalReviewUrl("https://careers.example.com/job/City/Intern_R1/apply")).toBe("https://careers.example.com/job/City/Intern_R1/apply");
+    expect(canonicalReviewUrl("https://acme.myworkdayjobs.com/Careers/apply")).toBe("https://acme.myworkdayjobs.com/Careers/apply");
+  });
+
   it("rejects non-approve/reject decisions and leaves the match pending", async () => {
     const sqlite = database();
     const result = await applyCodexReviews(createD1(sqlite), [{

@@ -416,7 +416,8 @@ export const claimDueNotifications = async (
   if (claimed.results.length === 0) return [];
   const ids = claimed.results.map((row) => row.id);
   const jobs = await database.prepare(`
-    SELECT DISTINCT ni.notification_id, j.company, j.title, j.location, j.official_url,
+    SELECT DISTINCT ni.notification_id, j.company, j.title, j.location,
+           COALESCE(NULLIF(review.verified_url, ''), j.official_url) AS official_url,
            j.published_at, j.first_seen_at, jm.score, jm.matched_terms,
            review.rationale AS review_rationale,
            CASE WHEN ${jobHasCoopSql("j")} THEN 'Co-op' ELSE 'Internship' END AS program,

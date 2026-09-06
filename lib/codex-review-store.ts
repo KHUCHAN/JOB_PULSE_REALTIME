@@ -65,6 +65,13 @@ export const canonicalReviewUrl = (value: string): string | null => {
   }
   url.searchParams.sort();
   if (url.pathname.length > 1) url.pathname = url.pathname.replace(/\/+$/, "");
+  // Workday's application route is a suffix of the same job-detail identity.
+  // Preserve the tenant, board, locale, location, requisition and query: never
+  // merge different jobs or make this a generic /apply stripping rule.
+  if (url.hostname.endsWith(".myworkdayjobs.com")
+    && /^\/(?:[^/]+\/)?[^/]+\/job\/[^/]+\/[^/]+_[^/]+\/apply$/.test(url.pathname)) {
+    url.pathname = url.pathname.slice(0, -6);
+  }
   return url.toString();
 };
 
