@@ -35,3 +35,33 @@ No manual crawl or duplicate workflow is started by this repair. HTTP 403
 provider blocks (including Tesla), Penn Medicine's HTTP 429 pagination failure,
 and other unresolved browser sources remain failures, not empty successes.
 Access, recipients, review policy and retention policy are unchanged.
+
+## First post-deploy owner run and next bounded improvement
+
+Run 34028798351 (f4a27d6, 10:56:18–11:33:31 UTC) completed in 37m13s,
+versus 52m14s in the preceding run. These runs differ in queue contents; this
+is an observed duration comparison, not a controlled speedup benchmark.
+The native drain now reports queue-drained=true in 28.34 minutes, attempting
+1,460 sources with 1,433 successes, 18 failures, 9 blocks and 2 request errors.
+Request recovery took 4m41s; browser recovery took 3m32s (excluding setup).
+
+Google's 3,419 retained rows required 12.3s fetch, 84.9s ingest queue wait and
+55.1s ingest. Apple waited 42.8s and Microsoft 35.1s. The next change packs
+up to 250 compact request-recovery records per HTTP chunk instead of 100,
+while retaining the exact 750,000-byte ceiling and two FIFO writer lanes.
+Large descriptions still split at the byte ceiling. Browser recovery keeps
+its existing defaults. The request log now includes ingestChunks so the next
+scheduled run can measure the effect, without starting an extra crawl.
+
+Regression fixtures preserve all 3,419 compact identities in 14 calls versus
+35; this is a compact-record transport test, not Google's measured payload
+or a claim of 60% faster production ingestion. Tests also cover multibyte
+description bounds and stopping without finalization after a middle-chunk
+failure. Official recency, locations, baseline protection, review decisions,
+notification deduplication and recipients remain unchanged.
+
+The workflow still correctly fails on unresolved sources: Penn Medicine's
+reader returns HTTP 429 at page 13, and browser recovery sees HTTP 403.
+Tesla and several other boards also return HTTP 403; Siemens hits its 45s
+deadline; Sanmina's host fails DNS; Amkor has an unusable empty response.
+These are not converted into successful empty catalogs by this optimization.

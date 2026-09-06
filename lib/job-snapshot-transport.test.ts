@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CrawledJob } from "./crawler";
-import { browserIngestChunks, browserIngestRecord, ingestJobSnapshotInChunks } from "./job-snapshot-transport";
+import { browserIngestChunks, browserIngestRecord, ingestJobSnapshotInChunks, REQUEST_SNAPSHOT_CHUNK_OPTIONS } from "./job-snapshot-transport";
 
 const job = (index: number, extra: Partial<CrawledJob> = {}): CrawledJob => ({
   externalId: `job-${index}`,
@@ -16,6 +16,34 @@ const job = (index: number, extra: Partial<CrawledJob> = {}): CrawledJob => ({
 });
 
 describe("browser job snapshot transport", () => {
+  it("packs compact request catalogs into fewer calls without losing identities or increasing the byte ceiling", () => {
+    const jobs = Array.from({ length: 3419 }, (_, index) => job(index));
+    const before = browserIngestChunks(jobs);
+    const after = browserIngestChunks(jobs, REQUEST_SNAPSHOT_CHUNK_OPTIONS);
+    expect(before).toHaveLength(35);
+    expect(after).toHaveLength(14);
+    expect(after.flat().map(row => row.externalId)).toEqual(before.flat().map(row => row.externalId));
+    expect(after.every(chunk => Buffer.byteLength(JSON.stringify(chunk)) <= 750_000)).toBe(true);
+    const rich = browserIngestChunks(jobs.slice(0, 25).map(row => ({ ...row, description: "한".repeat(20_000) })), REQUEST_SNAPSHOT_CHUNK_OPTIONS);
+    expect(rich.flat()).toHaveLength(25);
+    expect(rich.every(chunk => Buffer.byteLength(JSON.stringify(chunk)) <= 750_000)).toBe(true);
+  });
+
+  it("does not finalize or submit later chunks after a packed chunk fails", async () => {
+    const bodies: Array<{ finalizeSnapshot: boolean; jobs: unknown[] }> = [];
+    await expect(ingestJobSnapshotInChunks({
+      ...REQUEST_SNAPSHOT_CHUNK_OPTIONS,
+      allowedOrigins: ["https://jobs.example.com"], authorization: async () => "token",
+      completeListing: true, endpoint: "https://pulse.example/api/pulse", listingUrl: "https://jobs.example.com", sourceId: "a",
+      jobs: Array.from({ length: 501 }, (_, index) => job(index)), attempts: 1,
+      fetcher: async (_input, init) => {
+        bodies.push(JSON.parse(String(init?.body)));
+        return bodies.length === 1 ? Response.json({ jobs: 250 }) : Response.json({ error: "overloaded" }, { status: 503 });
+      },
+    })).rejects.toThrow("503");
+    expect(bodies.map(body => body.jobs.length)).toEqual([250, 250]);
+    expect(bodies.every(body => !body.finalizeSnapshot)).toBe(true);
+  });
   it("does not transport already-expired official postings; retains unknown dates", async () => {
     const bodies: Array<{ jobs: Array<{ externalId: string }>; finalizeSnapshot: boolean }> = [];
     await ingestJobSnapshotInChunks({

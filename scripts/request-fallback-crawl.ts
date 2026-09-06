@@ -1,5 +1,5 @@
 import { crawlSource, type CrawlSource } from "../lib/crawler.ts";
-import { ingestJobSnapshotInChunks } from "../lib/job-snapshot-transport.ts";
+import { ingestJobSnapshotInChunks, REQUEST_SNAPSHOT_CHUNK_OPTIONS } from "../lib/job-snapshot-transport.ts";
 import { isRequestFallbackDue, recoverCheckpointedCatalog } from "../lib/request-fallback-recovery.ts";
 import { isSafeCareerListingUrl } from "../lib/url-remediation.ts";
 import { verifySourceSnapshot } from "../lib/source-snapshot-verification.ts";
@@ -31,6 +31,7 @@ type RecoverySummary = {
   ingestWaitMs?: number;
   ingestMs?: number;
   verifyMs?: number;
+  ingestChunks?: number;
 };
 
 const siteUrl = (process.env.REQUEST_FALLBACK_LIVE_URL
@@ -188,6 +189,7 @@ const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
       });
     };
     const ingested = await ingestJobSnapshotInChunks({
+      ...REQUEST_SNAPSHOT_CHUNK_OPTIONS,
       allowedOrigins: [...new Set(allowedOrigins)].slice(0, 5),
       authorization: githubOidcToken,
       completeListing: result.completeListing,
@@ -217,6 +219,7 @@ const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
       ingestWaitMs,
       ingestMs,
       verifyMs,
+      ingestChunks: ingested.chunks,
       error: null,
     };
   } catch (error) {

@@ -6,6 +6,11 @@ type SnapshotChunkOptions = {
   maxJobs?: number;
 };
 
+// Request-only recovery can pack compact catalog records more efficiently.
+// Keep the existing byte ceiling: rich descriptions still split into small
+// chunks, and each company releases its FIFO writer lease between chunks.
+export const REQUEST_SNAPSHOT_CHUNK_OPTIONS = { maxJobs: 250, maxBytes: 750_000 } as const;
+
 type SnapshotTransportOptions = SnapshotChunkOptions & {
   allowedOrigins: string[];
   authorization: () => Promise<string>;
