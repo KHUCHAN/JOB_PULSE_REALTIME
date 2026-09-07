@@ -1969,6 +1969,32 @@ Wrong description.
     ]);
   });
 
+  it("refills three Radancy slots without waiting for one slow page and retains page order", async () => {
+    let release!: () => void;
+    const slow = new Promise<void>(resolve => { release = resolve; });
+    const starts: number[] = [];
+    let active = 0, maximum = 0;
+    const first = '<script src="https://tbcdn.talentbrew.com/js/client/search.js"></script>'
+      + '<section data-total-results="7" data-total-pages="7" data-records-per-page="1" data-ajax-post-url="/search-jobs/resultspost">'
+      + '<a href="/job/engineer/1/1">Engineer 1</a></section>';
+    const result = await crawlSource({
+      id: "radancy-refill", company: "Acme", postingUrl: "https://jobs.acme.example/search-jobs", adapter: "custom",
+    }, async (_input, init) => {
+      if ((init?.method ?? "GET") === "GET") return new Response(first);
+      const page = JSON.parse(String(init?.body)).CurrentPage as number;
+      starts.push(page); maximum = Math.max(maximum, ++active);
+      if (page === 2) await slow;
+      // A batch barrier never reaches page 5 while page 2 is held.
+      if (page === 5) release();
+      active--;
+      return Response.json({ results: `<a href="/job/engineer/1/${page}">Engineer ${page}</a>` });
+    }, new Date());
+    expect(maximum).toBeLessThanOrEqual(3);
+    expect(starts).toEqual([2, 3, 4, 5, 6, 7]);
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs.map(j => j.officialUrl.split("/").at(-1))).toEqual(["1", "2", "3", "4", "5", "6", "7"]);
+  });
+
   it("keeps an exact newest Radancy page while continuing a later checkpoint", async () => {
     const total = 40;
     const first = [

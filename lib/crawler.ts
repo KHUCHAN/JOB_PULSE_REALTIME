@@ -8324,8 +8324,11 @@ const crawlRadancyPages = async (
   // TalentBrew throttles larger bursts with 429s. Three concurrent page
   // requests stays fast while avoiding the partial 12/18-page responses seen
   // with nine-way fan-out in production.
-  for (let index = 0; index < pageNumbers.length; index += 3) {
-    const pages = await Promise.all(pageNumbers.slice(index, index + 3).map(async (currentPage) => {
+  let nextPageIndex = 0;
+  await Promise.all(Array.from({ length: Math.min(3, pageNumbers.length) }, async () => {
+    while (nextPageIndex < pageNumbers.length) {
+      const currentPage = pageNumbers[nextPageIndex++];
+      const page = await (async () => {
       for (let attempt = 0; attempt < pageAttempts; attempt += 1) {
         try {
           const response = await fetchWithTimeout(fetcher, new URL(postPath, source.postingUrl), {
@@ -8362,11 +8365,10 @@ const crawlRadancyPages = async (
         if (attempt < pageAttempts - 1) await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
       }
       return null;
-    }));
-    pages.forEach((page, pageIndex) => {
-      if (page) pagesByNumber.set(pageNumbers[index + pageIndex], page);
-    });
-  }
+      })();
+      if (page) pagesByNumber.set(currentPage, page);
+    }
+  }));
   // TalentBrew always returns its newest first page with the catalog shell.
   // Keep that free freshness window while continuing a later checkpoint so a
   // new page-one role is visible during the current two-hour pass instead of

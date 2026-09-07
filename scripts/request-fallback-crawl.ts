@@ -6,6 +6,7 @@ import { verifySourceSnapshot } from "../lib/source-snapshot-verification.ts";
 import { deferRecovery } from "../lib/recovery-policy.ts";
 import { createFifoLimiter } from "../lib/fifo-limiter.ts";
 import { sourceFetchBudget } from "../lib/source-fetch-budget.ts";
+import { runRecoveryPipeline } from "../lib/recovery-pipeline.ts";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
@@ -111,7 +112,7 @@ const liveSources = async (): Promise<CrawlSource[]> => {
   });
 };
 
-const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
+const collect = async (source: CrawlSource) => {
   const startedAt = Date.now();
   const budget = sourceFetchBudget(sourceTimeoutMs);
   try {
@@ -150,7 +151,6 @@ const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
     budget.check();
     // The deadline bounds upstream collection only; queued, already verified
     // snapshots keep their independent transport timeout and are never cut off.
-    budget.dispose();
     if (result.status !== "succeeded" || result.jobs.length === 0) {
       throw new Error(result.error ?? `${result.status} crawler result with ${result.jobs.length} jobs.`);
     }
@@ -158,6 +158,14 @@ const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
     if (!isSafeCareerListingUrl(source.company, source.postingUrl, listingUrl)) {
       throw new Error("Crawler resolved an unsafe listing URL.");
     }
+    return { result, listingUrl, startedAt, fetchedAt: Date.now() };
+  } finally {
+    budget.dispose();
+  }
+};
+
+const persist = async (source: CrawlSource, catalog: Awaited<ReturnType<typeof collect>>): Promise<RecoverySummary> => {
+    const { result, listingUrl, startedAt, fetchedAt } = catalog;
     const allowedOrigins = [listingUrl, ...result.jobs.flatMap((job) => [job.officialUrl, job.applyUrl ?? ""])]
       .flatMap((value): string[] => {
         try {
@@ -171,7 +179,6 @@ const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
     // are intentionally narrower. Eight simultaneous multi-chunk ingests
     // saturated the Worker/D1 path and made otherwise valid late sources time
     // out; two lanes retain throughput without write contention.
-    const fetchedAt = Date.now();
     let ingestWaitMs = 0, ingestMs = 0;
     // Lease one HTTP chunk, not an entire company's snapshot. Large catalogs
     // used to monopolize both writers for 50-100 seconds while every other
@@ -222,35 +229,30 @@ const recover = async (source: CrawlSource): Promise<RecoverySummary> => {
       ingestChunks: ingested.chunks,
       error: null,
     };
-  } catch (error) {
-    return {
-      sourceId: source.id,
-      status: "failed",
-      jobs: 0,
-      created: 0,
-      updated: 0,
-      elapsedMs: Date.now() - startedAt,
-      error: error instanceof Error ? error.message : "Unknown request-fallback error.",
-    };
-  } finally {
-    budget.dispose();
-  }
 };
 
 async function main(): Promise<void> {
   const sources = await liveSources();
-  const summaries: RecoverySummary[] = new Array(sources.length);
-  let cursor = 0;
-  await Promise.all(Array.from({ length: Math.min(concurrency, sources.length) }, async () => {
-    while (cursor < sources.length) {
-      const index = cursor++;
-      summaries[index] = await recover(sources[index]);
+  const started = new Map<string, number>();
+  const summaries = await runRecoveryPipeline(sources, {
+    concurrency,
+    // Never buffer the whole catalog inventory. Free upstream slots while
+    // two existing FIFO writers save at most sixteen in-flight catalogs.
+    pendingLimit: Math.min(16, concurrency * 2),
+    collect: (source) => { started.set(source.id, Date.now()); return collect(source); },
+    persist,
+    failed: (source, error): RecoverySummary => ({
+      sourceId: source.id, status: "failed", jobs: 0, created: 0, updated: 0,
+      elapsedMs: Date.now() - (started.get(source.id) ?? Date.now()),
+      error: error instanceof Error ? error.message : "Unknown request-fallback error.",
+    }),
+    onResult(result) {
       // Emit each company as soon as it finishes. A later source failure no
       // longer hides which official catalogs were already verified, and the
       // elapsed time makes a newly slow board immediately actionable.
-      process.stdout.write(`${JSON.stringify(summaries[index])}\n`);
-    }
-  }));
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+    },
+  });
   const summary = { attempted: summaries.length, summaries };
   if (process.env.REQUEST_FALLBACK_RESULT_PATH) {
     await mkdir(dirname(process.env.REQUEST_FALLBACK_RESULT_PATH), { recursive: true });
