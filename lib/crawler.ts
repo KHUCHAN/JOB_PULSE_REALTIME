@@ -15568,6 +15568,37 @@ const crawlOleeoAtom = async (source: CrawlSource, fetcher: typeof fetch): Promi
 };
 
 const crawlCoinbaseReader = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
+  // Coinbase's official Apply links identify this Greenhouse board. The
+  // careers-list reader has no descriptions or dates, so body-only recruiting
+  // years (e.g. "summer 2027") were invisible to downstream program filters.
+  try {
+    const response = await fetchWithTimeout(fetcher, "https://boards-api.greenhouse.io/v1/boards/coinbase/jobs?content=true", {
+      headers: { accept: "application/json" },
+    }, false, { attempts: 1, timeoutMs: 12_000 });
+    if (response.ok) {
+      const payload = await response.json() as { jobs?: GreenhouseJob[]; meta?: { total?: number } };
+      const rows = payload.jobs;
+      if (Array.isArray(rows) && rows.length > 0
+        && (payload.meta?.total === undefined || payload.meta.total === rows.length)
+        && new Set(rows.map(job => job.id)).size === rows.length
+        && rows.every(job => job.id && job.title?.trim() && plainText(job.content)
+          && /^https:\/\/www\.coinbase\.com\/careers\/positions\/\d+(?:\?.*)?$/.test(job.absolute_url))) {
+        const jobs = greenhouseJobs(rows, source).map(job => {
+          const official = new URL(job.officialUrl);
+          official.search = "";
+          return { ...job, officialUrl: official.href };
+        });
+        return {
+          status: "succeeded", responseStatus: response.status,
+          // Keep this addition-safe: legacy reader and official ATS inventories
+          // can differ during publication, and must not close one another.
+          completeListing: false, jobs, resolvedListingUrl: source.postingUrl, error: null,
+        };
+      }
+    }
+  } catch {
+    // Retain the bounded discovery fallback when the official ATS is down.
+  }
   const endpoint = `https://r.jina.ai/${source.postingUrl}`;
   try {
     const response = await fetchWithTimeout(fetcher, endpoint, {

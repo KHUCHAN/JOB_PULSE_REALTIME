@@ -17024,6 +17024,7 @@ Hybrid - New York, NY`;
       postingUrl: "https://www.coinbase.com/careers/positions",
       adapter: "custom",
     }, async (input) => {
+      if (String(input).startsWith("https://boards-api.greenhouse.io/")) return new Response("blocked", { status: 403 });
       expect(String(input)).toBe("https://r.jina.ai/https://www.coinbase.com/careers/positions");
       return new Response(markdown);
     }, new Date());
@@ -17041,6 +17042,40 @@ Hybrid - New York, NY`;
         arrangement: "hybrid",
       }),
     ]);
+  });
+
+  it("collects Coinbase body-only summer cycles and official dates directly without a reader", async () => {
+    const requests: string[] = [];
+    const result = await crawlSource({ id: "p2-0035-coinbase", company: "Coinbase",
+      postingUrl: "https://www.coinbase.com/careers/positions", adapter: "custom" }, async (input) => {
+      requests.push(String(input));
+      return Response.json({ meta: { total: 1 }, jobs: [{ id: 8175462, title: "Data Science Intern",
+        absolute_url: "https://www.coinbase.com/careers/positions/8175462?gh_jid=8175462",
+        content: "&lt;p&gt;This is a 12-week internship during summer 2027. Python and SQL.&lt;/p&gt;",
+        location: { name: "Hybrid - San Francisco, CA" }, requisition_id: "P78149",
+        first_published: "2026-09-08T18:20:03-04:00", updated_at: "2026-09-08T18:22:03-04:00" }] });
+    }, new Date());
+    expect(requests).toEqual(["https://boards-api.greenhouse.io/v1/boards/coinbase/jobs?content=true"]);
+    expect(result).toMatchObject({ status: "succeeded", completeListing: false, jobs: [{
+      externalId: "8175462", requisitionId: "P78149", employmentType: "Internship",
+      locationCountry: "United States", arrangement: "hybrid",
+      description: expect.stringContaining("summer 2027"),
+      officialUrl: "https://www.coinbase.com/careers/positions/8175462",
+      publishedAt: "2026-09-08T22:20:03.000Z", sourceUpdatedAt: "2026-09-08T22:22:03.000Z",
+    }] });
+  });
+
+  it.each([
+    { jobs: [], meta: { total: 2 } },
+    { jobs: [{ id: 1, title: "Intern", content: "summer 2027", absolute_url: "https://unrelated.example/job/1" }] },
+    { jobs: [{ id: 1, title: "Intern", absolute_url: "https://www.coinbase.com/careers/positions/1" }] },
+  ])("does not accept an incomplete or off-origin Coinbase ATS snapshot: %j", async payload => {
+    const result = await crawlSource({ id: "p2-0035-coinbase", company: "Coinbase",
+      postingUrl: "https://www.coinbase.com/careers/positions", adapter: "custom" }, async input =>
+      String(input).includes("boards-api.greenhouse.io") ? Response.json(payload) : new Response("down", { status: 503 }), new Date());
+    expect(result.status).not.toBe("succeeded");
+    expect(result.jobs).toEqual([]);
+    expect(result.completeListing).toBe(false);
   });
 
   it("persists CGI page-one progress without advancing past a blocked checkpoint page", async () => {
