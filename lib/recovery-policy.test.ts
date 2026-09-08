@@ -4,6 +4,29 @@ import { crawlSource, coastCentralJobsFromHtml } from "./crawler";
 import { recoverCheckpointedCatalog } from "./request-fallback-recovery";
 
 describe("bounded provider recovery", () => {
+  it("hands exhausted checkpoint stalls to browser recovery without a full catalog replay", async () => {
+    let calls = 0;
+    const crawl = async (): Promise<import("./crawler").SourceCrawlResult> => {
+      calls++;
+      return {
+        status: "succeeded", responseStatus: 200, completeListing: false,
+        jobs: [{ externalId: "a", title: "Role", company: "Acme", location: "New York",
+          arrangement: "unknown", employmentType: null, summary: null,
+          officialUrl: "https://example.com/jobs/a", publishedAt: null }],
+        pagination: { nextPage: 26, totalPages: 110, cycleComplete: false }, error: null,
+      };
+    };
+    let failure = "";
+    try {
+      await recoverCheckpointedCatalog({ id: "acme", company: "Acme", postingUrl: "https://example.com/jobs", adapter: "custom" },
+        fetch, crawl, { maxStalls: 2, wait: async () => undefined });
+    } catch (error) { failure = (error as Error).message; }
+    expect(calls).toBe(4); // head, stalled window, two bounded window retries
+    expect(failure).toBe("Checkpointed catalog did not advance beyond page 26.");
+    expect(deferRecovery(failure)).toBe(true);
+    expect(deferRecovery("Checkpointed catalog page count changed during request recovery.")).toBe(false);
+    expect(failedRecoveryIds({ attempted: 1, summaries: [{ sourceId: "acme", status: "failed" }] })).toEqual(["acme"]);
+  });
   it("distinguishes official maintenance from a challenge", () => {
     expect(workdayMaintenance("https://community.workday.com/maintenance-page", "")).toBe(true);
     expect(workdayMaintenance("https://www.myworkday.com/wday/drs/outage?t=kla", "")).toBe(true);

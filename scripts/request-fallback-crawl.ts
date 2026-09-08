@@ -134,6 +134,9 @@ const collect = async (source: CrawlSource) => {
       result = await recoverCheckpointedCatalog(source, budget.fetch, crawlSource, recoveryOptions);
     } catch (firstError) {
       budget.check();
+      // An exhausted checkpoint has already retried the failing window. Do
+      // not replay its successful prefix and the same stalled window again;
+      // keep it failed in the artifact for this owner's browser recovery.
       if (deferRecovery(firstError instanceof Error ? firstError.message : "")) throw firstError;
       // Retry the complete source once. Official Workday and sitemap edges can
       // change a page count or reject one burst even though the next bounded

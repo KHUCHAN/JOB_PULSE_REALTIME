@@ -1,6 +1,6 @@
 /** Fail fast for conditions that another immediate request cannot repair. */
 export const deferRecovery = (message: string): boolean =>
-  /upstream maintenance|HTML interstitial|HTTP (?:401|403|429)\b/i.test(message);
+  /upstream maintenance|HTML interstitial|HTTP (?:401|403|429)\b|Checkpointed catalog did not advance beyond page \d+\./i.test(message);
 
 export const workdayMaintenance = (url: string, body: string): boolean =>
   /^https:\/\/(?:community|static\.community)\.workday\.com\/maintenance-page(?:[./?]|$)/i.test(url)
