@@ -10,6 +10,7 @@ import { inferEmploymentTypeFromPrograms, isCoopEmploymentType, normalizeEmploym
 import { jobPostingIdentityKeys } from "../lib/job-posting-identity";
 import { syncResumeMatchesForUrls } from "../lib/resume-match-store";
 import { retainIncomingJobs } from "../lib/job-retention";
+import { obsoleteTopicMembershipsSql } from "../lib/topic-reconciliation";
 
 type SourceRow = {
   id: string;
@@ -1097,22 +1098,7 @@ export class D1CrawlStore implements CrawlStore {
           officialUrl: record.officialUrl,
           topicKeys: (record.areaMemberships as Array<{ topicKey: string }>).map(area => area.topicKey),
         }));
-        writes.push(this.db.prepare(`
-          DELETE FROM job_topics
-          WHERE topic_key LIKE 'area:%' AND job_id IN (
-            SELECT jobs.id
-            FROM json_each(?1)
-            JOIN jobs ON jobs.source_id = json_extract(value, '$.sourceId')
-                     AND jobs.official_url = json_extract(value, '$.officialUrl')
-          )
-          AND (job_id, topic_key) NOT IN (
-            SELECT jobs.id, topic.value
-            FROM json_each(?1) incoming
-            JOIN jobs ON jobs.source_id = json_extract(incoming.value, '$.sourceId')
-                     AND jobs.official_url = json_extract(incoming.value, '$.officialUrl')
-            JOIN json_each(incoming.value, '$.topicKeys') topic
-          )
-        `).bind(JSON.stringify(processedAreas)));
+        writes.push(this.db.prepare(obsoleteTopicMembershipsSql("area")).bind(JSON.stringify(processedAreas)));
         const areaMemberships = recordsChunk.flatMap((record) =>
           (record.areaMemberships as Array<{ topicKey: string; score: number; evidence: string[] }>).map((area) => ({
             sourceId: record.sourceId,
@@ -1149,22 +1135,7 @@ export class D1CrawlStore implements CrawlStore {
         topicKeys: (record.programKeys as string[]).map(key => `program:${key}`),
       }));
       for (const chunk of chunksByJsonBytes(processedPrograms, 1_500_000)) {
-        writes.push(this.db.prepare(`
-          DELETE FROM job_topics
-          WHERE topic_key LIKE 'program:%' AND job_id IN (
-            SELECT jobs.id
-            FROM json_each(?1)
-            JOIN jobs ON jobs.source_id = json_extract(value, '$.sourceId')
-                     AND jobs.official_url = json_extract(value, '$.officialUrl')
-          )
-          AND (job_id, topic_key) NOT IN (
-            SELECT jobs.id, topic.value
-            FROM json_each(?1) incoming
-            JOIN jobs ON jobs.source_id = json_extract(incoming.value, '$.sourceId')
-                     AND jobs.official_url = json_extract(incoming.value, '$.officialUrl')
-            JOIN json_each(incoming.value, '$.topicKeys') topic
-          )
-        `).bind(JSON.stringify(chunk)));
+        writes.push(this.db.prepare(obsoleteTopicMembershipsSql("program")).bind(JSON.stringify(chunk)));
       }
       const programMemberships = records.flatMap((record) =>
         (record.programKeys as string[]).map((programKey) => ({
@@ -1199,22 +1170,7 @@ export class D1CrawlStore implements CrawlStore {
         topicKeys: (record.recruitingYears as number[]).map(year => `year:${year}`),
       }));
       for (const chunk of chunksByJsonBytes(processedYears, 1_500_000)) {
-        writes.push(this.db.prepare(`
-          DELETE FROM job_topics
-          WHERE topic_key LIKE 'year:%' AND job_id IN (
-            SELECT jobs.id
-            FROM json_each(?1)
-            JOIN jobs ON jobs.source_id = json_extract(value, '$.sourceId')
-                     AND jobs.official_url = json_extract(value, '$.officialUrl')
-          )
-          AND (job_id, topic_key) NOT IN (
-            SELECT jobs.id, topic.value
-            FROM json_each(?1) incoming
-            JOIN jobs ON jobs.source_id = json_extract(incoming.value, '$.sourceId')
-                     AND jobs.official_url = json_extract(incoming.value, '$.officialUrl')
-            JOIN json_each(incoming.value, '$.topicKeys') topic
-          )
-        `).bind(JSON.stringify(chunk)));
+        writes.push(this.db.prepare(obsoleteTopicMembershipsSql("year")).bind(JSON.stringify(chunk)));
       }
       const yearMemberships = records.flatMap((record) =>
         (record.recruitingYears as number[]).map((year) => ({
