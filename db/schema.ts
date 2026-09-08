@@ -93,6 +93,7 @@ export const jobs = sqliteTable("jobs", {
   reopenedAt: text("reopened_at"),
   alertDiscoveredAfterBaseline: integer("alert_discovered_after_baseline", { mode: "boolean" }).notNull().default(false),
   resumeMatchHash: text("resume_match_hash"),
+  crawlSnapshotHash: text("crawl_snapshot_hash"),
   reviewState: text("review_state", { enum: ["new", "saved", "hidden", "applied"] }).notNull().default("new"),
   publishedAt: text("published_at"),
   firstSeenAt: text("first_seen_at").notNull(),

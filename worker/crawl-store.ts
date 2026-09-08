@@ -27,6 +27,7 @@ type ExistingJobRow = {
   official_url: string;
   status: "open" | "closed";
   resume_match_hash: string | null;
+  crawl_snapshot_hash?: string | null;
 };
 
 type WatermarkJobRow = ExistingJobRow & {
@@ -332,6 +333,19 @@ const sha256 = async (value: string): Promise<string> => {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 };
 
+// Hash the entire bounded input, not just resume-relevant fields. Salary,
+// dates, URLs, authorization text and classifier outputs must invalidate it.
+// Volatile observation fields do not describe a posting change. A daily salt
+// bounds reuse after out-of-band repairs without suppressing any collection.
+export const crawlSnapshotHash = (record: Record<string, unknown>, now: string) => sha256(JSON.stringify({
+  version: 1,
+  day: now.slice(0, 10),
+  record: Object.fromEntries(Object.entries(record).filter(([key]) => ![
+    "id", "firstSeenAt", "lastSeenAt", "topicClassifiedAt", "areaClassifiedAt",
+    "alertDiscoveredAfterBaseline", "crawlSnapshotHash",
+  ].includes(key))),
+}));
+
 const derivedFacets = (jobs: CrawledJob[]): CrawledFacet[] => {
   const definitions: Array<{ key: string; label: string; values: (job: CrawledJob) => string[] }> = [
     { key: "department", label: "Department", values: (job) => job.department ? [job.department] : [] },
@@ -634,7 +648,7 @@ export class D1CrawlStore implements CrawlStore {
     };
     jobs = withoutIncomingAtsMirrors(jobs, source.posting_url);
     const existingResult = await this.db.prepare(`
-      SELECT id, external_id, requisition_id, title, official_url, status, resume_match_hash
+      SELECT id, external_id, requisition_id, title, official_url, status, resume_match_hash, crawl_snapshot_hash
       FROM jobs WHERE source_id = ?
     `).bind(sourceId).all<ExistingJobRow>();
     const canonicalProtocolUrl = (value: string): string => {
@@ -801,6 +815,7 @@ export class D1CrawlStore implements CrawlStore {
         programKeys: record.programKeys,
         recruitingYears: record.recruitingYears,
       }));
+      record.crawlSnapshotHash = await crawlSnapshotHash(record, now);
       return record;
     };
 
@@ -895,6 +910,26 @@ export class D1CrawlStore implements CrawlStore {
       // Keep parent upserts before dependent topics and settle before matching.
       const writes: D1PreparedStatement[] = [];
       for (const recordsChunk of chunksByJsonBytes(records, 1_500_000)) {
+        const unchanged = recordsChunk.filter(record => {
+          const previous = existingByUrl.get(String(record.officialUrl));
+          return previous?.status === "open" && previous.crawl_snapshot_hash === record.crawlSnapshotHash;
+        });
+        const unchangedUrls = new Set(unchanged.map(record => record.officialUrl));
+        const unchangedRecords = new Set(unchanged);
+        const changed = recordsChunk.filter(record => !unchangedRecords.has(record));
+        if (unchanged.length > 0) {
+          // No rich JSON or indexed content columns are sent for unchanged
+          // parents. Topic reconciliation still runs below, even after an
+          // earlier partial batch failure. Never skip presence watermarks.
+          writes.push(this.db.prepare(`
+            UPDATE jobs SET last_seen_at = ?, topic_classified_at = ?,
+              area_classified_at = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE source_id = ? AND status = 'open'
+              AND official_url IN (SELECT value FROM json_each(?))
+          `).bind(now, now, jobAreaClassificationMarker(now), sourceId,
+            JSON.stringify([...unchangedUrls])));
+        }
+        if (changed.length > 0) {
         writes.push(this.db.prepare(`
         INSERT INTO jobs (
           id, source_id, external_id, title, company, location, arrangement,
@@ -907,7 +942,7 @@ export class D1CrawlStore implements CrawlStore {
           requisition_id, requisition_identity_key, external_identity_key, url_identity_key,
           apply_url, source_posted_text, source_updated_at, valid_through, raw_payload,
           published_at, first_seen_at, last_seen_at, closed_at, topic_classified_at, area_classified_at,
-          open_generation, reopened_at, alert_discovered_after_baseline, resume_match_hash
+          open_generation, reopened_at, alert_discovered_after_baseline, resume_match_hash, crawl_snapshot_hash
         )
         SELECT
           json_extract(value, '$.id'), json_extract(value, '$.sourceId'),
@@ -934,7 +969,7 @@ export class D1CrawlStore implements CrawlStore {
           json_extract(value, '$.firstSeenAt'), json_extract(value, '$.lastSeenAt'), NULL,
           json_extract(value, '$.topicClassifiedAt'), json_extract(value, '$.areaClassifiedAt'), 1, NULL,
           json_extract(value, '$.alertDiscoveredAfterBaseline'),
-          json_extract(value, '$.resumeMatchHash')
+          json_extract(value, '$.resumeMatchHash'), json_extract(value, '$.crawlSnapshotHash')
         FROM json_each(?)
         WHERE NOT EXISTS (SELECT 1 FROM expired_job_archive a
           WHERE a.source_id = json_extract(value, '$.sourceId') AND a.official_url = json_extract(value, '$.officialUrl'))
@@ -1000,6 +1035,7 @@ export class D1CrawlStore implements CrawlStore {
             ELSE jobs.reopened_at
           END,
           resume_match_hash = excluded.resume_match_hash,
+          crawl_snapshot_hash = excluded.crawl_snapshot_hash,
           status = 'open',
           published_at = COALESCE(excluded.published_at, jobs.published_at),
           last_seen_at = excluded.last_seen_at,
@@ -1007,7 +1043,8 @@ export class D1CrawlStore implements CrawlStore {
           area_classified_at = excluded.area_classified_at,
           closed_at = NULL,
           updated_at = CURRENT_TIMESTAMP
-        `).bind(JSON.stringify(recordsChunk)));
+        `).bind(JSON.stringify(changed)));
+        }
 
         const topicMatches = recordsChunk
           .filter((record) => record.aiDataMatched === true)

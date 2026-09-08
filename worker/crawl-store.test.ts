@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import type { CrawledJob } from "../lib/crawler";
-import { boundedJobRecord, compactRecord, D1CrawlStore, chunksByJsonBytes, chunksOf, nativeCrawlExcludedSourceIds } from "./crawl-store";
+import { boundedJobRecord, compactRecord, crawlSnapshotHash, D1CrawlStore, chunksByJsonBytes, chunksOf, nativeCrawlExcludedSourceIds } from "./crawl-store";
+import { sitesSchemaMigrationFiles } from "../build/sites-vite-plugin";
 
 describe("chunksOf", () => {
   it("keeps all forced request-recovery employers out of the native queue", () => {
@@ -77,7 +78,7 @@ describe("D1CrawlStore enriched job persistence", () => {
       alert_baseline_at?: string | null;
       previous_success_at?: string | null;
     };
-    existingJobs?: Array<{ id: string; external_id: string | null; requisition_id?: string | null; title: string; official_url: string; status: string; resume_match_hash: string | null }>;
+    existingJobs?: Array<{ id: string; external_id: string | null; requisition_id?: string | null; title: string; official_url: string; status: string; resume_match_hash: string | null; crawl_snapshot_hash?: string | null }>;
     catalogState?: Record<string, string>;
   } = {}) => {
     const calls: Array<{ sql: string; values: unknown[] }> = [];
@@ -189,6 +190,105 @@ describe("D1CrawlStore enriched job persistence", () => {
       .toBeLessThan(sql.findIndex(s => s.includes("INSERT INTO job_topics")));
     expect(sql.some(s => s.includes("program:"))).toBe(true);
     expect(sql.some(s => s.includes("year:"))).toBe(true);
+  });
+
+  it("uses a presence-only write for identical parents but still repairs topics", async () => {
+    const job: CrawledJob = {
+      externalId: "intern-1", title: "Data Science Intern Summer 2027", company: "Acme",
+      officialUrl: "https://careers.example/jobs/intern-1", location: "Austin, TX",
+      arrangement: "onsite", employmentType: "Internship", summary: "Python SQL machine learning",
+      description: "Keep the full official description", publishedAt: null,
+    };
+    const initial = fakeDb();
+    await new D1CrawlStore(initial.db).syncJobs("source-1", [job], false);
+    const record = JSON.parse(String(initial.calls.find(c => c.sql.includes("INSERT INTO jobs ("))!.values[0]))[0];
+    const previous = { id: record.id, external_id: job.externalId, title: job.title,
+      official_url: job.officialUrl, status: "open", resume_match_hash: record.resumeMatchHash,
+      crawl_snapshot_hash: record.crawlSnapshotHash };
+    vi.setSystemTime("2026-08-31T14:00:00Z");
+    const replay = fakeDb({ existingJobs: [previous] });
+    await new D1CrawlStore(replay.db).syncJobs("source-1", [job], false);
+    expect(replay.calls.some(c => c.sql.includes("INSERT INTO jobs ("))).toBe(false);
+    const touch = replay.calls.find(c => c.sql.includes("UPDATE jobs SET last_seen_at"))!;
+    expect(touch).toBeDefined();
+    expect(JSON.stringify(touch.values)).not.toContain(job.description);
+    expect(replay.calls.some(c => c.sql.includes("INSERT INTO job_topics"))).toBe(true);
+
+    const sqlite = new DatabaseSync(":memory:");
+    try {
+      // Start at the deployed job schema snapshot, then apply the actual new
+      // migration and FTS triggers. Historical catalog migrations are not a
+      // fresh-database initializer and must not be replayed on production.
+      const schema = JSON.parse(readFileSync("drizzle/meta/0144_snapshot.json", "utf8")).tables.jobs;
+      const columns = Object.values(schema.columns) as Array<{ name: string; type: string; primaryKey: boolean; notNull: boolean; default?: string }>;
+      sqlite.exec(`CREATE TABLE jobs (${columns.map(c => `"${c.name}" ${c.type}${c.primaryKey ? " PRIMARY KEY" : ""}${c.notNull ? " NOT NULL" : ""}${c.default !== undefined ? ` DEFAULT ${c.default}` : ""}`).join(",")}, UNIQUE(source_id, official_url))`);
+      for (const file of ["0030_job_search_fts.sql", "0143_retention_deployment_repair.sql", "0144_job_fts_changed_content.sql", "0145_crawl_snapshot_hash.sql"]) {
+        expect(sitesSchemaMigrationFiles).toContain(file);
+        sqlite.exec(readFileSync(`drizzle/${file}`, "utf8"));
+      }
+      for (const call of initial.calls.filter(c => c.sql.includes("INSERT INTO jobs ("))) {
+        sqlite.prepare(call.sql).run(...call.values as SQLInputValue[]);
+      }
+      const before = sqlite.prepare("SELECT * FROM jobs").get()!;
+      sqlite.prepare(touch.sql).run(...touch.values as SQLInputValue[]);
+      const after = sqlite.prepare("SELECT * FROM jobs").get()!;
+      expect(after.last_seen_at).toBe("2026-08-31T14:00:00.000Z");
+      for (const key of ["description", "published_at", "first_seen_at", "open_generation", "reopened_at",
+        "alert_discovered_after_baseline", "resume_match_hash", "crawl_snapshot_hash", "review_state"]) {
+        expect(after[key]).toEqual(before[key]);
+      }
+      sqlite.exec("INSERT INTO jobs_fts(jobs_fts, rank) VALUES ('integrity-check', 1)");
+
+      if (process.env.JOB_PULSE_BENCHMARK === "1") {
+        for (const index of Object.values(schema.indexes) as Array<{ name: string; columns: string[]; isUnique: boolean }>) {
+          sqlite.exec(`CREATE ${index.isUnique ? "UNIQUE " : ""}INDEX IF NOT EXISTS "${index.name}" ON jobs (${index.columns.join(",")})`);
+        }
+        const sample = Array.from({ length: 250 }, (_, i) => ({ ...record,
+          id: `bench-${i}`, officialUrl: `https://careers.example/bench-${i}`, description: "Official description. ".repeat(200) }));
+        const full = initial.calls.find(c => c.sql.includes("INSERT INTO jobs ("))!;
+        const payload = JSON.stringify(sample);
+        const urls = JSON.stringify(sample.map(r => r.officialUrl));
+        const fullStatement = sqlite.prepare(full.sql);
+        const touchStatement = sqlite.prepare(touch.sql);
+        fullStatement.run(payload);
+        const measure = (operation: () => void) => {
+          operation();
+          const start = performance.now();
+          for (let i = 0; i < 5; i++) operation();
+          return (performance.now() - start) / 5;
+        };
+        const fullMs = measure(() => { fullStatement.run(payload); });
+        const touchMs = measure(() => { touchStatement.run(...touch.values.slice(0, 4) as SQLInputValue[], urls); });
+        console.info(JSON.stringify({ benchmark: "250 unchanged parents; local SQLite, not production end-to-end", fullMs, touchMs,
+          fullBytes: Buffer.byteLength(payload), touchBytes: Buffer.byteLength(urls) }));
+      }
+    } finally { sqlite.close(); }
+
+    for (const previousJob of [{ ...previous, status: "closed" }, { ...previous, crawl_snapshot_hash: null }]) {
+      const retry = fakeDb({ existingJobs: [previousJob] });
+      await new D1CrawlStore(retry.db).syncJobs("source-1", [job], false);
+      expect(retry.calls.some(c => c.sql.includes("INSERT INTO jobs ("))).toBe(true);
+    }
+    for (const edit of [{ salaryMin: 50000 }, { description: "Changed requirements" },
+      { publishedAt: "2026-08-31T13:00:00Z" }, { location: "Singapore" }, { qualifications: "No CPT" }]) {
+      const retry = fakeDb({ existingJobs: [previous] });
+      await new D1CrawlStore(retry.db).syncJobs("source-1", [{ ...job, ...edit }], false);
+      expect(retry.calls.some(c => c.sql.includes("INSERT INTO jobs ("))).toBe(true);
+    }
+    vi.setSystemTime("2026-09-01T00:00:00Z");
+    const tomorrow = fakeDb({ existingJobs: [previous] });
+    await new D1CrawlStore(tomorrow.db).syncJobs("source-1", [job], false);
+    expect(tomorrow.calls.some(c => c.sql.includes("INSERT INTO jobs ("))).toBe(true);
+  });
+
+  it("hashes every stable field, including new future fields, without observation churn", async () => {
+    const record = { title: "Intern", salaryMin: 40, sourceUpdatedAt: "2026-08-31", programKeys: ["internship"] };
+    const hash = await crawlSnapshotHash(record, "2026-08-31T00:00:00Z");
+    expect(await crawlSnapshotHash({ ...record, id: "random", lastSeenAt: "later", areaClassifiedAt: "later" }, "2026-08-31T22:00:00Z")).toBe(hash);
+    for (const key of Object.keys(record)) {
+      expect(await crawlSnapshotHash({ ...record, [key]: "changed" }, "2026-08-31")).not.toBe(hash);
+    }
+    expect(await crawlSnapshotHash({ ...record, futureField: "new" }, "2026-08-31")).not.toBe(hash);
   });
 
   it("writes structured filter fields instead of dropping them from the job payload", async () => {

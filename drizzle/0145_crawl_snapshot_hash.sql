@@ -1,0 +1,1 @@
+ALTER TABLE `jobs` ADD `crawl_snapshot_hash` text;
