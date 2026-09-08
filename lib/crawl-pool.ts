@@ -14,7 +14,7 @@ export async function drainCrawlPool<T extends { attempted: number }>(options: {
 }) {
   const clock = options.clock ?? Date.now;
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
-  const pressure = crawlPressure(options.concurrency);
+  const pressure = crawlPressure(options.concurrency, clock);
   type Completion = { id: number; result: T } | { id: number; error: unknown };
   const active = new Map<number, Promise<Completion>>();
   let requests = 0;

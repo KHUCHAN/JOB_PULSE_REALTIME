@@ -86,4 +86,31 @@ describe("continuous leased crawl pool", () => {
     expect(crawl).toHaveBeenCalledTimes(5);
     expect(onPressure.mock.calls.every(([concurrency]) => concurrency === 1)).toBe(true);
   });
+
+  it("keeps processing at reduced capacity throughout the healthy recovery window", async () => {
+    vi.useFakeTimers();
+    const start = Date.now();
+    const starts: Array<{ time: number; running: number }> = [];
+    let calls = 0; let running = 0; let processed = 0;
+    const promise = drainCrawlPool({
+      concurrency: 4, deadline: start + 180_000,
+      crawl: async () => {
+        const index = calls++;
+        starts.push({ time: Date.now() - start, running: ++running });
+        await pause(1_000);
+        running--;
+        if (index === 0) throw new Error("D1 DB is overloaded");
+        return { attempted: index <= 80 ? 1 : 0 };
+      }, recoverable: () => true,
+      onResult: result => { processed += result.attempted; }, onError: vi.fn(),
+    });
+    await vi.runAllTimersAsync();
+    expect((await promise).drained).toBe(true);
+    const recovering = starts.filter(row => row.time >= 6_000 && row.time < 61_000);
+    expect(recovering.length).toBeGreaterThan(40);
+    expect(recovering.every(row => row.running === 1)).toBe(true);
+    expect(starts.some(row => row.time >= 61_000 && row.running === 2)).toBe(true);
+    expect(processed).toBe(80);
+    expect(running).toBe(0);
+  });
 });
