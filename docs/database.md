@@ -74,4 +74,11 @@ Sites packages schema migrations separately because its migration files have a s
 
 Before packaging a Sites build, create a deploy staging directory with `npm run sites:stage -- /path/to/new/staging-directory`. This copies the production build and its bounded schema-only migration set, and rejects any initial catalog seed or `*_refresh_sources_*.sql` file; the versioned runtime catalog sync remains authoritative for those data-only updates. Pass that staging directory to the Sites packaging script.
 
+Prefer the single checked command `npm run sites:stage -- /path/to/new/staging-directory /absolute/path/to/sites/scripts/package-site.sh /absolute/path/to/archive.tar.gz`.
+It runs the standard Sites helper against the isolated stage and verifies the
+archive contains exactly the validated migration set. Never pass the checkout
+directly to the generic helper: it overlays the historical root `drizzle/`
+directory and can replay superseded 0140–0142 DDL, failing on existing indexes.
+The staging validator also explicitly rejects those superseded files.
+
 `drizzle/0001_seed_sources.sql` initializes migration-managed D1 databases. Later refresh migrations apply the same upserts there; Sites deployments use the bounded runtime version sync described above.
