@@ -4364,6 +4364,70 @@ HUMAN RESOURCES Posted Date
     }));
   });
 
+  it("reads Walmart intern results beyond the first hundred with bounded concurrency", async () => {
+    const internPages: number[] = [];
+    let active = 0;
+    let peak = 0;
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = new URL(String(input));
+      const { query } = JSON.parse(String(init?.body));
+      const page = Number(url.searchParams.get("page"));
+      if (query !== "intern") return Response.json({ totalJobs: 0, jobs: [] });
+      internPages.push(page);
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      active -= 1;
+      return Response.json({ totalJobs: 513, jobs: Array.from({ length: page === 5 ? 13 : 100 }, (_, offset) => ({
+        id: `R-${page * 100 + offset}-External`,
+        metadata: { title: "2027 Software Engineering Intern", primaryLocationCountry: "US" },
+      })) });
+    };
+    const result = await crawlSource({ id: "p5-0763-walmart", company: "Walmart", adapter: "custom",
+      postingUrl: "https://careers.walmart.com/us/en/home" }, fetcher, new Date());
+    expect(result.status).toBe("succeeded");
+    expect(internPages).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(result.jobs).toHaveLength(513);
+    expect(peak).toBeLessThanOrEqual(2);
+  });
+
+  it("keeps Walmart checkpoints beyond the old ten-thousand job ceiling", async () => {
+    const pages: number[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const { query } = JSON.parse(String(init?.body));
+      if (query !== "*") return Response.json({ totalJobs: 0, jobs: [] });
+      const page = Number(new URL(String(input)).searchParams.get("page"));
+      pages.push(page);
+      return Response.json({ totalJobs: 33_304, jobs: [{ id: `R-${page}`, metadata: { title: "Engineer" } }] });
+    };
+    const result = await crawlSource({ id: "p5-0763-walmart", company: "Walmart", adapter: "custom",
+      postingUrl: "https://careers.walmart.com/us/en/home", crawlPageCursor: 51 }, fetcher, new Date());
+    expect(pages).toEqual([50, 51, 52]);
+    expect(result.pagination).toEqual({ nextPage: 53, cycleComplete: false, totalPages: 167 });
+    expect(result.completeListing).toBe(false);
+  });
+
+  it("reports Walmart intern page failures and safety limits without discarding observed jobs", async () => {
+    const internPages: number[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const { query } = JSON.parse(String(init?.body));
+      if (query !== "intern") return Response.json({ totalJobs: 0, jobs: [] });
+      const page = Number(new URL(String(input)).searchParams.get("page"));
+      internPages.push(page);
+      return Response.json({ totalJobs: 1_500, jobs: Array.from({ length: page === 1 ? 0 : 100 }, (_, offset) => ({
+        id: `R-${page * 100 + offset}`, metadata: { title: "Intern" },
+      })) });
+    };
+    const result = await crawlSource({ id: "p5-0763-walmart", company: "Walmart", adapter: "custom",
+      postingUrl: "https://careers.walmart.com/us/en/home" }, fetcher, new Date());
+    expect(result.status).toBe("failed");
+    expect(result.completeListing).toBe(false);
+    expect(result.jobs.length).toBeGreaterThanOrEqual(100);
+    expect(result.error).toContain("page 2 unavailable or incomplete");
+    expect(result.error).toContain("10-page safety bound");
+    expect(internPages).toEqual([0, 1, 2]);
+  });
+
   it("paginates Google's public job results instead of indexing careers navigation", async () => {
     const requests: string[] = [];
     const page = (start: number, count: number) => Array.from({ length: count }, (_, index) => {

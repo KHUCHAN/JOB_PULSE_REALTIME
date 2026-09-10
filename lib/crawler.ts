@@ -19542,7 +19542,7 @@ const crawlWalmart = async (source: CrawlSource, fetcher: typeof fetch): Promise
   const pageSize = 200;
   const pagesPerPass = 3;
   const programPageSize = 100;
-  const maximumJobs = 10_000;
+  const maximumInternPages = 10;
   const endpointFor = (page: number, size = pageSize) => {
     const endpoint = new URL("/api/ai/search-ai/api/v1/combined/hybrid-search", "https://careers.walmart.com");
     endpoint.searchParams.set("page", String(page));
@@ -19573,8 +19573,9 @@ const crawlWalmart = async (source: CrawlSource, fetcher: typeof fetch): Promise
   let first = await fetchPage(requestedStart - 1);
   if (!first) return { status: "failed", responseStatus: null, completeListing: false, jobs: [], error: "Walmart search endpoint did not return a usable first page." };
   const total = Math.max(0, Number(first.payload.totalJobs ?? first.payload.jobs?.length ?? 0));
-  const boundedTotal = Math.min(total, maximumJobs);
-  const pageCount = Math.max(1, Math.ceil(boundedTotal / pageSize));
+  // Memory is bounded by pagesPerPass, not by the size of the full catalog.
+  // Capping the catalog at 10,000 reset the cursor before later jobs were read.
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const startPage = Math.min(requestedStart, pageCount);
   if (startPage !== requestedStart) {
     const restarted = await fetchPage(startPage - 1);
@@ -19615,24 +19616,55 @@ const crawlWalmart = async (source: CrawlSource, fetcher: typeof fetch): Promise
     if (!result) continue;
     jobs.push(...(result.payload.jobs ?? []).flatMap((job) => walmartJob(source, job) ?? []));
   }
+  // The official intern search currently exceeds one 100-row page. Read its
+  // bounded tail with only two payloads in flight. The broad co-op synonyms
+  // can match thousands of warehouse roles; keep those as head supplements,
+  // while the uncapped checkpoint walk provides their eventual coverage.
+  const internHead = programResults[0];
+  const internTotal = Number(internHead?.payload.totalJobs ?? 0);
+  const internPages = Math.max(1, Math.ceil(internTotal / programPageSize));
+  const internErrors: string[] = [];
+  if (!internHead) internErrors.push("intern search first page unavailable");
+  else if ((internHead.payload.jobs?.length ?? 0) < Math.min(internTotal, programPageSize)) {
+    internErrors.push("intern search first page incomplete");
+  }
+  for (let page = 1; internHead && page < Math.min(internPages, maximumInternPages); page += 2) {
+    const pages = [page, page + 1].filter((index) => index < Math.min(internPages, maximumInternPages));
+    const results = await Promise.all(pages.map((index) => fetchPage(index, "intern", false, programPageSize)));
+    for (let index = 0; index < pages.length; index += 1) {
+      const result = results[index];
+      const expected = Math.min(programPageSize, Math.max(0, internTotal - pages[index] * programPageSize));
+      if (!result || (result.payload.jobs?.length ?? 0) < expected) {
+        internErrors.push(`intern search page ${pages[index] + 1} unavailable or incomplete`);
+      }
+      if (result) jobs.push(...(result.payload.jobs ?? []).flatMap((job) => walmartJob(source, job) ?? []));
+    }
+    // Preserve observed jobs, but do not spend the deadline retrying a broken tail.
+    if (internErrors.length) break;
+  }
+  if (internPages > maximumInternPages) internErrors.push(`intern search exceeds ${maximumInternPages}-page safety bound`);
   const unique = uniqueJobs(jobs);
   const checkpointed = pageCount > pagesPerPass || source.crawlPageCursor != null;
+  const errors = [
+    ...(firstFailedPage === null ? [] : [`catalog page ${firstFailedPage} unavailable`]),
+    ...internErrors,
+  ];
   return {
-    status: "succeeded",
+    status: errors.length ? "failed" : "succeeded",
     responseStatus: first.status,
     completeListing: !checkpointed && firstFailedPage === null
-      && total <= maximumJobs && successfulPages === pageCount && unique.length >= total,
+      && errors.length === 0 && successfulPages === pageCount && unique.length >= total,
     jobs: unique,
     ...(checkpointed ? {
       pagination: {
         // Re-read the final successful page at the next pass. Catalog order
         // can shift between runs, and this one-page overlap prevents gaps.
         nextPage: firstFailedPage ?? (endPage === pageCount ? 1 : endPage),
-        cycleComplete: firstFailedPage === null && endPage === pageCount && total <= maximumJobs,
+        cycleComplete: errors.length === 0 && endPage === pageCount,
         totalPages: pageCount,
       },
     } : {}),
-    error: null,
+    error: errors.length ? `Walmart partial coverage: ${errors.join("; ")}.` : null,
   };
 };
 
