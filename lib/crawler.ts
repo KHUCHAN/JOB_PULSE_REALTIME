@@ -20535,7 +20535,7 @@ const workdayCatalogIdentity = (job: WorkdayJob): string | null => {
   if (!job.title && !job.externalPath) {
     const requisitionId = job.bulletFields
       ?.map((value) => value.trim())
-      .find((value) => /^Req-\d+(?:-\d+)?$/i.test(value));
+      .find((value) => /^(?:Req-|JR)\d+(?:-\d+)?$/i.test(value));
     if (requisitionId) return `unavailable:${requisitionId.toLocaleLowerCase()}`;
   }
   return null;
@@ -20719,6 +20719,17 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
         seenPageIdentities,
       )) firstFailedPage = pageNumber;
     }
+    // Keep the failing page shape in the recovery artifact. A generic stalled
+    // cursor previously hid whether the upstream returned a short page,
+    // malformed card or duplicate identities. Never include raw page bodies.
+    const failedIndex = firstFailedPage === 1 ? 0 : pageNumbers.indexOf(firstFailedPage ?? -1) + 1;
+    const failedRows = firstFailedPage === null ? [] : pagePayloads[failedIndex]?.jobPostings ?? [];
+    const failedIdentities = failedRows.map(workdayCatalogIdentity);
+    const coverageError = firstFailedPage === null ? null
+      : `Workday catalog page ${firstFailedPage} was inconsistent: rows=${failedRows.length}, `
+        + `expected=${Math.min(20, Math.max(0, total - (firstFailedPage - 1) * 20))}, `
+        + `unusable=${failedIdentities.filter(id => !id).length}, `
+        + `unique=${new Set(failedIdentities.filter(Boolean)).size}.`;
     const facets: CrawledFacet[] = flattenedWorkdayFacets(first.payload.facets).flatMap((facet) => facet.facetParameter && facet.descriptor ? [{
       key: facet.facetParameter,
       label: facet.descriptor,
@@ -20838,7 +20849,7 @@ async function crawlWorkday(source: CrawlSource, endpoint: string, fetcher: type
           totalPages,
         },
       } : {}),
-      error: null,
+      error: coverageError,
     };
   } catch (error) {
     const responseStatus = typeof error === "object" && error && "responseStatus" in error

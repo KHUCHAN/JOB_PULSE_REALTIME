@@ -237,6 +237,16 @@ JOIN job_matches resume_match
  AND resume_match.open_generation = j.open_generation
  AND resume_match.is_active = 1`;
     fromBindings.push("chanyoung-resume");
+    if (filters.resumeReviewStatus === "unreviewed") {
+      // Apply durable review/delivery exclusions before LIMIT. Re-reading
+      // already delivered rows otherwise starves a bounded five-page sweep.
+      // This is the same raw jobs/job_matches view, never an approval engine.
+      add("resume_match.notified_at IS NULL");
+      add("NOT EXISTS (SELECT 1 FROM codex_reviews pending_review WHERE pending_review.job_match_id = resume_match.id)");
+      add(`NOT EXISTS (SELECT 1 FROM notification_identity_history pending_history
+        WHERE pending_history.profile_id = 'chanyoung-resume'
+          AND ${postingIdentityHistoryMatchSql("j", "pending_history")})`);
+    }
     // Resume view includes both internships and co-ops that reached the
     // personal matching pipeline. Exact program filters remain available.
   }

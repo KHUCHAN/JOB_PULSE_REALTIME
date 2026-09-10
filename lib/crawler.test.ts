@@ -8721,7 +8721,7 @@ We are an equal opportunity employer.`;
     expect(result.jobs).toHaveLength(580);
   });
 
-  it("completes a Workday catalog containing an authoritative requisition-only tombstone", async () => {
+  it.each(["Req-10002", "JR2024523"])("completes a Workday catalog containing an authoritative requisition-only tombstone %s", async (tombstoneId) => {
     const result = await crawlSource({
       id: "p5-0588-edwards-lifesciences",
       company: "Edwards Lifesciences",
@@ -8734,7 +8734,7 @@ We are an equal opportunity employer.`;
         externalPath: "/job/Irvine/Quality-Engineer_Req-10001",
         bulletFields: ["Req-10001"],
       }, {
-        bulletFields: ["Req-10002"],
+        bulletFields: [tombstoneId],
       }],
     }), new Date("2026-08-25T00:00:00Z"));
 
@@ -8827,6 +8827,7 @@ We are an equal opportunity employer.`;
     }, fetcher, new Date());
 
     expect(result.pagination).toEqual({ nextPage: 41, cycleComplete: false, totalPages: 58 });
+    expect(result.error).toContain("page 41 was inconsistent: rows=20, expected=20, unusable=1");
   });
 
   it("keeps Cisco within the request budget by disabling per-page automatic retries", async () => {

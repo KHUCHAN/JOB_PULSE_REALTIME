@@ -16,6 +16,29 @@ const job = (index: number, extra: Partial<CrawledJob> = {}): CrawledJob => ({
 });
 
 describe("browser job snapshot transport", () => {
+  it("marks every partial-recovery chunk incomplete and never finalizes it", async () => {
+    const bodies: Array<{ coverageIncomplete: boolean; finalizeSnapshot: boolean; completeListing: boolean }> = [];
+    await ingestJobSnapshotInChunks({
+      allowedOrigins: ["https://jobs.example.com"], authorization: async () => "token",
+      completeListing: false, coverageIncomplete: true, maxJobs: 1,
+      endpoint: "https://pulse.example/api/pulse", listingUrl: "https://jobs.example.com", sourceId: "a",
+      jobs: [job(1), job(2)],
+      fetcher: async (_input, init) => { bodies.push(JSON.parse(String(init?.body))); return Response.json({ jobs: 1 }); },
+    });
+    expect(bodies).toHaveLength(2);
+    expect(bodies.every(body => body.coverageIncomplete && !body.finalizeSnapshot && !body.completeListing)).toBe(true);
+  });
+
+  it("rejects contradictory partial and authoritative coverage before any write", async () => {
+    const fetcher = vi.fn();
+    await expect(ingestJobSnapshotInChunks({
+      allowedOrigins: [], authorization: async () => "token", fetcher,
+      completeListing: true, coverageIncomplete: true, jobs: [job(1)],
+      endpoint: "https://pulse.example/api/pulse", listingUrl: "https://jobs.example.com", sourceId: "a",
+    })).rejects.toThrow("incomplete recovery");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("packs compact request catalogs into fewer calls without losing identities or increasing the byte ceiling", () => {
     const jobs = Array.from({ length: 3419 }, (_, index) => job(index));
     const before = browserIngestChunks(jobs);

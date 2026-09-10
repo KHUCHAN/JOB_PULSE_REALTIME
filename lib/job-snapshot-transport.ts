@@ -15,6 +15,8 @@ type SnapshotTransportOptions = SnapshotChunkOptions & {
   allowedOrigins: string[];
   authorization: () => Promise<string>;
   completeListing: boolean;
+  /** A stalled recovery may save valid jobs but must remain visibly failed. */
+  coverageIncomplete?: boolean;
   endpoint: string;
   fetcher?: typeof fetch;
   jobs: CrawledJob[];
@@ -102,6 +104,9 @@ export const ingestJobSnapshotInChunks = async (
   options: SnapshotTransportOptions,
 ): Promise<SnapshotTransportSummary> => {
   const fetcher = options.fetcher ?? fetch;
+  if (options.coverageIncomplete && options.completeListing) {
+    throw new Error("An incomplete recovery cannot finalize an authoritative snapshot.");
+  }
   const attempts = options.attempts ?? 3;
   const retryDelayMs = options.retryDelayMs ?? 250;
   if (!Number.isInteger(attempts) || attempts < 1 || attempts > 5) {
@@ -140,6 +145,7 @@ export const ingestJobSnapshotInChunks = async (
       // Worker safely ignores finalizeSnapshot while completeListing stays
       // false, instead of closing rows that arrived in earlier chunks.
       completeListing: false,
+      ...(options.coverageIncomplete ? { coverageIncomplete: true } : {}),
       finalizeSnapshot: options.completeListing && index === chunks.length - 1,
     });
     let payload: SnapshotIngestPayload | null = null;

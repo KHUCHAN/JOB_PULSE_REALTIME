@@ -22,6 +22,8 @@ const rejectInvalidValues = (
 };
 
 export const validateExplicitJobFilterValues = (params: URLSearchParams) => {
+  rejectInvalidValues(params, "resumeReview", value => value === "unreviewed"
+    && params.get("resumeMatch") === "chanyoung-resume");
   rejectInvalidValues(params, "topic", (value) => value.trim().toLocaleLowerCase() === "ai-data");
   rejectInvalidValues(params, "area", (value) => ["ai-ml", "data-analytics", "software-engineering"].includes(value.trim().toLocaleLowerCase()));
   rejectInvalidValues(params, "region", (value) => ["us", "non_us", "mixed", "unknown"].includes(value.trim().toLocaleLowerCase()));

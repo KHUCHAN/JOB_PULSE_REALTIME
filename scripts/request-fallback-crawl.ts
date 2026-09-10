@@ -127,7 +127,7 @@ const collect = async (source: CrawlSource) => {
     // remainder of this job after all priority employers had finished. Persist
     // exactly one non-authoritative segment per two-hour run; the native cursor
     // and deterministic production slot cover the remaining segments over time.
-    const recoveryOptions = { ...(source.id === "legacy-row-102"
+    const recoveryOptions = { retainPartialOnStall: true, ...(source.id === "legacy-row-102"
       ? { maxPasses: 1, maxStalls: 0, retainPartialAtPassLimit: true }
       : { maxPasses: 60, maxStalls: 2, stallDelayMs: 1_500 }), checkBudget: budget.check };
     try {
@@ -203,6 +203,7 @@ const persist = async (source: CrawlSource, catalog: Awaited<ReturnType<typeof c
       allowedOrigins: [...new Set(allowedOrigins)].slice(0, 5),
       authorization: githubOidcToken,
       completeListing: result.completeListing,
+      coverageIncomplete: Boolean(result.error),
       endpoint: ingestUrl,
       jobs: result.jobs,
       listingUrl,
@@ -219,7 +220,9 @@ const persist = async (source: CrawlSource, catalog: Awaited<ReturnType<typeof c
     const payload = { ...ingested, verifiedDbSamples };
     return {
       sourceId: source.id,
-      status: "succeeded",
+      // Valid rows from a stalled checkpoint still reach D1, but the workflow
+      // must remain actionable rather than silently calling partial coverage healthy.
+      status: result.error ? "failed" : "succeeded",
       jobs: payload.jobs,
       created: payload.created,
       updated: payload.updated,
@@ -230,7 +233,7 @@ const persist = async (source: CrawlSource, catalog: Awaited<ReturnType<typeof c
       ingestMs,
       verifyMs,
       ingestChunks: ingested.chunks,
-      error: null,
+      error: result.error,
     };
 };
 

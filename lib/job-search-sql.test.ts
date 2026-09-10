@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { defaultJobFilters } from "./job-filter-query";
 import { buildJobSearchPlan } from "./job-search-sql";
@@ -462,5 +463,42 @@ describe("parameterized job search SQL", () => {
     expect(plan.pageSql).toContain("ORDER BY j.published_at IS NULL ASC, j.published_at DESC, resume_match.score DESC, j.first_seen_at DESC");
     expect(plan.pageSql).toContain("resume_match.score AS resume_match_score");
     expect(plan.bindings).toContain("chanyoung-resume");
+  });
+
+  it("excludes durable reviews and deliveries before paginating the opt-in raw DB backlog view", () => {
+    const plan = buildJobSearchPlan({ ...defaultJobFilters,
+      resumeMatchProfile: "chanyoung-resume", resumeReviewStatus: "unreviewed",
+      snapshotAt: "2026-09-10T00:00:00.000Z", pageSize: 100, page: 1,
+    });
+    for (const sql of [plan.pageSql, plan.countSql]) {
+      expect(sql).toContain("resume_match.notified_at IS NULL");
+      expect(sql).toContain("NOT EXISTS (SELECT 1 FROM codex_reviews pending_review");
+      expect(sql).toContain("notification_identity_history pending_history");
+      expect(sql).toContain("j.first_seen_at <= ?");
+    }
+    const original = buildJobSearchPlan({ ...defaultJobFilters, resumeMatchProfile: "chanyoung-resume" });
+    expect(original.pageSql).not.toContain("pending_review");
+    const database = new DatabaseSync(":memory:");
+    try {
+      database.exec(`
+        CREATE TABLE jobs (id TEXT PRIMARY KEY, source_id TEXT, company TEXT, official_url TEXT,
+          status TEXT, valid_through TEXT, first_seen_at TEXT, open_generation INTEGER,
+          requisition_identity_key TEXT, external_identity_key TEXT, url_identity_key TEXT);
+        CREATE TABLE match_profiles (id TEXT PRIMARY KEY, keyword_id TEXT);
+        CREATE TABLE job_matches (id TEXT PRIMARY KEY, job_id TEXT, keyword_id TEXT, open_generation INTEGER, is_active INTEGER, notified_at TEXT);
+        CREATE TABLE codex_reviews (job_match_id TEXT PRIMARY KEY, decision TEXT);
+        CREATE TABLE notification_identity_history (profile_id TEXT, identity_key TEXT, PRIMARY KEY(profile_id, identity_key));
+        INSERT INTO match_profiles VALUES ('chanyoung-resume', 'k');
+      `);
+      for (const id of ["pending", "reviewed", "notified", "identity-delivered", "new-insert"]) {
+        database.prepare("INSERT INTO jobs VALUES (?, 'source', 'Acme', ?, 'open', NULL, ?, 1, ?, NULL, ?)")
+          .run(id, `https://jobs.example/${id}`, id === "new-insert" ? "2026-09-11" : "2026-09-09", `req:${id}`, `url:${id}`);
+        database.prepare("INSERT INTO job_matches VALUES (?, ?, 'k', 1, 1, ?)")
+          .run(id, id, id === "notified" ? "2026-09-09" : null);
+      }
+      database.exec("INSERT INTO codex_reviews VALUES ('reviewed','reject'); INSERT INTO notification_identity_history VALUES ('chanyoung-resume','req:identity-delivered');");
+      expect(database.prepare(plan.countSql).get(...plan.bindings as string[])).toEqual({ total: 1 });
+      expect(database.prepare(original.countSql).get(...original.bindings as string[])).toEqual({ total: 5 });
+    } finally { database.close(); }
   });
 });

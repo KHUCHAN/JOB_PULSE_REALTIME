@@ -82,6 +82,7 @@ export interface JobFilters {
   page?: number;
   pageSize?: number;
   resumeMatchProfile?: "chanyoung-resume";
+  resumeReviewStatus?: "unreviewed";
 }
 
 export interface ResumeMatchSummary {

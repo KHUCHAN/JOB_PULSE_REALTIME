@@ -342,16 +342,23 @@ describe("large catalog US scope migration", () => {
     expect(sql).toContain("'https://jobs.jobvite.com/enphase-energy/'");
   });
 
-  it("publishes the bundled catalog version before production requests arrive", () => {
+  it("keeps the historical catalog marker immutable and advances new sources through bounded runtime deltas", () => {
     const seed = JSON.parse(readFileSync(resolve(process.cwd(), "db/seed/sources.json"), "utf8")) as {
       version: string;
       sources: unknown[];
       talentTargets: unknown[];
+      incrementalSourceIdsByPreviousVersion: Record<string, string[]>;
     };
     const sql = readFileSync(resolve(drizzlePath, "0139_refresh_sources_20260902092232.sql"), "utf8");
 
     expect(seed.version).toBe(catalogSeedVersion(seed.sources, seed.talentTargets));
-    expect(sql).toContain(`VALUES ('sources', '${seed.version}', CURRENT_TIMESTAMP)`);
+    const previousVersion = "v2:sha256:333ffa3b859e3c86ee7959b167dd80ec26b8318a1edfa51d5257e7d537bb1895";
+    expect(sql).toContain(`VALUES ('sources', '${previousVersion}', CURRENT_TIMESTAMP)`);
+    expect(seed.incrementalSourceIdsByPreviousVersion[previousVersion]).toEqual(["audit-row-3450"]);
+    expect(seed.sources).toContainEqual(expect.objectContaining({
+      id: "audit-row-3450", company: "Brunswick", enabled: true,
+      postingUrl: "https://brunswick.wd1.myworkdayjobs.com/search", adapter: "workday",
+    }));
     expect(sql).toContain("WHERE key = 'sources_sync_lock_v1'");
   });
 

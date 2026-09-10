@@ -165,4 +165,12 @@ describe("job filter query codec", () => {
     expect(filters.snapshotAt).toBe("2026-08-25T19:20:30.123Z");
     expect(serializeJobFilters(filters).get("snapshotAt")).toBe("2026-08-25T19:20:30.123Z");
   });
+
+  it("round-trips the opt-in unreviewed raw DB filter without changing the default view", () => {
+    const filters = parseJobFilterParams(new URLSearchParams("resumeMatch=chanyoung-resume&resumeReview=unreviewed"));
+    expect(filters.resumeReviewStatus).toBe("unreviewed");
+    expect(serializeJobFilters(filters).get("resumeReview")).toBe("unreviewed");
+    expect(parseJobFilterParams(new URLSearchParams("resumeMatch=chanyoung-resume")).resumeReviewStatus).toBeUndefined();
+    expect(parseJobFilterParams(new URLSearchParams("resumeReview=unreviewed")).resumeReviewStatus).toBeUndefined();
+  });
 });

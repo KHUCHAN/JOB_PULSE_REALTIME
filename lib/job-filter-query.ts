@@ -177,6 +177,8 @@ export function parseJobFilterParams(input: URLSearchParams): JobFilters {
   filters.resumeMatchProfile = input.get("resumeMatch") === "chanyoung-resume"
     ? "chanyoung-resume"
     : undefined;
+  filters.resumeReviewStatus = filters.resumeMatchProfile && input.get("resumeReview") === "unreviewed"
+    ? "unreviewed" : undefined;
 
   const page = parseInteger(input.get("page"));
   if (page !== undefined && page >= 1) filters.page = page;
@@ -204,6 +206,7 @@ export function serializeJobFilters(filters: JobFilters): URLSearchParams {
   appendText("location", normalized.location);
   if (normalized.resumeMatchProfile === "chanyoung-resume") {
     params.append("resumeMatch", normalized.resumeMatchProfile);
+    if (normalized.resumeReviewStatus === "unreviewed") params.append("resumeReview", "unreviewed");
   }
   for (const topic of normalizeEnumValues(normalized.topics, topicKeys)) params.append("topic", topic);
   for (const area of normalizeEnumValues(normalized.areas, areaKeys)) params.append("area", area);

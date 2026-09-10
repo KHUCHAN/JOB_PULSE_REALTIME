@@ -1,7 +1,8 @@
 {
-  "generatedAt": "2026-09-02",
-  "version": "v2:sha256:333ffa3b859e3c86ee7959b167dd80ec26b8318a1edfa51d5257e7d537bb1895",
+  "generatedAt": "2026-09-10",
+  "version": "v2:sha256:23d38fe251796cfaaa773a35c5da5775b68051a4287fd47390fe083218283211",
   "incrementalSourceIdsByPreviousVersion": {
+    "v2:sha256:333ffa3b859e3c86ee7959b167dd80ec26b8318a1edfa51d5257e7d537bb1895": ["audit-row-3450"],
     "v2:sha256:9d5dbbfa7d4d1af2fd573464ed8fe41c0d1a274458191b5eb8515391b29adb87": [
       "p5-0755-tower-semiconductor"
     ],
@@ -21930,6 +21931,21 @@
       "resumeUpload": "job_only",
       "jobAlerts": "unknown",
       "checkedAt": "2026-09-02",
+      "enabled": true
+    },
+    {
+      "id": "audit-row-3450",
+      "masterRow": 3450,
+      "company": "Brunswick",
+      "postingUrl": "https://brunswick.wd1.myworkdayjobs.com/search",
+      "talentUrl": null,
+      "channel": "Official Workday job board",
+      "adapter": "workday",
+      "verification": "valid_posting_feed",
+      "confidence": "high",
+      "resumeUpload": "job_only",
+      "jobAlerts": "unknown",
+      "checkedAt": "2026-09-10",
       "enabled": true
     }
   ],

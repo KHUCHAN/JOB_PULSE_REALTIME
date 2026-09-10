@@ -12,6 +12,8 @@ type CheckpointRecoveryOptions = {
   maxStalls?: number;
   stallDelayMs?: number;
   retainPartialAtPassLimit?: boolean;
+  /** Persist observed jobs without declaring a stalled catalog complete. */
+  retainPartialOnStall?: boolean;
   wait?: (milliseconds: number) => Promise<void>;
   checkBudget?: () => void;
 };
@@ -107,7 +109,7 @@ export const recoverCheckpointedCatalog = async (
         completeListing: false,
         jobs: [...jobs.values()],
         pagination: undefined,
-        error: null,
+        error: result.error,
       };
     }
     if (result.pagination.nextPage <= cursor) {
@@ -116,7 +118,15 @@ export const recoverCheckpointedCatalog = async (
         await wait(stallDelayMs);
         continue;
       }
-      throw new Error(`Checkpointed catalog did not advance beyond page ${cursor}.`);
+      const error = `Checkpointed catalog did not advance beyond page ${cursor}.`;
+      if (options.retainPartialOnStall && jobs.size > 0) return {
+        ...result,
+        completeListing: false,
+        jobs: [...jobs.values()],
+        pagination: undefined,
+        error: `${error} ${result.error ?? ""} Retained ${jobs.size} observed jobs; coverage remains incomplete.`.replace(/  +/g, " "),
+      };
+      throw new Error(error);
     }
     cursor = result.pagination.nextPage;
     stalls = 0;

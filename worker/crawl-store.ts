@@ -11,6 +11,7 @@ import { jobPostingIdentityKeys } from "../lib/job-posting-identity";
 import { syncResumeMatchesForUrls } from "../lib/resume-match-store";
 import { retainIncomingJobs } from "../lib/job-retention";
 import { obsoleteTopicMembershipsSql } from "../lib/topic-reconciliation";
+import { retryIdempotentD1 } from "../lib/d1-idempotent-retry";
 
 type SourceRow = {
   id: string;
@@ -1198,7 +1199,12 @@ export class D1CrawlStore implements CrawlStore {
              OR job_topics.evidence IS NOT excluded.evidence
         `).bind(JSON.stringify(chunk)));
       }
-      for (const batch of chunksOf(writes, 12)) await this.db.batch(batch);
+      // Only replay this prepared snapshot's parent upserts/topic reconciliation.
+      // IDs and observation timestamps are already fixed; notification writes
+      // and delivery are deliberately outside this retry boundary.
+      for (const batch of chunksOf(writes, 12)) {
+        await retryIdempotentD1(() => this.db.batch(batch));
+      }
     }
 
     await syncResumeMatchesForUrls(

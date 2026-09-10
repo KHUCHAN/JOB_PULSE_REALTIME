@@ -36,4 +36,13 @@ describe("explicit job-filter validation", () => {
       "snapshotAt=2026-08-25T19%3A20%3A30.123Z",
     ))).not.toThrow();
   });
+
+  it("requires an exact profile and unreviewed status for the backlog filter", () => {
+    expect(() => validateExplicitJobFilterValues(new URLSearchParams(
+      "resumeMatch=chanyoung-resume&resumeReview=unreviewed",
+    ))).not.toThrow();
+    for (const query of ["resumeReview=unreviewed", "resumeMatch=chanyoung-resume&resumeReview=approved"]) {
+      expect(() => validateExplicitJobFilterValues(new URLSearchParams(query))).toThrow("Invalid resumeReview");
+    }
+  });
 });

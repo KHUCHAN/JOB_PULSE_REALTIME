@@ -273,6 +273,7 @@ async function persistBrowserSnapshot(
   completeListing = false,
   listingUrl?: string,
   snapshotStartedAt?: string | null,
+  coverageIncomplete = false,
 ): Promise<{ sourceId: string; jobs: number; created: number; updated: number; closed: number }> {
   const store = new D1CrawlStore(database);
   const now = new Date();
@@ -309,13 +310,13 @@ async function persistBrowserSnapshot(
       await database.prepare("UPDATE sources SET enabled = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(source.id).run();
     }
     await store.finishRunAndSchedule(runId, {
-      status: "succeeded",
+      status: coverageIncomplete ? "failed" : "succeeded",
       responseStatus: 200,
       jobsSeen: jobs.length,
       jobsCreated: changes.created,
       jobsUpdated: changes.updated,
       jobsClosed: changes.closed,
-      error: null,
+      error: coverageIncomplete ? "Official catalog coverage incomplete; observed jobs retained without closing prior inventory." : null,
       finishedAt: new Date().toISOString(),
     }, source.id, new Date(now.getTime() + 2 * 60 * 60 * 1_000).toISOString());
     filterOptionsCache = null;
@@ -705,6 +706,12 @@ export async function POST(request: Request): Promise<Response> {
         ? new Date(watermarkTime).toISOString()
         : null;
       const finalizeSnapshot = body.finalizeSnapshot === true;
+      if (body.coverageIncomplete !== undefined && typeof body.coverageIncomplete !== "boolean") {
+        return json({ error: "Invalid coverageIncomplete flag." }, 400);
+      }
+      if (body.coverageIncomplete === true && (body.completeListing === true || finalizeSnapshot)) {
+        return json({ error: "Incomplete catalog coverage cannot close prior inventory." }, 400);
+      }
       if (finalizeSnapshot && !snapshotStartedAt) {
         return json({ error: "Snapshot watermark is outside the bounded ingest window." }, 400);
       }
@@ -716,6 +723,7 @@ export async function POST(request: Request): Promise<Response> {
         body.completeListing === true || finalizeSnapshot,
         listingUrl,
         snapshotStartedAt,
+        body.coverageIncomplete === true,
       ));
     }
     if (body.action === "ingestTeslaState") {

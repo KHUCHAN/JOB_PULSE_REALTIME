@@ -228,7 +228,9 @@ const matchesFilters = (job: RichJobPosting, filters: JobFilters): boolean => {
     && hasAny(filters.travelRequirements, [job.travelRequirements])
     && hasAny(filters.securityClearances, [job.securityClearance])
     && matchesArray(filters.languages, job.languages)
-    && (!filters.resumeMatchProfile || job.resumeMatchScore !== null);
+    && (!filters.resumeMatchProfile || job.resumeMatchScore !== null)
+    && (!filters.resumeMatchProfile || filters.resumeReviewStatus !== "unreviewed"
+      || (!job.resumeReviewDecision && !job.resumeNotifiedAt && !job.resumeIdentityAlreadyNotified));
 };
 
 const deduplicate = (jobs: RichJobPosting[]): RichJobPosting[] => {

@@ -22,6 +22,23 @@ const job = (id: string): SourceCrawlResult["jobs"][number] => ({
 });
 
 describe("request fallback checkpoint recovery", () => {
+  it("retains observed rows on an exhausted stall without claiming complete coverage", async () => {
+    const crawl = vi.fn(async (requested: CrawlSource): Promise<SourceCrawlResult> => ({
+      status: "succeeded", responseStatus: 200, completeListing: false,
+      jobs: requested.crawlPageCursor === 1 ? [job("a")] : [job("a"), job("b")],
+      pagination: { nextPage: 26, totalPages: 69, cycleComplete: false }, error: null,
+    }));
+    const result = await recoverCheckpointedCatalog(source, fetch, crawl, {
+      maxStalls: 1, retainPartialOnStall: true, wait: async () => {},
+    });
+    expect(crawl).toHaveBeenCalledTimes(3);
+    expect(result.jobs.map(row => row.externalId)).toEqual(["a", "b"]);
+    expect(result.completeListing).toBe(false);
+    expect(result.pagination).toBeUndefined();
+    expect(result.error).toContain("page 26");
+    expect(result.error).toContain("coverage remains incomplete");
+  });
+
   it("checks the shared budget even when an adapter swallows a fetch abort", async () => {
     let expired = false;
     const checkBudget = () => { if (expired) throw new Error("source deadline"); };
