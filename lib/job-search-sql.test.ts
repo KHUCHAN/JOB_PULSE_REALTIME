@@ -3,12 +3,13 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { defaultJobFilters } from "./job-filter-query";
 import { buildJobSearchPlan } from "./job-search-sql";
+import { classifyJobPrograms } from "./job-program-classifier";
 
 const sqliteLiteral = (value: unknown): string => typeof value === "number"
   ? String(value)
   : `'${String(value).replaceAll("'", "''")}'`;
 
-const executePlan = (sql: string, bindings: unknown[], limit?: number, offset?: number): unknown[] => {
+const executePlan = (sql: string, bindings: unknown[], limit?: number, offset?: number, fixture = ""): unknown[] => {
   const parameters = [...bindings, ...(limit === undefined ? [] : [limit, offset ?? 0])]
     .map((value, index) => `.parameter set ?${index + 1} ${sqliteLiteral(value)}`)
     .join("\n");
@@ -38,12 +39,13 @@ const executePlan = (sql: string, bindings: unknown[], limit?: number, offset?: 
          ('capital-london', 'Capital Group', '2027 Summer Associate', 'London', '[]', NULL, 'https://capgroup.wd1.myworkdayjobs.com/Careers/job/London/Role_R2', 'open', '2026-08-15', '2026-08-15'),
          ('canada-london', 'Canada Co', 'Analyst', 'London, ON', '[]', NULL, 'https://canada.wd1.myworkdayjobs.com/Careers/job/London/Role_R3', 'open', '2026-08-15', '2026-08-15'),
          ('secondary-sg', 'APAC Co', 'Analyst', '4 Locations', '["Singapore, Marina Bay"]', NULL, 'https://jobs.example.com/role', 'open', '2026-08-15', '2026-08-15');`,
+      fixture,
       ".parameter init",
       parameters,
       `${sql};`,
     ].join("\n"),
   });
-  return JSON.parse(output) as unknown[];
+  return output.trim() ? JSON.parse(output) as unknown[] : [];
 };
 
 describe("parameterized job search SQL", () => {
@@ -214,7 +216,7 @@ describe("parameterized job search SQL", () => {
       pageSize: 25,
     });
 
-    expect(plan.pageSql).toMatch(/\(j\.company = \? COLLATE NOCASE OR j\.company = \? COLLATE NOCASE\)/);
+    expect(plan.pageSql).toMatch(/\(company_job\.company = \? COLLATE NOCASE OR company_job\.company = \? COLLATE NOCASE\)/);
     expect(plan.pageSql).toContain("j.location_city = ? COLLATE NOCASE");
     expect(plan.pageSql).toContain("j.salary_max >= ?");
     expect(plan.pageSql).toContain("j.salary_min <= ?");
@@ -297,8 +299,8 @@ describe("parameterized job search SQL", () => {
     expect(plan.countSql).not.toContain("row_number() OVER");
   });
 
-  it("applies filters only to the canonical latest open row", () => {
-    const setup = buildJobSearchPlan({ ...defaultJobFilters, companies: ["Older Co"] });
+  it("applies non-company filters to the canonical row rather than stale duplicate attributes", () => {
+    const setup = buildJobSearchPlan({ ...defaultJobFilters, companies: ["Older Co"], employmentTypes: ["Internship"] });
     const sql = setup.countSql.replace("FROM jobs j", `FROM jobs j`);
     const parameters = setup.bindings.map((value, index) =>
       `.parameter set ?${index + 1} ${sqliteLiteral(value)}`,
@@ -307,7 +309,7 @@ describe("parameterized job search SQL", () => {
       encoding: "utf8",
       input: [
         "CREATE TABLE jobs (id TEXT, company TEXT, official_url TEXT, status TEXT, first_seen_at TEXT, valid_through TEXT, employment_type TEXT);",
-        "INSERT INTO jobs VALUES ('old','Older Co','https://example.com/1','open','2026-01-01',NULL,NULL),('new','Newer Co','https://example.com/1','open','2026-02-01',NULL,NULL);",
+        "INSERT INTO jobs VALUES ('old','Older Co','https://example.com/1','open','2026-01-01',NULL,'Internship'),('new','Newer Co','https://example.com/1','open','2026-02-01',NULL,'Full-time');",
         ".parameter init",
         parameters,
         `${sql};`,
@@ -327,8 +329,8 @@ describe("parameterized job search SQL", () => {
       postedBefore: "2026-08-09",
     });
 
-    expect(plan.pageSql).toContain("j.company = ? COLLATE NOCASE");
-    expect(plan.pageSql).not.toContain("lower(j.company)");
+    expect(plan.pageSql).toContain("company_job.company = ? COLLATE NOCASE");
+    expect(plan.pageSql).not.toContain("lower(company_job.company)");
     expect(plan.pageSql).toContain("j.published_at >= ?");
     expect(plan.pageSql).toContain("j.published_at < ?");
     expect(plan.pageSql).toContain("j.published_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 minutes')");
@@ -419,7 +421,7 @@ describe("parameterized job search SQL", () => {
     });
 
     expect(executePlan(plan.countSql, plan.bindings)).toEqual([{ total: 2 }]);
-    expect(plan.pageSql).toContain("j.company = ? COLLATE NOCASE");
+    expect(plan.pageSql).toContain("company_job.company = ? COLLATE NOCASE");
   });
 
   it("treats the Barclays brand and the legacy Barclays US source label as equivalent", () => {
@@ -435,8 +437,48 @@ describe("parameterized job search SQL", () => {
     expect(brandPlan.bindings).toEqual(["Barclays", "Barclays US"]);
     expect(legacyPlan.bindings).toEqual(["Barclays", "Barclays US"]);
     expect(brandPlan.pageSql).toContain(
-      "(j.company = ? COLLATE NOCASE OR j.company = ? COLLATE NOCASE)",
+      "(company_job.company = ? COLLATE NOCASE OR company_job.company = ? COLLATE NOCASE)",
     );
+  });
+
+  it("keeps a shared Amazon posting visible under its source labels without broadening subsidiary filters", () => {
+    const fixture = `INSERT INTO jobs (id, company, official_url, status, first_seen_at, published_at, valid_through) VALUES
+      ('amazon-canonical', 'Amazon', 'https://amazon.jobs/en/jobs/10529525', 'open', '2026-09-04', '2026-09-04', NULL),
+      ('aws-copy', 'Amazon / AWS', 'https://amazon.jobs/en/jobs/10529525', 'open', '2026-09-04', '2026-09-04', NULL),
+      ('robotics-copy', 'Amazon Robotics', 'https://amazon.jobs/en/jobs/10529525', 'open', '2026-09-04', '2026-09-04', NULL),
+      ('aws-only', 'Amazon / AWS', 'https://amazon.jobs/en/jobs/2', 'open', '2026-09-03', '2026-09-03', NULL),
+      ('closed-copy', 'Closed Label', 'https://amazon.jobs/en/jobs/10529525', 'closed', '2026-09-04', '2026-09-04', NULL),
+      ('expired-copy', 'Expired Label', 'https://amazon.jobs/en/jobs/10529525', 'open', '2026-09-03', '2026-09-04', '2000-01-01'),
+      ('later-copy', 'Later Label', 'https://amazon.jobs/en/jobs/10529525', 'open', '2026-09-03', '2026-09-04', NULL);`;
+    const query = (companies: string[], page = 1, snapshotAt?: string) => {
+      const plan = buildJobSearchPlan({ ...defaultJobFilters, companies, page, pageSize: 1, snapshotAt });
+      return {
+        rows: executePlan(plan.pageSql, plan.bindings, plan.limit, plan.offset, fixture),
+        count: executePlan(plan.countSql, plan.bindings, undefined, undefined, fixture),
+      };
+    };
+    expect(query(["amazon / aws"])).toMatchObject({ rows: [{ id: "amazon-canonical" }], count: [{ total: 2 }] });
+    expect(query(["Amazon / AWS"], 2).rows).toMatchObject([{ id: "aws-only" }]);
+    expect(query(["Amazon Robotics"])).toMatchObject({ rows: [{ id: "amazon-canonical" }], count: [{ total: 1 }] });
+    expect(query(["Amazon / AWS", "Amazon Robotics"]).count).toEqual([{ total: 2 }]);
+    expect(query(["Closed Label"]).count).toEqual([{ total: 0 }]);
+    expect(query(["Expired Label"]).count).toEqual([{ total: 0 }]);
+    expect(query(["Later Label"], 1, "2026-09-02").count).toEqual([{ total: 0 }]);
+  });
+
+  it("includes internship titles with missing, past, or future recruiting years unless a year is explicitly selected", () => {
+    const titles = ["Software Intern", "2026 Data Internship", "2027 AI Intern", "2028 Software Intern", "Data Co-op", "Internal Audit", "International Engineer"];
+    const fixture = "CREATE INDEX job_topics_topic_job_idx ON job_topics(topic_key, job_id);\n" + titles.map((title, index) =>
+      `INSERT INTO jobs (id, company, title, official_url, status, first_seen_at) VALUES ('year-${index}', 'Year Test', '${title}', 'https://example.com/year-${index}', 'open', '2026-09-01');\n` +
+      classifyJobPrograms(title).keys.map(key => `INSERT INTO job_topics VALUES ('year-${index}', 'program:${key}');`).join("\n")
+    ).join("\n");
+    const count = (recruitingYears: number[]) => {
+      const plan = buildJobSearchPlan({ ...defaultJobFilters, companies: ["Year Test"], programTypes: ["internship", "coop"], recruitingYears });
+      return executePlan(plan.countSql, plan.bindings, undefined, undefined, fixture);
+    };
+    expect(count([])).toEqual([{ total: 5 }]);
+    expect(count([2027])).toEqual([{ total: 1 }]);
+    expect(count([2026])).toEqual([{ total: 1 }]);
   });
 
   it("ranks known official posting dates ahead of newly discovered unknown dates", () => {

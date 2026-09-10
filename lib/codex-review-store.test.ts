@@ -130,14 +130,28 @@ describe("Codex review persistence", () => {
       .toEqual({ notification_eligible: 1 });
   });
 
-  it("leaves region and recruiting-year adjudication to Codex", async () => {
+  it.each(["Software Intern", "2026 Software Internship", "2028 AI Intern"])("accepts approved internship %s without a 2027 topic", async (title) => {
+    const sqlite = database();
+    sqlite.prepare("UPDATE jobs SET title = ? WHERE id = 'job-new'").run(title);
+    sqlite.prepare("DELETE FROM job_topics WHERE job_id = 'job-new' AND topic_key = 'year:2027'").run();
+    const result = await applyCodexReviews(createD1(sqlite), [{
+      jobId: "job-new", decision: "approve",
+      rationale: "Keyword match (not individually reviewed). United States. Software development stack. Recruiting year is not an eligibility gate.",
+      verifiedUrl: "https://careers.example.com/job-new",
+    }]);
+    expect(result).toMatchObject({ accepted: 1, approved: 1, rejected: 0, missing: [] });
+    expect(sqlite.prepare("SELECT notification_eligible FROM job_matches WHERE job_id = 'job-new'").get())
+      .toEqual({ notification_eligible: 1 });
+  });
+
+  it("leaves region adjudication to the review caller", async () => {
     const sqlite = database();
     sqlite.prepare("UPDATE jobs SET location_region = 'non_us' WHERE id = 'job-new'").run();
     sqlite.prepare("DELETE FROM job_topics WHERE job_id = 'job-new' AND topic_key = 'year:2027'").run();
     const result = await applyCodexReviews(createD1(sqlite), [{
       officialUrl: "https://careers.example.com/job-new",
       decision: "reject",
-      rationale: "The reviewed posting is outside the United States and is not a 2027 recruiting cycle.",
+      rationale: "The reviewed posting is outside the United States, United Kingdom, and Singapore.",
       verifiedUrl: "https://careers.example.com/job-new",
     }]);
     expect(result).toMatchObject({ accepted: 1, approved: 0, rejected: 1, missing: [] });

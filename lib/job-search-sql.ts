@@ -273,7 +273,20 @@ JOIN job_matches resume_match
   if (filters.snapshotAt) add("j.first_seen_at <= ?", [filters.snapshotAt]);
 
   if (filters.status && filters.status !== "all") add("j.review_state = ?", [filters.status]);
-  addAnyEquals("j.company", companyFilterValues(filters.companies));
+  const companies = companyFilterValues(filters.companies);
+  if (companies.length) {
+    // Select identities from the requested source labels, then return the
+    // global canonical row. A shared Amazon/AWS/Robotics URL must not vanish
+    // merely because its representative is labelled "Amazon". Do not expand
+    // a subsidiary selection to unrelated jobs from the entire parent brand.
+    add(`j.official_url IN (
+      SELECT company_job.official_url FROM jobs company_job
+      WHERE company_job.status = 'open'
+        AND (company_job.valid_through IS NULL OR company_job.valid_through >= date('now'))
+        AND (${companies.map(() => "company_job.company = ? COLLATE NOCASE").join(" OR ")})
+        ${filters.snapshotAt ? "AND company_job.first_seen_at <= ?" : ""}
+    )`, [...companies, ...(filters.snapshotAt ? [filters.snapshotAt] : [])]);
+  }
 
   const location = filters.location?.trim().toLocaleLowerCase();
   if (location) add("lower(coalesce(j.location, '')) LIKE ? ESCAPE '\\'", [`%${escapeLike(location)}%`]);
