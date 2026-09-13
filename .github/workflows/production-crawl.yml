@@ -13,6 +13,7 @@ on:
     paths:
       - .github/workflows/production-crawl.yml
       - scripts/run-production-crawl.mjs
+      - scripts/production-crawl-admission.mjs
       - scripts/request-fallback-crawl.ts
       - scripts/browser-fallback-crawl.ts
       - scripts/prepare-sites-package.ts
@@ -24,10 +25,9 @@ on:
       - db/schema.ts
       - drizzle/**
   schedule:
-    # One bounded workflow owns each two-hour collection window. The native
-    # drain finishes first and leaves enough time for targeted browser repair
-    # without the next scheduled run canceling it midway.
-    - cron: "17 */2 * * *"
+    # GitHub can delay/drop schedule events. Frequent lightweight admission
+    # checks recover a missed tick; only a due owner runs the full pipeline.
+    - cron: "2,17,32,47 * * * *"
   workflow_dispatch:
 
 concurrency:
@@ -38,11 +38,29 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
   id-token: write
 
 jobs:
+  admission:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.gate.outputs.run }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Admit only a due collection owner
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/production-crawl-admission.mjs
+
   crawl:
-    if: ${{ always() && !cancelled() }}
+    needs: [admission]
+    if: ${{ needs.admission.outputs.run == 'true' && !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -68,8 +86,8 @@ jobs:
     # run only when due. Sequential ordering also prevents the native stale-run
     # finalizer from misclassifying a streaming snapshot as disconnected.
     # Forty + thirty-five + twenty-five minutes remains below two hours.
-    needs: [crawl]
-    if: ${{ always() && !cancelled() }}
+    needs: [admission, crawl]
+    if: ${{ always() && !cancelled() && needs.admission.outputs.run == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -122,11 +140,11 @@ jobs:
           retention-days: 7
 
   browser-recovery:
-    needs: [crawl, request-recovery]
+    needs: [admission, crawl, request-recovery]
     # Browser recovery is the safety net for exactly the runs where the
     # native drain encounters an infrastructure/OIDC failure.  Do not let a
     # failed native job suppress the independent browser queue.
-    if: ${{ always() && !cancelled() }}
+    if: ${{ always() && !cancelled() && needs.admission.outputs.run == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
