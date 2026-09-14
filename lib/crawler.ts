@@ -19786,7 +19786,19 @@ async function crawlEightfold(source: CrawlSource, fetcher: typeof fetch): Promi
         },
       }, false, { attempts: 1, timeoutMs: 15_000 });
       let response = await request();
-      if (mode === "pcsx" && response.status === 429 && !sessionCookie) {
+      // Respect an explicit upstream cooldown; never turn Retry-After into
+      // an immediate cookie/bootstrap retry. Long cooldowns belong to the
+      // next scheduled owner, not this source's bounded execution window.
+      const retryAfter = response.headers.get("retry-after");
+      if (response.status === 429 && retryAfter !== null) {
+        const delay = /^\d+(?:\.\d+)?$/.test(retryAfter)
+          ? Number(retryAfter) * 1_000 : Date.parse(retryAfter) - Date.now();
+        if (Number.isFinite(delay) && delay <= 5_000) {
+          await response.body?.cancel().catch(() => undefined);
+          await new Promise(resolve => setTimeout(resolve, Math.max(0, delay)));
+          response = await request();
+        }
+      } else if (mode === "pcsx" && response.status === 429 && !sessionCookie) {
         await bootstrapSession();
         if (sessionCookie) response = await request();
       }
@@ -19824,8 +19836,11 @@ async function crawlEightfold(source: CrawlSource, fetcher: typeof fetch): Promi
       (_, index) => Math.max(startPage, 2) + index,
     );
     const pages: Array<Payload | null> = [];
-    for (let index = 0; index < pagesToFetch.length; index += 8) {
-      pages.push(...await Promise.all(pagesToFetch.slice(index, index + 8).map(async (page) => {
+    // Netflix's edge rate-limits an eight-request burst. Keep the complete
+    // checkpoint walk, but reduce simultaneous requests for this tenant.
+    const pageConcurrency = source.id === "p4-0314-netflix" ? 2 : 8;
+    for (let index = 0; index < pagesToFetch.length; index += pageConcurrency) {
+      pages.push(...await Promise.all(pagesToFetch.slice(index, index + pageConcurrency).map(async (page) => {
         try {
           return await fetchPage((page - 1) * pageSize, true, isCheckpointed ? 1 : 3);
         } catch {

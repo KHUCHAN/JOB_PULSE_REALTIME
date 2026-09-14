@@ -6,6 +6,44 @@ const source = { id: 'p4-0285-google', company: 'Google / Alphabet', postingUrl:
 const card = (id: number, title = `Role ${id}`, location = 'Mountain View, CA, USA') => `<li class="lLd3Je" ssk='0:${id}'><h3>${title}</h3><span class="r0wTof">${location}</span><a href="/about/careers/applications/jobs/results/${id}-role?q=intern&amp;sort_by=date" aria-label="Learn more about ${title}"></a></li>`;
 const page = (total: number, cards: string) => new Response(`<span class="SWhIm">${total}</span> jobs matched${cards}`);
 
+it('limits Netflix page bursts while preserving the complete catalog', async () => {
+  let active = 0, peak = 0;
+  const fetcher: typeof fetch = async input => {
+    const start = Number(new URL(String(input)).searchParams.get('start') ?? 0);
+    active++; peak = Math.max(peak, active);
+    await new Promise(resolve => setTimeout(resolve, 1)); active--;
+    return Response.json({ count: 100, positions: Array.from({ length: 10 }, (_, i) => ({
+      id: start + i + 1, name: `Engineering ${start + i}`, location: 'Los Gatos, CA, USA',
+    })) });
+  };
+  const result = await crawlSource({ id: 'p4-0314-netflix', company: 'Netflix', adapter: 'custom', postingUrl: 'https://netflix.eightfold.ai/careers' }, fetcher, new Date());
+  expect(result.status).toBe('succeeded');
+  expect(result.jobs).toHaveLength(100);
+  expect(peak).toBe(2);
+});
+
+it('defers explicit long Eightfold cooldowns without a cookie retry', async () => {
+  let calls = 0;
+  const result = await crawlSource({ id: 'cooldown-eightfold', company: 'Acme', adapter: 'custom', postingUrl: 'https://acme.eightfold.ai/careers' }, async () => {
+    calls++;
+    return new Response('', { status: 429, headers: { 'retry-after': '60' } });
+  }, new Date());
+  expect(result.status).toBe('blocked');
+  expect(result.error).toContain('429');
+  expect(calls).toBe(1);
+});
+
+it('retries an expired explicit Eightfold cooldown only once', async () => {
+  let calls = 0;
+  const result = await crawlSource({ id: 'cooldown-eightfold', company: 'Acme', adapter: 'custom', postingUrl: 'https://acme.eightfold.ai/careers' }, async () => {
+    calls++;
+    if (calls === 1) return new Response('', { status: 429, headers: { 'retry-after': '0' } });
+    return Response.json({ count: 0, positions: [] });
+  }, new Date());
+  expect(result.status).toBe('succeeded');
+  expect(calls).toBe(2);
+});
+
 it('keeps FAANG, Netflix and semiconductor recovery IDs enabled without truncation', () => {
   const workflow = readFileSync('.github/workflows/production-crawl.yml', 'utf8');
   for (const variable of ['REQUEST_FALLBACK_SOURCE_IDS', 'REQUEST_FALLBACK_FORCE_SOURCE_IDS']) {
