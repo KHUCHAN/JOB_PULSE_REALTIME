@@ -22,6 +22,18 @@ it('limits Netflix page bursts while preserving the complete catalog', async () 
   expect(peak).toBe(2);
 });
 
+it('uses Netflix official public legacy catalog without probing disabled PCSX', async () => {
+  const urls: string[] = [];
+  const result = await crawlSource({ id: 'p4-0314-netflix', company: 'Netflix', adapter: 'custom', postingUrl: 'https://explore.jobs.netflix.net/careers?domain=netflix.com' }, async input => {
+    const url = new URL(String(input)); urls.push(url.href);
+    expect(url.pathname).toBe('/api/apply/v2/jobs');
+    return Response.json({ count: 1, positions: [{ id: 101, ats_job_id: 'JR101', name: 'Engineer', location: 'Los Gatos, CA', t_create: 1789387200, canonicalPositionUrl: 'https://explore.jobs.netflix.net/careers/job/101' }] });
+  }, new Date());
+  expect(result.status).toBe('succeeded');
+  expect(result.jobs[0].externalId).toBe('JR101');
+  expect(urls).toHaveLength(1);
+});
+
 it('defers explicit long Eightfold cooldowns without a cookie retry', async () => {
   let calls = 0;
   const result = await crawlSource({ id: 'cooldown-eightfold', company: 'Acme', adapter: 'custom', postingUrl: 'https://acme.eightfold.ai/careers' }, async () => {

@@ -3,7 +3,7 @@ import { ingestJobSnapshotInChunks, REQUEST_SNAPSHOT_CHUNK_OPTIONS } from "../li
 import { isRequestFallbackDue, recoverCheckpointedCatalog } from "../lib/request-fallback-recovery.ts";
 import { isSafeCareerListingUrl } from "../lib/url-remediation.ts";
 import { verifySourceSnapshot } from "../lib/source-snapshot-verification.ts";
-import { deferRecovery } from "../lib/recovery-policy.ts";
+import { sourceRecoveryDelay } from "../lib/recovery-policy.ts";
 import { createFifoLimiter } from "../lib/fifo-limiter.ts";
 import { sourceFetchBudget } from "../lib/source-fetch-budget.ts";
 import { runRecoveryPipeline } from "../lib/recovery-pipeline.ts";
@@ -137,12 +137,14 @@ const collect = async (source: CrawlSource) => {
       // An exhausted checkpoint has already retried the failing window. Do
       // not replay its successful prefix and the same stalled window again;
       // keep it failed in the artifact for this owner's browser recovery.
-      if (deferRecovery(firstError instanceof Error ? firstError.message : "")) throw firstError;
+      const retryDelay = sourceRecoveryDelay(source.id, firstError instanceof Error ? firstError.message : "");
+      if (retryDelay === null) throw firstError;
       // Retry the complete source once. Official Workday and sitemap edges can
       // change a page count or reject one burst even though the next bounded
       // pass is healthy; isolating the retry here prevents that source from
       // affecting the other seven worker lanes.
-      await new Promise((resolve) => setTimeout(resolve, 2_000));
+      await new Promise((resolve) => setTimeout(resolve, retryDelay));
+      budget.check();
       try {
         result = await recoverCheckpointedCatalog(source, budget.fetch, crawlSource, recoveryOptions);
       } catch (secondError) {

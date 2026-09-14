@@ -1,9 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { deferRecovery, failedRecoveryIds, succeededRecoveryIds, workdayMaintenance } from "./recovery-policy";
+import { deferRecovery, failedRecoveryIds, succeededRecoveryIds, workdayMaintenance, sourceRecoveryDelay } from "./recovery-policy";
 import { crawlSource, coastCentralJobsFromHtml } from "./crawler";
 import { recoverCheckpointedCatalog } from "./request-fallback-recovery";
 
 describe("bounded provider recovery", () => {
+  it('allows only one delayed same-source Synopsys 403 recheck', () => {
+    expect(sourceRecoveryDelay('p5-1071-synopsys', 'Career site returned HTTP 403.')).toBe(30_000);
+    expect(sourceRecoveryDelay('other', 'Career site returned HTTP 403.')).toBeNull();
+    expect(sourceRecoveryDelay('p5-1071-synopsys', 'HTTP 429')).toBeNull();
+    expect(sourceRecoveryDelay('p5-1071-synopsys', 'HTTP 401')).toBeNull();
+    expect(sourceRecoveryDelay('p5-1071-synopsys', 'HTML interstitial')).toBeNull();
+    expect(sourceRecoveryDelay('p5-1071-synopsys', 'HTTP 503')).toBe(2_000);
+  });
   it("hands exhausted checkpoint stalls to browser recovery without a full catalog replay", async () => {
     let calls = 0;
     const crawl = async (): Promise<import("./crawler").SourceCrawlResult> => {

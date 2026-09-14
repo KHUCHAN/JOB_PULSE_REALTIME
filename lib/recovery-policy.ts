@@ -2,6 +2,14 @@
 export const deferRecovery = (message: string): boolean =>
   /upstream maintenance|HTML interstitial|HTTP (?:401|403|429)\b|Checkpointed catalog did not advance beyond page \d+\./i.test(message);
 
+// The same public Synopsys listing intermittently returns 403 then 200.
+// Recheck once, with a real cooldown and unchanged client/URL. Persistent
+// denial, challenges, authentication failures and 429 remain deferred.
+export const sourceRecoveryDelay = (sourceId: string, message: string): number | null => {
+  if (sourceId === 'p5-1071-synopsys' && message === 'Career site returned HTTP 403.') return 30_000;
+  return deferRecovery(message) ? null : 2_000;
+};
+
 export const workdayMaintenance = (url: string, body: string): boolean =>
   /^https:\/\/(?:community|static\.community)\.workday\.com\/maintenance-page(?:[./?]|$)/i.test(url)
   || /^https:\/\/www\.myworkday\.com\/wday\/drs\/outage(?:[/?]|$)/i.test(url)

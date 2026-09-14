@@ -19728,7 +19728,10 @@ async function crawlEightfold(source: CrawlSource, fetcher: typeof fetch): Promi
   try {
     type Payload = { count?: number; positions?: EightfoldPosition[]; facets?: Record<string, unknown>; filterDef?: { facets?: Record<string, unknown> } };
     type ApiMode = "pcsx" | "legacy";
-    let apiMode: ApiMode = "pcsx";
+    // Netflix's official careers shell uses the public apply/v2 catalog.
+    // PCSX explicitly reports that it is not enabled for this tenant; probing
+    // it first wastes requests and can rate-limit an otherwise healthy feed.
+    let apiMode: ApiMode = page.hostname === "explore.jobs.netflix.net" ? "legacy" : "pcsx";
 
     const bootstrapSession = async (): Promise<void> => {
       const careers = new URL("/careers", origin);
