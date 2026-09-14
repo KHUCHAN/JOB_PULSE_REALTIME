@@ -59,8 +59,8 @@ jobs:
         run: node scripts/production-crawl-admission.mjs
 
   crawl:
-    needs: [admission]
-    if: ${{ needs.admission.outputs.run == 'true' && !cancelled() }}
+    needs: [admission, request-recovery]
+    if: ${{ always() && needs.admission.outputs.run == 'true' && !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -71,8 +71,8 @@ jobs:
       - name: Drain due production sources
         env:
           JOB_PULSE_SITE_URL: https://job-pulse-realtime.autodev61.chatgpt.site
-          # A repair push needs a bounded smoke drain before its targeted
-          # recovery pass; the recurring schedule retains the full drain.
+          # A repair push needs only a bounded smoke drain after critical
+          # recovery; the recurring schedule retains the full drain.
           JOB_PULSE_MAX_RUN_MINUTES: ${{ github.event_name == 'push' && '2' || '40' }}
           # Start with two leases, grow to four after clean rounds, and back
           # down to one with cooldown when shared D1 capacity is saturated.
@@ -81,12 +81,13 @@ jobs:
 
   request-recovery:
     # Large and high-priority first-party catalogs run in an independent Node
-    # process after the Worker drain. This avoids the edge request deadline;
+    # process BEFORE the Worker drain. Critical internships must not wait
+    # behind a forty-minute long-tail sweep. This avoids the edge deadline;
     # the forced set is verified every workflow, while ordinary recovery IDs
     # run only when due. Sequential ordering also prevents the native stale-run
     # finalizer from misclassifying a streaming snapshot as disconnected.
     # Forty + thirty-five + twenty-five minutes remains below two hours.
-    needs: [admission, crawl]
+    needs: [admission]
     if: ${{ always() && !cancelled() && needs.admission.outputs.run == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 35

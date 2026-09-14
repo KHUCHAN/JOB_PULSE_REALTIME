@@ -56,6 +56,10 @@ test('workflow serializes every mutating lane behind admission', async () => {
   assert.match(text, /cancel-in-progress: false/);
   assert.equal((text.match(/needs\.admission\.outputs\.run == 'true'/g) || []).length, 3);
   assert.match(text, /actions: read/);
+  assert.match(text, /  crawl:\n    needs: \[admission, request-recovery\]/);
+  const recovery = text.slice(text.indexOf('  request-recovery:'), text.indexOf('  browser-recovery:'));
+  assert.match(recovery, /needs: \[admission\]/);
+  assert.doesNotMatch(recovery, /needs: \[admission, crawl\]/);
 });
 test('watchdog never dispatches within grace or when an owner is queued', async () => {
   for (const [age, queued] of [[140, false], [180, true]]) {
