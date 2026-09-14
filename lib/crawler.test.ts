@@ -8791,7 +8791,7 @@ We are an equal opportunity employer.`;
     expect(result.jobs).toHaveLength(580);
   });
 
-  it.each(["Req-10002", "JR2024523"])("completes a Workday catalog containing an authoritative requisition-only tombstone %s", async (tombstoneId) => {
+  it.each(["Req-10002", "JR2024523", "R258651"])("completes a Workday catalog containing an authoritative requisition-only tombstone %s", async (tombstoneId) => {
     const result = await crawlSource({
       id: "p5-0588-edwards-lifesciences",
       company: "Edwards Lifesciences",

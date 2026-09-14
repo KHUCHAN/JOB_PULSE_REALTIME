@@ -363,6 +363,14 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
 // every pass. Keep the verified, first-party board identity here and promote
 // the canonical listing URL after the first successful sync.
 const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
+  "p4-0210-adobe": {
+    // Adobe's public career cards link this official Workday tenant. Read
+    // its structured catalog directly, rather than repeatedly stalling
+    // in the presentation site's fallback/checkpoint discovery path.
+    discovered: { kind: "workday", endpoint: "https://adobe.wd5.myworkdayjobs.com/wday/cxs/adobe/external_experienced/jobs" },
+    listingUrl: "https://adobe.wd5.myworkdayjobs.com/external_experienced",
+    adapter: "workday",
+  },
   "p5-1038-renesas": {
     // Renesas links this tenant from its own careers site. The presentation
     // site's sitemap includes expired vacancies and omits structured dates;
@@ -20607,7 +20615,7 @@ const workdayCatalogIdentity = (job: WorkdayJob): string | null => {
   if (!job.title && !job.externalPath) {
     const requisitionId = job.bulletFields
       ?.map((value) => value.trim())
-      .find((value) => /^(?:Req-|JR)\d+(?:-\d+)?$/i.test(value));
+      .find((value) => /^(?:Req-|JR|R)\d+(?:-\d+)?$/i.test(value));
     if (requisitionId) return `unavailable:${requisitionId.toLocaleLowerCase()}`;
   }
   return null;

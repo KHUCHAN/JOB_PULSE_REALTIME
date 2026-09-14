@@ -78,3 +78,18 @@ it('uses the employer-linked active Renesas ATS rather than expired sitemap vaca
   expect(result.resolvedListingUrl).toBe('https://careers.smartrecruiters.com/RenesasElectronics');
   expect(result.jobs).toContainEqual(expect.objectContaining({ title: 'Intern, Test Engineering', locationCountry: 'us', publishedAt: '2026-09-14T13:26:57.574Z', officialUrl: expect.stringContaining('jobs.smartrecruiters.com/RenesasElectronics/') }));
 });
+
+it('routes Adobe directly to its official Workday catalog without dropping UK or Singapore', async () => {
+  const fetcher: typeof fetch = async (input, init) => {
+    expect(String(input)).toBe('https://adobe.wd5.myworkdayjobs.com/wday/cxs/adobe/external_experienced/jobs');
+    const request = JSON.parse(String(init?.body));
+    const job = { title: 'Software Engineer', externalPath: '/job/San-Jose/Software-Engineer_R171666', locationsText: 'San Jose, California, USA', postedOn: 'Posted Today', bulletFields: ['R171666'] };
+    expect(request.appliedFacets).toEqual({});
+    return Response.json({ total: 3, jobPostings: [job, { ...job, externalPath: '/job/London/Software-Engineer_R171667', locationsText: 'London, United Kingdom' }, { ...job, externalPath: '/job/Singapore/Software-Engineer_R171668', locationsText: 'Singapore' }] });
+  };
+  const result = await crawlSource({ id: 'p4-0210-adobe', company: 'Adobe', adapter: 'phenom', postingUrl: 'https://careers.adobe.com/us/en/search-results' }, fetcher, new Date());
+  expect(result.status).toBe('succeeded');
+  expect(result.completeListing).toBe(true);
+  expect(result.jobs.map(j => j.location)).toEqual(['San Jose, California, USA', 'London, United Kingdom', 'Singapore']);
+  expect(result.resolvedListingUrl).toBe('https://adobe.wd5.myworkdayjobs.com/external_experienced');
+});
