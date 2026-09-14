@@ -31,11 +31,11 @@ it('reads later newest-first internship pages without a year constraint and pres
     if (q === 'intern') return page(21, n === 1
       ? Array.from({ length: 20 }, (_, i) => card(1000 + i, `Software Intern ${i}`)).join('')
       : card(119184, 'Data Scientist, Product Intern, MS', 'Austin, TX, USA'));
-    return page(421, Array.from({ length: n === 22 ? 1 : 20 }, (_, i) => card(n * 100 + i)).join(''));
+    return page(6000, Array.from({ length: 20 }, (_, i) => card(n * 100 + i)).join(''));
   };
-  const result = await crawlSource(source, fetcher, new Date('2026-09-14T12:00:00Z'));
+  const result = await crawlSource({ ...source, crawlPageCursor: 1 }, fetcher, new Date('2026-09-14T12:00:00Z'));
   expect(result.status).toBe('succeeded');
-  expect(result.pagination?.cycleComplete).toBe(true);
+  expect(result.pagination?.cycleComplete).toBe(false);
   expect(result.jobs[0].title).toBe('Software Intern 0');
   expect(result.jobs).toContainEqual(expect.objectContaining({ externalId: '119184', location: 'Austin, TX, USA', publishedAt: null, officialUrl: 'https://www.google.com/about/careers/applications/jobs/results/119184-role' }));
   expect(detailIds.some(id => id.includes('119184-role'))).toBe(true);

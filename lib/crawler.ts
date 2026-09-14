@@ -26051,6 +26051,10 @@ const withLargeCatalogRequestScope = (source: CrawlSource): CrawlSource => (
 export async function crawlSource(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
   const budgetedFetcher = crawlBudgetedFetcher(fetcher, source.id === "p2-0027-bank-of-america"
     ? { maxRequests: 130, deadlineMs: 45_000 }
+    : source.id === "p4-0285-google"
+      // 32 catalog pages + at most 16 priority pages + 48 detail requests.
+      // The default 50-request limit silently starved the newest detail rows.
+      ? { maxRequests: 100, deadlineMs: 45_000 }
     : undefined);
   const requestScopedSource = withLargeCatalogRequestScope(source);
   const scoped = applyLargeCatalogRegionScope(await crawlSourceBase(requestScopedSource, budgetedFetcher, now), source);
