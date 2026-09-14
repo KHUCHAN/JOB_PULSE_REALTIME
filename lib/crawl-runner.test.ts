@@ -205,6 +205,7 @@ describe("runDueCrawls", () => {
       return `<a href="/about/careers/applications/jobs/results/${id}-role-${id}" aria-label="Learn more about Role ${id}"></a>`;
     }).join("");
     const fetcher: typeof fetch = async (input) => {
+      if (new URL(String(input)).searchParams.has("q")) return new Response('<span class="SWhIm">0</span> jobs matched');
       const pageNumber = Number(new URL(String(input)).searchParams.get("page") ?? 1);
       return new Response(`<span class="SWhIm">421</span> jobs matched ${page(pageNumber * 100, pageNumber === 22 ? 1 : 20)}`, { status: 200 });
     };
@@ -233,7 +234,9 @@ describe("runDueCrawls", () => {
     const store = new MemoryStore([source]);
     const page = Array.from({ length: 20 }, (_, index) =>
       `<a href="/about/careers/applications/jobs/results/${100 + index}-role" aria-label="Learn more about Role ${index}"></a>`).join("");
-    await runDueCrawls(store, async () => new Response(`<span class="SWhIm">1000</span> jobs matched ${page}`),
+    await runDueCrawls(store, async (input) => new Response(new URL(String(input)).searchParams.has("q")
+      ? '<span class="SWhIm">0</span> jobs matched'
+      : `<span class="SWhIm">1000</span> jobs matched ${page}`),
       new Date("2026-08-08T12:00:00.000Z"), { concurrency: 1 });
 
     expect(source.nextCrawlAt).toBe("2026-08-08T12:05:00.000Z");

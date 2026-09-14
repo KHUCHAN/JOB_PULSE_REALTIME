@@ -4511,7 +4511,9 @@ HUMAN RESOURCES Posted Date
       }
       const pageNumber = Number(url.searchParams.get("page") ?? 1);
       requests.push(pageNumber);
-      if (url.searchParams.get("q") === "2027 internship") {
+      if (url.searchParams.get("q") === "co-op") return new Response('<span class="SWhIm">0</span> jobs matched');
+      if (url.searchParams.get("q") === "intern") {
+        expect(url.searchParams.get("sort_by")).toBe("date");
         return new Response(`<span class="SWhIm">1</span> jobs matched
           <a href="/about/careers/applications/jobs/results/94172495052972742-software-engineering-intern-ms-summer-2027?q=2027+internship" aria-label="Learn more about Software Engineering Intern, MS, Summer 2027"></a>`, { status: 200 });
       }
@@ -4549,6 +4551,10 @@ HUMAN RESOURCES Posted Date
       return `<a href="/about/careers/applications/jobs/results/${id}-role-${id}" aria-label="Learn more about Role ${id}"></a>`;
     }).join("");
     const fetcher: typeof fetch = async (input) => {
+      if (new URL(String(input)).searchParams.has("q")) {
+        requests.push(1);
+        return new Response('<span class="SWhIm">0</span> jobs matched');
+      }
       const pageNumber = Number(new URL(String(input)).searchParams.get("page") ?? 1);
       requests.push(pageNumber);
       if (pageNumber === 22) return new Response("temporary failure", { status: 503 });

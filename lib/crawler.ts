@@ -363,6 +363,14 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
 // every pass. Keep the verified, first-party board identity here and promote
 // the canonical listing URL after the first successful sync.
 const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
+  "p5-1038-renesas": {
+    // Renesas links this tenant from its own careers site. The presentation
+    // site's sitemap includes expired vacancies and omits structured dates;
+    // the linked ATS exposes active records, requisitions, location and dates.
+    discovered: { kind: "smartrecruiters", endpoint: "https://api.smartrecruiters.com/v1/companies/RenesasElectronics/postings" },
+    listingUrl: "https://careers.smartrecruiters.com/RenesasElectronics",
+    adapter: "smartrecruiters",
+  },
   "p5-1052-sarcos-robotics": {
     // Palladyne's careers page embeds only a small presentation subset. Its
     // linked Paylocity board is the canonical complete catalog and includes
@@ -19268,16 +19276,28 @@ const googleJobsFromHtml = (html: string, source: CrawlSource): CrawledJob[] => 
     // between the full catalog and the priority internship views.
     official.searchParams.delete("q");
     official.searchParams.delete("company");
+    official.searchParams.delete("sort_by");
     const officialUrl = official.href;
     const externalId = new URL(officialUrl).pathname.match(/\/jobs\/results\/(\d+)-/i)?.[1];
     const title = decodeHtmlAttribute(label).replace(/^Learn more about\s+/i, "").trim();
     if (!externalId || !title) continue;
+    // Read locations from this card only. Do not borrow an adjacent result's
+    // location, and do not require a detail request just to recover US states.
+    const prefix = html.slice(0, match.index);
+    const cardStart = prefix.lastIndexOf('<li class="lLd3Je"');
+    const card = cardStart >= 0 ? prefix.slice(cardStart) : "";
+    const cardIdentity = card.match(/ssk=['"]\d+:(\d+)['"]/)?.[1];
+    const locations = cardIdentity === externalId
+      ? [...new Set([...card.matchAll(/<span\b[^>]*class=["'][^"']*\br0wTof\b[^"']*["'][^>]*>([^<]+)<\/span>/gi)]
+          .flatMap((value) => plainText(value[1])?.replace(/^[;\s]+/, "") ?? []))]
+      : [];
     const programs = classifyJobPrograms(title);
     jobs.push({
       externalId,
       title,
       company: source.company,
-      location: null,
+      location: locations[0] ?? null,
+      ...(locations.length > 1 ? { secondaryLocations: locations.slice(1) } : {}),
       arrangement: "unknown",
       employmentType: programs.keys.some((key) => key === "internship" || key === "coop") ? "Internship" : null,
       summary: null,
@@ -19324,11 +19344,11 @@ const googleJobsFromResponse = async (
     const anchorPattern = /<a\b[^>]*>/gi;
     let lastCompleteEnd = 0;
     for (const match of buffer.matchAll(anchorPattern)) {
-      jobs.push(...googleJobsFromHtml(match[0], source));
+      jobs.push(...googleJobsFromHtml(buffer.slice(lastCompleteEnd, (match.index ?? 0) + match[0].length), source));
       lastCompleteEnd = (match.index ?? 0) + match[0].length;
     }
     if (lastCompleteEnd > 0) buffer = buffer.slice(lastCompleteEnd);
-    if (buffer.length > 8_192) {
+    if (buffer.length > 131_072) {
       const partialAnchor = buffer.toLowerCase().lastIndexOf("<a");
       buffer = partialAnchor >= 0 ? buffer.slice(partialAnchor) : buffer.slice(-4_096);
     }
@@ -19352,6 +19372,7 @@ const crawlGoogleCareers = async (source: CrawlSource, fetcher: typeof fetch): P
     const query = queryOverride ?? sourceEndpoint.searchParams.get("q");
     if (company) endpoint.searchParams.set("company", company);
     if (query) endpoint.searchParams.set("q", query);
+    if (queryOverride) endpoint.searchParams.set("sort_by", "date");
     if (page > 1) endpoint.searchParams.set("page", String(page));
     return endpoint;
   };
@@ -19394,13 +19415,32 @@ const crawlGoogleCareers = async (source: CrawlSource, fetcher: typeof fetch): P
   // query views are a priority lane only; the unfiltered checkpoint still
   // walks the complete catalog for data-quality and closure semantics.
   if (isCheckpointedCatalog) {
-    const priorityPages = await Promise.all([
-      fetchPage(1, "2027 internship"),
-      fetchPage(1, "2027 co-op"),
-    ]);
-    for (const priority of priorityPages) {
-      for (const job of priority?.jobs ?? []) jobsByUrl.set(job.officialUrl, job);
+    const priorityJobs = new Map<string, CrawledJob>();
+    for (const query of ["intern", "co-op"]) {
+      const priority = await fetchPage(1, query);
+      if (!priority) return { status: "failed", responseStatus: first.status, completeListing: false, jobs: [...jobsByUrl.values()], error: `Google priority ${query} first page failed.` };
+      const count = priority.total ?? priority.jobs.length;
+      const size = Math.max(priority.jobs.length, 1);
+      const pages = Math.ceil(count / size);
+      // The priority lane is small today (70 rows). Exceeding the explicit
+      // budget must be visible, never a silently successful partial scan.
+      if (pages > 8) return { status: "failed", responseStatus: first.status, completeListing: false, jobs: [...jobsByUrl.values()], error: `Google priority ${query} backlog: ${pages} pages exceeds 8-page budget.` };
+      for (const job of priority.jobs) priorityJobs.set(job.officialUrl, job);
+      const rest = await Promise.all(Array.from({ length: Math.max(0, pages - 1) }, (_, index) => fetchPage(index + 2, query)));
+      const identities = new Set(priority.jobs.map((job) => job.officialUrl));
+      for (const [index, result] of rest.entries()) {
+        const expected = Math.min(size, count - (index + 1) * size);
+        if (!result || !claimPageIdentities(result.jobs.map((job) => job.officialUrl), expected, identities)) {
+          return { status: "failed", responseStatus: first.status, completeListing: false, jobs: [...priorityJobs.values(), ...jobsByUrl.values()], error: `Google priority ${query} page ${index + 2} failed or repeated.` };
+        }
+        for (const job of result.jobs) priorityJobs.set(job.officialUrl, job);
+      }
     }
+    // Map insertion order drives bounded enrichment: new internship results
+    // come before unrelated unfiltered inventory.
+    const catalog = [...jobsByUrl.values()];
+    jobsByUrl.clear();
+    for (const job of [...priorityJobs.values(), ...catalog]) if (!jobsByUrl.has(job.officialUrl)) jobsByUrl.set(job.officialUrl, job);
   }
   const startPage = isCheckpointedCatalog
     ? Math.min(Math.max(source.crawlPageCursor ?? 1, 1), boundedPages)
@@ -19426,7 +19466,7 @@ const crawlGoogleCareers = async (source: CrawlSource, fetcher: typeof fetch): P
         continue;
       }
       successfulPages += 1;
-      for (const job of result.jobs) jobsByUrl.set(job.officialUrl, job);
+      for (const job of result.jobs) if (!jobsByUrl.has(job.officialUrl)) jobsByUrl.set(job.officialUrl, job);
     }
   }
   const jobs = [...jobsByUrl.values()];
@@ -25387,6 +25427,7 @@ const verifiedInactiveCareerPage = (
 // Keeping this explicit avoids spending one detail request on every internship
 // returned by already-rich ATS feeds.
 const VERIFIED_JSON_LD_DETAIL_HOSTS = new Set([
+  "careers.arm.com",
   "careers.fedex.com",
   "jobs.citi.com",
   "search.jobs.barclays",
@@ -25747,7 +25788,7 @@ const enrichProgramJobDetails = async (
     const needsDetail = !hasLocation
       || !job.description || job.description.trim().length < 100
       || !(job.requisitionId ?? job.externalId)
-      || !job.publishedAt;
+      || (!job.publishedAt && new URL(job.officialUrl).hostname !== "www.google.com");
     if (!indexedAsProgram || !needsDetail) return [];
     const candidates = workdayDetailCandidates(job.officialUrl);
     return [{ index, candidates }];
@@ -25757,14 +25798,15 @@ const enrichProgramJobDetails = async (
   // requisition/apply identity during the same crawl (and can be deduplicated
   // against an ATS mirror). Rotate the remainder so older sparse records still
   // converge over subsequent two-hour passes.
-  const prioritizedCount = Math.min(Math.ceil(WORKDAY_DETAIL_BATCH_SIZE / 2), targets.length);
+  const detailBudget = source.id === "p4-0285-google" ? 48 : WORKDAY_DETAIL_BATCH_SIZE;
+  const prioritizedCount = Math.min(Math.ceil(detailBudget * (source.id === "p4-0285-google" ? 2 / 3 : 1 / 2)), targets.length);
   const prioritizedTargets = targets.slice(0, prioritizedCount);
   const rotatingTargets = targets.slice(prioritizedCount);
-  const rotatingBudget = WORKDAY_DETAIL_BATCH_SIZE - prioritizedTargets.length;
+  const rotatingBudget = detailBudget - prioritizedTargets.length;
   const enrichmentStart = rotatingTargets.length === 0
     ? 0
     : (Math.floor(now.getTime() / (2 * 60 * 60 * 1_000)) * Math.max(1, rotatingBudget)) % rotatingTargets.length;
-  const selectedTargets = targets.length <= WORKDAY_DETAIL_BATCH_SIZE
+  const selectedTargets = targets.length <= detailBudget
     ? targets
     : [
         ...prioritizedTargets,
@@ -25976,7 +26018,10 @@ const enrichProgramJobDetails = async (
       if (reader) enriched[index] = mergeProgramJobDetail(current, reader.detail, reader.applyUrl);
     }
   };
-  await Promise.all(selectedTargets.map(enrichOne));
+  // Keep increased coverage from creating a burst of dozens of requests.
+  for (let index = 0; index < selectedTargets.length; index += 8) {
+    await Promise.all(selectedTargets.slice(index, index + 8).map(enrichOne));
+  }
   return { ...result, jobs: enriched };
 };
 

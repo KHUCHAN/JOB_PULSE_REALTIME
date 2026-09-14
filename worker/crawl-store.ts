@@ -98,6 +98,7 @@ export const nativeCrawlExcludedSourceIds = [
   "p2-0062-stripe",
   "p4-0319-nvidia",
   "p4-0308-meta",
+  "p4-0314-netflix",
   "p4-0394-amazon",
   "p5-0538-amazon-2",
   "p5-0540-amazon-robotics",
