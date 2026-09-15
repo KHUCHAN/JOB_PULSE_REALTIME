@@ -60,7 +60,7 @@ describe("verified official source catalog", () => {
       generatedAt: string;
       incrementalSourceIdsByPreviousVersion: Record<string, string[]>;
     };
-    expect(seed.generatedAt).toBe("2026-09-10");
+    expect(seed.generatedAt).toBe("2026-09-14");
     expect(seed.incrementalSourceIdsByPreviousVersion[
       "v2:sha256:333ffa3b859e3c86ee7959b167dd80ec26b8318a1edfa51d5257e7d537bb1895"
     ]).toEqual(["audit-row-3450"]);

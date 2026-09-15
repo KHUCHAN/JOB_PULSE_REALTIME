@@ -136,6 +136,20 @@ jobs:
         timeout-minutes: 3
         run: node scripts/audit-critical-alert-coverage.mjs output/request-recovery/alert-coverage.json
 
+      - name: Recover employer-hosted RippleMatch recruiting profiles
+        if: ${{ always() && !cancelled() }}
+        timeout-minutes: 12
+        env:
+          REQUEST_FALLBACK_LIVE_URL: https://job-pulse-realtime.autodev61.chatgpt.site
+          REQUEST_FALLBACK_CONCURRENCY: "1"
+          REQUEST_FALLBACK_INGEST_CONCURRENCY: "1"
+          REQUEST_FALLBACK_SOURCE_TIMEOUT_MS: "180000"
+          REQUEST_FALLBACK_RESULT_PATH: output/request-recovery/ripplematch.json
+          # This is part of the existing admitted owner, not a second crawl.
+          # Public role requests share a one-request/second FIFO limiter.
+          REQUEST_FALLBACK_SOURCE_IDS: ripplematch-abbott,ripplematch-daikin-comfort-technologies,ripplematch-sanofi,ripplematch-palo-alto-networks,ripplematch-bnp-paribas,ripplematch-ncr-voyix,ripplematch-anheuser-busch,ripplematch-chamberlain-group,ripplematch-peak6,ripplematch-esri,ripplematch-apex-fintech-solutions,ripplematch-rockwell-automation,ripplematch-sc-johnson,ripplematch-relativity-space,ripplematch-kingspan,ripplematch-amway,ripplematch-mks
+        run: node scripts/request-fallback-crawl.ts
+
       - name: Preserve per-company recovery and timing evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@v4

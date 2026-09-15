@@ -1,5 +1,6 @@
 import type { CrawledJob } from "./crawler.ts";
 import { jobPostingIdentityKeys, type JobPostingIdentityInput } from "./job-posting-identity.ts";
+import { sameRipplematchIdentity } from "./ripplematch-dedup.ts";
 
 export async function findArchivedJob(database: D1Database, job: JobPostingIdentityInput) {
   const keys = jobPostingIdentityKeys(job);
@@ -27,8 +28,18 @@ export const isExpiredPosting = (publishedAt: unknown, now: string): boolean => 
 
 /** Check a bounded incoming chunk, never load an entire source's archive. */
 export async function retainIncomingJobs(database: D1Database, sourceId: string, jobs: CrawledJob[], now: string): Promise<CrawledJob[]> {
-  const recent = jobs.filter((job) => !isExpiredPosting(job.publishedAt, now));
+  let recent = jobs.filter((job) => !isExpiredPosting(job.publishedAt, now));
   if (!recent.length) return [];
+  if (sourceId.startsWith("ripplematch-")) {
+    // Supplemental employer-hosted profiles must not duplicate an already
+    // collected primary ATS identity. Restrict the lookup to this employer.
+    const existing = await database.prepare(`SELECT official_url AS officialUrl,
+      title, location, requisition_id AS requisitionId FROM jobs
+      WHERE company = ? COLLATE NOCASE AND source_id <> ? AND status = 'open'`)
+      .bind(recent[0].company, sourceId).all<{ officialUrl: string; title: string; location: string | null; requisitionId: string | null }>();
+    recent = recent.filter(job => !existing.results.some(row => sameRipplematchIdentity(job, row)));
+    if (!recent.length) return [];
+  }
   const identities = recent.map((job, position) => ({
     position, officialUrl: job.officialUrl, ...jobPostingIdentityKeys({ sourceId, ...job }),
   }));

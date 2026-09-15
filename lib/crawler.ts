@@ -1,4 +1,5 @@
 import { jobsFromBrowserAnchors, type BrowserAnchor } from "./browser-job-extractor.ts";
+import { crawlRipplematch, ripplematchCompanySlug } from "./ripplematch-crawler.ts";
 import { workdayMaintenance } from "./recovery-policy.ts";
 import { normalizeEmploymentType, workdayBulletFields } from "./employment-type.ts";
 import { classifyJobPrograms } from "./job-program-classifier.ts";
@@ -24788,6 +24789,7 @@ const crawlWcgCareers = async (
 };
 
 async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
+  if (ripplematchCompanySlug(source.postingUrl)) return crawlRipplematch(source, fetcher);
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "p5-1106-wcg") {
     return crawlWcgCareers(source, fetcher, now);
   }
