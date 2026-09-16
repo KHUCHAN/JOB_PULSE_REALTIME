@@ -7341,7 +7341,7 @@ We are an equal opportunity employer.`;
     expect(result.jobs).toHaveLength(100);
   });
 
-  it("checkpoints TikTok's official catalog and retains role, program, location, and apply fields", async () => {
+  it("drains TikTok's official catalog in one crawl and retains role, program, location, and apply fields", async () => {
     const offsets: number[] = [];
     const fetcher: typeof fetch = async (input, init) => {
       const url = String(input);
@@ -7382,15 +7382,16 @@ We are an equal opportunity employer.`;
       postingUrl: "https://lifeattiktok.com/search",
       adapter: "custom",
       crawlPageCursor: 4,
+      crawlPreviousCycleStartedAt: "2026-08-10T12:00:00.000Z",
     }, fetcher, new Date("2026-08-11T12:00:00Z"));
 
-    expect(offsets).toEqual([0, 300, 400, 500]);
+    expect(offsets).toEqual([0, 100, 200, 300, 400, 500]);
     expect(result).toEqual(expect.objectContaining({
       status: "succeeded",
-      completeListing: false,
-      pagination: { nextPage: 1, cycleComplete: true, totalPages: 6 },
+      completeListing: true,
     }));
-    expect(result.jobs).toHaveLength(330);
+    expect(result.pagination).toBeUndefined();
+    expect(result.jobs).toHaveLength(530);
     expect(result.jobs[0]).toEqual(expect.objectContaining({
       externalId: "1",
       title: "Machine Learning Engineer Intern",
@@ -7409,7 +7410,7 @@ We are an equal opportunity employer.`;
     }));
   });
 
-  it("does not advance TikTok's checkpoint when its public API repeats a page", async () => {
+  it("fails TikTok's authoritative-listing check when its public API repeats a page", async () => {
     const jobs = Array.from({ length: 100 }, (_, index) => ({
       id: String(index + 1), code: `A${index + 1}`, title: `TikTok Role ${index + 1}`,
     }));
@@ -7417,9 +7418,63 @@ We are an equal opportunity employer.`;
     const result = await crawlSource({
       id: "p5-0752-tiktok", company: "TikTok / ByteDance",
       postingUrl: "https://lifeattiktok.com/search", adapter: "custom", crawlPageCursor: 4,
+      crawlPreviousCycleStartedAt: "2026-08-10T12:00:00.000Z",
     }, fetcher, new Date());
-    expect(result.pagination).toEqual({ nextPage: 4, cycleComplete: false, totalPages: 6 });
+    expect(result.completeListing).toBe(false);
+    expect(result.pagination).toBeUndefined();
     expect(result.jobs).toHaveLength(100);
+  });
+
+  it("fails TikTok's authoritative-listing check when the catalog count changes between pages", async () => {
+    const fetcher: typeof fetch = async (_input, init) => {
+      const request = JSON.parse(String(init?.body)) as { offset: number };
+      return Response.json({
+        code: 0,
+        data: {
+          count: request.offset === 0 ? 200 : 201,
+          job_post_list: Array.from({ length: 100 }, (_, index) => ({
+            id: String(request.offset + index + 1),
+            code: `A${request.offset + index + 1}`,
+            title: `TikTok Role ${request.offset + index + 1}`,
+          })),
+        },
+      });
+    };
+    const result = await crawlSource({
+      id: "p5-0752-tiktok", company: "TikTok / ByteDance",
+      postingUrl: "https://lifeattiktok.com/search", adapter: "custom",
+      crawlPreviousCycleStartedAt: "2026-08-10T12:00:00.000Z",
+    }, fetcher, new Date());
+    expect(result.completeListing).toBe(false);
+    expect(result.jobs).toHaveLength(200);
+  });
+
+  it("finishes TikTok's initial baseline in one bounded full-catalog pass", async () => {
+    const fetcher: typeof fetch = async (_input, init) => {
+      const request = JSON.parse(String(init?.body)) as { offset: number };
+      return Response.json({
+        code: 0,
+        data: {
+          count: 200,
+          job_post_list: Array.from({ length: 100 }, (_, index) => ({
+            id: String(request.offset + index + 1),
+            code: `A${request.offset + index + 1}`,
+            title: `TikTok Role ${request.offset + index + 1}`,
+          })),
+        },
+      });
+    };
+    const result = await crawlSource({
+      id: "p5-0752-tiktok", company: "TikTok / ByteDance",
+      postingUrl: "https://lifeattiktok.com/search", adapter: "custom",
+      crawlCycleStartedAt: "2026-08-11T10:00:00.000Z",
+      crawlPreviousCycleStartedAt: null,
+    }, fetcher, new Date());
+    expect(result).toEqual(expect.objectContaining({
+      completeListing: false,
+      pagination: { nextPage: 1, cycleComplete: true, totalPages: 2 },
+    }));
+    expect(result.jobs).toHaveLength(200);
   });
 
   it("paginates ServiceNow reader pages when the request surface is blocked", async () => {

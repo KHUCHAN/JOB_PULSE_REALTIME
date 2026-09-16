@@ -12526,44 +12526,82 @@ const crawlTikTok = async (source: CrawlSource, fetcher: typeof fetch): Promise<
   const first = await fetchPage(0);
   if (!first) return { status: "failed", responseStatus: null, completeListing: false, jobs: [], error: "TikTok public jobs API did not return a usable first page." };
   const totalPages = Math.ceil(Math.min(first.total, 10_000) / pageSize);
-  const isCheckpointed = totalPages > 4;
-  const startPage = isCheckpointed ? Math.min(Math.max(source.crawlPageCursor ?? 1, 1), totalPages) : 1;
-  const endPage = isCheckpointed ? Math.min(startPage + (startPage === 1 ? 3 : 2), totalPages) : totalPages;
+  // TikTok's catalog currently spans dozens of pages. The old three-page
+  // checkpoint needed well over a day to finish a first pass, and the crawl
+  // runner suppresses notifications until that pass is complete. The public
+  // endpoint is a lightweight JSON API, so drain it in bounded parallel
+  // batches instead. Page 1 is still read first so a changing catalog fails
+  // closed rather than closing unseen jobs.
+  const pagesToFetch = Array.from({ length: Math.max(0, totalPages - 1) }, (_, index) => index + 2);
+  const pageResults: Array<{ page: number; result: Awaited<ReturnType<typeof fetchPage>> }> = [];
+  for (let index = 0; index < pagesToFetch.length; index += 6) {
+    const batch = pagesToFetch.slice(index, index + 6);
+    const results = await Promise.all(batch.map(async (page) => ({
+      page,
+      result: await fetchPage((page - 1) * pageSize),
+    })));
+    pageResults.push(...results);
+  }
   const jobsByUrl = new Map(first.jobs.map((job) => [job.officialUrl, job]));
   const seenIdentities = new Set<string>();
-  let firstFailedPage: number | null = claimPageIdentities(
+  let catalogStable = claimPageIdentities(
     first.jobs.map((job) => job.externalId ?? job.officialUrl),
     Math.min(pageSize, first.total),
     seenIdentities,
-  ) ? null : 1;
-  for (let page = Math.max(startPage, 2); page <= endPage; page += 1) {
-    const result = await fetchPage((page - 1) * pageSize);
-    const expected = Math.min(pageSize, Math.max(0, first.total - (page - 1) * pageSize));
-    if (!result || !claimPageIdentities(
-      result.jobs.map((job) => job.externalId ?? job.officialUrl), expected, seenIdentities,
-    )) {
-      firstFailedPage ??= page;
+  );
+  let minimumReportedTotal = first.total;
+  for (const { page, result } of pageResults) {
+    if (!result) {
+      catalogStable = false;
       continue;
     }
+    minimumReportedTotal = Math.min(minimumReportedTotal, result.total);
+    const offset = (page - 1) * pageSize;
+    const expected = Math.min(pageSize, Math.max(0, Math.min(first.total, result.total) - offset));
+    const identities = result.jobs.map((job) => job.externalId ?? job.officialUrl);
+    const pageIdentities = new Set(identities.filter((value): value is string => Boolean(value)));
+    const validPage = identities.length >= expected
+      && pageIdentities.size === identities.length;
+    if (!validPage) {
+      catalogStable = false;
+      continue;
+    }
+    if (result.total !== first.total || [...pageIdentities].some((value) => seenIdentities.has(value))) {
+      // The live catalog can add or remove a handful of roles while the 43
+      // pages are being read. Retain every unique row, but do not call the
+      // result authoritative enough to close a missing job.
+      catalogStable = false;
+    }
+    for (const identity of pageIdentities) seenIdentities.add(identity);
     for (const job of result.jobs) jobsByUrl.set(job.officialUrl, job);
   }
   const jobs = [...jobsByUrl.values()];
-  if (isCheckpointed) return {
-    status: "succeeded",
-    responseStatus: first.status,
-    completeListing: false,
-    jobs,
-    pagination: {
-      nextPage: firstFailedPage ?? (endPage === totalPages ? 1 : endPage),
-      cycleComplete: firstFailedPage === null && endPage === totalPages,
-      totalPages,
-    },
-    error: null,
-  };
+  const allPagesReturned = pageResults.every(({ result }) => result !== null);
+  if (source.crawlPreviousCycleStartedAt == null) {
+    // Complete the old multi-day baseline checkpoint in one invocation. Allow
+    // at most one moving-boundary duplicate per page; a repeated endpoint page
+    // or a materially incomplete catalog still keeps the baseline suppressed.
+    const minimumBaselineCoverage = Math.max(0, minimumReportedTotal - totalPages);
+    return {
+      status: "succeeded",
+      responseStatus: first.status,
+      completeListing: false,
+      jobs,
+      pagination: {
+        nextPage: 1,
+        cycleComplete: allPagesReturned && jobs.length >= minimumBaselineCoverage,
+        totalPages,
+      },
+      error: null,
+    };
+  }
   return {
     status: "succeeded",
     responseStatus: first.status,
-    completeListing: first.total <= 10_000 && firstFailedPage === null && jobs.length >= first.total,
+    completeListing: first.total <= 10_000
+      && catalogStable
+      && allPagesReturned
+      && jobs.length >= first.total,
     jobs,
     error: null,
   };
