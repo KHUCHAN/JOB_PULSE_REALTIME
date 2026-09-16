@@ -7477,6 +7477,45 @@ We are an equal opportunity employer.`;
     expect(result.jobs).toHaveLength(200);
   });
 
+  it("keeps TikTok roles from all three Job Pulse countries", async () => {
+    const countries = [
+      "United States of America",
+      "United Kingdom",
+      "Singapore",
+      "Canada",
+    ];
+    const fetcher: typeof fetch = async () => Response.json({
+      code: 0,
+      data: {
+        count: countries.length,
+        job_post_list: countries.map((country, index) => ({
+          id: String(index + 1),
+          code: `A${index + 1}`,
+          title: `Software Engineer Intern ${country}`,
+          city_info: {
+            en_name: index === 2 ? "Singapore" : `City ${index + 1}`,
+            parent: { en_name: country },
+          },
+        })),
+      },
+    });
+
+    const result = await crawlSource({
+      id: "p5-0752-tiktok",
+      company: "TikTok / ByteDance",
+      postingUrl: "https://lifeattiktok.com/search",
+      adapter: "custom",
+      crawlPreviousCycleStartedAt: "2026-09-16T00:00:00.000Z",
+    }, fetcher, new Date());
+
+    expect(result.completeListing).toBe(true);
+    expect(result.jobs.map((job) => job.locationCountry)).toEqual([
+      "United States of America",
+      "United Kingdom",
+      "Singapore",
+    ]);
+  });
+
   it("paginates ServiceNow reader pages when the request surface is blocked", async () => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input) => {

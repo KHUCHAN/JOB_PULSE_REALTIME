@@ -212,7 +212,6 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
   "p5-0740-stmicroelectronics",
   "p5-0741-stryker",
   "p5-0750-thales-us",
-  "p5-0752-tiktok",
   "p5-0758-uber",
   "p5-0776-3m",
   "p5-0793-amd",
@@ -26092,19 +26091,41 @@ const enrichProgramJobDetails = async (
 };
 
 const applyLargeCatalogRegionScope = (result: SourceCrawlResult, source: CrawlSource): SourceCrawlResult => {
-  if (result.status !== "succeeded" || !US_SCOPED_LARGE_CATALOGS.has(source.id)) return result;
-  const jobs = result.jobs.filter((job) => classifyJobRegion({
-    location: job.location,
-    locationCity: job.locationCity,
-    locationState: job.locationState,
-    locationCountry: job.locationCountry,
-    secondaryLocations: job.secondaryLocations,
-    sourceCompany: source.company,
-    sourcePostingUrl: result.resolvedListingUrl ?? source.postingUrl,
-  }) !== "non_us");
+  if (result.status !== "succeeded") return result;
+  let jobs: CrawledJob[];
+  if (source.id === "p5-0752-tiktok") {
+    // Job Pulse reviews the United States, United Kingdom, and Singapore.
+    // TikTok's global catalog is large, but restricting it with the generic
+    // US-only policy silently removed every UK and Singapore role. Its public
+    // API supplies a structured country hierarchy, so retain all three target
+    // countries while keeping unknown/multi-location rows fail-open.
+    const targetCountries = new Set([
+      "us", "usa", "united states", "united states of america",
+      "gb", "gbr", "uk", "united kingdom", "england", "scotland", "wales", "northern ireland",
+      "sg", "sgp", "singapore",
+    ]);
+    const normalizeCountry = (value: string | null | undefined) => (value ?? "")
+      .normalize("NFKD").replace(/\p{M}+/gu, "").toLocaleLowerCase()
+      .replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+    jobs = result.jobs.filter((job) => {
+      const country = normalizeCountry(job.locationCountry);
+      return !country || targetCountries.has(country);
+    });
+  } else {
+    if (!US_SCOPED_LARGE_CATALOGS.has(source.id)) return result;
+    jobs = result.jobs.filter((job) => classifyJobRegion({
+      location: job.location,
+      locationCity: job.locationCity,
+      locationState: job.locationState,
+      locationCountry: job.locationCountry,
+      secondaryLocations: job.secondaryLocations,
+      sourceCompany: source.company,
+      sourcePostingUrl: result.resolvedListingUrl ?? source.postingUrl,
+    }) !== "non_us");
+  }
   // Native facet counts describe the unscoped global catalog. Dropping them
-  // lets complete crawls derive accurate US-scoped facets, while incomplete
-  // checkpoint segments leave the last authoritative facet snapshot intact.
+  // lets complete crawls derive accurate location-scoped facets, while
+  // incomplete checkpoint segments leave the last authoritative snapshot.
   return { ...result, jobs, facets: undefined };
 };
 
