@@ -39,12 +39,22 @@ No direct crawl API or second crawler is introduced.
 
 Read-only live adapter checks recovered AMD 618, Loews 281 and Sanmina 754
 records with complete catalog evidence. These checks did not ingest or email.
-Full unit/integration suite: 1,326 tests; admission/watchdog suite: 13 tests;
+Full unit/integration suite: 1,327 tests; admission/watchdog suite: 13 tests;
 TypeScript check passed.
 
-The Sites connector currently returns `sites_access_disabled` for this
-workspace. GitHub runner changes can be published independently, but the
-native Worker guard/exclusion changes require a subsequent Sites publication.
-Do not claim those Worker changes are live until deployment is verified.
+The initial Sites access failure was resolved. Sites version 321, source
+`ed9616285379e5f3dce15402c53ae3c18860b799`, deployed successfully on
+2026-09-20 at 05:52:48 UTC, preserving public access. Deployment ID:
+`appgdep_6aaf74a8f4308191b2d9159054c6f3ae`. This includes the native Worker
+guard/exclusions as well as the Google results-catalog correction below.
+
+The first owner-run audit exposed an overly broad URL rejection for Google's
+legitimate `/jobs/results/` catalog. The correction accepts only the catalog
+endpoint, not nested individual job URLs; both cases have regression tests.
+The production DB confirmed Google's source was refreshed at 05:53:21 UTC
+without a source error, and Sanmina at 05:53:25 UTC. Owner run 35492748790
+was still running at this verification point; this does not assert that its
+entire recovery pipeline succeeded.
+
 Persistent employer 403 challenges and the desktop Chrome/CDP connection
 remain separate external limitations, not successful repairs.
