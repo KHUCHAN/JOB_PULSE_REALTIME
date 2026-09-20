@@ -16,6 +16,7 @@ on:
       - scripts/production-crawl-admission.mjs
       - scripts/request-fallback-crawl.ts
       - scripts/browser-fallback-crawl.ts
+      - scripts/summarize-recovery.ts
       - scripts/prepare-sites-package.ts
       - lib/**
       - app/api/pulse/**
@@ -97,6 +98,9 @@ jobs:
         with:
           node-version: 22
       - name: Recover request-only egress sources
+        # The final recovery audit reconciles these failures against browser
+        # recovery. A repaired first attempt must not poison the whole run.
+        continue-on-error: true
         env:
           REQUEST_FALLBACK_LIVE_URL: https://job-pulse-realtime.autodev61.chatgpt.site
           REQUEST_FALLBACK_INGEST_URL: https://job-pulse-realtime.autodev61.chatgpt.site/api/pulse
@@ -125,18 +129,20 @@ jobs:
           # TypeScript lane instead of inside a 55-second Worker request. Eight
           # crawlers operate independently, then D1 ingestion uses bounded
           # chunks; one slow board cannot cancel the other company snapshots.
-          REQUEST_FALLBACK_SOURCE_IDS: audit-row-3449,p2-0062-stripe,p2-0046-mastercard,p4-0285-google,p4-0219-apple,p4-0319-nvidia,p4-0308-meta,p4-0314-netflix,p4-0394-amazon,p5-0538-amazon-2,p5-0540-amazon-robotics,p4-0309-microsoft,p4-0204-palantir,p4-0256-databricks,p5-0733-snowflake,p5-1086-tsmc-arizona,p5-0563-broadcom,p5-0793-amd,p5-0798-applied-materials,p5-0804-arm,p5-0916-globalfoundries,p5-0947-intel,p5-0643-kla-corporation,p5-0960-lam-research,p5-0984-micron-technology,p5-0550-asml,p5-0709-qualcomm,p5-1050-samsung-semiconductor,p5-1008-onsemi,p5-0755-tower-semiconductor,p5-0726-semtech,p5-0543-amgen,p4-0210-adobe,p5-0547-anthropic,p4-0245-cisco,p5-0624-ibm,p5-0692-openai,p4-0325-oracle,p4-0340-salesforce,p4-0347-servicenow,p5-0736-spacex,p5-0752-tiktok,p5-0758-uber,p5-0767-xai,p5-0796-analog-devices,p5-0839-cadence-design-systems,p5-0940-infineon,p5-0659-marvell-technology,p5-0663-mediatek,p5-0999-nxp-semiconductors,p5-1038-renesas,p5-0740-stmicroelectronics,p5-1071-synopsys,p5-1078-texas-instruments,p5-1018-penn-medicine,legacy-row-826,p2-0075-american-family-insurance,legacy-row-102,legacy-row-84,p5-0842-carefirst-bluecross-blueshield
+          REQUEST_FALLBACK_SOURCE_IDS: audit-row-3449,p2-0062-stripe,p2-0046-mastercard,p4-0285-google,p4-0219-apple,p4-0319-nvidia,p4-0308-meta,p4-0314-netflix,p4-0394-amazon,p5-0538-amazon-2,p5-0540-amazon-robotics,p4-0309-microsoft,p4-0204-palantir,p4-0256-databricks,p5-0733-snowflake,p5-1086-tsmc-arizona,p5-0563-broadcom,p5-0793-amd,p5-0798-applied-materials,p5-0804-arm,p5-0916-globalfoundries,p5-0947-intel,p5-0643-kla-corporation,p5-0960-lam-research,p5-0984-micron-technology,p5-0550-asml,p5-0709-qualcomm,p5-1050-samsung-semiconductor,p5-1008-onsemi,p5-0755-tower-semiconductor,p5-0726-semtech,p5-0543-amgen,p4-0210-adobe,p5-0547-anthropic,p4-0245-cisco,p5-0624-ibm,p5-0692-openai,p4-0325-oracle,p4-0340-salesforce,p4-0347-servicenow,p5-0736-spacex,p5-0752-tiktok,p5-0758-uber,p5-0767-xai,p5-0796-analog-devices,p5-0839-cadence-design-systems,p5-0940-infineon,p5-0659-marvell-technology,p5-0663-mediatek,p5-0999-nxp-semiconductors,p5-1038-renesas,p5-0740-stmicroelectronics,p5-1071-synopsys,p5-1078-texas-instruments,p5-1018-penn-medicine,legacy-row-826,p2-0075-american-family-insurance,legacy-row-102,legacy-row-84,p5-0842-carefirst-bluecross-blueshield,legacy-row-832,legacy-row-860
           # The critical employer set runs every two-hour workflow even when
           # an off-schedule repair shifted next_crawl_at past the due horizon.
-          REQUEST_FALLBACK_FORCE_SOURCE_IDS: audit-row-3449,p2-0062-stripe,p2-0046-mastercard,p4-0285-google,p4-0219-apple,p4-0319-nvidia,p4-0308-meta,p4-0314-netflix,p4-0394-amazon,p5-0538-amazon-2,p5-0540-amazon-robotics,p4-0309-microsoft,p4-0204-palantir,p4-0256-databricks,p5-0733-snowflake,p5-1086-tsmc-arizona,p5-0563-broadcom,p5-0793-amd,p5-0798-applied-materials,p5-0804-arm,p5-0916-globalfoundries,p5-0947-intel,p5-0643-kla-corporation,p5-0960-lam-research,p5-0984-micron-technology,p5-0550-asml,p5-0709-qualcomm,p5-1050-samsung-semiconductor,p5-1008-onsemi,p5-0755-tower-semiconductor,p5-0726-semtech,p4-0210-adobe,p5-0547-anthropic,p4-0245-cisco,p5-0624-ibm,p5-0692-openai,p4-0325-oracle,p4-0340-salesforce,p4-0347-servicenow,p5-0736-spacex,p5-0752-tiktok,p5-0758-uber,p5-0767-xai,p5-0796-analog-devices,p5-0839-cadence-design-systems,p5-0940-infineon,p5-0659-marvell-technology,p5-0663-mediatek,p5-0999-nxp-semiconductors,p5-1038-renesas,p5-0740-stmicroelectronics,p5-1071-synopsys,p5-1078-texas-instruments
+          REQUEST_FALLBACK_FORCE_SOURCE_IDS: audit-row-3449,p2-0062-stripe,p2-0046-mastercard,p4-0285-google,p4-0219-apple,p4-0319-nvidia,p4-0308-meta,p4-0314-netflix,p4-0394-amazon,p5-0538-amazon-2,p5-0540-amazon-robotics,p4-0309-microsoft,p4-0204-palantir,p4-0256-databricks,p5-0733-snowflake,p5-1086-tsmc-arizona,p5-0563-broadcom,p5-0793-amd,p5-0798-applied-materials,p5-0804-arm,p5-0916-globalfoundries,p5-0947-intel,p5-0643-kla-corporation,p5-0960-lam-research,p5-0984-micron-technology,p5-0550-asml,p5-0709-qualcomm,p5-1050-samsung-semiconductor,p5-1008-onsemi,p5-0755-tower-semiconductor,p5-0726-semtech,p4-0210-adobe,p5-0547-anthropic,p4-0245-cisco,p5-0624-ibm,p5-0692-openai,p4-0325-oracle,p4-0340-salesforce,p4-0347-servicenow,p5-0736-spacex,p5-0752-tiktok,p5-0758-uber,p5-0767-xai,p5-0796-analog-devices,p5-0839-cadence-design-systems,p5-0940-infineon,p5-0659-marvell-technology,p5-0663-mediatek,p5-0999-nxp-semiconductors,p5-1038-renesas,p5-0740-stmicroelectronics,p5-1071-synopsys,p5-1078-texas-instruments,legacy-row-832,legacy-row-860
         run: node scripts/request-fallback-crawl.ts
 
       - name: Audit critical employers in the raw DB view
+        continue-on-error: true
         if: ${{ always() && !cancelled() }}
         timeout-minutes: 3
         run: node scripts/audit-critical-alert-coverage.mjs output/request-recovery/alert-coverage.json
 
       - name: Recover employer-hosted RippleMatch recruiting profiles
+        continue-on-error: true
         if: ${{ always() && !cancelled() }}
         timeout-minutes: 12
         env:
@@ -194,6 +200,7 @@ jobs:
           name: request-recovery-results
           path: output/request-recovery
       - name: Recover browser-only problem sources
+        continue-on-error: true
         # Request failures are passed via the same workflow's artifact below.
         env:
           BROWSER_FALLBACK_LIVE_URL: https://job-pulse-realtime.autodev61.chatgpt.site
@@ -202,18 +209,18 @@ jobs:
           # Repair pushes verify the exact affected sources immediately. The
           # scheduled run leaves this empty and continues rotating through the
           # full browser-recovery queue below.
-          BROWSER_FALLBACK_SOURCE_IDS: ${{ github.event_name == 'push' && 'p4-0317-nubank,p4-0386-whatnot,p5-0726-semtech,p5-0755-tower-semiconductor,p2-0183-webster-bank,p2-0196-graphistry,p5-1077-tesla,p2-0167-state-attorneys-general,p5-1052-sarcos-robotics,legacy-row-864,p2-0027-bank-of-america,p2-0076-ameriprise-financial,p2-0034-coast-central-cu,p4-0390-84-51,p5-0653-linkedin,p5-0850-ciena,p5-1028-progressive-insurance,legacy-row-807,p5-1106-wcg,legacy-row-126,p2-0179-us-attorney-s-office' || '' }}
+          BROWSER_FALLBACK_SOURCE_IDS: ${{ github.event_name == 'push' && 'p5-0793-amd,legacy-row-832,legacy-row-860' || '' }}
           # The browser action records every empty/failed/blocked result in
           # crawl_runs and advances next_crawl_at. Selecting the oldest rows
           # therefore rotates fairly without a run-number offset that could
           # skip sources as the queue shrinks.
           # The iframe-aware extractor can safely drain a larger slice while
-          # staying below the 25-minute job timeout (12 browser workers).
+          # staying below the 25-minute job timeout (eight browser workers).
           BROWSER_FALLBACK_LIMIT: "160"
-          BROWSER_FALLBACK_CONCURRENCY: "12"
-          # Fail one pathological page promptly instead of letting it consume
-          # a worker lane for a full minute. The next scheduled run retries it.
-          BROWSER_FALLBACK_SOURCE_TIMEOUT_MS: "45000"
+          BROWSER_FALLBACK_CONCURRENCY: "8"
+          # Reserve time for rendered recovery after a cancellable native
+          # stage; eight workers reduce browser contention on the runner.
+          BROWSER_FALLBACK_SOURCE_TIMEOUT_MS: "60000"
           # Browser inspection and D1 persistence are separate bounded pools.
           # Three writers avoid saturating the Worker/D1 path; each writer
           # still transports chunks concurrently with ongoing inspections.
@@ -230,6 +237,11 @@ jobs:
           # data regression.
           BROWSER_FALLBACK_FORCE_NATIVE_SOURCE_IDS: legacy-row-864,p2-0027-bank-of-america,p2-0076-ameriprise-financial,p2-0034-coast-central-cu,p4-0390-84-51,p5-0850-ciena,p5-1028-progressive-insurance,legacy-row-807,p5-1106-wcg,p5-0588-edwards-lifesciences,p4-0241-cgi,legacy-row-777,legacy-row-811,legacy-row-846,audit-row-392,audit-row-411,p5-1072-tampa-general-hospital,legacy-row-803,legacy-row-118,legacy-row-794,legacy-row-835,legacy-row-876,p5-0699-pepsico,p2-0196-graphistry,p2-0058-royal-business-bank,p5-0810-atrium-health,p4-0236-cathay-bank,p4-0259-dow-jones-risk-compliance,p2-0035-coinbase,audit-row-350,p2-0036-evercore,p5-0931-henry-ford-health,p4-0290-honor,p5-0616-hca-healthcare,p5-0644-kratos-defense,p5-0755-tower-semiconductor,p4-0302-l-e-k-consulting,p2-0044-loandepot,p4-0349-slalom,p4-0384-veriff,p4-0448-improving,p4-0458-mclagan,p4-0463-nardello-co,p5-0545-anduril-industries,p5-0763-walmart,p5-1052-sarcos-robotics,p5-1039-revolut,p5-0722-saic,p5-0747-teradata,p5-0806-ase-group,p5-0857-closedloop,p5-0890-emory-healthcare,p2-0167-state-attorneys-general,legacy-row-867,p5-1077-tesla,p2-0179-us-attorney-s-office,p2-0180-valley-national-bancorp,p5-1104-wayfair,p4-0386-whatnot,audit-row-440,p5-0623-ibis-ai
         run: npm run crawler:fallback:browser
+      - name: Reconcile final recovery and critical DB outcomes
+        if: ${{ always() && !cancelled() }}
+        # Fail closed if any artifact is absent, collection was interrupted,
+        # persistence failed, or a company is still unresolved after recovery.
+        run: node scripts/summarize-recovery.ts
       - name: Preserve unresolved company evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@v4

@@ -57,6 +57,8 @@ type PagedCrawlState = {
 // behind work that cannot succeed from that network. sourcesByIds deliberately
 // remains unrestricted so an explicit repair can still target any source.
 export const nativeCrawlExcludedSourceIds = [
+  "legacy-row-832", // Loews public Workday catalog, owned by request recovery.
+  "legacy-row-860", // Sanmina public Deltek catalog, owned by request recovery.
   // Every forced request-lane source has one owner. Do not collect and write
   // these catalogs twice in the same workflow (native then request recovery).
   "p4-0210-adobe",

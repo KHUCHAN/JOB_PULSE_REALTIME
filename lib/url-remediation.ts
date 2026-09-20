@@ -3,7 +3,19 @@ const JOB_TEXT = /\b(?:jobs?|careers?|opportunities|open (?:positions|roles)|joi
 const JOB_PATH = /\/(?:jobs?|careers?|opportunities|positions?|openings?|search-results|search\/results|job-search|open-positions|join-us)(?:\/|$|[?#-])/i;
 const JOB_LISTING_PATH = /(?:\/jobs?\/(?:search|positions?|openings?|listings?)(?:[/?#]|$)|\/JobBoard(?:[/?#]|$)|\/candidate\/jobboard(?:[/?#]|$)|\/CalHRPublic\/Search\/JobSearchResults\.aspx(?:[?#]|$)|\/jobs?\.html(?:[?#]|$))/i;
 const USER_ONLY = /(?:job-?alerts?|talent-?community|introduceyourself|sign[_-]?in|\/login|\/connect(?:[/?#]|$)|\/apply(?:[/?#]|$))/i;
-const JOB_DETAIL = /(?:\/(?:job|jobs)\/[^/?#]+(?:\/[^/?#]+)?(?:[?#]|$)|[?&](?:pid|jobid|jobseqno|gh_jid)=)/i;
+const JOB_DETAIL = /(?:\/(?:job|jobs)\/[^/?#]+(?:\/[^/?#]+)*\/?(?:[?#]|$)|[?&](?:pid|jobid|jobseqno|gh_jid)=)/i;
+
+// Reject escaped HTML/JSON fragments before they can become a durable crawl
+// root (e.g. /%22https://internal-amd.icims.com/...\\%22).
+const invalidCatalogUrl = (value: string): boolean => {
+  try {
+    const url = new URL(value);
+    const decoded = decodeURIComponent(url.pathname + url.search);
+    return url.protocol !== "https:" || Boolean(url.username || url.password)
+      || /["<>\\\\]/.test(decoded) || /https?:\/\//i.test(decodeURIComponent(url.pathname))
+      || /^(?:internal|employee)[.-]/i.test(url.hostname);
+  } catch { return true; }
+};
 
 export type BrowserLink = { href: string; text: string };
 
@@ -40,6 +52,7 @@ export const detectUrlAdapter = (url: string, resourceUrls: string[] = []): "gre
 };
 
 export const isPublicAtsCatalogUrl = (value: string): boolean => {
+  if (invalidCatalogUrl(value)) return false;
   try {
     const url = new URL(value);
     const path = `${url.pathname}${url.search}`;
@@ -59,6 +72,7 @@ export const rankCareerLink = (link: BrowserLink, currentUrl: string): number =>
   } catch {
     return -100;
   }
+  if (invalidCatalogUrl(url.href)) return -100;
   if (!['http:', 'https:'].includes(url.protocol)) return -100;
   if (/linkedin\.com|indeed\.com|glassdoor\.com|facebook\.com|instagram\.com|twitter\.com|x\.com/i.test(url.hostname)) return -100;
   let score = 0;
@@ -96,6 +110,7 @@ export const careerCandidates = (links: BrowserLink[], currentUrl: string): Brow
 };
 
 export const isSafeCareerRecommendation = (company: string, originalUrl: string, recommendedUrl: string): boolean => {
+  if (invalidCatalogUrl(recommendedUrl)) return false;
   let original: URL;
   let recommended: URL;
   try {
@@ -138,6 +153,7 @@ export const isSafeCareerRecommendation = (company: string, originalUrl: string,
     || /\.jobs$/i.test(recommended.hostname)
     || /^(?:jobs?|careers?|talent)\./i.test(recommended.hostname)
     || /careers?/i.test(recommended.hostname)
+    || (/\.hrdepartment\.com$/i.test(recommended.hostname) && /^\/hr\/ats\/JobSearch\/(?:index|viewAll)(?:\/|$)/i.test(recommended.pathname))
     || JOB_PATH.test(`${recommended.pathname}${recommended.search}`);
 };
 
@@ -148,6 +164,7 @@ export const isSafeCareerRecommendation = (company: string, originalUrl: string,
  * vendor/support pages that can expose another company's jobs.
  */
 export const isSafeCareerListingUrl = (company: string, originalUrl: string, candidateUrl: string): boolean => {
+  if (invalidCatalogUrl(candidateUrl)) return false;
   let candidate: URL;
   let original: URL;
   try {

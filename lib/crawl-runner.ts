@@ -1,5 +1,5 @@
 import { crawlSource, type CrawledFacet, type CrawledJob, type CrawlSource, type SourceCrawlResult } from "./crawler";
-import { detectUrlAdapter } from "./url-remediation";
+import { detectUrlAdapter, isSafeCareerListingUrl } from "./url-remediation";
 
 export type PersistedSource = CrawlSource & {
   nextCrawlAt: string | null;
@@ -83,6 +83,9 @@ const runSource = async (
   let changes = { created: 0, updated: 0, closed: 0 };
   if (crawl.status === "succeeded") {
     try {
+      if (crawl.resolvedListingUrl && !isSafeCareerListingUrl(source.company, source.postingUrl, crawl.resolvedListingUrl)) {
+        throw new Error(`Rejected unsafe resolved listing URL: ${crawl.resolvedListingUrl}`);
+      }
       // A checkpointed feed is initially walked over several invocations. Every
       // page in that first catalog pass is existing inventory, not a newly
       // published role; alert only after the first complete authoritative cycle.

@@ -1,6 +1,6 @@
 /** Fail fast for conditions that another immediate request cannot repair. */
 export const deferRecovery = (message: string): boolean =>
-  /upstream maintenance|HTML interstitial|HTTP (?:401|403|429)\b|Checkpointed catalog did not advance beyond page \d+\./i.test(message);
+  /upstream maintenance|HTML interstitial|HTTP (?:401|403|404|410|429)\b|Checkpointed catalog did not advance beyond page \d+\./i.test(message);
 
 // The same public Synopsys listing intermittently returns 403 then 200.
 // Recheck once, with a real cooldown and unchanged client/URL. Persistent

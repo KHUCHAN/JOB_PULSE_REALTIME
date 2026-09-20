@@ -17,6 +17,7 @@ import { createSnapshotWriter, type SnapshotWriteTiming } from "../lib/snapshot-
 import { jobPostingIdentityKeys } from "../lib/job-posting-identity.ts";
 import { anchorsFromHtml, coastCentralJobsFromHtml, crawlSource, deltaInternshipListingUrl, extractJobsFromHtml, jobsFromFedExApiPayload, jobsFromTeslaState, type CrawledFacet, type CrawledJob, type CrawlSource, type TeslaState } from "../lib/crawler.ts";
 import { careerCandidates, isSafeCareerListingUrl } from "../lib/url-remediation.ts";
+import { abortableRecovery, recoveryFetch } from "../lib/abortable-recovery.ts";
 
 export type BrowserFallbackResult = {
   source: CrawlSource;
@@ -28,6 +29,7 @@ export type BrowserFallbackResult = {
   authoritativeEmpty?: boolean;
   browserState?: { kind: "tesla"; state: TeslaState };
   error: string | null;
+  persistenceError?: string;
   timing?: SnapshotWriteTiming & { inspectMs: number; ingestMs: number; chunks: number };
 };
 
@@ -498,7 +500,7 @@ const jobsAcrossPages = async (page: Page, source: CrawlSource): Promise<Crawled
   return [...unique.values()];
 };
 
-const jobsViaHttp1 = async (source: CrawlSource): Promise<CrawledJob[]> => {
+const jobsViaHttp1 = async (source: CrawlSource, signal?: AbortSignal): Promise<CrawledJob[]> => {
   try {
     const { stdout: html } = await execFileAsync("curl", [
       "--http1.1", "--location", "--silent", "--show-error", "--compressed",
@@ -506,7 +508,7 @@ const jobsViaHttp1 = async (source: CrawlSource): Promise<CrawledJob[]> => {
       // browser recovery window before client-side rendering gets a chance.
       "--connect-timeout", "5", "--max-time", "12", "--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
       source.postingUrl,
-    ], { maxBuffer: 25 * 1024 * 1024 });
+    ], { maxBuffer: 25 * 1024 * 1024, signal });
     const structured = extractJobsFromHtml(html, source).jobs;
     const linked = jobsFromBrowserAnchors(anchorsFromHtml(html), source);
     return [...new Map([...structured, ...linked].map((job) => [job.officialUrl, job])).values()];
@@ -727,7 +729,8 @@ export const curlNativeFetch: typeof fetch = async (input, init) => {
     args.push("--data-binary", await request.text());
   }
   args.push("--write-out", `\n${CURL_META}%{http_code}\t%{content_type}\t%{url_effective}`, request.url);
-  const { stdout } = await execFileAsync("curl", args, { maxBuffer: 100 * 1024 * 1024 });
+  request.signal.throwIfAborted();
+  const { stdout } = await execFileAsync("curl", args, { maxBuffer: 100 * 1024 * 1024, signal: request.signal });
   const marker = stdout.lastIndexOf(`\n${CURL_META}`);
   if (marker < 0) throw new Error("curl native retry returned no response metadata.");
   const body = stdout.slice(0, marker);
@@ -756,6 +759,7 @@ export const recoverNativeOutsideWorker = async (
   source: BrowserRecoverySource,
   fetcher: typeof fetch = fetch,
   now = new Date(),
+  retryFetcher: typeof fetch | null = fetcher === fetch ? curlNativeFetch : null,
 ): Promise<BrowserFallbackResult | null> => {
   if (!source.attemptNativeRecovery && source.adapter !== "workday") return null;
   let result = await crawlSource(source, fetcher, now);
@@ -765,10 +769,10 @@ export const recoverNativeOutsideWorker = async (
     source, status: result.responseStatus, finalUrl: source.postingUrl,
     jobs: [], completeListing: false, error: result.error,
   };
-  if (fetcher === fetch && (result.status !== "succeeded"
+  if (retryFetcher && (result.status !== "succeeded"
     || Boolean(result.error)
     || (result.jobs.length === 0 && !result.completeListing))) {
-    result = await crawlSource(source, curlNativeFetch, now);
+    result = await crawlSource(source, retryFetcher, now);
   }
   if (/upstream maintenance/i.test(result.error ?? "")) return {
     source, status: result.responseStatus, finalUrl: source.postingUrl,
@@ -831,7 +835,7 @@ export const recoverNativeOutsideWorker = async (
   };
 };
 
-const inspect = async (page: Page, source: CrawlSource): Promise<BrowserFallbackResult> => {
+const inspect = async (page: Page, source: CrawlSource, signal: AbortSignal): Promise<BrowserFallbackResult> => {
   try {
     const isTesla = source.id === "p5-1077-tesla" || source.company === "Tesla";
     const isFedEx = source.id === "audit-row-359" || source.company === "FedEx";
@@ -847,9 +851,17 @@ const inspect = async (page: Page, source: CrawlSource): Promise<BrowserFallback
     // path. Retrying it twice plus curl used most of the 60-second browser
     // budget before the known-good same-origin browser call could begin.
     if (!isTesla) {
-      const native = await recoverNativeOutsideWorker(source);
+      // Native APIs must not consume the entire rendered-browser lease. All
+      // fetches and curl subprocesses share the stage cancellation signal.
+      const native = await abortableRecovery(stageSignal => recoverNativeOutsideWorker(
+        source, recoveryFetch(fetch, stageSignal), new Date(), recoveryFetch(curlNativeFetch, stageSignal),
+      ), Math.min(25_000, sourceTimeoutMs * 0.42), signal).catch(() => null);
+      signal.throwIfAborted();
       if (native) return native;
-      const http1Jobs = browserJobsForSource(source, await jobsViaHttp1(source));
+      const http1Jobs = browserJobsForSource(source, await abortableRecovery(
+        stageSignal => jobsViaHttp1(source, stageSignal), 5_000, signal,
+      ).catch(() => []));
+      signal.throwIfAborted();
       if (http1Jobs.length > 0) {
         return { source, status: 200, finalUrl: source.postingUrl, jobs: http1Jobs, error: null };
       }
@@ -979,12 +991,14 @@ const inspect = async (page: Page, source: CrawlSource): Promise<BrowserFallback
 };
 
 const inspectWithDeadline = async (page: Page, source: CrawlSource): Promise<BrowserFallbackResult> => {
+  const controller = new AbortController();
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      inspect(page, source),
+      inspect(page, source, controller.signal),
       new Promise<BrowserFallbackResult>((resolveResult) => {
         timeout = setTimeout(() => {
+          controller.abort(new Error("Browser source deadline exceeded."));
           void page.close({ runBeforeUnload: false }).catch(() => undefined);
           resolveResult({ source, status: null, finalUrl: null, jobs: [], error: `Browser fallback exceeded ${Math.round(sourceTimeoutMs / 1_000)} seconds.` });
         }, sourceTimeoutMs);
@@ -992,6 +1006,7 @@ const inspectWithDeadline = async (page: Page, source: CrawlSource): Promise<Bro
     ]);
   } finally {
     if (timeout) clearTimeout(timeout);
+    controller.abort();
   }
 };
 
@@ -1009,6 +1024,7 @@ export const browserResultClassification = (result: BrowserFallbackResult): {
   status: "succeeded" | "failed" | "blocked";
   code: BrowserResultCode;
 } => {
+  if (result.persistenceError) return { status: "failed", code: "ingest_error" };
   if (result.authoritativeEmpty) return { status: "succeeded", code: "empty_board" };
   if (result.error?.startsWith("Rejected unsafe browser listing candidate:")) return { status: "failed", code: "unsafe_listing" };
   if (result.jobs.length > 0 && result.finalUrl) return { status: "succeeded", code: "jobs_recovered" };
@@ -1141,6 +1157,7 @@ async function main(): Promise<void> {
   const persistenceFailureIds = new Set<string>();
   const markPersistenceFailure = (result: BrowserFallbackResult, message: string): void => {
     persistenceFailureIds.add(result.source.id);
+    result.persistenceError = message;
     result.error = result.error ? `${result.error} ${message}` : message;
   };
   if (!dryRun && productionIngestUrl) {
@@ -1230,29 +1247,29 @@ async function main(): Promise<void> {
     await d1(["--file", sqlPath]);
   }
   // Persist the final outcome, including ingest failures added after inspection.
-  await writeFile(outputPath, JSON.stringify({ generatedAt: new Date().toISOString(), results }));
+  await writeFile(outputPath, JSON.stringify({ generatedAt: new Date().toISOString(), completed: true, results }));
+  const summary = browserRecoverySummary(results);
   process.stdout.write(`${JSON.stringify({
     attempted: results.length,
     recovered: successful.length,
     jobs: successful.reduce((sum, result) => sum + result.jobs.length, 0),
     persistenceFailures: persistenceFailureIds.size,
-    unresolved: results.flatMap((result) => {
-      const classification = browserResultClassification(result);
-      return classification.status === "succeeded" && classification.code !== "empty_board"
-        ? []
-        : [{
-            sourceId: result.source.id,
-            company: result.source.company,
-            status: classification.status,
-            code: classification.code,
-            responseStatus: result.status,
-            jobs: result.jobs.length,
-            error: result.error,
-          }];
-    }),
+    ...summary,
   })}\n`);
   if (persistenceFailureIds.size > 0
     || results.some(result => browserResultClassification(result).status !== "succeeded")) process.exitCode = 1;
 }
+
+export const browserRecoverySummary = (results: BrowserFallbackResult[]) => {
+  const rows = results.map(result => ({
+    sourceId: result.source.id, company: result.source.company,
+    ...browserResultClassification(result), responseStatus: result.status,
+    jobs: result.jobs.length, error: result.persistenceError ?? result.error,
+  }));
+  return {
+    authoritativeEmpty: rows.filter(row => row.status === "succeeded" && row.code === "empty_board"),
+    unresolved: rows.filter(row => row.status !== "succeeded"),
+  };
+};
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();

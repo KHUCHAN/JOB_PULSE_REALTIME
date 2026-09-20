@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { runDueCrawls, runSpecificCrawls, type CrawlStore, type PersistedSource } from "./crawl-runner";
 import type { CrawledJob } from "./crawler";
+import * as crawlerModule from "./crawler";
 
 class MemoryStore implements CrawlStore {
   constructor(readonly sources: PersistedSource[], private readonly failSync = false) {}
@@ -56,6 +57,22 @@ class MemoryStore implements CrawlStore {
 }
 
 describe("runDueCrawls", () => {
+  it.each([
+    'https://careers.amd.com/%22https://internal-amd.icims.com/jobs/search%22',
+    'https://internal-amd.icims.com/jobs/search',
+    'https://careers.loewshotels.com/job/room-attendant/new-york/R0087265/',
+  ])("does not persist or promote unsafe crawler roots: %s", async (url) => {
+    const source: PersistedSource = { id: "acme", company: "Acme", postingUrl: "https://careers.acme.com/", adapter: "custom", nextCrawlAt: null };
+    const store = new MemoryStore([source]);
+    const spy = vi.spyOn(crawlerModule, "crawlSource").mockResolvedValue({ status: "succeeded", responseStatus: 200,
+      jobs: [], completeListing: true, error: null, resolvedListingUrl: url });
+    try {
+      const result = await runDueCrawls(store, fetch, new Date(), { concurrency: 1 });
+      expect(result.failed).toBe(1);
+      expect(store.resolvedListings).toEqual([]);
+      expect(store.synced).toEqual([]);
+    } finally { spy.mockRestore(); }
+  });
   it.each([false, true])("prefers atomic finish/schedule, including persistence failure=%s", async (failSync) => {
     const store = new MemoryStore([{ id: "acme", company: "Acme", postingUrl: "https://job-boards.greenhouse.io/acme", adapter: "greenhouse", nextCrawlAt: null }], failSync);
     const atomic = vi.fn(async (id: string, values: Record<string, unknown>, sourceId: string, next: string) => {

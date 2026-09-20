@@ -1,4 +1,5 @@
 import { jobsFromBrowserAnchors, type BrowserAnchor } from "./browser-job-extractor.ts";
+import { crawlSanmina } from "./sanmina-crawler.ts";
 import { crawlRipplematch, ripplematchCompanySlug } from "./ripplematch-crawler.ts";
 import { workdayMaintenance } from "./recovery-policy.ts";
 import { normalizeEmploymentType, workdayBulletFields } from "./employment-type.ts";
@@ -363,6 +364,18 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
 // every pass. Keep the verified, first-party board identity here and promote
 // the canonical listing URL after the first successful sync.
 const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
+  "p5-0793-amd": {
+    discovered: { kind: "jibe", endpoint: "https://careers.amd.com/api/jobs?page=1&limit=100&sortBy=posted_date&descending=true&internal=false" },
+    listingUrl: "https://careers.amd.com/jobs",
+    adapter: "custom",
+  },
+  "legacy-row-832": {
+    // The employer's live vacancy Apply link identifies this complete public
+    // Workday tenant; do not crawl an expired presentation-site detail page.
+    discovered: { kind: "workday", endpoint: "https://loewshotels.wd5.myworkdayjobs.com/wday/cxs/loewshotels/loewshotels/jobs" },
+    listingUrl: "https://loewshotels.wd5.myworkdayjobs.com/loewshotels",
+    adapter: "workday",
+  },
   "p4-0210-adobe": {
     // Adobe's public career cards link this official Workday tenant. Read
     // its structured catalog directly, rather than repeatedly stalling
@@ -1704,6 +1717,7 @@ const icimsCatalogUrl = (html: string): string | null => {
   for (const match of searchable.matchAll(/https?:\/\/[a-z0-9-]+\.icims\.com[^\s"'<>\\]*/gi)) {
     try {
       const url = new URL(decodeHtmlAttribute(match[0]));
+      if (/^(?:internal|employee)[.-]/i.test(url.hostname)) continue;
       if (!/^\/(?:jobs(?:\/(?:search|intro))?)?\/?$/i.test(url.pathname)) continue;
       url.hash = "";
       return url.href;
@@ -24983,6 +24997,7 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   // Apply an ID-pinned feed only at the root. Redirect/candidate recursion
   // keeps the same source ID, so reapplying it at discovery depth 1 would
   // loop back to the root feed until the request/deadline budget is spent.
+  if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-860") return crawlSanmina(source, fetcher);
   const verifiedFeed = (source.discoveryDepth ?? 0) === 0 ? VERIFIED_SOURCE_FEEDS[source.id] : undefined;
   if (verifiedFeed) {
     const verifiedDayforceIdentity = dayforceBoardIdentity(verifiedFeed.listingUrl);
@@ -24999,7 +25014,7 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
             postingUrl: verifiedFeed.listingUrl,
             adapter: verifiedFeed.adapter,
           }, verifiedFeed.discovered.endpoint, fetcher, now)
-        : await crawlDiscoveredFeed(source, verifiedFeed.discovered, fetcher)
+        : await crawlDiscoveredFeed({ ...source, postingUrl: verifiedFeed.listingUrl, adapter: verifiedFeed.adapter }, verifiedFeed.discovered, fetcher)
       : verifiedDayforceIdentity
         ? await crawlDayforce({ ...source, postingUrl: verifiedFeed.listingUrl }, verifiedDayforceIdentity, fetcher)
       : isEightfoldListingUrl(verifiedFeed.listingUrl)
