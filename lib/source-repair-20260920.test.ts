@@ -5,6 +5,12 @@ import { crawlSanmina, sanminaListing } from "./sanmina-crawler";
 import { sourceRecoveryDelay } from "./recovery-policy";
 
 describe("corrupted crawl-root regression", () => {
+  it("accepts the Google results catalog but not its individual job details", () => {
+    const root = "https://www.google.com/about/careers/applications/jobs/results/";
+    expect(isSafeCareerListingUrl("Google / Alphabet", root, root)).toBe(true);
+    expect(isSafeCareerRecommendation("Google / Alphabet", root, root)).toBe(true);
+    expect(isSafeCareerListingUrl("Google / Alphabet", root, root + "123-data-intern/")).toBe(false);
+  });
   it("rejects escaped URLs, internal portals, and deep individual vacancies", () => {
     for (const bad of [
       'https://careers.amd.com/%22https://internal-amd.icims.com/jobs/search?back=none&redirect=search%5C%22',
