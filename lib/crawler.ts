@@ -939,6 +939,13 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
     listingUrl: "https://job-boards.greenhouse.io/nuro",
     adapter: "greenhouse",
   },
+  "p5-1045-rohde-schwarz-us": {
+    // The presentation-site job board now renders "0 Job offerings /
+    // SearchEngine not available!". Its job pages apply through this official
+    // Avature portal; field 840 is Country and option 7792 is United States.
+    listingUrl: "https://jobs.rohde-schwarz.com/en_US/careers/SearchJobs/?840=%5B7792%5D&840_format=1049&listFilterMode=1",
+    adapter: "custom",
+  },
 };
 
 type GreenhouseJob = {
@@ -9117,6 +9124,41 @@ const crawlTalentHubPages = async (
   };
 };
 
+// Some Avature tenants (e.g. Rohde & Schwarz) render an unlabeled card
+// subtitle: `<span>Country</span> • <span>City/Region</span><br>` followed by
+// `<span>Department</span> • <span>#Requisition</span>`. Accept only that exact
+// shape (class-less spans and a `#id` marker on the second line) so free-form
+// subtitles on other tenants can never be misread as a location.
+const avatureUnlabeledPlace = (block: string): {
+  country: string;
+  region: string | null;
+  city: string | null;
+  state: string | null;
+} | null => {
+  const subtitle = block.match(
+    /<div\b[^>]*class=["'][^"']*\barticle__header__text__subtitle\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/i,
+  )?.[1];
+  const [placeLine, metadataLine] = subtitle?.split(/<br\s*\/?>/i) ?? [];
+  if (!placeLine || !metadataLine) return null;
+  if (placeLine.replace(/<span>[\s\S]*?<\/span>/gi, "").trim()) return null;
+  const isSeparator = (value: string) => /^(?:&#8226;|&bull;|&#x2022;|[•·|])?$/i.test(value.trim());
+  const values = [...placeLine.matchAll(/<span>([\s\S]*?)<\/span>/gi)]
+    .map((match) => match[1])
+    .filter((value) => !isSeparator(value))
+    .map((value) => icimsText(value));
+  const hasRequisitionMarker = [...metadataLine.matchAll(/<span>([\s\S]*?)<\/span>/gi)]
+    .some((match) => /^#\s*[A-Za-z0-9-]+$/.test(icimsText(match[1]) ?? ""));
+  if (!hasRequisitionMarker || values.length < 1 || values.length > 2 || values.some((value) => !value)) return null;
+  const [country, region = null] = values as string[];
+  const cityAndState = region?.match(/^(.+?)\s*\(([^()]+)\)$/);
+  return {
+    country,
+    region: cityAndState ? null : region,
+    city: cityAndState?.[1].trim() ?? null,
+    state: cityAndState?.[2].trim() ?? null,
+  };
+};
+
 const avatureJobsFromHtml = (html: string, source: CrawlSource): CrawledJob[] => {
   const sourceOrigin = new URL(source.postingUrl).origin;
   const jobFromAnchor = (href: string, titleText: string, block = ""): CrawledJob[] => {
@@ -9139,10 +9181,11 @@ const avatureJobsFromHtml = (html: string, source: CrawlSource): CrawledJob[] =>
     const inlineMetadata = subtitle?.match(
       /^\s*Job\s+ID\s*:\s*([^|]+?)\s*\|\s*Posted\s*:\s*([^|]+?)\s*\|\s*(.+?)\s*$/i,
     );
-    const structuredCity = field("list-item-jobCity");
-    const structuredState = field("list-item-jobState");
-    const structuredCountry = field("list-item-jobCountry");
-    const structuredLocation = [structuredCity, structuredState, structuredCountry]
+    const unlabeledPlace = inlineMetadata ? null : avatureUnlabeledPlace(block);
+    const structuredCity = field("list-item-jobCity") ?? unlabeledPlace?.city ?? null;
+    const structuredState = field("list-item-jobState") ?? unlabeledPlace?.state ?? null;
+    const structuredCountry = field("list-item-jobCountry") ?? unlabeledPlace?.country ?? null;
+    const structuredLocation = [structuredCity, structuredState ?? unlabeledPlace?.region, structuredCountry]
       .filter((value): value is string => Boolean(value)).join(", ");
     const location = structuredLocation || (field("list-item-location") ?? inlineMetadata?.[3]?.trim() ?? null);
     const requisitionId = field("list-item-(?:ref|id|jobId)")?.replace(/^(?:job|role)\s+id\s*:?\s*/i, "")

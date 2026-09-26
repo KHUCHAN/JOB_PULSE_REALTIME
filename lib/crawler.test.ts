@@ -2454,6 +2454,68 @@ Wrong description.
     })]);
   });
 
+  it("reads Rohde & Schwarz's unlabeled Avature country and region subtitle from its US-filtered catalog", async () => {
+    // Trimmed from jobs.rohde-schwarz.com/en_US/careers/SearchJobs/?840=[7792]
+    // (field 840 = Country, option 7792 = United States).
+    const card = (id: string, title: string, country: string, region: string, department: string) => [
+      '<article class="article article--result"><div class="article__header"><div class="article__header__text">',
+      '<h3 class="article__header__text__title article__header__text__title--6">',
+      `<a href="https://jobs.rohde-schwarz.com/en_US/careers/JobDetail/${title.replaceAll(" ", "-")}/${id}">\n  ${title}\n</a></h3>`,
+      '<div class="article__header__text__subtitle">',
+      `<span>\n  ${country}\n</span>\n<span> &#8226; </span>\n<span>\n  ${region}\n</span>\n<br>`,
+      `<span>\n  ${department}\n</span>\n<span> &#8226; </span>\n<span>\n  #${id}\n</span></div></div>`,
+      '<div class="article__header__actions">',
+      `<a class="button button--primary" href="https://jobs.rohde-schwarz.com/en_US/careers/ApplicationMethods?jobId=${id}">Apply</a>`,
+      '</div></div></article>',
+    ].join("");
+    const listingUrl = "https://jobs.rohde-schwarz.com/en_US/careers/SearchJobs/?840=%5B7792%5D&840_format=1049&listFilterMode=1";
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "p5-1045-rohde-schwarz-us",
+      company: "Rohde & Schwarz US",
+      postingUrl: "https://www.rohde-schwarz.com/us/career/jobs/career-jobboard_251573.html",
+      adapter: "custom",
+    }, async (input) => {
+      requests.push(String(input));
+      return new Response([
+        '<meta name="avature.portal.page" content="SearchJobs"/>',
+        '<div class="list-controls__text__legend">1-3 of 3 results</div>',
+        card("17241", "Account Manager", "United States", "Texas", "5US1GS - 5US1GS South Geography"),
+        card("16187", "Field Service Technician - Columbia, MD", "United States", "Columbia (Maryland)", "5USSOTCC - 5USSOTCC Calibration Campaigns(CA)"),
+        card("13698", "Senior WLAN Tester", "India", "Bangalore", "1INC15 - 1INC15 User Interface Tools"),
+      ].join(""));
+    }, new Date());
+
+    expect(requests[0]).toBe(listingUrl);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded",
+      completeListing: true,
+      resolvedListingUrl: listingUrl,
+    }));
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        externalId: "17241",
+        requisitionId: "17241",
+        title: "Account Manager",
+        location: "Texas, United States",
+        locationCountry: "United States",
+      }),
+      expect.objectContaining({
+        externalId: "16187",
+        location: "Columbia, Maryland, United States",
+        locationCity: "Columbia",
+        locationState: "Maryland",
+        locationCountry: "United States",
+      }),
+      expect.objectContaining({
+        externalId: "13698",
+        location: "Bangalore, India",
+        locationCountry: "India",
+      }),
+    ]);
+    expect(result.jobs.every((job) => job.officialUrl.startsWith("https://jobs.rohde-schwarz.com/en_US/careers/JobDetail/"))).toBe(true);
+  });
+
   it("supports modern Avature folder pagination and nested location fields", async () => {
     const card = (id: string, title: string, city: string, state: string, country: string) => [
       '<article class="article article--result">',
