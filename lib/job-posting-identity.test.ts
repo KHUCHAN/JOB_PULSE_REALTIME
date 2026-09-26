@@ -22,6 +22,24 @@ describe("durable posting identity", () => {
     });
   });
 
+  it("keeps the ID-bearing route of a hash-routed job board", () => {
+    // Kratos's official Pereless board serves every posting from one page and
+    // routes by fragment. Dropping it gave all 329 jobs one URL identity, so a
+    // single archived posting blocked the whole catalog from ingestion.
+    const base = "https://apps3.pereless.com/templates/magnetolive/?cid=85347&int=0";
+    expect(canonicalPostingUrl(`${base}#/jobDescription/101/Test-Engineer`))
+      .not.toBe(canonicalPostingUrl(`${base}#/jobDescription/102/Test-Engineer`));
+    expect(canonicalPostingUrl(`${base}#!/jobDescription/101/Test-Engineer`))
+      .toBe(canonicalPostingUrl(`${base}#/jobDescription/101/Test-Engineer`));
+  });
+
+  it("still ignores in-page anchors", () => {
+    expect(canonicalPostingUrl("https://careers.acme.example/jobs/42#apply"))
+      .toBe(canonicalPostingUrl("https://careers.acme.example/jobs/42"));
+    expect(canonicalPostingUrl("https://careers.acme.example/jobs/42#/"))
+      .toBe(canonicalPostingUrl("https://careers.acme.example/jobs/42"));
+  });
+
   it("retains meaningful ATS query parameters", () => {
     expect(canonicalPostingUrl("https://jobs.example/search?job=42&source=handshake"))
       .not.toBe(canonicalPostingUrl("https://jobs.example/search?job=43&source=handshake"));

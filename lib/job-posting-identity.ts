@@ -19,7 +19,10 @@ const normalizedIdentifier = (value: string | null | undefined): string | null =
 export const canonicalPostingUrl = (value: string): string => {
   try {
     const url = new URL(value);
-    url.hash = "";
+    // In-page anchors are not identities, but a hash-routed board (Kratos's
+    // Pereless "#/jobDescription/<id>/...") carries the job ID only there.
+    const route = url.hash.match(/^#!?(\/.*\d.*)$/)?.[1];
+    url.hash = route ? `#${route}` : "";
     url.hostname = url.hostname.toLocaleLowerCase();
     if (url.hostname === "search.jobs.barclays") {
       url.pathname = url.pathname.replace(/^\/en(?=\/job\/)/i, "");
