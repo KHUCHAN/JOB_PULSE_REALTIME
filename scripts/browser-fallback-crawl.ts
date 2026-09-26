@@ -1104,10 +1104,27 @@ export const persistenceSql = (results: BrowserFallbackResult[]): string => {
   return statements.join("\n");
 };
 
+// A request lane that died before writing its results must not also cancel
+// the independent browser queue. The final reconcile still fails closed on
+// the same missing file; only a present but malformed handoff is fatal here.
+export const readRequestHandoff = async (path: string): Promise<unknown | null> => {
+  let text: string;
+  try {
+    text = await readFile(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error;
+    console.warn(`Request recovery handoff ${path} is missing; recovering the browser queue without it.`);
+    return null;
+  }
+  return JSON.parse(text);
+};
+
 async function main(): Promise<void> {
   const recoveredRequestIds = new Set<string>();
-  if (process.env.BROWSER_FALLBACK_REQUEST_RESULT_PATH) {
-    const handoff = JSON.parse(await readFile(process.env.BROWSER_FALLBACK_REQUEST_RESULT_PATH, "utf8"));
+  const handoff = process.env.BROWSER_FALLBACK_REQUEST_RESULT_PATH
+    ? await readRequestHandoff(process.env.BROWSER_FALLBACK_REQUEST_RESULT_PATH)
+    : null;
+  if (handoff !== null) {
     for (const id of succeededRecoveryIds(handoff)) recoveredRequestIds.add(id);
     for (const id of failedRecoveryIds(handoff)) {
       handedOffSourceIds.add(id);

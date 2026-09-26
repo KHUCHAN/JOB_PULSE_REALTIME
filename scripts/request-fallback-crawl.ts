@@ -7,6 +7,7 @@ import { sourceRecoveryDelay } from "../lib/recovery-policy.ts";
 import { createFifoLimiter } from "../lib/fifo-limiter.ts";
 import { sourceFetchBudget } from "../lib/source-fetch-budget.ts";
 import { runRecoveryPipeline } from "../lib/recovery-pipeline.ts";
+import { fetchLiveSourceInventory, inventoryFailureHandoff } from "../lib/live-source-inventory.ts";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
@@ -86,14 +87,9 @@ const liveSources = async (): Promise<CrawlSource[]> => {
     { length: Math.ceil(sourceIds.length / 20) },
     (_, index) => sourceIds.slice(index * 20, index * 20 + 20),
   );
-  const inventory = (await Promise.all(sourceWindows.map(async (window) => {
-    const response = await fetch(`${siteUrl}/api/pulse?resource=sources&ids=${encodeURIComponent(window.join(","))}`, {
-      headers: { accept: "application/json" },
-      signal: AbortSignal.timeout(30_000),
-    });
-    if (!response.ok) throw new Error(`Live source inventory returned HTTP ${response.status}.`);
-    return response.json() as Promise<LiveSource[]>;
-  }))).flat();
+  const inventory = (await Promise.all(sourceWindows.map((window) => fetchLiveSourceInventory<LiveSource>(
+    `${siteUrl}/api/pulse?resource=sources&ids=${encodeURIComponent(window.join(","))}`,
+  )))).flat();
   const byId = new Map(inventory.map((source) => [source.id, source]));
   const now = new Date();
   // Start large catalogs early so they overlap the many short fetches instead
@@ -239,8 +235,22 @@ const persist = async (source: CrawlSource, catalog: Awaited<ReturnType<typeof c
     };
 };
 
+const writeResult = async (summary: { attempted: number; summaries: unknown[] }): Promise<void> => {
+  if (!process.env.REQUEST_FALLBACK_RESULT_PATH) return;
+  await mkdir(dirname(process.env.REQUEST_FALLBACK_RESULT_PATH), { recursive: true });
+  await writeFile(process.env.REQUEST_FALLBACK_RESULT_PATH, JSON.stringify(summary));
+};
+
 async function main(): Promise<void> {
-  const sources = await liveSources();
+  let sources: CrawlSource[];
+  try {
+    sources = await liveSources();
+  } catch (error) {
+    // Without this evidence the audit, browser recovery and final reconcile
+    // all crashed on a missing results file, and the browser queue never ran.
+    await writeResult(inventoryFailureHandoff(sourceIds, error));
+    throw error;
+  }
   const started = new Map<string, number>();
   const summaries = await runRecoveryPipeline(sources, {
     concurrency,
@@ -262,10 +272,7 @@ async function main(): Promise<void> {
     },
   });
   const summary = { attempted: summaries.length, summaries };
-  if (process.env.REQUEST_FALLBACK_RESULT_PATH) {
-    await mkdir(dirname(process.env.REQUEST_FALLBACK_RESULT_PATH), { recursive: true });
-    await writeFile(process.env.REQUEST_FALLBACK_RESULT_PATH, JSON.stringify(summary));
-  }
+  await writeResult(summary);
   process.stdout.write(`${JSON.stringify(summary)}\n`);
   if (summaries.some((summary) => summary.status === "failed")) process.exitCode = 1;
 }

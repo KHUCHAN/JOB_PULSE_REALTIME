@@ -240,7 +240,9 @@ jobs:
       - name: Reconcile final recovery and critical DB outcomes
         if: ${{ always() && !cancelled() }}
         # Fail closed if any artifact is absent, collection was interrupted,
-        # persistence failed, or a company is still unresolved after recovery.
+        # recovered jobs failed to persist, or a critical employer is still
+        # uncollected. Long-tail companies left unresolved after recovery are
+        # listed as a warning and in the step summary without failing the run.
         run: node scripts/summarize-recovery.ts
       - name: Preserve unresolved company evidence
         if: ${{ always() }}

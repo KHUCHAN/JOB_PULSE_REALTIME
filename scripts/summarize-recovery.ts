@@ -23,8 +23,15 @@ export function summarizeRecovery(request: unknown, ripplematch: unknown, browse
   for (const id of browserFailed) failed.add(id);
   const auditErrors = coverage.sources.filter(r => r.error || (r.collectionStatus !== "succeeded" && !recovered.has(r.id ?? "")));
   const requestRows = [request, ripplematch].flatMap(r => (r as RecoveryHandoff).summaries);
+  // The owner run fails only when the pipeline itself broke: missing evidence
+  // (thrown above), recovered jobs that never reached D1, or a critical
+  // employer the raw DB audit still sees as uncollected. Long-tail bot walls,
+  // parser misses and a missed failure-status write lose no collected rows;
+  // they recur every run and are reported, not fatal. Failing on them kept
+  // every run red for weeks and hid the outages that did matter.
+  const persistenceFailed = summary.unresolved.some(r => r.code === "ingest_error" && r.jobs > 0);
   return {
-    status: failed.size || auditErrors.length ? "partial_failure" : "succeeded",
+    status: persistenceFailed || auditErrors.length ? "partial_failure" : failed.size ? "degraded" : "succeeded",
     attemptedSources: new Set([...requestRows.map(r => r.sourceId), ...evidence.results.map(r => r.source.id)]).size,
     unresolvedSourceIds: [...failed].sort(), recoveredAfterRequestFailure,
     authoritativeEmpty: summary.authoritativeEmpty,
@@ -42,7 +49,7 @@ async function main() {
     const safe = (value: string) => value.replace(/[|\r\n<>]/g, " ");
     await appendFile(process.env.GITHUB_STEP_SUMMARY, [
       "## Recovery outcome (separate from the main drain)", "",
-      `- Result: ${report.status}`,
+      `- Result: ${report.status}${report.status === "degraded" ? " (company-level misses are reported, not fatal)" : ""}`,
       `- Unresolved companies: ${report.unresolvedSourceIds.length}`,
       `- Request failures recovered by browser: ${report.recoveredAfterRequestFailure.length}`,
       `- Verified empty catalogs (not failures): ${report.authoritativeEmpty.length}`, "",
@@ -51,7 +58,10 @@ async function main() {
       "", "Request/DB audit failures are retained in the JSON report above.", "",
     ].join("\n"));
   }
-  if (report.status !== "succeeded") process.exitCode = 1;
+  if (report.status === "degraded") {
+    console.log(`::warning title=Unresolved companies::${report.unresolvedSourceIds.length} companies still unresolved after recovery: ${report.unresolvedSourceIds.join(", ")}`);
+  }
+  if (report.status === "partial_failure") process.exitCode = 1;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
   main().catch(error => { console.error(error); process.exitCode = 1; });

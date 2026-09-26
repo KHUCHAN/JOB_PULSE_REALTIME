@@ -1,7 +1,28 @@
 import { describe, expect, it, vi } from "vitest";
 import { createServer } from "node:http";
 import type { CrawledJob, CrawlSource } from "../lib/crawler";
-import { browserChallengeHtml, browserJobsForSource, browserListingSource, browserResultClassification, calCareersBrowserJobs, curlNativeFetch, fedExBrowserApiResult, nativeRunnerRecoveryEligible, persistenceSql, recoverNativeOutsideWorker, type BrowserFallbackResult } from "./browser-fallback-crawl";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { browserChallengeHtml, browserJobsForSource, browserListingSource, browserResultClassification, calCareersBrowserJobs, curlNativeFetch, fedExBrowserApiResult, nativeRunnerRecoveryEligible, persistenceSql, readRequestHandoff, recoverNativeOutsideWorker, type BrowserFallbackResult } from "./browser-fallback-crawl";
+
+describe("browser fallback request handoff", () => {
+  it("keeps the browser queue running when the request lane left no results file", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "handoff-"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await expect(readRequestHandoff(join(dir, "results.json"))).resolves.toBeNull();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("results.json"));
+    warn.mockRestore();
+  });
+  it("still refuses a malformed handoff instead of silently omitting failed sources", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "handoff-"));
+    const path = join(dir, "results.json");
+    await writeFile(path, "{\"attempted\":");
+    await expect(readRequestHandoff(path)).rejects.toThrow();
+    await writeFile(path, JSON.stringify({ attempted: 1, summaries: [{ sourceId: "amd", status: "failed" }] }));
+    await expect(readRequestHandoff(path)).resolves.toEqual({ attempted: 1, summaries: [{ sourceId: "amd", status: "failed" }] });
+  });
+});
 
 describe("browser fallback Workday recovery", () => {
   it("classifies the configured 45-second deadline as timeout instead of an unknown navigation failure", () => {
