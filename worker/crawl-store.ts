@@ -847,11 +847,19 @@ export class D1CrawlStore implements CrawlStore {
             return false;
           }
         })();
+        // One requisition can be posted to several locations, each with its
+        // own ATS job ID (SpaceX on Greenhouse). Those are separate openings:
+        // treating them as mirrors closed every member of the group on
+        // alternate runs and moved one location's row onto another's URL.
+        const separateOpening = (row: ExistingJobRow): boolean => Boolean(externalId && row.external_id
+          && requisitionId && row.requisition_id
+          && mirrorIdentity(row.requisition_id) === mirrorIdentity(requisitionId)
+          && mirrorIdentity(row.external_id) !== mirrorIdentity(externalId));
         const identityMatches = isFirstPartyListing
           ? [...new Set([mirrorIdentity(externalId), mirrorIdentity(requisitionId)]
             .filter((value): value is string => Boolean(value))
             .flatMap((identity) => existingByMirrorIdentity.get(identity) ?? []))]
-            .filter((row) => mirrorTitle(row.title) === recordTitle)
+            .filter((row) => mirrorTitle(row.title) === recordTitle && !separateOpening(row))
           : [];
         const listingMatches = isFirstPartyListing
           ? (existingByListingIdentity.get(canonicalListingIdentityUrl(officialUrl)) ?? [])

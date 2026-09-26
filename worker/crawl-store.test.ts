@@ -534,6 +534,52 @@ describe("D1CrawlStore enriched job persistence", () => {
     expect(result.closed).toBe(1);
   });
 
+  it("keeps distinct same-requisition postings open instead of closing each as the other's mirror", async () => {
+    // SpaceX posts one requisition to several locations; each Greenhouse post
+    // has its own job ID. Treating them as mirrors closed every member of the
+    // group on alternate runs and failed post-ingest verification.
+    const title = "Principal Cybersecurity Engineer (Starshield)";
+    const dcUrl = "https://boards.greenhouse.io/spacex/jobs/8821448002?gh_jid=8821448002";
+    const hawthorneUrl = "https://boards.greenhouse.io/spacex/jobs/8821415002?gh_jid=8821415002";
+    const { db, calls } = fakeDb({
+      source: { company: "SpaceX", posting_url: "https://boards.greenhouse.io/spacex" },
+      existingJobs: [
+        { id: "dc", external_id: "8821448002", requisition_id: "6530555002", title, official_url: dcUrl, status: "open", resume_match_hash: null },
+        { id: "hawthorne", external_id: "8821415002", requisition_id: "6530555002", title, official_url: hawthorneUrl, status: "open", resume_match_hash: null },
+      ],
+    });
+    const common = { title, company: "SpaceX", arrangement: "onsite" as const, employmentType: null, summary: null,
+      requisitionId: "6530555002", publishedAt: new Date().toISOString() };
+    const result = await new D1CrawlStore(db).syncJobs("p5-0736-spacex", [
+      { ...common, externalId: "8821448002", location: "Washington, DC", officialUrl: dcUrl },
+      { ...common, externalId: "8821415002", location: "Hawthorne, CA", officialUrl: hawthorneUrl },
+    ], false);
+
+    expect(calls.find((call) => call.sql.includes("id IN (SELECT value FROM json_each(?))"))).toBeUndefined();
+    expect(result.closed).toBe(0);
+  });
+
+  it("does not move another location's row onto a newly seen same-requisition posting", async () => {
+    const title = "Principal Cybersecurity Engineer (Starshield)";
+    const dcUrl = "https://boards.greenhouse.io/spacex/jobs/8821448002?gh_jid=8821448002";
+    const hawthorneUrl = "https://boards.greenhouse.io/spacex/jobs/8821415002?gh_jid=8821415002";
+    const { db, calls } = fakeDb({
+      source: { company: "SpaceX", posting_url: "https://boards.greenhouse.io/spacex" },
+      existingJobs: [
+        { id: "dc", external_id: "8821448002", requisition_id: "6530555002", title, official_url: dcUrl, status: "open", resume_match_hash: null },
+      ],
+    });
+    await new D1CrawlStore(db).syncJobs("p5-0736-spacex", [{
+      title, company: "SpaceX", arrangement: "onsite", employmentType: null, summary: null, requisitionId: "6530555002",
+      externalId: "8821415002", location: "Hawthorne, CA", officialUrl: hawthorneUrl, publishedAt: new Date().toISOString(),
+    }], false);
+
+    expect(calls.find((call) => call.sql.includes("UPDATE jobs") && call.sql.includes("officialUrl") && call.sql.includes("json_each"))).toBeUndefined();
+    expect(calls.find((call) => call.sql.includes("id IN (SELECT value FROM json_each(?))"))).toBeUndefined();
+    const inserted = calls.find((call) => call.sql.includes("INSERT INTO jobs"));
+    expect(JSON.parse(String(inserted?.values[0]))).toEqual([expect.objectContaining({ officialUrl: hawthorneUrl })]);
+  });
+
   it("changes the resume evaluation hash when company or posting date changes", async () => {
     const { db, calls } = fakeDb();
     const store = new D1CrawlStore(db);
