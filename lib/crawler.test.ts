@@ -1674,6 +1674,40 @@ Wrong description.
     expect(requests.filter((url) => new URL(url).searchParams.get("pr") === "0")).toHaveLength(2);
   });
 
+  it("reads iCIMS cards whose location is a labeled dt/dd field and whose date is a header title", async () => {
+    // GD Mission Systems leaves the header-left div empty, labels the location
+    // inside <dt>, and exposes the exact posted time only as a title attribute.
+    const card = `<li class="iCIMS_JobCardItem"><div class="row">
+      <div class="col-xs-6 header left"> </div>
+      <div class="col-xs-6 header right"><span class="sr-only field-label">Posted Date</span>
+        <span title="9/25/2026 7:32 PM"> 10 hours ago<span class="sr-only">(9/25/2026 7:32 PM)</span></span></div>
+      <div class="col-xs-12 title"><a href="https://careers-gdms.icims.com/jobs/75200/senior-information-assurance-engineer/job?in_iframe=1" class="iCIMS_Anchor">
+        <span class="sr-only field-label">Title</span><h3> Senior Information Assurance Engineer</h3></a></div>
+      <div class="col-xs-12 description">Requires a Bachelor's degree in Engineering.</div>
+      <div class="col-xs-12 additionalFields"><dl class="iCIMS_JobHeaderGroup">
+        <div class="iCIMS_JobHeaderTag"><dt class="iCIMS_JobHeaderField">ID</dt><dd class="iCIMS_JobHeaderData"><span> 2026-75200</span></dd></div>
+        <div class="iCIMS_JobHeaderTag"><dt class="iCIMS_JobHeaderField"><span class="glyphicons glyphicons-map-marker" aria-hidden="true"></span>
+          <span class="sr-only field-label">Job Location</span></dt><dd class="iCIMS_JobHeaderData"><span> US-CO-Boulder</span></dd></div>
+        <div class="iCIMS_JobHeaderTag"><dt class="iCIMS_JobHeaderField">Category</dt><dd class="iCIMS_JobHeaderData"><span> Cyber</span></dd></div>
+      </dl></div></div></li>`;
+    const result = await crawlSource({
+      id: "gdms-icims", company: "General Dynamics", postingUrl: "https://careers-gdms.icims.com/jobs/search?ss=1", adapter: "icims",
+    }, async () => new Response(`<h2 class="iCIMS_SubHeader iCIMS_SubHeader_Jobs">Search Results Page 1 of 1</h2>
+      <ul class="container-fluid iCIMS_JobsTable">${card}</ul>`, { status: 200, headers: { "content-type": "text/html" } }), new Date("2026-09-26T10:00:00Z"));
+
+    expect(result.jobs).toEqual([expect.objectContaining({
+      externalId: "75200",
+      location: "US-CO-Boulder",
+      locationCountry: "US",
+      locationState: "CO",
+      locationCity: "Boulder",
+      department: "Cyber",
+      requisitionId: "2026-75200",
+      sourcePostedText: "9/25/2026 7:32 PM",
+      publishedAt: expect.stringMatching(/^2026-09-2[56]T/),
+    })]);
+  });
+
   it("follows a public iCIMS catalog embedded in a corporate careers page", async () => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input) => {

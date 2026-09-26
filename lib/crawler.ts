@@ -1866,14 +1866,6 @@ const icimsJobsFromHtml = (html: string, source: CrawlSource): { rawCount: numbe
     official.searchParams.delete("needsRedirect");
     official.hash = "";
 
-    const location = icimsText(card.match(
-      /<span\b[^>]*class=["'][^"']*field-label[^"']*["'][^>]*>\s*Job Locations?\s*<\/span>\s*<span\b[^>]*>([\s\S]*?)<\/span>/i,
-    )?.[1]) ?? icimsText(card.match(
-      /<div\b[^>]*class=["'][^"']*\bheader\s+left\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/i,
-    )?.[1]);
-    const description = icimsText(card.match(
-      /<div\b[^>]*class=["'][^"']*\bdescription\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/i,
-    )?.[1]);
     const fields = new Map<string, string>();
     for (const field of card.matchAll(
       /<dt\b[^>]*>([\s\S]*?)<\/dt>\s*<dd\b[^>]*>([\s\S]*?)<\/dd>/gi,
@@ -1882,9 +1874,22 @@ const icimsJobsFromHtml = (html: string, source: CrawlSource): { rawCount: numbe
       const value = icimsText(field[2]);
       if (key && value) fields.set(key, value);
     }
+    // Some tenants (GD Mission Systems) leave the header empty and label the
+    // location inside the dt/dd group instead.
+    const location = icimsText(card.match(
+      /<span\b[^>]*class=["'][^"']*field-label[^"']*["'][^>]*>\s*Job Locations?\s*<\/span>\s*<span\b[^>]*>([\s\S]*?)<\/span>/i,
+    )?.[1]) ?? icimsText(card.match(
+      /<div\b[^>]*class=["'][^"']*\bheader\s+left\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/i,
+    )?.[1]) ?? fields.get("job location") ?? fields.get("job locations") ?? null;
+    const description = icimsText(card.match(
+      /<div\b[^>]*class=["'][^"']*\bdescription\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/i,
+    )?.[1]);
     const employmentType = normalizeEmploymentType(fields.get("type"))
       ?? (classifyJobPrograms(title).keys.some((key) => key === "internship" || key === "coop") ? "Internship" : null);
-    const publishedText = fields.get("posted date") ?? fields.get("date posted") ?? null;
+    // The header shows a relative age; its title attribute has the exact time.
+    const publishedText = fields.get("posted date") ?? fields.get("date posted") ?? icimsText(card.match(
+      /field-label[^>]*>\s*Posted Date\s*<\/span>\s*<span\b[^>]*\btitle=["']([^"']+)["']/i,
+    )?.[1]) ?? null;
     return [{
       externalId: anchor[2],
       title,
