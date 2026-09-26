@@ -128,6 +128,9 @@ export const LARGE_CATALOG_US_SCOPE_POLICY_VERSION = "large-us-v8";
 // reset and cleanup. The full membership set below still controls every crawl.
 export const LARGE_CATALOG_US_SCOPE_POLICY_REQUEUE_SOURCE_IDS = ["p2-0046-mastercard"] as const;
 export const US_SCOPED_LARGE_CATALOGS = new Set([
+  // Phenom HTML pages are relevance-sorted and overlap; the US scope uses the
+  // complete widgets API instead. No prior inventory needs a requeue.
+  "p2-0110-franklin-templeton",
   "audit-row-3447", // TD Bank global Workday catalog
   "audit-row-319", // Baker Hughes
   "audit-row-338", // Cummins
@@ -505,15 +508,75 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
     adapter: "custom",
   },
   "p4-0317-nubank": {
-    // The corporate careers page is protected by a JavaScript challenge.
-    // Its linked Greenhouse board is authoritative and can explicitly report
-    // a verified zero-job state without waiting on Chrome.
-    discovered: {
-      kind: "greenhouse",
-      endpoint: "https://boards-api.greenhouse.io/v1/boards/nubank/jobs?content=true",
-    },
-    listingUrl: "https://job-boards.greenhouse.io/nubank",
+    // nu.com/en/careers now links Ashby; the former Greenhouse board is empty.
+    discovered: { kind: "ashby", endpoint: "https://api.ashbyhq.com/posting-api/job-board/nubank" },
+    listingUrl: "https://jobs.ashbyhq.com/nubank",
+    adapter: "ashby",
+  },
+  "p5-0533-agilent-technologies": {
+    // careers.agilent.com links this Workday site (the SmartRecruiters board
+    // carries only a handful of the same roles).
+    discovered: { kind: "workday", endpoint: "https://agilent.wd5.myworkdayjobs.com/wday/cxs/agilent/Agilent_Careers/jobs" },
+    listingUrl: "https://agilent.wd5.myworkdayjobs.com/Agilent_Careers",
+    adapter: "workday",
+  },
+  "p4-0398-armis": {
+    // The stored URL was a Greenhouse sign-in page. ServiceNow acquired Armis
+    // and its roles now appear in the ServiceNow source; keep the public
+    // board so an empty result is verified rather than rejected.
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/armissecurity/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/armissecurity",
     adapter: "greenhouse",
+  },
+  "p4-0405-bumble": {
+    // team.bumble.com links Ashby; the Lever board is empty.
+    discovered: { kind: "ashby", endpoint: "https://api.ashbyhq.com/posting-api/job-board/bumbleinc" },
+    listingUrl: "https://jobs.ashbyhq.com/bumbleinc",
+    adapter: "ashby",
+  },
+  "p2-0110-franklin-templeton": {
+    // The Workday site search returns zero; the official Phenom board lists
+    // the roles and links back to that Workday site to apply.
+    listingUrl: "https://careers.franklintempleton.com/us/en/search-results",
+    adapter: "phenom",
+  },
+  "p5-1066-sword-health": {
+    // The Lever board is empty; Sword's Greenhouse board carries its roles.
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/swordhealth/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/swordhealth",
+    adapter: "greenhouse",
+  },
+  "p4-0464-ncino": {
+    // The Workday site returns zero; nCino, Inc. publishes on Greenhouse.
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/ncinoinc/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/ncinoinc",
+    adapter: "greenhouse",
+  },
+  "p2-0107-first-horizon": {
+    // firsthorizon.com/careers now links Oracle Candidate Experience; the old
+    // UltiPro board keeps only two stale FHN Financial roles.
+    oracle: { apiOrigin: "https://ibpwjb.fa.ocs.oraclecloud.com", site: "CX_1" },
+    listingUrl: "https://ibpwjb.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/jobs",
+    adapter: "custom",
+  },
+  "p5-0937-hudson-river-trading": {
+    // HRT's live role pages embed the "wehrtyou" board; the default
+    // discovery landed on a stale talent-community board.
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/wehrtyou/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/wehrtyou",
+    adapter: "greenhouse",
+  },
+  "p4-0293-hummingbird": {
+    // The current careers page lists no roles; the company's linked board.
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/hummingbirdregtech/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/hummingbirdregtech",
+    adapter: "greenhouse",
+  },
+  "p5-0772-general-dynamics": {
+    // The GDMS Jibe site stopped updating in March 2026; the live GDMS job
+    // search links this iCIMS portal.
+    listingUrl: "https://careers-gdms.icims.com/jobs/search?ss=1",
+    adapter: "icims",
   },
   "legacy-row-103": { listingUrl: "https://careers.jetblue.com/search/?q=&locationsearch=&sortColumn=referencedate&sortDirection=desc", adapter: "custom" },
   "legacy-row-110": { listingUrl: "https://jobs.nscorp.com/search/?q=&locationsearch=&sortColumn=referencedate&sortDirection=desc", adapter: "custom" },
