@@ -8519,6 +8519,32 @@ We are an equal opportunity employer.`;
     }));
   });
 
+  it("reports BrassRing's scheduled-maintenance page instead of a session failure", async () => {
+    const maintenanceHtml = `<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+      <html><head><title>Infinite BrassRing</title></head><body>
+      <h2 style="font-size:16px; font-weight: bold;">The application is currently unavailable for scheduled maintenance. We apologize for any inconvenience this may cause and appreciate your patience as we work to improve our solutions. Please visit <a href="https://status.brassring.com/">status page</a> for additional information.</p>
+      </body></html>`;
+    const requests: string[] = [];
+    const result = await crawlSource({
+      id: "legacy-row-786",
+      company: "Archer Daniels Midland",
+      postingUrl: "https://sjobs.brassring.com/TGnewUI/Search/Home/Home?partnerid=25416&siteid=5998",
+      adapter: "custom",
+    }, async (input) => {
+      requests.push(String(input));
+      return new Response(maintenanceHtml, { headers: { "set-cookie": "ASPSESSIONIDSWRDCBDC=AOIKJGBD; secure; path=/" } });
+    }, new Date("2026-09-26T09:30:00Z"));
+
+    expect(requests).toHaveLength(1);
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed",
+      responseStatus: 200,
+      completeListing: false,
+      jobs: [],
+      error: "BrassRing careers is unavailable for scheduled maintenance.",
+    }));
+  });
+
   it("fails closed when BrassRing job identities belong to another board", async () => {
     const foreignPayload = {
       JobsCount: 1,

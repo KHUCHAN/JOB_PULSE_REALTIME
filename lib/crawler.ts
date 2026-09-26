@@ -6325,6 +6325,11 @@ const crawlBrassRing = async (
     const html = await initial.text();
     const token = decodeHtmlAttribute(html.match(/name=["']__RequestVerificationToken["'][^>]*value=["']([^"']+)/i)?.[1] ?? "");
     const encryptedSessionValue = decodeHtmlAttribute(html.match(/id=["']CookieValue["'][^>]*value=["']([^"']+)/i)?.[1] ?? "");
+    // During Infinite Talent's planned US Production windows every gateway
+    // returns this HTTP 200 notice; name it so it is not triaged as a parser bug.
+    if (!token && /\bcurrently unavailable for scheduled maintenance\b/i.test(html)) {
+      throw new Error("BrassRing careers is unavailable for scheduled maintenance.");
+    }
     if (!token || !encryptedSessionValue || cookies.size === 0) throw new Error("BrassRing careers did not establish a crawl session.");
     const requestHeaders = () => ({
       "content-type": "application/json;charset=UTF-8",
