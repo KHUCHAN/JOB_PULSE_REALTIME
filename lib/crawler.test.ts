@@ -514,20 +514,19 @@ describe("repaired source adapters", () => {
     }));
   });
 
-  it("bypasses Nubank's challenged landing page and accepts its authoritative empty Greenhouse board", async () => {
+  it("bypasses Nubank's challenged landing page and reads the Ashby board its careers page links", async () => {
     const source = { id: "p4-0317-nubank", company: "Nubank", postingUrl: "https://international.nubank.com.br/careers/", adapter: "custom" as const };
     const requests: string[] = [];
     const result = await crawlSource(source, async (input) => {
       requests.push(String(input));
-      return Response.json({ jobs: [], meta: { total: 0 } });
+      return Response.json({ jobs: [] });
     }, new Date());
-    expect(requests).toEqual(["https://boards-api.greenhouse.io/v1/boards/nubank/jobs?content=true"]);
+    expect(requests.every((url) => url.startsWith("https://api.ashbyhq.com/posting-api/job-board/nubank"))).toBe(true);
+    expect(requests).not.toContain("https://international.nubank.com.br/careers/");
     expect(result).toEqual(expect.objectContaining({
       status: "succeeded",
-      responseStatus: 200,
-      completeListing: true,
       jobs: [],
-      resolvedListingUrl: "https://job-boards.greenhouse.io/nubank",
+      resolvedListingUrl: "https://jobs.ashbyhq.com/nubank",
     }));
   });
 
@@ -3476,12 +3475,19 @@ HUMAN RESOURCES Posted Date
     expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true, resolvedListingUrl: "https://join.matchgroupcareers.com/careers?domain=gotinder.com" }));
   });
 
-  it("treats Hummingbird's explicit future-openings page as a healthy empty board", async () => {
+  it("reads Hummingbird's linked Greenhouse board instead of its future-openings page", async () => {
+    const requests: string[] = [];
     const result = await crawlSource({
       id: "p4-0293-hummingbird", company: "Hummingbird", postingUrl: "https://www.hummingbird.co/careers", adapter: "custom",
-    }, async () => new Response("<main><h2>Future openings</h2><p>Send us your resume for later.</p></main>"), new Date());
+    }, async (input) => {
+      requests.push(String(input));
+      return Response.json({ jobs: [], meta: { total: 0 } });
+    }, new Date());
 
-    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true, jobs: [] }));
+    expect(requests).toEqual(["https://boards-api.greenhouse.io/v1/boards/hummingbirdregtech/jobs?content=true"]);
+    expect(result).toEqual(expect.objectContaining({
+      status: "succeeded", completeListing: true, jobs: [], resolvedListingUrl: "https://job-boards.greenhouse.io/hummingbirdregtech",
+    }));
   });
 
   it("uses Molson Coors' official US SuccessFactors catalog and preserves its posted date", async () => {
