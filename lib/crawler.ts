@@ -572,6 +572,26 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
     listingUrl: "https://job-boards.greenhouse.io/hummingbirdregtech",
     adapter: "greenhouse",
   },
+  "legacy-row-788": {
+    // The stored URL was Assurant's job-scam notice and jobs.assurant.com is
+    // challenge-only; this is Assurant's public Workday site.
+    discovered: { kind: "workday", endpoint: "https://assurant.wd1.myworkdayjobs.com/wday/cxs/assurant/Assurant_Careers/jobs" },
+    listingUrl: "https://assurant.wd1.myworkdayjobs.com/Assurant_Careers",
+    adapter: "workday",
+  },
+  "p2-0112-glacier-bancorp": {
+    // The stored iCIMS host is the employee portal; glacierbank.com links
+    // this public Jibe board.
+    discovered: { kind: "jibe", endpoint: "https://www.gbcijobs.com/api/jobs?page=1&limit=100&sortBy=posted_date&descending=true&internal=false" },
+    listingUrl: "https://www.gbcijobs.com/glacier-bank/jobs",
+    adapter: "custom",
+  },
+  "p5-0862-concertai": {
+    // careers.concertai.com is gone; the careers route embeds this board.
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/concertai/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/concertai",
+    adapter: "greenhouse",
+  },
   "p5-0772-general-dynamics": {
     // The GDMS Jibe site stopped updating in March 2026; the live GDMS job
     // search links this iCIMS portal.
