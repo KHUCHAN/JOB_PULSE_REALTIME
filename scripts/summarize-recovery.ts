@@ -24,11 +24,11 @@ export function summarizeRecovery(request: unknown, ripplematch: unknown, browse
   const auditErrors = coverage.sources.filter(r => r.error || (r.collectionStatus !== "succeeded" && !recovered.has(r.id ?? "")));
   const requestRows = [request, ripplematch].flatMap(r => (r as RecoveryHandoff).summaries);
   // The owner run fails only when the pipeline itself broke: missing evidence
-  // (thrown above), recovered jobs that never reached D1, or a critical
-  // employer the raw DB audit still sees as uncollected. Long-tail bot walls,
-  // parser misses and a missed failure-status write lose no collected rows;
-  // they recur every run and are reported, not fatal. Failing on them kept
-  // every run red for weeks and hid the outages that did matter.
+  // (thrown above), recovered jobs whose write failed in transport or D1, or
+  // a critical employer the raw DB audit still sees as uncollected. Long-tail
+  // bot walls, parser misses, a server policy rejection (ingest_rejected) and
+  // a missed failure-status write are reported, not fatal. Failing on them
+  // kept every run red for weeks and hid the outages that did matter.
   const persistenceFailed = summary.unresolved.some(r => r.code === "ingest_error" && r.jobs > 0);
   return {
     status: persistenceFailed || auditErrors.length ? "partial_failure" : failed.size ? "degraded" : "succeeded",

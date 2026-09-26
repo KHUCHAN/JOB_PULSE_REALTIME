@@ -173,7 +173,12 @@ export const ingestJobSnapshotInChunks = async (
         lastError = null;
         break;
       }
-      lastError = new Error(`Production ingest returned HTTP ${response.status}${payload?.error ? `: ${payload.error}` : "."}`);
+      // Keep the status so callers can tell a deterministic rejection from a
+      // lost write.
+      lastError = Object.assign(
+        new Error(`Production ingest returned HTTP ${response.status}${payload?.error ? `: ${payload.error}` : "."}`),
+        { status: response.status },
+      );
       const retryable = [408, 425, 429].includes(response.status) || response.status >= 500;
       if (!retryable || attempt === attempts) throw lastError;
       if (retryDelayMs > 0) {

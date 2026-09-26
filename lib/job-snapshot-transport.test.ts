@@ -134,6 +134,25 @@ describe("browser job snapshot transport", () => {
     expect(bodies[0].snapshotStartedAt).toBe(bodies[1].snapshotStartedAt);
   });
 
+  it("reports a non-retryable server rejection with its HTTP status", async () => {
+    const fetcher = vi.fn(async () => Response.json({ error: "Browser snapshot listing URL did not match the source company." }, { status: 400 }));
+    const failure = await ingestJobSnapshotInChunks({
+      allowedOrigins: ["https://jobs.example.com"],
+      authorization: async () => "token",
+      completeListing: true,
+      endpoint: "https://pulse.example/api/pulse",
+      fetcher: fetcher as typeof fetch,
+      jobs: [job(1)],
+      listingUrl: "https://jobs.example.com",
+      retryDelayMs: 0,
+      sourceId: "source-1",
+    }).catch((error: unknown) => error);
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).toMatchObject({ status: 400, message: expect.stringContaining("did not match the source company") });
+  });
+
   it("retries transient persistence failures with fresh authorization and one snapshot identity", async () => {
     const bodies: Array<Record<string, unknown>> = [];
     const authorization = vi.fn(async () => `token-${authorization.mock.calls.length}`);

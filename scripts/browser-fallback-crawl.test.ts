@@ -6,6 +6,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { browserChallengeHtml, browserJobsForSource, browserListingSource, browserResultClassification, calCareersBrowserJobs, curlNativeFetch, fedExBrowserApiResult, nativeRunnerRecoveryEligible, persistenceSql, readRequestHandoff, recoverNativeOutsideWorker, type BrowserFallbackResult } from "./browser-fallback-crawl";
 
+describe("browser fallback persistence outcomes", () => {
+  const recovered: BrowserFallbackResult = {
+    source: { id: "penn", company: "Penn Medicine (UPHS)", postingUrl: "https://careers.pennmedicine.org/search/jobs", adapter: "custom" },
+    status: 200, finalUrl: "https://careers.pennmedicine.org/search/jobs", jobs: [], error: null,
+  };
+  it("separates a server policy rejection from a lost write", () => {
+    expect(browserResultClassification({ ...recovered, persistenceError: "Production ingest returned HTTP 503.", persistenceRejected: false }))
+      .toEqual({ status: "failed", code: "ingest_error" });
+    expect(browserResultClassification({ ...recovered, persistenceError: "Production ingest returned HTTP 400: listing URL did not match.", persistenceRejected: true }))
+      .toEqual({ status: "failed", code: "ingest_rejected" });
+  });
+});
+
 describe("browser fallback request handoff", () => {
   it("keeps the browser queue running when the request lane left no results file", async () => {
     const dir = await mkdtemp(join(tmpdir(), "handoff-"));

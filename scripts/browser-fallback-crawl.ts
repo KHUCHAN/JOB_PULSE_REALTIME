@@ -30,6 +30,9 @@ export type BrowserFallbackResult = {
   browserState?: { kind: "tesla"; state: TeslaState };
   error: string | null;
   persistenceError?: string;
+  // The server refused the snapshot by policy (a non-retryable 4xx), as
+  // opposed to a write that was lost in transport or D1.
+  persistenceRejected?: boolean;
   timing?: SnapshotWriteTiming & { inspectMs: number; ingestMs: number; chunks: number };
 };
 
@@ -1018,13 +1021,14 @@ type BrowserResultCode =
   | "navigation_timeout"
   | "navigation_error"
   | "unsafe_listing"
-  | "ingest_error";
+  | "ingest_error"
+  | "ingest_rejected";
 
 export const browserResultClassification = (result: BrowserFallbackResult): {
   status: "succeeded" | "failed" | "blocked";
   code: BrowserResultCode;
 } => {
-  if (result.persistenceError) return { status: "failed", code: "ingest_error" };
+  if (result.persistenceError) return { status: "failed", code: result.persistenceRejected ? "ingest_rejected" : "ingest_error" };
   if (result.authoritativeEmpty) return { status: "succeeded", code: "empty_board" };
   if (result.error?.startsWith("Rejected unsafe browser listing candidate:")) return { status: "failed", code: "unsafe_listing" };
   if (result.jobs.length > 0 && result.finalUrl) return { status: "succeeded", code: "jobs_recovered" };
@@ -1241,6 +1245,9 @@ async function main(): Promise<void> {
           process.stdout.write(`${JSON.stringify({ sourceId: result.source.id, jobs: ingested.jobs, timing: result.timing })}\n`);
         } catch (error) {
           markPersistenceFailure(result, error instanceof Error ? error.message : "Production browser ingest failed.");
+          const status = (error as { status?: unknown }).status;
+          result.persistenceRejected = typeof status === "number" && status >= 400 && status < 500
+            && ![408, 425, 429].includes(status);
           try {
             const retry = await recordProductionBrowserResult({
               action: "recordBrowserCrawlResult",

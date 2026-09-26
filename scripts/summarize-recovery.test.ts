@@ -47,6 +47,15 @@ describe("final owner recovery outcome", () => {
     expect(summarizeRecovery(emptyRequest, emptyRequest, { completed: true, results: [{ ...row, jobs: [job], authoritativeEmpty: false, persistenceError: "HTTP 500" }] },
       { sources: [{ id: "google", collectionStatus: "succeeded" }] }).status).toBe("partial_failure");
   });
+  it("reports a server policy rejection of recovered jobs as degraded, not a lost write", () => {
+    const job = { externalId: "1", title: "Nurse", company: "AMD", location: "Philadelphia", arrangement: "unknown" as const,
+      employmentType: null, summary: null, officialUrl: "https://careers.amd.com/jobs/1", publishedAt: null };
+    expect(summarizeRecovery(emptyRequest, emptyRequest, { completed: true, results: [{ ...row, jobs: [job], authoritativeEmpty: false,
+      persistenceError: "Production ingest returned HTTP 400: Browser snapshot listing URL did not match the source company.", persistenceRejected: true }] },
+    { sources: [{ id: "google", collectionStatus: "succeeded" }] })).toMatchObject({
+      status: "degraded", browserFailures: [expect.objectContaining({ code: "ingest_rejected" })],
+    });
+  });
   it("reports a missed failure-status write as degraded because no collected rows were lost", () => {
     const deadPage: BrowserFallbackResult = { ...row, status: 404, authoritativeEmpty: false,
       persistenceError: "Production browser result recording failed: The operation was aborted due to timeout" };
