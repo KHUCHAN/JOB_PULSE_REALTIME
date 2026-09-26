@@ -15366,6 +15366,72 @@ We are an equal opportunity employer.`;
     expect(result.jobs[0]).not.toHaveProperty("locationCity");
   });
 
+  it("keeps Coast Central branch openings that share one role PDF and skips partner-employer postings", async () => {
+    const listingUrl = "https://www.coastccu.org/community/careers/";
+    const pdfUrl = "https://www.coastccu.org/wp-content/uploads/2026/08/MSR-I.pdf";
+    const accordion = (title: string, body: string, anchor?: string) => `<div class="co-accordion">
+        <button class="co-accordion--trigger js-accordion_toggle closed"><span>${title}</span><span class="co-accordion--arrow"></span></button>
+        <div class="co-accordion--content js-accordion_content entry_content"><p>${body}</p>${anchor ?? ""}</div></div>`;
+    const msrPdf = `<p style="text-align: center;"><a class="cta-link" href="http://www.coastccu.org/wp-content/uploads/2026/08/MSR-I.pdf">Member Services Representative &#8211; Full Job Description</a></p>`;
+    const html = `<meta property="article:modified_time" content="2026-09-25T16:46:58+00:00" />
+      <a class="co-mp_cta--link" href="https://www.coastccu.org/speed-bump/?url=https%3A%2F%2Fcopilot.formstack.com%2Fstart-workflow%2F21b99460-89d4-402b-96cb-61323a3cd8d3&prev=https%3A%2F%2Fwww.coastccu.org%2Fcommunity%2Fcareers%2F">Apply Now</a>
+      <h2 class="co-intro_text--title">Current Openings<span></span></h2></header>
+      ${accordion("Member Services Representative (Bayshore Mall - Eureka)", "Our Bayshore Mall location in Eureka has a regular, full-time opportunity. Salary range is $19.00 &#8211; $30.80/hour.", msrPdf)}
+      ${accordion("Member Services Representative (Crescent City)", "Our Crescent City location has a regular, part-time opportunity. Salary range is $19.00 &#8211; $30.80/hour.", msrPdf)}
+      ${accordion("Member Services Representative (Weaverville)", "Our Weaverville location has a regular, full-time opportunity.", msrPdf)}
+      ${accordion("TruStage Financial Advisor", "Please note: <strong>This position is with TruStage, not Coast Central.</strong> See the original TruStage posting below.", `<a href="http://www.coastccu.org/wp-content/uploads/2026/08/MSR-I.pdf">Financial Advisor &#8211; External Application</a>`)}
+      ${accordion("Secret Shoppers", "Please visit our Secret Shopping Partner to apply.")}
+      </section>`;
+    const requests: Array<{ url: string; method: string }> = [];
+    const result = await crawlSource({
+      id: "p2-0034-coast-central-cu", company: "Coast Central Credit Union", postingUrl: listingUrl, adapter: "custom",
+    }, async (input, init) => {
+      const url = String(input);
+      requests.push({ url, method: init?.method ?? "GET" });
+      return url === listingUrl
+        ? new Response(html)
+        : new Response(null, { status: 200, headers: { "content-type": "application/pdf" } });
+    }, new Date("2026-09-26T09:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true, error: null }));
+    // One shared PDF is validated once, not once per branch opening.
+    expect(requests).toEqual([
+      { url: listingUrl, method: "GET" },
+      { url: pdfUrl, method: "HEAD" },
+    ]);
+    expect(result.jobs.map((job) => [job.title, job.location, job.employmentType])).toEqual([
+      ["Member Services Representative (Bayshore Mall - Eureka)", "Eureka, CA", "Full-time"],
+      ["Member Services Representative (Crescent City)", "Crescent City, CA", "Part-time"],
+      ["Member Services Representative (Weaverville)", "Weaverville, CA", "Full-time"],
+    ]);
+    expect(new Set(result.jobs.map((job) => job.externalId)).size).toBe(3);
+    expect(new Set(result.jobs.map((job) => job.officialUrl)).size).toBe(3);
+    expect(result.jobs.every((job) => job.officialUrl.startsWith(`${pdfUrl}#`))).toBe(true);
+    expect(result.jobs.every((job) => (job.rawPayload as { officialPdf?: string }).officialPdf === pdfUrl)).toBe(true);
+    expect(result.jobs.some((job) => /trustage|secret shopper/i.test(job.title))).toBe(false);
+  });
+
+  it("fails Coast Central closed when openings sharing one PDF cannot be told apart", async () => {
+    const listingUrl = "https://www.coastccu.org/community/careers/";
+    const opening = `<div class="co-accordion"><button class="co-accordion--trigger"><span>Member Services Representative</span></button>
+      <div class="co-accordion--content"><p>Full-time role in Eureka.</p>
+      <a href="https://www.coastccu.org/wp-content/uploads/2026/08/MSR-I.pdf">Member Services Representative Full Job Description</a></div></div>`;
+    const html = `<meta property="article:modified_time" content="2026-09-25T16:46:58+00:00">
+      <a href="https://www.coastccu.org/speed-bump/?url=https%3A%2F%2Fcopilot.formstack.com%2Fstart-workflow%2F21b99460-89d4-402b-96cb-61323a3cd8d3&prev=https%3A%2F%2Fwww.coastccu.org%2Fcommunity%2Fcareers%2F">Apply Now</a>
+      <h2>Current Openings</h2><section>${opening}${opening}</section>`;
+    const result = await crawlSource({
+      id: "p2-0034-coast-central-cu", company: "Coast Central Credit Union", postingUrl: listingUrl, adapter: "custom",
+    }, async (input) => String(input) === listingUrl
+      ? new Response(html)
+      : new Response(null, { status: 200, headers: { "content-type": "application/pdf" } }), new Date());
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed",
+      jobs: [],
+      error: "Coast Central careers returned an empty or malformed openings section.",
+    }));
+  });
+
   it("fails Coast Central closed when an advertised job PDF is unavailable", async () => {
     const listingUrl = "https://www.coastccu.org/community/careers/";
     const pdfUrl = "https://www.coastccu.org/wp-content/uploads/2026/08/Business-Portfolio-Officer.pdf";

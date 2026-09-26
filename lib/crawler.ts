@@ -5360,6 +5360,7 @@ type CoastCentralOpening = {
   title: string;
   description: string;
   officialUrl: string;
+  pdfUrl: string;
   validThrough: string | null;
   locationCity: string | null;
 };
@@ -5389,6 +5390,7 @@ const coastCentralCity = (description: string): string | null => [
   "Fortuna",
   "Willow Creek",
   "Garberville",
+  "Weaverville",
 ].find((city) => new RegExp(`\\b${city.replace(" ", "\\s+")}\\b`, "i").test(description)) ?? null;
 
 const coastCentralSalaryFields = (
@@ -5431,7 +5433,14 @@ const coastCentralOpenings = (html: string): CoastCentralOpening[] | null => {
     const pdf = anchorsFromHtml(descriptionHtml).find(({ href, text }) =>
       /full job description/i.test(text) && /\.pdf(?:[?#]|$)/i.test(href));
     if (/^secret shoppers?$/i.test(title) && !pdf) continue;
-    if (!pdf || !jobIdentityText(pdf.text).startsWith(jobIdentityText(title))) return null;
+    // Partner roles (e.g. a TruStage advisor) are listed with an explicit
+    // "this position is with X, not Coast Central" notice; they are not this
+    // employer's openings.
+    if (/\bnot\s+(?:with\s+)?Coast Central\b/i.test(description)) continue;
+    // Branch-specific openings are titled "Role (Branch)" while the PDF anchor
+    // names only the role.
+    const roleTitle = title.replace(/\s*\([^()]+\)$/, "") || title;
+    if (!pdf || !jobIdentityText(pdf.text).startsWith(jobIdentityText(roleTitle))) return null;
     let officialUrl: URL;
     try {
       officialUrl = new URL(pdf.href, COAST_CENTRAL_LISTING_URL);
@@ -5455,9 +5464,20 @@ const coastCentralOpenings = (html: string): CoastCentralOpening[] | null => {
       title,
       description,
       officialUrl: officialUrl.href,
+      pdfUrl: officialUrl.href,
       validThrough,
       locationCity,
     });
+  }
+  // Several branch openings can share one role PDF. Give each its own
+  // identity from its official title; identical titles still fail below.
+  const pdfUses = new Map<string, number>();
+  for (const { pdfUrl } of openings) pdfUses.set(pdfUrl, (pdfUses.get(pdfUrl) ?? 0) + 1);
+  for (const opening of openings) {
+    if (pdfUses.get(opening.pdfUrl) === 1) continue;
+    const slug = jobIdentityText(opening.title).replace(/\s+/g, "-");
+    opening.externalId = `${opening.externalId}--${slug}`;
+    opening.officialUrl = `${opening.pdfUrl}#${slug}`;
   }
   if (openings.length === 0 || new Set(openings.map(({ externalId }) => externalId)).size !== openings.length
     || new Set(openings.map(({ officialUrl }) => officialUrl)).size !== openings.length) return null;
@@ -5496,7 +5516,7 @@ const coastCentralJob = (
     applyUrl,
     ...(sourceUpdatedAt ? { sourceUpdatedAt } : {}),
     ...(opening.validThrough ? { validThrough: opening.validThrough } : {}),
-    rawPayload: { officialPdf: opening.officialUrl, applicationWorkflow: COAST_CENTRAL_FORM_URL },
+    rawPayload: { officialPdf: opening.pdfUrl, applicationWorkflow: COAST_CENTRAL_FORM_URL },
     officialUrl: opening.officialUrl,
     publishedAt: null,
   };
@@ -5539,27 +5559,28 @@ const crawlCoastCentralCareers = async (source: CrawlSource, fetcher: typeof fet
       throw new Error("Coast Central careers returned an empty or malformed openings section.");
     }
     const updated = new Map<string, string | null>();
-    for (let index = 0; index < openings.length; index += 6) {
-      const values = await Promise.all(openings.slice(index, index + 6).map(async (opening) => {
+    const pdfUrls = [...new Set(openings.map(({ pdfUrl }) => pdfUrl))];
+    for (let index = 0; index < pdfUrls.length; index += 6) {
+      const values = await Promise.all(pdfUrls.slice(index, index + 6).map(async (pdfUrl) => {
         try {
-          const pdf = await fetchWithTimeout(fetcher, opening.officialUrl, {
+          const pdf = await fetchWithTimeout(fetcher, pdfUrl, {
             method: "HEAD",
             headers: { accept: "application/pdf", referer: COAST_CENTRAL_LISTING_URL },
           }, true, { attempts: 1, timeoutMs: 8_000 });
           if (!pdf.ok || !/^application\/pdf\b/i.test(pdf.headers.get("content-type") ?? "")
-            || (pdf.url && pdf.url !== opening.officialUrl)) {
+            || (pdf.url && pdf.url !== pdfUrl)) {
             failureStatus ??= pdf.status;
-            return { opening, valid: false, modifiedAt: null };
+            return { pdfUrl, valid: false, modifiedAt: null };
           }
-          return { opening, valid: true, modifiedAt: normalizedDate(pdf.headers.get("last-modified")) ?? pageUpdatedAt };
+          return { pdfUrl, valid: true, modifiedAt: normalizedDate(pdf.headers.get("last-modified")) ?? pageUpdatedAt };
         } catch {
-          return { opening, valid: false, modifiedAt: null };
+          return { pdfUrl, valid: false, modifiedAt: null };
         }
       }));
-      for (const value of values) if (value.valid) updated.set(value.opening.officialUrl, value.modifiedAt);
+      for (const value of values) if (value.valid) updated.set(value.pdfUrl, value.modifiedAt);
     }
-    const jobs = openings.flatMap((opening) => updated.has(opening.officialUrl)
-      ? [coastCentralJob(opening, source, applyUrl, updated.get(opening.officialUrl) ?? pageUpdatedAt)]
+    const jobs = openings.flatMap((opening) => updated.has(opening.pdfUrl)
+      ? [coastCentralJob(opening, source, applyUrl, updated.get(opening.pdfUrl) ?? pageUpdatedAt)]
       : []);
     if (jobs.length !== openings.length) throw new Error("Coast Central job-description PDFs were incomplete or unavailable.");
     return {
