@@ -13050,6 +13050,66 @@ We are an equal opportunity employer.`;
     ]);
   });
 
+  it("accepts Amkor's legacy SuccessFactors page whose endRow is the unclamped page window", async () => {
+    const total = 12;
+    const dwr = (batchId: number, pageSize: number, count: number, endRow: number): string => {
+      const refs = Array.from({ length: count }, (_, index) => `s${index + 10}`);
+      const records = refs.map((reference, index) => `s2[${index}]=${reference};${reference}.corporatePosting=true;${reference}.id=${29_000 + index};${reference}.postingDate="09\\/${String(10 + index).padStart(2, "0")}\\/2026";${reference}.title="Engineer ${index + 1}";`).join("");
+      return `throw 'allowScriptTagRemoting is false.';
+//#DWR-INSERT
+//#DWR-REPLY
+var s0={};var s1={};var s2=[];var s3={};${refs.map((reference) => `var ${reference}={};`).join("")}
+s1.postings=s2;s1.pagination=s3;s3.currentPage=1;s3.endRow=${endRow};s3.increaseCandSummaryPagination=false;s3.pageSize=${pageSize};s3.startRow=1;s3.totalCount=${total};
+${records}
+dwr.engine._remoteHandleCallback('${batchId}','0',{filters:s0,results:s1});`;
+    };
+    const result = await crawlSource({
+      id: "p5-0544-amkor-technology",
+      company: "Amkor Technology",
+      postingUrl: "https://amkor.com/careers/united-states/",
+      adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      if (url.includes("getInitialJobSearchData.dwr")) return new Response(dwr(0, 10, 10, 10));
+      // Live reply for a 45-job catalog: endRow=50 with totalCount=45.
+      if (url.includes("careerJobSearchControllerProxy.search.dwr")) return new Response(dwr(1, 50, total, 50));
+      return new Response('<script>var ajaxSecKey="abcdefghijklmnopqrstuvwxyz123456";</script>', {
+        headers: { "set-cookie": "JSESSIONID=first; Path=/; Secure" },
+      });
+    }, new Date("2026-09-26T09:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true, error: null }));
+    expect(result.jobs).toHaveLength(total);
+    expect(new Set(result.jobs.map((job) => job.externalId)).size).toBe(total);
+  });
+
+  it("fails Amkor closed when a legacy SuccessFactors page omits postings from its window", async () => {
+    const dwr = (batchId: number, pageSize: number, count: number, endRow: number, totalCount: number): string => {
+      const refs = Array.from({ length: count }, (_, index) => `s${index + 10}`);
+      const records = refs.map((reference, index) => `s2[${index}]=${reference};${reference}.id=${29_000 + index};${reference}.postingDate="09/10/2026";${reference}.title="Engineer ${index + 1}";`).join("");
+      return `var s0={};var s1={};var s2=[];var s3={};${refs.map((reference) => `var ${reference}={};`).join("")}s1.postings=s2;s1.pagination=s3;s3.currentPage=1;s3.endRow=${endRow};s3.pageSize=${pageSize};s3.startRow=1;s3.totalCount=${totalCount};${records}dwr.engine._remoteHandleCallback('${batchId}','0',{results:s1});`;
+    };
+    const result = await crawlSource({
+      id: "p5-0544-amkor-technology",
+      company: "Amkor Technology",
+      postingUrl: "https://amkor.com/careers/united-states/",
+      adapter: "custom",
+    }, async (input) => {
+      const url = String(input);
+      if (url.includes("getInitialJobSearchData.dwr")) return new Response(dwr(0, 10, 10, 10, 12));
+      if (url.includes("careerJobSearchControllerProxy.search.dwr")) return new Response(dwr(1, 50, 11, 50, 12));
+      return new Response('<script>var ajaxSecKey="abcdefghijklmnopqrstuvwxyz123456";</script>', {
+        headers: { "set-cookie": "JSESSIONID=first; Path=/; Secure" },
+      });
+    }, new Date("2026-09-26T09:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "failed",
+      jobs: [],
+      error: expect.stringContaining("malformed or changing catalog page"),
+    }));
+  });
+
   it("fails Amkor closed when its legacy SuccessFactors search response is not authoritative", async () => {
     const validInitial = `var s0={};var s1={};var s2=[];var s3={};var s4={};s1.postings=s2;s2[0]=s4;s3.currentPage=1;s3.endRow=1;s3.pageSize=10;s3.startRow=1;s3.totalCount=1;s4.id=28989;s4.postingDate="08/10/2026";s4.title="MES Engineer";dwr.engine._remoteHandleCallback('0','0',{results:s1});`;
     const result = await crawlSource({

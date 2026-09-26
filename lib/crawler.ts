@@ -6040,7 +6040,10 @@ const parseLegacySuccessFactorsDwr = (
   const expectedStart = total === 0 ? 0 : ((expectedPage - 1) * expectedPageSize) + 1;
   const expectedEnd = Math.min(expectedPage * expectedPageSize, total);
   const expectedCount = Math.max(0, expectedEnd - expectedStart + 1);
-  if ((total === 0 ? startRow !== 0 && startRow !== 1 : startRow !== expectedStart) || endRow !== expectedEnd) {
+  // A page shorter than its window can report the unclamped window end
+  // (endRow=50 with totalCount=45); the posting count must still be exact.
+  if ((total === 0 ? startRow !== 0 && startRow !== 1 : startRow !== expectedStart)
+    || (endRow !== expectedEnd && endRow !== expectedPage * expectedPageSize)) {
     return { jobs: [], total, valid: false };
   }
   const jobReferences = dwrArrayReferences(body, postingsReference);
