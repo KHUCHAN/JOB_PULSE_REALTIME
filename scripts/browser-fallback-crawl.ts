@@ -637,17 +637,7 @@ const recoverCalCareersInBrowser = async (page: Page, source: CrawlSource): Prom
     return criteria.includes("depid=148")
       && document.querySelectorAll('div[id*="_pnlCardContainer_"]').length > 0;
   }, { timeout: 15_000 });
-  // Cards can render from the statewide result before the department filter's
-  // own async postback finishes; posting then returns every state job (e.g.
-  // 100/2817). Wait for the page's request manager to go idle first.
-  const asyncIdle = () => page.waitForFunction(() => {
-    const manager = (window as unknown as { Sys?: { WebForms?: { PageRequestManager?: {
-      getInstance?: () => { get_isInAsyncPostBack?: () => boolean } | undefined;
-    } } } }).Sys?.WebForms?.PageRequestManager?.getInstance?.();
-    return !manager?.get_isInAsyncPostBack?.();
-  }, { timeout: 15_000 }).catch(() => undefined);
-  await asyncIdle();
-  const postback = () => page.evaluate(async () => {
+  const result = await page.evaluate(async () => {
     const form = document.querySelector<HTMLFormElement>("form");
     if (!form) throw new Error("CalCareers search form was unavailable.");
     const data = new FormData(form);
@@ -701,14 +691,6 @@ const recoverCalCareersInBrowser = async (page: Page, source: CrawlSource): Prom
       window.clearTimeout(timeout);
     }
   });
-  let result = await postback();
-  if (result.status < 400 && result.rows.length !== result.total) {
-    // One bounded retry after the page settles; completeness is still
-    // verified below, so a second unfiltered answer stays rejected.
-    await asyncIdle();
-    await page.waitForTimeout(1_500);
-    result = await postback();
-  }
   const jobs = calCareersBrowserJobs(source, result.rows);
   if (!result.status || result.status >= 400) {
     return { source, status: result.status || null, finalUrl, jobs: [], error: `CalCareers result postback returned HTTP ${result.status || "unknown"}.` };
