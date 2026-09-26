@@ -15,6 +15,24 @@ describe("career URL remediation", () => {
     expect(rankCareerLink({ href: "https://jobs.lever.co/acme", text: "Open roles" }, "https://acme.com/careers")).toBeGreaterThan(100);
   });
 
+  it("accepts Talemetry country searches and Paylocity tenant boards as listings, not job details", () => {
+    // Broadening JOB_DETAIL for deep Loews detail URLs also rejected these
+    // stored listing URLs, even when the candidate was identical to them.
+    const penn = "https://careers.pennmedicine.org/search/jobs/in/country/united-states";
+    const alvarez = "https://careers.alvarezandmarsal.com/en/search/jobs/in/country/united-states";
+    const palladyne = "https://recruiting.paylocity.com/recruiting/jobs/All/265fde3e-5bd7-4a32-8881-2f62c8f3d32e/Palladyne-AI";
+    const meditech = "https://recruiting.paylocity.com/recruiting/jobs/All/7791d608-f43a-4be3-8c56-90cab1a0447c/Medical-Information-Technology-Inc";
+    expect(isSafeCareerListingUrl("Penn Medicine (UPHS)", penn, penn)).toBe(true);
+    expect(isSafeCareerListingUrl("Alvarez & Marsal", alvarez, alvarez)).toBe(true);
+    expect(isSafeCareerListingUrl("Sarcos Robotics (Palladyne AI)", palladyne, palladyne)).toBe(true);
+    expect(isSafeCareerListingUrl("MEDITECH", meditech, meditech)).toBe(true);
+    expect(isPublicAtsCatalogUrl(palladyne)).toBe(true);
+
+    expect(isSafeCareerListingUrl("Penn Medicine (UPHS)", penn, "https://careers.pennmedicine.org/search/jobs/in/country/united-states/extra/detail")).toBe(false);
+    expect(isSafeCareerListingUrl("Alvarez & Marsal", alvarez, "https://careers.alvarezandmarsal.com/en/jobs/18082906-senior-associate")).toBe(false);
+    expect(isSafeCareerListingUrl("MEDITECH", meditech, "https://recruiting.paylocity.com/Recruiting/Jobs/Details/4292687")).toBe(false);
+  });
+
   it("recognizes opaque public ATS catalogs linked from an official careers page", () => {
     expect(isPublicAtsCatalogUrl("https://career8.successfactors.com/career?company=amkor")).toBe(true);
     expect(isPublicAtsCatalogUrl("https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=tenant")).toBe(true);

@@ -1,7 +1,9 @@
 const ATS_HOST = /(?:greenhouse\.io|lever\.co|myworkdayjobs\.com|myworkdaysite\.com|smartrecruiters\.com|ashbyhq\.com|icims\.com|jobvite\.com|hirebridge\.com|taleo\.net|tal\.net|brassring\.com|apply\.workable\.com|bamboohr\.com|pinpointhq\.com|teamtailor\.com|jobs\.gusto\.com|ats\.rippling\.com|csod\.com|dayforcehcm\.com|successfactors\.(?:com|eu)|oraclecloud\.com|eightfold\.ai|avature\.net|submit4jobs\.com|rec\.pro\.ukg\.net|(?:myjobs|workforcenow)\.adp\.com|recruiting\.paylocity\.com|recruiting\d*\.ultipro\.com)/i;
 const JOB_TEXT = /\b(?:jobs?|careers?|opportunities|open (?:positions|roles)|join (?:our )?team|search roles?)\b/i;
 const JOB_PATH = /\/(?:jobs?|careers?|opportunities|positions?|openings?|search-results|search\/results|job-search|open-positions|join-us)(?:\/|$|[?#-])/i;
-const JOB_LISTING_PATH = /(?:\/jobs?\/results\/?(?:[?#]|$)|\/jobs?\/(?:search|positions?|openings?|listings?)(?:[/?#]|$)|\/JobBoard(?:[/?#]|$)|\/candidate\/jobboard(?:[/?#]|$)|\/CalHRPublic\/Search\/JobSearchResults\.aspx(?:[?#]|$)|\/jobs?\.html(?:[?#]|$))/i;
+// Talemetry country searches and Paylocity tenant boards nest under /jobs/
+// but are catalogs; JOB_DETAIL alone would reject them.
+const JOB_LISTING_PATH = /(?:\/search\/jobs(?:\/in\/country\/[a-z0-9-]+)?\/?(?:[?#]|$)|\/recruiting\/jobs\/All\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\/[^/?#]+)?\/?(?:[?#]|$)|\/jobs?\/results\/?(?:[?#]|$)|\/jobs?\/(?:search|positions?|openings?|listings?)(?:[/?#]|$)|\/JobBoard(?:[/?#]|$)|\/candidate\/jobboard(?:[/?#]|$)|\/CalHRPublic\/Search\/JobSearchResults\.aspx(?:[?#]|$)|\/jobs?\.html(?:[?#]|$))/i;
 const USER_ONLY = /(?:job-?alerts?|talent-?community|introduceyourself|sign[_-]?in|\/login|\/connect(?:[/?#]|$)|\/apply(?:[/?#]|$))/i;
 const JOB_DETAIL = /(?:\/(?:job|jobs)\/[^/?#]+(?:\/[^/?#]+)*\/?(?:[?#]|$)|[?&](?:pid|jobid|jobseqno|gh_jid)=)/i;
 
