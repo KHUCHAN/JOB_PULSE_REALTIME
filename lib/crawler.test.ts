@@ -15275,6 +15275,60 @@ We are an equal opportunity employer.`;
     expect(result.jobs[0]).not.toHaveProperty("applyUrl");
   });
 
+  it("keeps Paycom's international CareerArc roles that have no U.S. postal code", async () => {
+    const listingUrl = "https://www.paycom.com/careers/job-map/";
+    const entry = (id: number, title: string, location: Record<string, unknown>) => ({
+      id,
+      title,
+      description: "<p>As part of Paycom Europe Limited's continued growth, lead the enterprise risk framework.</p>",
+      apply_url: `https://app.careerarc.com/job_postings/${id}?ctm_campaign=job_map%3A401&ctm_company=459&ctm_source=5&ctm_target=job_posting%3A${id}`,
+      brand: { id: 2276, name: "Paycom" },
+      categories: [{ id: 8453474, name: "Legal" }],
+      employment_type: "Other",
+      is_unmappable: false,
+      remote: false,
+      locations: [location],
+      tracking_params: { ctm_company: "459", ctm_source: "5", ctm_target: `job_posting:${id}`, ctm_campaign: "job_map:401" },
+    });
+    const entries = [
+      entry(7830525, "Payroll Specialist", {
+        id: 344743, canonical_name: "Oklahoma City, OK", city: "Oklahoma City", country_code: "USA",
+        lat: 35.6053478, lng: -97.6182396, postal_code: "73142", state: "OK", street_address: "5713 NW 132nd St",
+      }),
+      entry(7830526, "Head of Risk - IE", {
+        id: 196832, canonical_name: "Dublin, Ireland", city: "Dublin", country_code: "IRL",
+        lat: 53.3498053, lng: -6.2603097, postal_code: null, state: "D", street_address: null,
+      }),
+    ];
+    const result = await crawlSource({
+      id: "p4-0472-paycom", company: "Paycom", postingUrl: listingUrl, adapter: "custom",
+    }, async (input) => String(input) === listingUrl
+      ? new Response(`<iframe src="https://app.careerarc.com/job_maps/401"></iframe>`)
+      : Response.json({
+          entries,
+          meta: { total_count: 2, total_pages: 1, page: 1, per_page: 25, links: {} },
+        }), new Date("2026-09-26T09:00:00Z"));
+
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true, error: null }));
+    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs[0]).toEqual(expect.objectContaining({
+      location: "Oklahoma City, OK",
+      locationState: "OK",
+      locationCountry: "United States",
+      locationPostalCode: "73142",
+    }));
+    expect(result.jobs[1]).toEqual(expect.objectContaining({
+      externalId: "7830526",
+      title: "Head of Risk - IE",
+      location: "Dublin, Ireland",
+      locationCity: "Dublin",
+      locationCountry: "Ireland",
+      officialUrl: "https://app.careerarc.com/job_postings/7830526",
+    }));
+    expect(result.jobs[1]).not.toHaveProperty("locationState");
+    expect(result.jobs[1]).not.toHaveProperty("locationPostalCode");
+  });
+
   it("fails Paycom closed when CareerArc repeats a job identity", async () => {
     const listingUrl = "https://www.paycom.com/careers/job-map/";
     const duplicate = {

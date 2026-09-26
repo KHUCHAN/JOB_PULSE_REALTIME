@@ -5206,10 +5206,20 @@ const paycomCareerArcJob = (entry: PaycomCareerArcEntry, source: CrawlSource): C
     const latitude = typeof location.lat === "number" && Number.isFinite(location.lat) ? location.lat : null;
     const longitude = typeof location.lng === "number" && Number.isFinite(location.lng) ? location.lng : null;
     const locationId = Number(location.id);
-    if (!name || !city || !state || !postalCode || latitude === null || longitude === null
+    const countryCode = asText(location.country_code);
+    const isUs = countryCode === "USA";
+    // CareerArc also lists Paycom Europe roles, e.g. "Dublin, Ireland" with
+    // country_code IRL and no postal code. Take the country from the
+    // canonical name; U.S. rows still need a state and ZIP code.
+    const country = isUs
+      ? "United States"
+      : /^[A-Z]{3}$/.test(countryCode ?? "") ? name?.match(/,\s*([A-Za-z][A-Za-z .'-]{2,})$/)?.[1]?.trim() ?? null : null;
+    if (!name || !city || !country || latitude === null || longitude === null
       || !Number.isSafeInteger(locationId) || locationId <= 0
-      || asText(location.country_code) !== "USA") return [];
-    return [{ name, city, state, postalCode, latitude, longitude, id: locationId }];
+      || (isUs && (!state || !postalCode))) return [];
+    return [{
+      name, city, state: isUs ? state : null, postalCode, country, latitude, longitude, id: locationId,
+    }];
   });
   if (normalizedLocations.length !== locations.length) return null;
   const primary = normalizedLocations[0];
@@ -5242,9 +5252,9 @@ const paycomCareerArcJob = (entry: PaycomCareerArcEntry, source: CrawlSource): C
     department: categories.join("; "),
     jobFunction: categories.join("; "),
     locationCity: primary.city,
-    locationState: primary.state,
-    locationCountry: "United States",
-    locationPostalCode: primary.postalCode,
+    ...(primary.state ? { locationState: primary.state } : {}),
+    locationCountry: primary.country,
+    ...(primary.postalCode ? { locationPostalCode: primary.postalCode } : {}),
     latitude: primary.latitude,
     longitude: primary.longitude,
     ...(normalizedLocations.length > 1 ? { secondaryLocations: normalizedLocations.slice(1).map(({ name }) => name) } : {}),
