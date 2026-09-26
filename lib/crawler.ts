@@ -16524,7 +16524,8 @@ const fastenalSessionCookie = (headers: Headers): string | null => {
   const values = (headers as Headers & { getSetCookie?: () => string[] }).getSetCookie?.()
     ?? [headers.get("set-cookie") ?? ""];
   const session = values.join(",").match(
-    /(?:^|,\s*)JSESSIONID=(?:"([A-Za-z0-9._~:-]{8,256})"|([A-Za-z0-9._~:-]{8,256}))(?:;|,|$)/i,
+    // Session ids are base64url-like and can contain "_" as well as "-".
+    /(?:^|,\s*)JSESSIONID=(?:"([\w.~:-]{8,256})"|([\w.~:-]{8,256}))(?:;|,|$)/i,
   );
   const value = session?.[1] ?? session?.[2];
   return value ? `JSESSIONID=${session?.[1] ? `"${value}"` : value}` : null;
@@ -16740,7 +16741,9 @@ const crawlFastenalCareers = async (source: CrawlSource, fetcher: typeof fetch):
       `<option\\b(?=[^>]*\\bvalue=["']${FASTENAL_US_COUNTRY_LOCALITY_ID}["'])[^>]*>\\s*United States\\s*</option>`,
       "i",
     ).test(listingHtml);
-    if (csrfHeader !== "X-CSRF-TOKEN" || !csrfToken || !/^[a-z0-9-]{20,128}$/i.test(csrfToken)
+    // Spring Security issues either UUID tokens or XOR-masked base64url
+    // tokens, whose alphabet includes "_" and optional "=" padding.
+    if (csrfHeader !== "X-CSRF-TOKEN" || !csrfToken || !/^[\w-]{20,128}={0,2}$/.test(csrfToken)
       || !sessionCookie || !hasUsFilter || !/<form\b[^>]*\bid=["']findJobsForm["']/i.test(listingHtml)) {
       throw new Error("Fastenal job search returned invalid session or U.S. filter configuration.");
     }

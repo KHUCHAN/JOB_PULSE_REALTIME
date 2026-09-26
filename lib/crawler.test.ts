@@ -15731,6 +15731,51 @@ We are an equal opportunity employer.`;
     }));
   });
 
+  it("accepts Fastenal's base64url CSRF tokens and session ids", async () => {
+    const corporateUrl = "https://careers.fastenal.com/";
+    const listingUrl = "https://jobs.fastenal.com/jobs";
+    const csrfToken = "FZjsedfDwrgo1xuAOmKd-YFOf41dbaUQUji4hg433XOO95ePcP3UHbOio9wFsyOwA0-pzrZ9Uu87W5M9a12J428BuBa4x6C_";
+    const sessionId = "NnxQ-1RB5BcD8st_ZkmkMm1c4Wo3rulH5PpCZEle.webmsc-p-app02-jvm02";
+    const listingHtml = `<meta name="_csrf_parameter" content="_csrf" />
+      <meta name="_csrf_header" content="X-CSRF-TOKEN" />
+      <meta name="_csrf" content="${csrfToken}" />
+      <form id="findJobsForm" name="findJobsForm" method="post">
+      <select id="countryLocalityId" name="countryLocalityId"><option value="-1">
+        All
+      </option><option value="156"
+        >
+        United States
+      </option></select></form>`;
+    const requests: Array<{ url: string; headers: Headers }> = [];
+    const result = await crawlSource({
+      id: "legacy-row-811", company: "Fastenal", postingUrl: corporateUrl, adapter: "custom",
+    }, async (input, init) => {
+      const url = String(input);
+      requests.push({ url, headers: new Headers(init?.headers) });
+      if (url === corporateUrl) return new Response(`<a href="${listingUrl}">Search Careers</a>`);
+      if (url === listingUrl) {
+        const headers = new Headers();
+        headers.append("set-cookie", "org.springframework.web.servlet.i18n.CookieLocaleResolver.LOCALE=en-US; Path=/; Secure; HttpOnly");
+        headers.append("set-cookie", `JSESSIONID=${sessionId}; path=/; secure; HttpOnly; SameSite=None`);
+        return new Response(listingHtml, { headers });
+      }
+      if (url === "https://jobs.fastenal.com/load-jobs") return Response.json({
+        draw: 1, recordsTotal: 1, recordsFiltered: 1,
+        data: [{
+          jobId: 633002, title: "Software Developer", type: "Full-time", city: "Winona", state: "MN",
+          department: "Administrative", endDate: "10-31-2026", approvedDate: Date.parse("2026-09-20T00:00:00.000Z"),
+        }],
+      });
+      return new Response("unexpected", { status: 404 });
+    }, new Date("2026-09-26T09:00:00.000Z"));
+
+    expect(result).toEqual(expect.objectContaining({ status: "succeeded", completeListing: true, error: null }));
+    expect(result.jobs.map(({ externalId }) => externalId)).toEqual(["633002"]);
+    const apiRequest = requests.find(({ url }) => url === "https://jobs.fastenal.com/load-jobs");
+    expect(apiRequest?.headers.get("x-csrf-token")).toBe(csrfToken);
+    expect(apiRequest?.headers.get("cookie")).toBe(`JSESSIONID=${sessionId}`);
+  });
+
   it("fails Fastenal closed when its U.S. API repeats a job identity", async () => {
     const corporateUrl = "https://careers.fastenal.com/";
     const listingUrl = "https://jobs.fastenal.com/jobs";
