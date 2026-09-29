@@ -108,41 +108,43 @@ const areaKeysProjection = (alias: string): string => `coalesce((
          )
        ), '[]') AS area_keys`;
 
+// These are point lookups even under production-sized match/review history.
+// Pin the existing exact-key indexes rather than letting a correlated join
+// start from a profile-wide scan when D1's statistics change during a crawl.
 export const jobDetailProjection = (alias = "j"): string => [
   ...jobDetailColumns.map((column) => `${alias}.${column} AS ${column}`),
   areaKeysProjection(alias),
   `(SELECT detail_match.score
-    FROM job_matches detail_match
-    JOIN match_profiles detail_profile ON detail_profile.keyword_id = detail_match.keyword_id
-    WHERE detail_profile.id = 'chanyoung-resume'
+    FROM job_matches detail_match INDEXED BY job_matches_job_keyword_generation_unique
+    WHERE detail_match.keyword_id = (SELECT keyword_id FROM match_profiles WHERE id = 'chanyoung-resume')
       AND detail_match.job_id = ${alias}.id
       AND detail_match.open_generation = ${alias}.open_generation
       AND detail_match.is_active = 1
     LIMIT 1) AS resume_match_score`,
   `(SELECT detail_match.matched_terms
-    FROM job_matches detail_match
-    JOIN match_profiles detail_profile ON detail_profile.keyword_id = detail_match.keyword_id
-    WHERE detail_profile.id = 'chanyoung-resume'
+    FROM job_matches detail_match INDEXED BY job_matches_job_keyword_generation_unique
+    WHERE detail_match.keyword_id = (SELECT keyword_id FROM match_profiles WHERE id = 'chanyoung-resume')
       AND detail_match.job_id = ${alias}.id
       AND detail_match.open_generation = ${alias}.open_generation
       AND detail_match.is_active = 1
     LIMIT 1) AS resume_match_evidence`,
   `(SELECT detail_match.notified_at
-    FROM job_matches detail_match
-    JOIN match_profiles detail_profile ON detail_profile.keyword_id = detail_match.keyword_id
-    WHERE detail_profile.id = 'chanyoung-resume'
+    FROM job_matches detail_match INDEXED BY job_matches_job_keyword_generation_unique
+    WHERE detail_match.keyword_id = (SELECT keyword_id FROM match_profiles WHERE id = 'chanyoung-resume')
       AND detail_match.job_id = ${alias}.id
       AND detail_match.open_generation = ${alias}.open_generation
       AND detail_match.is_active = 1
     LIMIT 1) AS resume_notified_at`,
   `(SELECT detail_review.decision
-    FROM codex_reviews detail_review
-    JOIN job_matches detail_match ON detail_match.id = detail_review.job_match_id
-    JOIN match_profiles detail_profile ON detail_profile.keyword_id = detail_match.keyword_id
-    WHERE detail_profile.id = 'chanyoung-resume'
-      AND detail_match.job_id = ${alias}.id
-      AND detail_match.open_generation = ${alias}.open_generation
-      AND detail_match.is_active = 1
+    FROM codex_reviews detail_review INDEXED BY codex_reviews_job_match_unique
+    WHERE detail_review.job_match_id = (
+      SELECT detail_match.id
+      FROM job_matches detail_match INDEXED BY job_matches_job_keyword_generation_unique
+      WHERE detail_match.job_id = ${alias}.id
+        AND detail_match.keyword_id = (SELECT keyword_id FROM match_profiles WHERE id = 'chanyoung-resume')
+        AND detail_match.open_generation = ${alias}.open_generation
+        AND detail_match.is_active = 1
+    )
     LIMIT 1) AS resume_review_decision`,
   `EXISTS (
     SELECT 1 FROM notification_identity_history history

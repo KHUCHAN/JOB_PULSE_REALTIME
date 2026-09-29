@@ -162,7 +162,8 @@ export const US_SCOPED_LARGE_CATALOGS = new Set([
   "p4-0214-alvarez-marsal",
   "p4-0222-avanade",
   "p4-0225-barclays-us",
-  "p4-0245-cisco",
+  // Cisco stays global: its official catalog is bounded, and US-only scoping
+  // silently removed the UK's and Singapore's internship postings.
   "p4-0258-deutsche-bank-americas",
   "p4-0285-google",
   "p4-0289-hcltech",
@@ -26051,7 +26052,7 @@ const enrichProgramJobDetails = async (
   // requisition/apply identity during the same crawl (and can be deduplicated
   // against an ATS mirror). Rotate the remainder so older sparse records still
   // converge over subsequent two-hour passes.
-  const detailBudget = source.id === "p4-0285-google" ? 48 : WORKDAY_DETAIL_BATCH_SIZE;
+  const detailBudget = ["p4-0285-google", "p4-0245-cisco"].includes(source.id) ? 48 : WORKDAY_DETAIL_BATCH_SIZE;
   const prioritizedCount = Math.min(Math.ceil(detailBudget * (source.id === "p4-0285-google" ? 2 / 3 : 1 / 2)), targets.length);
   const prioritizedTargets = targets.slice(0, prioritizedCount);
   const rotatingTargets = targets.slice(prioritizedCount);
@@ -26326,8 +26327,10 @@ const withLargeCatalogRequestScope = (source: CrawlSource): CrawlSource => (
 export async function crawlSource(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
   const budgetedFetcher = crawlBudgetedFetcher(fetcher, source.id === "p2-0027-bank-of-america"
     ? { maxRequests: 130, deadlineMs: 45_000 }
-    : source.id === "p4-0285-google"
+    : source.id === "p4-0285-google" || source.id === "p4-0245-cisco"
       // 32 catalog pages + at most 16 priority pages + 48 detail requests.
+      // Cisco also needs its 20 catalog pages plus up to 48 internship details;
+      // eight rotating details left fresh co-ops without dates/body keywords.
       // The default 50-request limit silently starved the newest detail rows.
       ? { maxRequests: 100, deadlineMs: 45_000 }
     : undefined);
