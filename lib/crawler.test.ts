@@ -15518,7 +15518,7 @@ dwr.engine._remoteHandleCallback('${batchId}','0',{filters:s0,results:s1});`;
       status: "failed",
       completeListing: false,
       jobs: [],
-      error: "Paycom CareerArc feed returned duplicate or unusable job records.",
+      error: "Paycom map groups exceed safe single-page bounds.",
     }));
   });
 

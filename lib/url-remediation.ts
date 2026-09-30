@@ -185,6 +185,14 @@ export const isSafeCareerListingUrl = (company: string, originalUrl: string, can
   if (ATS_VENDOR_LANDING.test(candidate.hostname) && /^\/?$/i.test(candidate.pathname)) return false;
   if (THIRD_PARTY_AGGREGATOR.test(candidate.hostname)) return false;
   if (NON_LISTING_PATH.test(`${candidate.pathname}${candidate.search}`)) return false;
+  // Employer-confirmed September 2026 ATS migrations. Keep these exceptions
+  // exact: an opaque Oracle host or a parent-company feed is not generally safe.
+  if (company.trim().toLowerCase() === "dollar general"
+    && (original.hostname === "careers.dollargeneral.com" || original.hostname === "ibxwjb.fa.ocs.oraclecloud.com")
+    && candidate.href === "https://ibxwjb.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/jobs") return true;
+  if (company.trim().toLowerCase() === "masimo"
+    && candidate.hostname === "jobs.danaher.com") return ["egcu.fa.us6.oraclecloud.com", "www.masimo.com", "jobs.danaher.com"].includes(original.hostname)
+      && candidate.href === "https://jobs.danaher.com/global/en/search-results?opco=Masimo";
   const isExactFedExUsCatalog = (url: URL): boolean => url.protocol === "https:"
     && url.hostname.toLocaleLowerCase() === "careers.fedex.com"
     && url.pathname === "/jobs/page/1"

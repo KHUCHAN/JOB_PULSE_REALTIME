@@ -27,6 +27,13 @@ test('failed main drain has a bounded retry backoff', () => {
   assert.equal(decideAdmission([failed(29)], { now }).run, false);
   assert.equal(decideAdmission([failed(30)], { now }).run, true);
 });
+test('time-limited full collections fail the drain step; only push smoke may remain partial', async () => {
+  const script = await readFile(new URL('../scripts/run-production-crawl.mjs', import.meta.url), 'utf8');
+  assert.match(script, /if \(!pool\.drained && process\.env\.GITHUB_EVENT_NAME !== "push"\) \{\s*process\.exitCode = 1;/);
+  const workflow = await readFile(new URL('../.github/workflows/production-crawl.yml', import.meta.url), 'utf8');
+  assert.match(workflow, /JOB_PULSE_MAX_RUN_MINUTES:.*'50'/);
+  assert.match(workflow, /REQUEST_FALLBACK_REPAIRED_SOURCE_IDS:.*audit-row-342/);
+});
 test('active owner blocks even a repair push', () => {
   assert.equal(decideAdmission([run(4, { status: 'in_progress' })], { now, event: 'push' }).run, false);
 });

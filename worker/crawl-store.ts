@@ -57,6 +57,10 @@ type PagedCrawlState = {
 // behind work that cannot succeed from that network. sourcesByIds deliberately
 // remains unrestricted so an explicit repair can still target any source.
 export const nativeCrawlExcludedSourceIds = [
+  "audit-row-345", // Migrated Oracle retention window, owned by request recovery.
+  "p5-0660-masimo", // Verified Masimo-only Danaher catalog.
+  "p4-0472-paycom", // Complete CareerArc map reconciliation.
+  "p2-0196-graphistry", // Normal Node requests work; Worker edge returns 202.
   "legacy-row-832", // Loews public Workday catalog, owned by request recovery.
   "legacy-row-860", // Sanmina public Deltek catalog, owned by request recovery.
   // Every forced request-lane source has one owner. Do not collect and write

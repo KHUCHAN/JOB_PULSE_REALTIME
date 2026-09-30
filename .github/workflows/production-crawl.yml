@@ -74,7 +74,7 @@ jobs:
           JOB_PULSE_SITE_URL: https://job-pulse-realtime.autodev61.chatgpt.site
           # A repair push needs only a bounded smoke drain after critical
           # recovery; the recurring schedule retains the full drain.
-          JOB_PULSE_MAX_RUN_MINUTES: ${{ github.event_name == 'push' && '2' || '40' }}
+          JOB_PULSE_MAX_RUN_MINUTES: ${{ github.event_name == 'push' && '2' || '50' }}
           # Start with two leases, grow to four after clean rounds, and back
           # down to one with cooldown when shared D1 capacity is saturated.
           JOB_PULSE_REQUEST_CONCURRENCY: "4"
@@ -87,7 +87,7 @@ jobs:
     # the forced set is verified every workflow, while ordinary recovery IDs
     # run only when due. Sequential ordering also prevents the native stale-run
     # finalizer from misclassifying a streaming snapshot as disconnected.
-    # Forty + thirty-five + twenty-five minutes remains below two hours.
+    # Fifty + thirty-five + twenty-five minutes remains below two hours.
     needs: [admission]
     if: ${{ always() && !cancelled() && needs.admission.outputs.run == 'true' }}
     runs-on: ubuntu-latest
@@ -102,6 +102,9 @@ jobs:
         # recovery. A repaired first attempt must not poison the whole run.
         continue-on-error: true
         env:
+          # Keep repaired catalogs owned and verified in this one lane. Delta
+          # was excluded from native leases AND from stale-only browser work.
+          REQUEST_FALLBACK_REPAIRED_SOURCE_IDS: audit-row-345,p5-0660-masimo,p4-0472-paycom,p2-0196-graphistry,audit-row-342
           REQUEST_FALLBACK_LIVE_URL: https://job-pulse-realtime.autodev61.chatgpt.site
           REQUEST_FALLBACK_INGEST_URL: https://job-pulse-realtime.autodev61.chatgpt.site/api/pulse
           REQUEST_FALLBACK_CONCURRENCY: "8"

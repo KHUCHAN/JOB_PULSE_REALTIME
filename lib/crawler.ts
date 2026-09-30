@@ -404,9 +404,16 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
     adapter: "custom",
   },
   "audit-row-345": {
-    discovered: { kind: "jibe", endpoint: "https://careers.dollargeneral.com/api/jobs?page=1&limit=100&sortBy=posted_date&descending=true&internal=false" },
-    listingUrl: "https://careers.dollargeneral.com/jobs?page=1",
+    // Linked by the employer's corporate careers page after its Jibe migration.
+    oracle: { apiOrigin: "https://ibxwjb.fa.ocs.oraclecloud.com", site: "CX_1" },
+    listingUrl: "https://ibxwjb.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/jobs",
     adapter: "custom",
+  },
+  "p5-0660-masimo": {
+    // Masimo now recruits through Danaher. The widget query and response
+    // validation below both pin the operating company, never the parent feed.
+    listingUrl: "https://jobs.danaher.com/global/en/search-results?opco=Masimo",
+    adapter: "phenom",
   },
   "audit-row-434": {
     discovered: { kind: "jibe", endpoint: "https://jobs.uhsinc.com/api/jobs?page=1&limit=100&sortBy=posted_date&descending=true&internal=false" },
@@ -841,6 +848,13 @@ const VERIFIED_SOURCE_FEEDS: Record<string, VerifiedSourceFeed> = {
     // rediscovered instead of permanently treating the source as inactive.
     listingUrl: "https://groq.com/careers-at-groq",
     adapter: "custom",
+  },
+  "p5-1006-om1": {
+    // Still linked by om1.com/careers. A missing board is an upstream error,
+    // not an empty catalog; avoid rediscovering the same dead link 20 times.
+    discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/om1/jobs?content=true" },
+    listingUrl: "https://job-boards.greenhouse.io/om1",
+    adapter: "greenhouse",
   },
   "p4-0492-scale-ai": {
     discovered: { kind: "greenhouse", endpoint: "https://boards-api.greenhouse.io/v1/boards/scaleai/jobs?content=true" },
@@ -1303,6 +1317,7 @@ type RecruiterboxOpening = {
 };
 
 type PhenomJob = {
+  opco?: string;
   title?: string;
   jobId?: string;
   jobSeqNo?: string;
@@ -2661,11 +2676,18 @@ const oracleJobUrl = (sourceUrl: string, site: string, job: OracleJob): string =
 
 async function crawlOracle(
   source: CrawlSource,
-  oracle: { apiOrigin: string; site: string },
+  oracle: { apiOrigin: string; site: string; locationFacet?: string },
   fetcher: typeof fetch,
+  now = new Date(),
 ): Promise<SourceCrawlResult> {
   try {
-    const pageSize = 25;
+    // DG's migrated tenant contains 90k mostly old store requisitions. Its
+    // official API supports 200/page and postingStartDate. Match our existing
+    // 30-day retention window (with a full UTC-day margin), not a role/year
+    // filter. A date-window snapshot must never close unseen undated jobs.
+    const retentionWindow = source.id === "audit-row-345";
+    const pageSize = retentionWindow ? 200 : 25;
+    const postedAfter = new Date(now.getTime() - 31 * 86_400_000).toISOString().slice(0, 10);
     // One request is spent discovering Oracle from the public listing page.
     // Keep the remaining API work inside the source-wide 50-request budget.
     // Some Oracle tenants advertise a count that includes hidden requisitions.
@@ -2683,7 +2705,7 @@ async function crawlOracle(
       const endpoint = new URL("/hcmRestApi/resources/latest/recruitingCEJobRequisitions", oracle.apiOrigin);
       endpoint.searchParams.set("onlyData", "true");
       endpoint.searchParams.set("expand", "requisitionList.workLocation");
-      endpoint.searchParams.set("finder", `findReqs;siteNumber=${oracle.site},limit=${pageSize},offset=${offset},sortBy=POSTING_DATES_DESC`);
+      endpoint.searchParams.set("finder", `findReqs;siteNumber=${oracle.site},limit=${pageSize},offset=${offset},sortBy=POSTING_DATES_DESC${retentionWindow ? `,postingStartDate=${postedAfter}` : ""}${oracle.locationFacet ? `,selectedLocationsFacet=${oracle.locationFacet}` : ""}`);
       const response = await fetchWithTimeout(fetcher, endpoint, {
         headers: { accept: "application/json", referer: source.postingUrl },
       });
@@ -2818,7 +2840,7 @@ async function crawlOracle(
     return {
       status: "succeeded",
       responseStatus: first.responseStatus,
-      completeListing,
+      completeListing: completeListing && !retentionWindow,
       jobs: unique,
       ...(!completeListing ? {
         pagination: {
@@ -2831,6 +2853,68 @@ async function crawlOracle(
     };
   } catch (error) {
     return { status: "failed", responseStatus: null, completeListing: false, jobs: [], error: error instanceof Error ? error.message : "Unknown Oracle crawler error." };
+  }
+}
+
+/** Oracle caps an unfiltered query at offset 10,000. Complete the retention
+ * window using the tenant's own location facets, reconciling all unique IDs
+ * to its advertised total. Partial/changed partitions cannot authorize closure.
+ */
+async function crawlDollarGeneral(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
+  const feed = VERIFIED_SOURCE_FEEDS[source.id];
+  const oracle = feed.oracle!;
+  const scoped = { ...source, postingUrl: feed.listingUrl, crawlPageCursor: 1 };
+  const head = await crawlOracle(scoped, oracle, fetcher, now);
+  if (head.status !== "succeeded" || !head.pagination) return { ...head, resolvedListingUrl: feed.listingUrl };
+  const endpoint = new URL("/hcmRestApi/resources/latest/recruitingCEJobRequisitions", oracle.apiOrigin);
+  endpoint.searchParams.set("onlyData", "true");
+  endpoint.searchParams.set("expand", "locationsFacet");
+  const after = new Date(now.getTime() - 31 * 86_400_000).toISOString().slice(0, 10);
+  endpoint.searchParams.set("finder", `findReqs;siteNumber=${oracle.site},limit=1,offset=0,sortBy=POSTING_DATES_DESC,postingStartDate=${after},facetsList=LOCATIONS`);
+  const read = async (term?: string) => {
+    const query = new URL(endpoint);
+    if (term) query.searchParams.set("finder", query.searchParams.get("finder") + `,userTargetFacetName=LOCATIONS,userTargetFacetInputTerm=${term}`);
+    const response = await fetchWithTimeout(fetcher, query, { headers: { accept: "application/json" } });
+    if (!response.ok) throw new Error(`Dollar General facet inventory HTTP ${response.status}.`);
+    const payload = await response.json() as { items?: Array<{ TotalJobsCount: number; locationsFacet: Array<{Id: number; Name: string; TotalCount: number}> }> };
+    const index = payload.items?.[0];
+    if (!index || !Number.isSafeInteger(index.TotalJobsCount) || !Array.isArray(index.locationsFacet)) throw new Error("Dollar General facet inventory is invalid.");
+    return index;
+  };
+  const jobs = new Map(head.jobs.map(job => [job.externalId, job]));
+  try {
+    const index = await read();
+    const us = index.locationsFacet.find(facet => facet.Name === "United States");
+    if (!us || !Number.isSafeInteger(us.TotalCount)) throw new Error("Dollar General omitted its US country total.");
+    const facets = new Map(index.locationsFacet.map(facet => [facet.Id, facet]));
+    // The default facet list contains only ten entries. Ask the official
+    // autocomplete for every state instead of mistaking that top ten for all
+    // locations. Values/tenant IDs always come from the employer response.
+    const states = "AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY PR VI GU".split(" ");
+    const missing = states.filter(state => ![...facets.values()].some(facet => facet.Name === `${state}, United States`));
+    for (let offset = 0; offset < missing.length; offset += 4) {
+      const results = await Promise.all(missing.slice(offset, offset + 4).map(async state => ({ state, index: await read(state) })));
+      for (const { state, index: result } of results) for (const facet of result.locationsFacet) {
+        if (facet.Name === `${state}, United States`) facets.set(facet.Id, facet);
+      }
+    }
+    for (const facet of facets.values()) {
+      if (!Number.isSafeInteger(facet.Id) || facet.TotalCount <= 0 || facet.TotalCount > 9_600) continue;
+      const part = await crawlOracle(scoped, { ...oracle, locationFacet: String(facet.Id) }, fetcher, now);
+      if (part.status !== "succeeded" || part.pagination) continue;
+      part.jobs.forEach(job => jobs.set(job.externalId, job));
+    }
+    const stable = await read();
+    const scopedJobs = applyLargeCatalogRegionScope({ ...head, jobs: [...jobs.values()] }, source).jobs;
+    if (stable.TotalJobsCount !== index.TotalJobsCount || jobs.size !== index.TotalJobsCount) {
+      throw new Error(`Dollar General retention coverage incomplete (${jobs.size}/${index.TotalJobsCount}); official offset cap or catalog drift.`);
+    }
+    return { status: "succeeded", responseStatus: 200, completeListing: false,
+      jobs: scopedJobs, resolvedListingUrl: feed.listingUrl, error: null };
+  } catch (error) {
+    return { status: "succeeded", responseStatus: head.responseStatus, completeListing: false,
+      jobs: [...jobs.values()], resolvedListingUrl: feed.listingUrl,
+      error: error instanceof Error ? error.message : "Dollar General partition reconciliation failed." };
   }
 }
 
@@ -2985,6 +3069,8 @@ const phenomJobs = (html: string, source: CrawlSource): PhenomPage | null => {
   if (!data || typeof data !== "object") return null;
   const jobs = (data as JsonLdValue).jobs;
   if (!Array.isArray(jobs)) return null;
+  if (source.id === "p5-0660-masimo" && jobs.some(value =>
+    !value || typeof value !== "object" || (value as PhenomJob).opco !== "Masimo")) return null;
   const totalHits = typeof (eager as JsonLdValue).totalHits === "number"
     ? (eager as JsonLdValue).totalHits as number
     : typeof (data as JsonLdValue).totalHits === "number" ? (data as JsonLdValue).totalHits as number : null;
@@ -3021,7 +3107,7 @@ const phenomJobs = (html: string, source: CrawlSource): PhenomPage | null => {
     // route is live, while applyUrl is intentionally only the application form.
     const isMastercard = listing.hostname.toLocaleLowerCase() === "careers.mastercard.com";
     const officialUrl = asText(job.jobUrl)
-      ?? (isMastercard ? generatedDetailUrl : null)
+      ?? (isMastercard || source.id === "p5-0660-masimo" ? generatedDetailUrl : null)
       ?? asText(job.applyUrl)
       ?? asText(job.actionUrl)
       ?? generatedDetailUrl;
@@ -3201,7 +3287,7 @@ const crawlPhenomWidgets = async (source: CrawlSource, fetcher: typeof fetch): P
           // global catalog and guessing from sparse listing labels afterward.
           // Phenom tenants use both common country labels; unknown values are
           // harmless because selected_fields is an OR filter.
-          selected_fields: source.regionScope === "us"
+          selected_fields: source.id === "p5-0660-masimo" ? { opco: ["Masimo"] } : source.regionScope === "us"
             ? { country: ["United States of America", "United States", "USA", "US"] }
             : {},
           // A string `sortBy` is ignored by RTX and produces overlapping,
@@ -5367,6 +5453,62 @@ const paycomCareerArcJob = (entry: PaycomCareerArcEntry, source: CrawlSource): C
   };
 };
 
+// CareerArc's global offset windows can overlap even with unchanged totals.
+// Its own map supplies bounded geographic groups. Read each as ONE page, then
+// reconcile the unique IDs against the global count and a stable marker set.
+// Never turn a deduplicated, short global response into an authoritative feed.
+const paycomMapCatalog = async (source: CrawlSource, fetcher: typeof fetch, total: number): Promise<CrawledJob[]> => {
+  type Marker = { geohash: string; locations_count: number; job_postings_count: number;
+    bounds: Record<"north" | "south" | "east" | "west", number> };
+  const markerUrl = new URL("https://app.careerarc.com/api/job_maps/401/markers");
+  for (const [key, value] of Object.entries({ north: 90, south: -90, east: 180, west: -180 })) {
+    markerUrl.searchParams.set(`bounds[${key}]`, String(value));
+  }
+  markerUrl.searchParams.set("zoom", "3");
+  const read = async (url: URL): Promise<PaycomCareerArcPayload> => {
+    const response = await fetchWithTimeout(fetcher, url, {
+      headers: { accept: "application/json", referer: PAYCOM_CAREERARC_MAP_URL },
+    }, true, { attempts: 1, timeoutMs: 10_000 });
+    if (!response.ok) throw new Error(`Paycom map catalog returned HTTP ${response.status}.`);
+    return response.json() as Promise<PaycomCareerArcPayload>;
+  };
+  const markers = (await read(markerUrl)).entries as unknown as Marker[];
+  if (!Array.isArray(markers) || !markers.length || markers.length > 20
+    || markers.some(m => !/^[0-9b-hjkmnp-z]{12}$/.test(m.geohash)
+      || !Number.isSafeInteger(m.job_postings_count) || m.job_postings_count < 1 || m.job_postings_count > 25
+      || !Number.isSafeInteger(m.locations_count) || m.locations_count < 1
+      || !m.bounds || ["north", "south", "east", "west"].some(k => !Number.isFinite(m.bounds[k as keyof Marker["bounds"]])))) {
+    throw new Error("Paycom map groups exceed safe single-page bounds.");
+  }
+  const entries: PaycomCareerArcEntry[] = [];
+  for (let offset = 0; offset < markers.length; offset += 4) {
+    const groups = await Promise.all(markers.slice(offset, offset + 4).map(async marker => {
+      const endpoint = new URL(PAYCOM_CAREERARC_API_URL);
+      endpoint.searchParams.set("page", "1");
+      endpoint.searchParams.set("per_page", "25");
+      if (marker.locations_count === 1) endpoint.searchParams.set("geohash", marker.geohash);
+      else for (const [key, value] of Object.entries(marker.bounds)) {
+        // Avoid excluding the exact boundary point through float rounding.
+        endpoint.searchParams.set(`bounds[${key}]`, String(value + (["north", "east"].includes(key) ? 0.00001 : -0.00001)));
+      }
+      const payload = await read(endpoint);
+      if (!Array.isArray(payload.entries) || payload.entries.length !== marker.job_postings_count
+        || Number(payload.meta?.total_count) !== marker.job_postings_count
+        || Number(payload.meta?.total_pages) !== 1 || Number(payload.meta?.page) !== 1
+        || payload.meta?.links?.next) throw new Error("Paycom map group changed or needs pagination.");
+      return payload.entries as PaycomCareerArcEntry[];
+    }));
+    entries.push(...groups.flat());
+  }
+  const signature = (values: Marker[]) => values.map(m => JSON.stringify([m.geohash, m.job_postings_count, m.locations_count, m.bounds])).sort().join("|");
+  const verification = (await read(markerUrl)).entries as unknown as Marker[];
+  if (!Array.isArray(verification) || signature(verification) !== signature(markers)) throw new Error("Paycom map changed during collection.");
+  const jobs = entries.flatMap(entry => paycomCareerArcJob(entry, source) ?? []);
+  if (entries.length !== total || jobs.length !== total || new Set(entries.map(e => e.id)).size !== total
+    || new Set(jobs.map(j => j.officialUrl)).size !== total) throw new Error("Paycom map does not cover the full unique catalog.");
+  return jobs;
+};
+
 const crawlPaycomCareers = async (source: CrawlSource, fetcher: typeof fetch): Promise<SourceCrawlResult> => {
   let responseStatus: number | null = null;
   let failureStatus: number | null = null;
@@ -5437,10 +5579,12 @@ const crawlPaycomCareers = async (source: CrawlSource, fetcher: typeof fetch): P
       rawEntries.push(...entries);
     }
     const rawIds = rawEntries.map((entry) => Number(entry.id));
-    const jobs = rawEntries.flatMap((entry) => paycomCareerArcJob(entry, source) ?? []);
-    if (rawEntries.length !== total || jobs.length !== total
-      || new Set(rawIds).size !== total || new Set(jobs.map((job) => job.officialUrl)).size !== total) {
+    let jobs = rawEntries.flatMap((entry) => paycomCareerArcJob(entry, source) ?? []);
+    if (rawEntries.length !== total || jobs.length !== total) {
       throw new Error("Paycom CareerArc feed returned duplicate or unusable job records.");
+    }
+    if (new Set(rawIds).size !== total || new Set(jobs.map((job) => job.officialUrl)).size !== total) {
+      jobs = await paycomMapCatalog(source, fetcher, total);
     }
     return {
       status: "succeeded",
@@ -11718,9 +11862,9 @@ const crawlDow = async (source: CrawlSource, fetcher: typeof fetch): Promise<Sou
 async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
   const discoveryDepth = source.discoveryDepth ?? 0;
   try {
-    if (source.adapter === "phenom" && source.regionScope === "us") {
+    if (source.adapter === "phenom" && (source.regionScope === "us" || source.id === "p5-0660-masimo")) {
       const widgets = await crawlPhenomWidgets(source, fetcher);
-      if (widgets.status === "succeeded") return widgets;
+      if (widgets.status === "succeeded" || source.id === "p5-0660-masimo") return widgets;
     }
     const response = await fetchWithTimeout(fetcher, source.postingUrl);
     if (!response.ok) {
@@ -11817,6 +11961,11 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
         error: "Career site returned an access-verification challenge.",
       };
     }
+    if (source.id === "p4-0440-groq" && finalPage.href === "https://groq.com/"
+      && !anchorsFromHtml(html).some(({ href, text }) => /careers?|job-boards|greenhouse|ashbyhq|jobs\.lever|open positions/i.test(`${href} ${text}`))) return {
+      status: "failed", responseStatus: response.status, completeListing: false, jobs: [],
+      error: "Groq's official careers URL redirects to its homepage without a current hiring link; upstream board unavailable.",
+    };
     const inactiveCareerPage = verifiedInactiveCareerPage(source, finalPage, html);
     if (inactiveCareerPage) return {
       status: "succeeded",
@@ -25173,6 +25322,7 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
   // loop back to the root feed until the request/deadline budget is spent.
   if ((source.discoveryDepth ?? 0) === 0 && source.id === "legacy-row-860") return crawlSanmina(source, fetcher);
   const verifiedFeed = (source.discoveryDepth ?? 0) === 0 ? VERIFIED_SOURCE_FEEDS[source.id] : undefined;
+  if (verifiedFeed && source.id === "audit-row-345") return crawlDollarGeneral(source, fetcher, now);
   if (verifiedFeed) {
     const verifiedDayforceIdentity = dayforceBoardIdentity(verifiedFeed.listingUrl);
     const result = verifiedFeed.oracle
@@ -25180,7 +25330,7 @@ async function crawlSourceBase(source: CrawlSource, fetcher: typeof fetch, now: 
           ...source,
           postingUrl: verifiedFeed.listingUrl,
           adapter: verifiedFeed.adapter,
-        }, verifiedFeed.oracle, fetcher)
+        }, verifiedFeed.oracle, fetcher, now)
       : verifiedFeed.discovered
       ? verifiedFeed.discovered.kind === "workday"
         ? await crawlWorkday({
@@ -26325,7 +26475,9 @@ const withLargeCatalogRequestScope = (source: CrawlSource): CrawlSource => (
 );
 
 export async function crawlSource(source: CrawlSource, fetcher: typeof fetch, now: Date): Promise<SourceCrawlResult> {
-  const budgetedFetcher = crawlBudgetedFetcher(fetcher, source.id === "p2-0027-bank-of-america"
+  const budgetedFetcher = crawlBudgetedFetcher(fetcher, source.id === "audit-row-345"
+    ? { maxRequests: 240, deadlineMs: 170_000 }
+    : source.id === "p2-0027-bank-of-america"
     ? { maxRequests: 130, deadlineMs: 45_000 }
     : source.id === "p4-0285-google" || source.id === "p4-0245-cisco"
       // 32 catalog pages + at most 16 priority pages + 48 detail requests.

@@ -195,6 +195,13 @@ const pool = await drainCrawlPool({
 summary.drained = pool.drained;
 summary.stopReason = pool.stopReason;
 if (pool.stopReason === "consecutive-request-errors") process.exitCode = 1;
+// A bounded repair smoke is intentionally partial. A scheduled full drain is
+// not: failing its step keeps admission on the existing 30-minute retry clock
+// rather than incorrectly postponing the remaining queue for two hours.
+if (!pool.drained && process.env.GITHUB_EVENT_NAME !== "push") {
+  process.exitCode = 1;
+  console.error(`Production collection incomplete: ${pool.stopReason}; pending sources retain their checkpoints.`);
+}
 
 // Edge capacity can remain briefly saturated after the final parallel round.
 // Retry only the compact finalization and verification calls; never repeat a
