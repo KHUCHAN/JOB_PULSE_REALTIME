@@ -13,6 +13,7 @@ on:
     paths:
       - .github/workflows/production-crawl.yml
       - scripts/run-production-crawl.mjs
+      - scripts/production-crawl-limits.mjs
       - scripts/production-crawl-admission.mjs
       - scripts/request-fallback-crawl.ts
       - scripts/browser-fallback-crawl.ts
@@ -63,7 +64,7 @@ jobs:
     needs: [admission, request-recovery]
     if: ${{ always() && needs.admission.outputs.run == 'true' && !cancelled() }}
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -74,7 +75,9 @@ jobs:
           JOB_PULSE_SITE_URL: https://job-pulse-realtime.autodev61.chatgpt.site
           # A repair push needs only a bounded smoke drain after critical
           # recovery; the recurring schedule retains the full drain.
-          JOB_PULSE_MAX_RUN_MINUTES: ${{ github.event_name == 'push' && '2' || '50' }}
+          # The two-lease ceiling needs a longer drain window for large queues.
+          # Leave time for bounded maintenance/final verification in the job.
+          JOB_PULSE_MAX_RUN_MINUTES: ${{ github.event_name == 'push' && '2' || '80' }}
           # Keep at most two leases against the shared single-writer DB; back
           # down to one with cooldown when shared D1 capacity is saturated.
           JOB_PULSE_REQUEST_CONCURRENCY: "2"
@@ -87,7 +90,8 @@ jobs:
     # the forced set is verified every workflow, while ordinary recovery IDs
     # run only when due. Sequential ordering also prevents the native stale-run
     # finalizer from misclassifying a streaming snapshot as disconnected.
-    # Fifty + thirty-five + twenty-five minutes remains below two hours.
+    # Admission keeps the two-hour cadence but never overlaps an active owner;
+    # a worst-case long recovery + drain can postpone the following collection.
     needs: [admission]
     if: ${{ always() && !cancelled() && needs.admission.outputs.run == 'true' }}
     runs-on: ubuntu-latest

@@ -1,16 +1,16 @@
 import { drainExpiredJobs } from "../lib/job-retention-drain.ts";
 import { drainCrawlPool } from "../lib/crawl-pool.ts";
+import { productionCrawlLimits } from "./production-crawl-limits.mjs";
 
 const siteUrl = (process.env.JOB_PULSE_SITE_URL || "https://job-pulse-realtime.autodev61.chatgpt.site").replace(/\/$/, "");
 const boundedInteger = (value, fallback, minimum, maximum) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.max(minimum, Math.min(maximum, Math.trunc(parsed))) : fallback;
 };
-const maximumMinutes = boundedInteger(process.env.JOB_PULSE_MAX_RUN_MINUTES, 45, 1, 50);
+const { maximumMinutes, requestConcurrency } = productionCrawlLimits();
 // Each API call still leases and crawls exactly one company. Parallelizing
 // independent requests here raises throughput without letting one slow or
 // malformed source consume a multi-company Worker request.
-const requestConcurrency = boundedInteger(process.env.JOB_PULSE_REQUEST_CONCURRENCY, 2, 1, 12);
 const targetedSourceIds = [...new Set((process.env.JOB_PULSE_TARGETED_RECRAWL_SOURCE_IDS || "")
   .split(",")
   .map((value) => value.trim())
@@ -81,6 +81,7 @@ const summary = {
   stopReason: null,
   staleRunsFinalized: 0,
   requestConcurrency,
+  maxRunMinutes: maximumMinutes,
   targetedRecrawls: 0,
 };
 
@@ -136,8 +137,9 @@ try {
 }
 // Cleanup failures remain visible without suppressing source collection.
 if (retention.error) process.exitCode = 1;
-// Keep the normal crawl window intact; maintenance adds at most two minutes,
-// keeping 40 + 2 + 35 + 25 comfortably inside the two-hour owner workflow.
+// Keep the normal crawl window intact; maintenance adds at most two minutes.
+// The serialized owner/admission guard prevents overlap even if the combined
+// recovery and collection stages run beyond the nominal two-hour interval.
 deadline = Date.now() + maximumMinutes * 60_000;
 
 // Source URL repairs should not wait behind the oldest entries in the normal
