@@ -31,7 +31,7 @@ test('time-limited full collections fail the drain step; only push smoke may rem
   const script = await readFile(new URL('../scripts/run-production-crawl.mjs', import.meta.url), 'utf8');
   assert.match(script, /if \(!pool\.drained && process\.env\.GITHUB_EVENT_NAME !== "push"\) \{\s*process\.exitCode = 1;/);
   const workflow = await readFile(new URL('../.github/workflows/production-crawl.yml', import.meta.url), 'utf8');
-  assert.match(workflow, /JOB_PULSE_MAX_RUN_MINUTES:.*'80'/);
+  assert.match(workflow, /JOB_PULSE_MAX_RUN_MINUTES:.*'120'/);
   assert.match(workflow, /REQUEST_FALLBACK_REPAIRED_SOURCE_IDS:.*audit-row-342/);
 });
 test('active owner blocks even a repair push', () => {

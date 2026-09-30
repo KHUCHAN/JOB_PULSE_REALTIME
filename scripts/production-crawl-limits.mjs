@@ -8,7 +8,7 @@ const boundedInteger = (value, fallback, minimum, maximum) => {
 
 export function productionCrawlLimits(env = process.env) {
   return {
-    maximumMinutes: boundedInteger(env.JOB_PULSE_MAX_RUN_MINUTES, 80, 1, 80),
+    maximumMinutes: boundedInteger(env.JOB_PULSE_MAX_RUN_MINUTES, 120, 1, 120),
     // Extending the collection window must not increase D1 writer pressure.
     requestConcurrency: boundedInteger(env.JOB_PULSE_REQUEST_CONCURRENCY, 2, 1, 2),
   };

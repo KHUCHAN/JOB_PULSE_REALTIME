@@ -64,7 +64,7 @@ jobs:
     needs: [admission, request-recovery]
     if: ${{ always() && needs.admission.outputs.run == 'true' && !cancelled() }}
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 130
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -77,7 +77,7 @@ jobs:
           # recovery; the recurring schedule retains the full drain.
           # The two-lease ceiling needs a longer drain window for large queues.
           # Leave time for bounded maintenance/final verification in the job.
-          JOB_PULSE_MAX_RUN_MINUTES: ${{ github.event_name == 'push' && '2' || '80' }}
+          JOB_PULSE_MAX_RUN_MINUTES: ${{ github.event_name == 'push' && '2' || '120' }}
           # Keep at most two leases against the shared single-writer DB; back
           # down to one with cooldown when shared D1 capacity is saturated.
           JOB_PULSE_REQUEST_CONCURRENCY: "2"
