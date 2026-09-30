@@ -6,6 +6,8 @@ type SnapshotChunkOptions = {
   maxJobs?: number;
 };
 
+export type SnapshotFetch = (input: RequestInfo | URL, init?: RequestInit & { requestTimeoutMs?: number }) => Promise<Response>;
+
 // Request-only recovery can pack compact catalog records more efficiently.
 // Keep the existing byte ceiling: rich descriptions still split into small
 // chunks, and each company releases its FIFO writer lease between chunks.
@@ -18,7 +20,7 @@ type SnapshotTransportOptions = SnapshotChunkOptions & {
   /** A stalled recovery may save valid jobs but must remain visibly failed. */
   coverageIncomplete?: boolean;
   endpoint: string;
-  fetcher?: typeof fetch;
+  fetcher?: SnapshotFetch;
   jobs: CrawledJob[];
   listingUrl: string;
   sourceId: string;
@@ -103,12 +105,15 @@ export const browserIngestChunks = (
 export const ingestJobSnapshotInChunks = async (
   options: SnapshotTransportOptions,
 ): Promise<SnapshotTransportSummary> => {
-  const fetcher = options.fetcher ?? fetch;
+  const fetcher: SnapshotFetch = options.fetcher ?? ((input, init) => {
+    const { requestTimeoutMs = 120_000, ...request } = init ?? {};
+    return fetch(input, { ...request, signal: AbortSignal.timeout(requestTimeoutMs) });
+  });
   if (options.coverageIncomplete && options.completeListing) {
     throw new Error("An incomplete recovery cannot finalize an authoritative snapshot.");
   }
   const attempts = options.attempts ?? 3;
-  const retryDelayMs = options.retryDelayMs ?? 250;
+  const retryDelayMs = options.retryDelayMs ?? 5_000;
   if (!Number.isInteger(attempts) || attempts < 1 || attempts > 5) {
     throw new Error("Snapshot transport attempts must be between 1 and 5.");
   }
@@ -158,7 +163,8 @@ export const ingestJobSnapshotInChunks = async (
           method: "POST",
           headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
           body,
-          signal: AbortSignal.timeout(options.timeoutMs ?? 120_000),
+          // The FIFO writer starts this deadline only after acquiring a slot.
+          requestTimeoutMs: options.timeoutMs ?? 120_000,
         });
       } catch (error) {
         lastError = error instanceof Error ? error : new Error("Production browser ingest failed.");

@@ -40,6 +40,7 @@ export const alertDatabaseWithMatches = (matchCount = 2): DatabaseSync => {
       PRIMARY KEY(profile_id, recipient)
     );
     CREATE TABLE jobs (
+      location_region TEXT NOT NULL DEFAULT 'us',
       id TEXT PRIMARY KEY, company TEXT NOT NULL, title TEXT NOT NULL, location TEXT,
       official_url TEXT NOT NULL, apply_url TEXT, published_at TEXT, first_seen_at TEXT NOT NULL,
       employment_type TEXT,

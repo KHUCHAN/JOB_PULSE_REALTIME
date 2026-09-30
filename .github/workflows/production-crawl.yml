@@ -75,9 +75,9 @@ jobs:
           # A repair push needs only a bounded smoke drain after critical
           # recovery; the recurring schedule retains the full drain.
           JOB_PULSE_MAX_RUN_MINUTES: ${{ github.event_name == 'push' && '2' || '50' }}
-          # Start with two leases, grow to four after clean rounds, and back
+          # Keep at most two leases against the shared single-writer DB; back
           # down to one with cooldown when shared D1 capacity is saturated.
-          JOB_PULSE_REQUEST_CONCURRENCY: "4"
+          JOB_PULSE_REQUEST_CONCURRENCY: "2"
         run: node scripts/run-production-crawl.mjs
 
   request-recovery:
@@ -111,7 +111,7 @@ jobs:
           # One company cannot consume the whole recovery job by restarting
           # per-request timeouts across pages/retries. Valid ingests are separate.
           REQUEST_FALLBACK_SOURCE_TIMEOUT_MS: "180000"
-          REQUEST_FALLBACK_INGEST_CONCURRENCY: "2"
+          REQUEST_FALLBACK_INGEST_CONCURRENCY: "1"
           REQUEST_FALLBACK_RESULT_PATH: output/request-recovery/results.json
           # Penn Medicine's official Talemetry map feed is available from the
           # independent runner but its edge rejects Sites Worker egress.
@@ -225,9 +225,9 @@ jobs:
           # stage; eight workers reduce browser contention on the runner.
           BROWSER_FALLBACK_SOURCE_TIMEOUT_MS: "60000"
           # Browser inspection and D1 persistence are separate bounded pools.
-          # Three writers avoid saturating the Worker/D1 path; each writer
-          # still transports chunks concurrently with ongoing inspections.
-          BROWSER_FALLBACK_INGEST_CONCURRENCY: "3"
+          # One FIFO writer prevents D1 contention while eight independent
+          # browser collectors continue. Timeout starts after writer admission.
+          BROWSER_FALLBACK_INGEST_CONCURRENCY: "1"
           # Sources whose official boards require client rendering, protected
           # egress, or a browser-established session must not sit behind the
           # generic recovery queue. The script still validates the official

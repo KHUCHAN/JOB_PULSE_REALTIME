@@ -4,7 +4,7 @@ import { isRequestFallbackDue, recoverCheckpointedCatalog } from "../lib/request
 import { isSafeCareerListingUrl } from "../lib/url-remediation.ts";
 import { verifySourceSnapshot } from "../lib/source-snapshot-verification.ts";
 import { sourceRecoveryDelay } from "../lib/recovery-policy.ts";
-import { createFifoLimiter } from "../lib/fifo-limiter.ts";
+import { createSnapshotWriter } from "../lib/snapshot-writer.ts";
 import { sourceFetchBudget } from "../lib/source-fetch-budget.ts";
 import { runRecoveryPipeline } from "../lib/recovery-pipeline.ts";
 import { fetchLiveSourceInventory, inventoryFailureHandoff } from "../lib/live-source-inventory.ts";
@@ -50,11 +50,11 @@ const forcedSourceIds = new Set(((process.env.REQUEST_FALLBACK_FORCE_SOURCE_IDS 
 const concurrency = Math.max(1, Math.min(8,
   Number.parseInt(process.env.REQUEST_FALLBACK_CONCURRENCY ?? "4", 10) || 4));
 const ingestConcurrency = Math.max(1, Math.min(4,
-  Number.parseInt(process.env.REQUEST_FALLBACK_INGEST_CONCURRENCY ?? "2", 10) || 2));
+  Number.parseInt(process.env.REQUEST_FALLBACK_INGEST_CONCURRENCY ?? "1", 10) || 1));
 const sourceTimeoutMs = Math.max(30_000, Math.min(300_000,
   Number.parseInt(process.env.REQUEST_FALLBACK_SOURCE_TIMEOUT_MS ?? "180000", 10) || 180_000));
 let cachedOidc = { value: "", expiresAt: 0 };
-const withIngestSlot = createFifoLimiter(ingestConcurrency);
+const snapshotWriter = createSnapshotWriter(ingestConcurrency);
 
 const githubOidcToken = async (): Promise<string> => {
   const staticSecret = process.env.REQUEST_FALLBACK_INGEST_SECRET?.trim();
@@ -182,24 +182,13 @@ const persist = async (source: CrawlSource, catalog: Awaited<ReturnType<typeof c
       });
     // Official catalogs are fetched eight at a time, but D1 snapshot writes
     // are intentionally narrower. Eight simultaneous multi-chunk ingests
-    // saturated the Worker/D1 path and made otherwise valid late sources time
-    // out; two lanes retain throughput without write contention.
-    let ingestWaitMs = 0, ingestMs = 0;
+    // saturated the Worker/D1 path. One shared FIFO writer keeps collection
+    // parallel without competing writes or expiry while waiting in the queue.
+    const timing = { waitMs: 0, writeMs: 0, requests: 0 };
     // Lease one HTTP chunk, not an entire company's snapshot. Large catalogs
-    // used to monopolize both writers for 50-100 seconds while every other
-    // source waited. FIFO chunk leases preserve the two-writer D1 limit.
-    const fairFetch: typeof fetch = async (input, init) => {
-      const queuedAt = Date.now();
-      return withIngestSlot(async () => {
-        const acquiredAt = Date.now();
-        ingestWaitMs += acquiredAt - queuedAt;
-        try {
-          const response = await fetch(input, init);
-          const body = await response.arrayBuffer();
-          return new Response(body, { status: response.status, headers: response.headers });
-        } finally { ingestMs += Date.now() - acquiredAt; }
-      });
-    };
+    // used to monopolize writers for 50-100 seconds while every other source
+    // waited. FIFO chunk leases preserve fairness across collected catalogs.
+    const fairFetch = snapshotWriter(timing);
     const ingested = await ingestJobSnapshotInChunks({
       ...REQUEST_SNAPSHOT_CHUNK_OPTIONS,
       allowedOrigins: [...new Set(allowedOrigins)].slice(0, 5),
@@ -231,8 +220,8 @@ const persist = async (source: CrawlSource, catalog: Awaited<ReturnType<typeof c
       verifiedDbSamples: payload.verifiedDbSamples,
       elapsedMs: Date.now() - startedAt,
       fetchMs: fetchedAt - startedAt,
-      ingestWaitMs,
-      ingestMs,
+      ingestWaitMs: timing.waitMs,
+      ingestMs: timing.writeMs,
       verifyMs,
       ingestChunks: ingested.chunks,
       error: result.error,

@@ -10,7 +10,7 @@ const maximumMinutes = boundedInteger(process.env.JOB_PULSE_MAX_RUN_MINUTES, 45,
 // Each API call still leases and crawls exactly one company. Parallelizing
 // independent requests here raises throughput without letting one slow or
 // malformed source consume a multi-company Worker request.
-const requestConcurrency = boundedInteger(process.env.JOB_PULSE_REQUEST_CONCURRENCY, 4, 1, 12);
+const requestConcurrency = boundedInteger(process.env.JOB_PULSE_REQUEST_CONCURRENCY, 2, 1, 12);
 const targetedSourceIds = [...new Set((process.env.JOB_PULSE_TARGETED_RECRAWL_SOURCE_IDS || "")
   .split(",")
   .map((value) => value.trim())
@@ -76,6 +76,7 @@ const summary = {
   updated: 0,
   closed: 0,
   requestErrors: 0,
+  storagePressure: 0,
   drained: false,
   stopReason: null,
   staleRunsFinalized: 0,
@@ -179,6 +180,7 @@ const pool = await drainCrawlPool({
   recoverable: isRecoverableRequestError,
   onResult(result) {
     summary.requests += 1;
+    summary.storagePressure += number(result.storagePressure);
     for (const key of ["attempted", "succeeded", "failed", "blocked", "created", "updated", "closed"]) {
       summary[key] += number(result[key]);
     }
@@ -195,6 +197,7 @@ const pool = await drainCrawlPool({
 summary.drained = pool.drained;
 summary.stopReason = pool.stopReason;
 if (pool.stopReason === "consecutive-request-errors") process.exitCode = 1;
+if (summary.storagePressure > 0) process.exitCode = 1;
 // A bounded repair smoke is intentionally partial. A scheduled full drain is
 // not: failing its step keeps admission on the existing 30-minute retry clock
 // rather than incorrectly postponing the remaining queue for two hours.

@@ -130,6 +130,7 @@ export const planResumeDigests = async (
          AND review.profile_id = ?
          AND review.decision = 'approve'
         WHERE jm.is_active = 1 AND j.status = 'open'
+          AND j.location_region = 'us'
       `).bind(JSON.stringify(exactTargets), keywordId, profileId).all<ExactMatchRow>();
       if (exactMatches.results.length !== exactTargets.length) {
         const eligibleJobIds = new Set(exactMatches.results.map((row) => row.job_id));
@@ -271,6 +272,7 @@ export const planResumeDigests = async (
         ON ni.job_match_id = jm.id AND ni.recipient = pr.recipient
       WHERE jm.keyword_id = ? AND jm.is_active = 1 AND jm.notification_eligible = 1
         AND jm.open_generation = j.open_generation AND j.status = 'open'
+        AND j.location_region = 'us'
         AND ${canonicalOpenJobNotExists("j")}
         AND ni.id IS NULL
         AND NOT EXISTS (

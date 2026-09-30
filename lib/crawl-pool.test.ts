@@ -5,6 +5,17 @@ afterEach(() => vi.useRealTimers());
 const pause = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
 describe("continuous leased crawl pool", () => {
+  it("backs off an HTTP-success response carrying a source-level DB failure", async () => {
+    vi.useFakeTimers();
+    const start = Date.now(); const starts: number[] = []; const onPressure = vi.fn();
+    const result = drainCrawlPool({ concurrency: 1, deadline: start + 20_000,
+      crawl: async () => { starts.push(Date.now() - start); return starts.length === 1 ? { attempted: 1, storagePressure: 1 } : { attempted: 0 }; },
+      recoverable: () => true, onResult: vi.fn(), onError: vi.fn(), onPressure });
+    await vi.runAllTimersAsync();
+    expect((await result).drained).toBe(true);
+    expect(starts[1]).toBeGreaterThanOrEqual(5_000);
+    expect(onPressure).toHaveBeenCalledWith(1, 5_000);
+  });
   it("refills fast slots while a slow company is running, with the same concurrency cap", async () => {
     vi.useFakeTimers();
     let running = 0; let maximum = 0; let calls = 0;

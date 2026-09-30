@@ -57,6 +57,12 @@ class MemoryStore implements CrawlStore {
 }
 
 describe("runDueCrawls", () => {
+  it("exposes D1 persistence pressure independently of ordinary employer failures", async () => {
+    const store = new MemoryStore([{ id: "acme", company: "Acme", postingUrl: "https://job-boards.greenhouse.io/acme", adapter: "greenhouse", nextCrawlAt: null }]);
+    vi.spyOn(store, "syncJobs").mockRejectedValue(new Error("D1_ERROR: D1 DB is overloaded"));
+    const fetcher: typeof fetch = async () => Response.json({ jobs: [{ id: 42, title: "Intern", absolute_url: "https://job-boards.greenhouse.io/acme/jobs/42" }] });
+    expect(await runDueCrawls(store, fetcher, new Date())).toMatchObject({ attempted: 1, failed: 1, storagePressure: 1 });
+  });
   it.each([
     'https://careers.amd.com/%22https://internal-amd.icims.com/jobs/search%22',
     'https://internal-amd.icims.com/jobs/search',

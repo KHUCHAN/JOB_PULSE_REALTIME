@@ -9,6 +9,21 @@ import {
 import { alertDatabaseWithMatches, createD1ForSqlite } from "./resume-alert-test-helper";
 
 describe("resume digest reservation", () => {
+  it("fails the entire exact dispatch when a non-US target is included", async () => {
+    const sqlite = alertDatabaseWithMatches(2);
+    sqlite.prepare("UPDATE jobs SET location_region = 'non_us' WHERE id = 'job-2'").run();
+    await expect(planResumeDigests(createD1ForSqlite(sqlite), "chanyoung-resume", "2026-08-10T12:00:00.000Z", 500, 1, ["job-1", "job-2"]))
+      .rejects.toThrow("target mismatch");
+    expect(sqlite.prepare("SELECT count(*) AS total FROM notifications").get()).toEqual({ total: 0 });
+  });
+
+  it("limits ordinary planning to US work locations without deleting other-country reviews", async () => {
+    const sqlite = alertDatabaseWithMatches(2);
+    sqlite.prepare("UPDATE jobs SET location_region = 'non_us' WHERE id = 'job-2'").run();
+    const planned = await planResumeDigests(createD1ForSqlite(sqlite), "chanyoung-resume", "2026-08-10T12:00:00.000Z");
+    expect(planned.map(x => x.jobCount)).toEqual([1]);
+    expect(sqlite.prepare("SELECT count(*) AS total FROM codex_reviews").get()).toEqual({ total: 2 });
+  });
   it("reserves one item per recipient and never duplicates a sent pair", async () => {
     const sqlite = alertDatabaseWithMatches(2);
     const db = createD1ForSqlite(sqlite);

@@ -1,5 +1,6 @@
 import { crawlSource, type CrawledFacet, type CrawledJob, type CrawlSource, type SourceCrawlResult } from "./crawler";
 import { detectUrlAdapter, isSafeCareerListingUrl } from "./url-remediation";
+import { isStoragePressure } from "./storage-pressure";
 
 export type PersistedSource = CrawlSource & {
   nextCrawlAt: string | null;
@@ -28,6 +29,7 @@ export interface CrawlStore {
 }
 
 export type CrawlBatchResult = {
+  storagePressure?: number;
   attempted: number;
   succeeded: number;
   failed: number;
@@ -119,6 +121,7 @@ const runSource = async (
     } catch (syncError) {
       status = "failed";
       error = syncError instanceof Error ? syncError.message : "Could not persist crawl results.";
+      if (isStoragePressure(syncError)) result.storagePressure = 1;
     }
   }
 
@@ -148,6 +151,7 @@ const runSource = async (
 };
 
 const add = (target: CrawlBatchResult, value: CrawlBatchResult): void => {
+  if (value.storagePressure) target.storagePressure = (target.storagePressure ?? 0) + value.storagePressure;
   target.attempted += value.attempted;
   target.succeeded += value.succeeded;
   target.failed += value.failed;

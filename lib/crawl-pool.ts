@@ -1,7 +1,7 @@
 import { crawlPressure } from "./crawl-pressure.ts";
 
 /** Refill a free lease slot without waiting for unrelated slow companies. */
-export async function drainCrawlPool<T extends { attempted: number }>(options: {
+export async function drainCrawlPool<T extends { attempted: number; storagePressure?: number }>(options: {
   crawl: () => Promise<T>;
   concurrency: number;
   deadline: number;
@@ -68,7 +68,14 @@ export async function drainCrawlPool<T extends { attempted: number }>(options: {
     } else {
       options.onResult(completion.result);
       consecutiveErrors = 0;
-      if (++clean >= pressure.concurrency) { pressure.observe(0); clean = 0; }
+      // A source-level D1 failure is returned inside HTTP 200. It must not
+      // count as a clean completion and immediately refill the saturated DB.
+      if (completion.result.storagePressure) {
+        clean = 0;
+        const cooldownMs = pressure.observe(1);
+        cooldownUntil = clock() + cooldownMs;
+        options.onPressure?.(pressure.concurrency, cooldownMs);
+      } else if (++clean >= pressure.concurrency) { pressure.observe(0); clean = 0; }
       if (completion.result.attempted === 0) {
         if (probing) { drained = true; stopReason = "queue-drained"; }
         else emptyObserved = true;
