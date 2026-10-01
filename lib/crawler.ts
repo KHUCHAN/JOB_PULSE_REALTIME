@@ -8589,6 +8589,19 @@ const crawlRadancyPages = async (
   fetcher: typeof fetch,
 ): Promise<SourceCrawlResult | null> => {
   if (!/tbcdn\.talentbrew\.com/i.test(html)) return null;
+  // Arm's CDN can serve a stale search shell (391 jobs) while the live POST
+  // endpoint already has 392. That makes the expected last-page size wrong
+  // and permanently stalls recovery on page 27. Refresh only the listing
+  // shell, keeping canonical job URLs and all completeness checks unchanged.
+  if (source.id === "p5-0804-arm") {
+    const freshListing = new URL(source.postingUrl);
+    freshListing.searchParams.set("_catalog_refresh", String(Date.now()));
+    const response = await fetchWithTimeout(fetcher, freshListing, {
+      headers: { "cache-control": "no-cache" },
+    });
+    if (!response.ok) throw new Error(`Arm catalog refresh returned HTTP ${response.status}.`);
+    html = await response.text();
+  }
   const postPath = dataAttribute(html, "data-ajax-post-url");
   const advertisedTotalPages = Number(dataAttribute(html, "data-total-pages"));
   const totalResults = Number(dataAttribute(html, "data-total-job-results") ?? dataAttribute(html, "data-total-results"));
@@ -8634,6 +8647,7 @@ const crawlRadancyPages = async (
   // requests stays fast while avoiding the partial 12/18-page responses seen
   // with nine-way fan-out in production.
   let nextPageIndex = 0;
+  let catalogDrift: string | null = null;
   await Promise.all(Array.from({ length: Math.min(3, pageNumbers.length) }, async () => {
     while (nextPageIndex < pageNumbers.length) {
       const currentPage = pageNumbers[nextPageIndex++];
@@ -8666,7 +8680,16 @@ const crawlRadancyPages = async (
           });
           if (response.ok) {
             const payload = await response.json() as { results?: string };
-            return typeof payload.results === "string" ? radancyJobsFromHtml(payload.results, source) : null;
+            if (typeof payload.results === "string") {
+              const liveCount = dataAttribute(payload.results, "data-total-job-results")
+                ?? dataAttribute(payload.results, "data-total-results");
+              if (liveCount != null && Number(liveCount) !== totalResults) {
+                catalogDrift = `Official Radancy catalog changed from ${totalResults} to ${liveCount} jobs on page ${currentPage}; restart with a fresh listing.`;
+                return null;
+              }
+              return radancyJobsFromHtml(payload.results, source);
+            }
+            return null;
           }
         } catch {
           // Retry transient page failures before keeping the listing incomplete.
@@ -8700,20 +8723,20 @@ const crawlRadancyPages = async (
     jobs.push(...pageJobs);
   }
   const normalized = uniqueJobs(jobs);
-  const cycleComplete = firstFailedPage === null && endPage === totalPages;
+  const cycleComplete = catalogDrift === null && firstFailedPage === null && endPage === totalPages;
   return {
     status: "succeeded",
     responseStatus: 200,
     completeListing: startPage === 1 && cycleComplete && normalized.length === totalResults,
     jobs: normalized,
-    ...(totalPages > maximumPages || source.crawlPageCursor != null ? {
+    ...(totalPages > maximumPages || source.crawlPageCursor != null || catalogDrift ? {
       pagination: {
-        nextPage: cycleComplete ? 1 : firstFailedPage ?? endPage + 1,
+        nextPage: cycleComplete || catalogDrift ? 1 : firstFailedPage ?? endPage + 1,
         cycleComplete,
         totalPages,
       },
     } : {}),
-    error: null,
+    error: catalogDrift,
   };
 };
 

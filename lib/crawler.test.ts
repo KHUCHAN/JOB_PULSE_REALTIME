@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as crawlerModule from "./crawler";
 import { crawlBudgetedFetcher, crawlSource, discoverAts, oracleCareerSite } from "./crawler";
+import { recoverCheckpointedCatalog } from "./request-fallback-recovery";
 
 describe("source crawl budget", () => {
   it("stops issuing requests after the per-source request ceiling", async () => {
@@ -2000,6 +2001,53 @@ Wrong description.
       "https://jobs.acme.example/job/analyst/1/1",
       "https://jobs.acme.example/job/designer/1/2",
     ]);
+  });
+
+  it("refreshes Arm's stale shell and drains the exact 392-job catalog including page 27", async () => {
+    const cards = (first: number, count: number) => Array.from({ length: count }, (_, i) =>
+      `<li data-job-id="${first + i}"><a href="/job/cambridge/engineer/1/${first + i}"><h2>Hardware Engineer ${first + i}</h2></a><span class="job-location">Cambridge, United Kingdom</span></li>`).join("");
+    const shell = (count: number) => '<script src="https://tbcdn.talentbrew.com/search.js"></script>'
+      + `<section data-total-results="${count + 118}" data-total-job-results="${count}" data-total-pages="27" data-records-per-page="15" data-ajax-post-url="/search-jobs/resultspost">${cards(1, 15)}</section>`;
+    const refreshedUrls: string[] = [];
+    const requestedPages: number[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (init?.method !== "POST") {
+        if (url.searchParams.has("_catalog_refresh")) {
+          refreshedUrls.push(url.href);
+          return new Response(shell(392));
+        }
+        return new Response(shell(391));
+      }
+      const body = JSON.parse(String(init.body));
+      expect(body.TotalResults).toBe(392);
+      requestedPages.push(body.CurrentPage);
+      return Response.json({ results: `<section data-total-job-results="392">${cards((body.CurrentPage - 1) * 15 + 1, body.CurrentPage === 27 ? 2 : 15)}</section>` });
+    };
+    const result = await recoverCheckpointedCatalog({
+      id: "p5-0804-arm", company: "Arm", postingUrl: "https://careers.arm.com/search-jobs", adapter: "custom",
+    }, fetcher, crawlSource, { maxPasses: 3, maxStalls: 0 });
+    expect(refreshedUrls).toHaveLength(2);
+    expect(requestedPages).toEqual(Array.from({ length: 26 }, (_, i) => i + 2));
+    expect(result.jobs).toHaveLength(392);
+    expect(result.jobs.at(-1)?.externalId).toBe("392");
+    expect(result.jobs.every(job => !job.officialUrl.includes("_catalog_refresh"))).toBe(true);
+    expect(result).toMatchObject({ completeListing: false, error: null });
+    expect(result.pagination).toBeUndefined();
+  });
+
+  it("never marks a changing Radancy job count as complete even when page sizes still match", async () => {
+    const first = '<script src="https://tbcdn.talentbrew.com/search.js"></script>'
+      + '<section data-total-job-results="2" data-total-pages="2" data-records-per-page="1" data-ajax-post-url="/search-jobs/resultspost"><a href="/job/engineer/1/1">Hardware Engineer 1</a></section>';
+    const result = await crawlSource({
+      id: "radancy-count-drift", company: "Acme", postingUrl: "https://jobs.acme.example/search-jobs", adapter: "custom",
+    }, async (_input, init) => init?.method === "POST"
+      ? Response.json({ results: '<section data-total-job-results="3"><a href="/job/engineer/1/2">Hardware Engineer 2</a></section>' })
+      : new Response(first), new Date());
+    expect(result.completeListing).toBe(false);
+    expect(result.pagination).toMatchObject({ nextPage: 1, cycleComplete: false });
+    expect(result.error).toContain("changed from 2 to 3 jobs");
+    expect(result.jobs).toHaveLength(1);
   });
 
   it("refills three Radancy slots without waiting for one slow page and retains page order", async () => {
