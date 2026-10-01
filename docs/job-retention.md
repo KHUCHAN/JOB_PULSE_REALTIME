@@ -27,7 +27,10 @@ Do not run the production runner locally: it owns crawling as well as maintenanc
 
 `scripts/run-production-crawl.mjs` runs retention first with the existing GitHub
 OIDC authentication. Each API call deletes at most 100 jobs; the sequential drain
-has a two-minute wall budget and a 10-call/1,000-job ceiling. No additional crawler or
+has a two-minute wall budget and a 100-call/10,000-job ceiling, with a one-second
+pause between sequential chunks. The deadline can stop it below that ceiling.
+The legacy utility default remains 10 calls; only the admitted owner opts into
+the higher volume. No additional crawler or
 scheduled workflow is created. The existing crawl budget remains intact.
 
 Errors and remaining backlog are printed in Actions output and its step summary.
@@ -37,9 +40,10 @@ no eligible rows remain. This does not promise an unbounded one-request purge.
 
 Keep the last facet cache usable during deletion; do not cause public requests
 to recompute the whole catalog after every chunk. The owner refreshes four
-rotating facets once after a clean drain. Native requests start at two concurrent
-leases, grow to four after clean rounds, and reduce concurrency with a bounded
-cooldown after transport failures. Repeated capacity failures remain failures,
+rotating facets once after a clean drain. Native requests use at most two concurrent
+leases, reduce to one with a bounded cooldown under pressure, and never exceed
+the two-lease ceiling. Transport failures also trigger a bounded
+cooldown. Repeated capacity failures remain failures,
 but finalization failure no longer prevents collecting the remaining diagnostics.
 
 ## Rollout order

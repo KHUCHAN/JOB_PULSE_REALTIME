@@ -128,7 +128,7 @@ const postAction = async (action, timeoutMs, values = {}) => {
 let retention = { deleted: 0, batches: 0, hasMore: true, error: null };
 try {
   retention = { ...await drainExpiredJobs(() => postAction("purgeExpiredJobs", 20_000), Date.now, 120_000,
-    (progress) => Object.assign(retention, progress)), error: null };
+    (progress) => Object.assign(retention, progress), { maximumBatches: 100, pauseMs: 1000 }), error: null };
   console.log(JSON.stringify({ retention }));
   if (retention.hasMore) console.error("Retention backlog remains; the next owner batch will continue.");
 } catch (error) {

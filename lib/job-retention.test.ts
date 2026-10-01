@@ -162,6 +162,36 @@ describe("30-day job retention", () => {
 });
 
 describe("owner workflow retention drain", () => {
+  it("paces the production owner and caps backlog cleanup at 10000 without extending its two-minute budget", async () => {
+    let time = 0;
+    let pauses = 0;
+    const result = await drainExpiredJobs(async () => ({ deleted: 100, hasMore: true }), () => time, 120_000, undefined,
+      { maximumBatches: 100, pauseMs: 1000, sleep: async ms => { expect(ms).toBe(1000); time += ms; pauses++; } });
+    expect(result).toEqual({ deleted: 10000, batches: 100, hasMore: true });
+    expect(pauses).toBe(99);
+    expect(time).toBeLessThan(120_000);
+  });
+  it("does not pause or launch another chunk past the bounded maintenance window", async () => {
+    let time = 0;
+    let pauses = 0;
+    const result = await drainExpiredJobs(async () => { time += 59000; return { deleted: 100, hasMore: true }; }, () => time, 120_000, undefined,
+      { maximumBatches: 100, pauseMs: 1000, sleep: async ms => { time += ms; pauses++; } });
+    expect(result).toEqual({ deleted: 200, batches: 2, hasMore: true });
+    expect(pauses).toBe(1);
+  });
+  it("rejects unsafe maintenance volume and pacing overrides", async () => {
+    for (const options of [{ maximumBatches: 0 }, { maximumBatches: 101 }, { pauseMs: -1 }, { pauseMs: 10001 }]) {
+      let calls = 0;
+      await expect(drainExpiredJobs(async () => { calls++; return { deleted: 100, hasMore: true }; }, () => 0, 120_000, undefined, options))
+        .rejects.toThrow("Invalid retention drain limits.");
+      expect(calls).toBe(0);
+    }
+  });
+  it("uses paced higher-volume retention only inside the existing owner", () => {
+    const runner = readFileSync('scripts/run-production-crawl.mjs', 'utf8');
+    expect(runner).toContain('Date.now, 120_000');
+    expect(runner).toContain('{ maximumBatches: 100, pauseMs: 1000 }');
+  });
   it("caps fast maintenance at 1000 deletions without pretending the backlog is empty", async () => {
     expect(await drainExpiredJobs(async () => ({ deleted: 100, hasMore: true }), () => 0))
       .toEqual({ deleted: 1000, batches: 10, hasMore: true });
