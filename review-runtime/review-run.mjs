@@ -15,9 +15,11 @@ if(replay){const summary=JSON.parse(await fs.readFile(path.join(replay,'summary.
 const label=(replay?'replay-':'shadow-')+stamp+'-'+Date.now();
 const out=path.join(runtime,'shadow-runs',label);await fs.mkdir(out,{recursive:true});
 try{await fs.copyFile(path.join(runtime,'undated-source-observations.json'),path.join(out,'undated-source-observations.json'));}catch(error){if(error.code!=='ENOENT')throw error;}
+const stateAccessMarker=path.join(runtime,'shadow-state-access-hold.json');
+try{const marker=JSON.parse(await fs.readFile(stateAccessMarker));if(marker.status==='hold'&&!args.includes('--retry-state-access')){console.log(JSON.stringify({status:'hold-state-access',reason:'Known background access blocker; explicit supervised retry required',posts:0,llmTokens:0}));process.exit(1);}}catch(error){if(error.code!=='ENOENT')throw error;}
 const statePath=path.join(project,'.codex_tmp/codex-direct-db-gmail-state.json');
 const boundedStateRead=()=>new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('Canonical state read did not finish within 30 seconds')),30000);fs.readFile(statePath).then(resolve,reject).finally(()=>clearTimeout(timer));});
-let stateBefore;try{stateBefore=await boundedStateRead();}catch(error){const report={kind:replay?'offline-gate-replay':'live-shadow',stamp,runAt,out,status:'hold-state-access',error:error.message,posts:0,llmTokens:0};await fs.writeFile(path.join(out,'summary.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));process.exit(1);}
+let stateBefore;try{stateBefore=await boundedStateRead();}catch(error){const report={kind:replay?'offline-gate-replay':'live-shadow',stamp,runAt,out,status:'hold-state-access',error:error.message,posts:0,llmTokens:0};await fs.writeFile(path.join(out,'summary.json'),JSON.stringify(report,null,2));await fs.writeFile(stateAccessMarker,JSON.stringify({status:'hold',at:new Date().toISOString(),reason:error.message},null,2));console.log(JSON.stringify(report));process.exit(1);}
 const stateHash=createHash('sha256').update(stateBefore).digest('hex');
 const heldIds=['0372c3b6-f552-4eda-b4cc-4e7d1e807664','035b9146-f749-4e3f-8d85-2c753e4287ab','6507b05a-279b-4bba-9bb7-14e60bc9db9f','90f82229-368f-49cc-8f9a-5f48b3ce0f6c','eaf48f95-7b8b-4e63-aaf9-b2f27453c13e'];
 const env={...process.env,JOB_PULSE_PROJECT_ROOT:project,JOB_PULSE_SHADOW_OUTPUT:out};

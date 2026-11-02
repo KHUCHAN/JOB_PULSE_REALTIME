@@ -16,6 +16,10 @@ assert lane in ('shadow','platform')
 with (runtime/(lane+'.lock')).open('a+') as lock:
  try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
  except BlockingIOError:print(json.dumps({'status':'skipped-active-lane','lane':lane}));sys.exit(0)
+ if lane=='shadow':
+  marker=runtime/'shadow-state-access-hold.json'
+  if marker.exists() and json.loads(marker.read_text()).get('status')=='hold':
+   print(json.dumps({'status':'hold-state-access','reason':'known blocker; no repeated private-file read','posts':0}));sys.exit(0)
  if lane=='platform':
   day=datetime.datetime.now(datetime.timezone.utc).date().isoformat();usage=runtime/'platform-runs'/day/'usage.json'
   if usage.exists() and any(x.get('inputTokens',0)>0 for x in json.loads(usage.read_text())):
