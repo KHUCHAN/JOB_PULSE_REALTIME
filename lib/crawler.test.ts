@@ -17406,7 +17406,7 @@ dwr.engine._remoteHandleCallback('${batchId}','0',{filters:s0,results:s1});`;
     }));
   });
 
-  it("parses CGI's real Markdown reader format and fails closed on unstable page identities", async () => {
+  it("parses CGI's recorded Markdown format offline and fails closed on unstable page identities", async () => {
     const source = {
       id: "p4-0241-cgi",
       company: "CGI",
@@ -17419,12 +17419,10 @@ dwr.engine._remoteHandleCallback('${batchId}','0',{filters:s0,results:s1});`;
     const recovered = await crawlSource(source, async (input) => {
       const url = String(input);
       requests.push(url);
-      if (!url.startsWith("https://r.jina.ai/")) return new Response("<title>Radware Block Page</title>");
       return new Response(`Title: Careers\n\nMarkdown Content:\nSearch Results (1)\n\n| Position ID | Title | Category | City | Country |\n| --- | --- | --- | --- | --- |\n${markdownRow("J0826-0001", "1325001")}\n\nPage 1 of 1 NEXT`);
     }, new Date());
-    expect(requests).toHaveLength(2);
-    expect(requests[1]).toContain("CountryID=US");
-    expect(requests[1]).toContain("%26");
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toContain("CountryID=US");
     expect(recovered).toEqual(expect.objectContaining({
       status: "succeeded",
       completeListing: true,
@@ -17488,7 +17486,7 @@ dwr.engine._remoteHandleCallback('${batchId}','0',{filters:s0,results:s1});`;
     expect(result.jobs.some((job) => job.externalId === "J0826-0201")).toBe(true);
   });
 
-  it("uses CGI reader card rows for later POST-only catalog pages", async () => {
+  it("parses recorded CGI card rows on later catalog pages", async () => {
     const source = {
       id: "p4-0241-cgi",
       company: "CGI",
@@ -17503,8 +17501,8 @@ dwr.engine._remoteHandleCallback('${batchId}','0',{filters:s0,results:s1});`;
     const readerPage = `Title: Careers\n\nURL Source: http://cgi.njoyn.com/CORP/xweb/xweb.asp?CLID=21001&page=JobListing&lang=1&CountryID=US&pn=2\n\nMarkdown Content:\n## J0826-0051 - Summer 2027 Applied AI Intern\n\nCategory Analytics & Emerging Technology\n\nCity New York\n\nCountry United States`;
     const result = await crawlSource(source, async (input, init) => {
       const url = String(input);
-      if (url.startsWith("https://r.jina.ai/")) return new Response(readerPage);
-      if (init?.method === "POST") return new Response("<title>Radware Block Page</title>");
+      expect(url).not.toContain("r.jina.ai");
+      if (init?.method === "POST") return new Response(readerPage);
       return new Response(firstPage);
     }, new Date());
 
@@ -17523,7 +17521,7 @@ dwr.engine._remoteHandleCallback('${batchId}','0',{filters:s0,results:s1});`;
     }));
   });
 
-  it("preserves a literal pipe inside a CGI reader table title", async () => {
+  it("preserves a literal pipe inside a recorded CGI table title", async () => {
     const source = {
       id: "p4-0241-cgi",
       company: "CGI",
@@ -17532,9 +17530,7 @@ dwr.engine._remoteHandleCallback('${batchId}','0',{filters:s0,results:s1});`;
     };
     const row = "| [J0426-1430](http://cgi.njoyn.com/CORP/xweb/xweb.asp?clid=21001&Page=JobDetails&Jobid=J0426-1430&BRID=1292903) | Backend Developer (Golang / Java | Microservices) | Software Development / Engineering | Merrimack | United States |";
     const content = `Title: Careers\nURL Source: http://cgi.njoyn.com/CORP/xweb/xweb.asp?CLID=21001&page=JobListing&CountryID=US\nSearch Results (1)\n${row}\nPage 1 of 1`;
-    const result = await crawlSource(source, async (input) => String(input).startsWith("https://r.jina.ai/")
-      ? new Response(content)
-      : new Response("<title>Radware Block Page</title>"), new Date());
+    const result = await crawlSource(source, async () => new Response(content), new Date());
     expect(result.jobs).toEqual([expect.objectContaining({
       externalId: "J0426-1430",
       title: "Backend Developer (Golang / Java | Microservices)",
@@ -17751,4 +17747,11 @@ Hybrid - New York, NY`;
     expect(result.jobs.find((job) => job.externalId === "20070021-0157")?.officialUrl)
       .toContain("/%EF%A3%BF-software-engineer-21");
   });
+});
+
+
+it("stops CGI on a challenge without a reader or proxy request",async()=>{
+ const requests:string[]=[];
+ const result=await crawlSource({id:"p4-0241-cgi",company:"CGI",postingUrl:"https://cgi.njoyn.com/CORP/xweb/xweb.asp",adapter:"custom"},async input=>{requests.push(String(input));return new Response("Radware Block Page",{status:403})},new Date());
+ expect(result.status).toBe("blocked");expect(requests).toHaveLength(1);
 });

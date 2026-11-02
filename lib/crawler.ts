@@ -23000,45 +23000,22 @@ const crawlCgiNjoyn = async (
     expectedCatalog?: { total: number; totalPages: number },
   ): Promise<CgiNjoynPage> => {
     const listingUrl = cgiNjoynPageUrl(page);
-    try {
-      const form = page > 1 ? new URLSearchParams({
-        s: " EnterDate Desc ",
-        pn: String(page),
-        Inp_country: "US",
-        inp_Country_CGI: "US",
-        Inp_Keywords: "",
-        inp_City: "",
-      }) : null;
-      const direct = await fetchWithTimeout(fetcher, page === 1 ? listingUrl : CGI_NJOYN_LISTING_URL, form ? {
-        method: "POST",
-        headers: {
-          "content-type": "application/x-www-form-urlencoded",
-          referer: CGI_NJOYN_LISTING_URL,
-        },
-        body: form,
-      } : undefined, true, { attempts: 1, timeoutMs: 7_000 });
-      responseStatus = direct.status;
-      if (direct.ok) {
-        const parsed = parseCgiNjoynPage(await direct.text(), source, page, expectedCatalog);
-        if (parsed) return { ...parsed, responseStatus: direct.status };
-      } else {
-        await direct.body?.cancel().catch(() => undefined);
-      }
-    } catch {
-      // The independent reader below can recover a Radware-blocked Njoyn page.
-    }
-    const reader = await fetchWithTimeout(fetcher, cgiNjoynReaderUrl(listingUrl), {
-      headers: { accept: "text/markdown,text/plain,text/html" },
-    }, false, { attempts: 1, timeoutMs: 10_000 });
-    responseStatus = reader.status;
-    if (!reader.ok) {
-      throw Object.assign(new Error(`CGI Njoyn reader returned HTTP ${reader.status}.`), {
-        responseStatus: reader.status,
+    const form = page > 1 ? new URLSearchParams({
+      s: " EnterDate Desc ", pn: String(page), Inp_country: "US", inp_Country_CGI: "US", Inp_Keywords: "", inp_City: "",
+    }) : null;
+    const direct = await fetchWithTimeout(fetcher, page === 1 ? listingUrl : CGI_NJOYN_LISTING_URL, form ? {
+      method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", referer: CGI_NJOYN_LISTING_URL }, body: form,
+    } : undefined, true, { attempts: 1, timeoutMs: 15_000 });
+    responseStatus = direct.status;
+    const content = await direct.text();
+    if (!direct.ok || /Radware Block Page|Just a moment|captcha/i.test(content)) {
+      throw Object.assign(new Error(`CGI official catalog unavailable (HTTP ${direct.status}); no reader/proxy fallback.`), {
+        responseStatus: isBlockedHttpStatus(direct.status) || /Radware Block Page|Just a moment|captcha/i.test(content) ? 403 : direct.status,
       });
     }
-    const parsed = parseCgiNjoynPage(await reader.text(), source, page, expectedCatalog);
+    const parsed = parseCgiNjoynPage(content, source, page, expectedCatalog);
     if (!parsed) throw new Error(`CGI Njoyn returned an unusable US catalog page ${page}.`);
-    return { ...parsed, responseStatus: reader.status };
+    return { ...parsed, responseStatus: direct.status };
   };
 
   try {
@@ -26502,6 +26479,8 @@ export async function crawlSource(source: CrawlSource, fetcher: typeof fetch, no
     ? { maxRequests: 240, deadlineMs: 170_000 }
     : source.id === "p2-0027-bank-of-america"
     ? { maxRequests: 130, deadlineMs: 45_000 }
+    : source.id === "p4-0241-cgi"
+      ? { maxRequests: 50, deadlineMs: 45_000 }
     : source.id === "p4-0285-google" || source.id === "p4-0245-cisco"
       // 32 catalog pages + at most 16 priority pages + 48 detail requests.
       // Cisco also needs its 20 catalog pages plus up to 48 internship details;
