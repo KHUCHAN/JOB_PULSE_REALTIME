@@ -1,0 +1,1 @@
+{"type":"object","additionalProperties":false,"properties":{"decision":{"type":"string","enum":["hold","evidence_only"]},"reason":{"type":"string"},"officialQuote":{"type":"string"}},"required":["decision","reason","officialQuote"]}
