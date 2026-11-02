@@ -23035,9 +23035,9 @@ const crawlCgiNjoyn = async (
     } : undefined, true, { attempts: 1, timeoutMs: 15_000 });
     responseStatus = direct.status;
     const content = await direct.text();
-    if (!direct.ok || /Radware Block Page|<title[^>]*>\s*Just a moment/i.test(content)) {
+    if (!direct.ok || /Radware (?:Block|Captcha) Page|<title[^>]*>\s*Just a moment/i.test(content)) {
       throw Object.assign(new Error(`CGI official catalog unavailable (HTTP ${direct.status}); no reader/proxy fallback.`), {
-        responseStatus: isBlockedHttpStatus(direct.status) || /Radware Block Page|<title[^>]*>\s*Just a moment/i.test(content) ? 403 : direct.status,
+        responseStatus: isBlockedHttpStatus(direct.status) || /Radware (?:Block|Captcha) Page|<title[^>]*>\s*Just a moment/i.test(content) ? 403 : direct.status,
       });
     }
     const parsed = parseCgiNjoynPage(content, source, page, expectedCatalog);

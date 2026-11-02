@@ -766,6 +766,10 @@ export const recoverNativeOutsideWorker = async (
 ): Promise<BrowserFallbackResult | null> => {
   if (!source.attemptNativeRecovery && source.adapter !== "workday") return null;
   let result = await crawlSource(source, fetcher, now);
+  if (["legacy-row-860", "p4-0241-cgi"].includes(source.id) && result.status === "blocked") return {
+    source, status: result.responseStatus, finalUrl: source.postingUrl,
+    jobs: [], completeListing: false, error: result.error,
+  };
   // Provider maintenance is not a browser challenge. Do not spend a second
   // HTTP retry and a rendered browser slot on the same published outage.
   if (/upstream maintenance/i.test(result.error ?? "")) return {
