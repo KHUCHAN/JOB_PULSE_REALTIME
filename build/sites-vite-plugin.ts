@@ -35,6 +35,7 @@ export const sitesSchemaMigrationFiles = [
   "0143_retention_deployment_repair.sql",
   "0144_job_fts_changed_content.sql",
   "0145_crawl_snapshot_hash.sql",
+  "0146_explicit_us_office_locations.sql",
 ] as const;
 
 // Packages Sites metadata and migrations after Vite finishes compiling.

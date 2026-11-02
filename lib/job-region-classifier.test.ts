@@ -110,3 +110,11 @@ describe("classifyJobRegion", () => {
     })).toBe("unknown");
   });
 });
+
+
+it.each(["Houston TX","Nashville TN","San Francisco Office","San Jose CA","New York NY"])("resolves the explicit US ATS location %s",location=>expect(classifyJobRegion({location})).toBe("us"));
+it.each(["Berlin DE","Toronto ON"])("does not turn a foreign city-code location into US: %s",location=>expect(classifyJobRegion({location})).toBe("non_us"));
+it("retains mixed evidence and ambiguous office names",()=>{
+ expect(classifyJobRegion({location:"Houston TX",locationCountry:"Canada"})).toBe("mixed");
+ expect(classifyJobRegion({location:"London Office"})).toBe("unknown");
+});

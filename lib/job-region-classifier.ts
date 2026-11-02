@@ -97,6 +97,13 @@ const rawLocation = (value: unknown): RegionEvidence => {
   if ([...usCountryAliases].some((country) => containsPhrase(location, country))) return "us";
   if (nonUsCountryNames.some((country) => containsPhrase(location, country))) return "non_us";
   if (usStateNames.some((state) => containsPhrase(location, state))) return "us";
+  // Explicit city + uppercase subdivision without a comma (ATS display labels).
+  const bare = original.match(/^([A-Z][A-Za-z.' -]+?)\s+([A-Z]{2})(?:\s+\d{5}(?:-\d{4})?)?$/);
+  if (bare?.[2] === "DE") return delawareLocalities.has(normalize(bare[1])) ? "us" : "non_us";
+  if (bare && usStateCodes.has(bare[2])) return "us";
+  if (bare && canadianProvinceCodes.has(bare[2])) return "non_us";
+  // Avoid general city-name guessing; these exact office labels are unambiguous.
+  if (/^(?:San Francisco|New York|Seattle|Los Angeles|Houston|Nashville) Office$/i.test(original)) return "us";
   const contextualCode = original.match(/,\s*([A-Z]{2})(?:\s*[,-]|\s+[A-Z]\d[A-Z]\s*\d[A-Z]\d|\s+\d{5}|$)/);
   if (contextualCode?.[1] === "DE" && !/,\s*DE\s+\d{5}\b/.test(original)) {
     const locality = normalize(original.slice(0, contextualCode.index));
