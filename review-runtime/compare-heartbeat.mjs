@@ -1,5 +1,5 @@
 import './evidence-io.cjs';
-import {comparePolicy} from './comparison-policy.mjs';
+import {comparePolicy,legacySelectionAgrees} from './comparison-policy.mjs';
 // Read-only aligned comparison: saved evidence first; explicit fixed-boundary re-fetch fallback.
 import fs from 'node:fs/promises';import path from 'node:path';import {fileURLToPath} from 'node:url';import {spawn} from 'node:child_process';
 const code=path.dirname(fileURLToPath(import.meta.url)),runtime=process.env.JOB_PULSE_RUNTIME??path.resolve(code,'../../review-runtime');
@@ -8,7 +8,7 @@ const stamp=process.argv[2]==='--snapshot-heartbeat'?meta.heartbeat:process.argv
 if(meta.heartbeat!==stamp)throw Error('Foreground snapshot --heartbeat '+stamp+' first');
 const legacy=path.join(snapshot,'legacy'),read=async n=>JSON.parse(await fs.readFile(path.join(legacy,n))),optional=async n=>read(n).catch(e=>{if(e.code==='ENOENT')return null;throw e;});
 const summary=await optional('summary.json'),selection=await read('selection-manifest.json'),dispatch=await optional(stamp+'-us-dispatch-plan.json');
-if(dispatch&&JSON.stringify(selection.selectedIds)!==JSON.stringify(dispatch.selected))throw Error('Legacy selection evidence disagrees');
+if(!legacySelectionAgrees(selection.selectedIds,dispatch,summary))throw Error('Legacy selection evidence disagrees');
 const baseline=path.join(runtime,'aligned-inputs',stamp+'-'+Date.now());await fs.mkdir(baseline,{recursive:true});
 for(const n of await fs.readdir(legacy))if(n.endsWith('.json')){await fs.copyFile(path.join(legacy,n),path.join(baseline,n));await fs.chmod(path.join(baseline,n),0o600);}
 let scan=await optional(stamp+'.json'),provenance='saved raw pages and saved official evidence; network denied during gate replay';

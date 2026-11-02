@@ -1,4 +1,4 @@
-import {test} from 'node:test';import assert from 'node:assert/strict';import {comparePolicy} from './comparison-policy.mjs';
+import {test} from 'node:test';import assert from 'node:assert/strict';import {comparePolicy,legacySelectionAgrees} from './comparison-policy.mjs';
 const old={jobId:'id',decision:'approve',rationale:'Keyword match (not individually reviewed). United States. Direct software engineering role. Official date: 2026-11-01. Application caveats: Must be enrolled. | No sponsorship.'};
 const args={legacy:[old],fresh:[{...old,rationale:old.rationale.replace('Must be enrolled. | No sponsorship.','No sponsorship. | Must be enrolled. | Must attend onsite.')}],rows:[{id:'id',publishedAt:'2026-11-01'}],audit:[{id:'id',caveats:['No sponsorship.','Must be enrolled.','Must attend onsite.'],caveatsVerbatim:true}],legacySelected:['id'],freshSelected:['id'],keywordLabels:['Direct software engineering role']};
 test('reviewed exceptions require exact heartbeat, id, type and legacy text',()=>{
@@ -51,4 +51,13 @@ test('keyword label exception needs exact heartbeat, id and both label sets',()=
  assert(comparePolicy({...input,reviewedExceptions:[entry]}).accepted);
  for(const patch of [{heartbeat:'other'},{id:'other'},{freshValue:'[]'},{legacyValue:'[]'},{reason:''}])assert(!comparePolicy({...input,reviewedExceptions:[{...entry,...patch}]}).accepted);
  assert(!comparePolicy({...input,fresh:[{...b,rationale:b.rationale.replace('2026-11-01','2026-11-02')}],reviewedExceptions:[entry]}).accepted);
+});
+test('legacy selection may differ only by IDs the run explains',()=>{
+ const dispatch={selected:['a','c'],excluded:[{id:'x'}]},summary={uncertainPersistenceIds:['u']};
+ assert(legacySelectionAgrees(['a','u','x','c'],dispatch,summary));assert(legacySelectionAgrees(['a'],null,null));
+ assert(!legacySelectionAgrees(['a','z','c'],dispatch,summary));assert(!legacySelectionAgrees(['c','a'],dispatch,summary));assert(!legacySelectionAgrees(['a','u','c'],{selected:['a','c']},null));
+});
+test('stored official date label compares by date value',()=>{
+ const stored=old.rationale.replace('Official date: 2026-11-01','Stored official date: 2026-11-01');assert.notEqual(stored,old.rationale);
+ assert.equal(comparePolicy({...args,legacy:[{...old,rationale:stored}],fresh:[old]}).labels[0].dateMatch,true);
 });

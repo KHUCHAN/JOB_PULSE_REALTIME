@@ -1,9 +1,12 @@
 import {keywordLabels} from './keyword-policy.mjs';
 // Final read-only revalidation shared by fresh and pending approvals.
-import {JSDOM} from 'jsdom';import {evaluateEvidence,storedCountry} from './evidence-policy.mjs';import {postingText} from './caveats.mjs';
+import fs from 'node:fs/promises';import path from 'node:path';import {JSDOM} from 'jsdom';import {evaluateEvidence,storedCountry} from './evidence-policy.mjs';import {postingText} from './caveats.mjs';
 const canon=s=>{const u=new URL(s);u.hash='';for(const k of [...u.searchParams.keys()])if(/^(utm_|source$|src$|ref$|gh_src$|_ccid$)/i.test(k))u.searchParams.delete(k);return u.href.replace(/\/$/,'');};
 const norm=s=>String(s??'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
 const flatten=x=>Array.isArray(x)?x.flatMap(flatten):x&&typeof x==='object'?[x,...flatten(x['@graph']??[])]:[];
+// Identities from the durable reconciliation record; these POSTs are never repeated.
+export const persistedQuarantine=record=>[...(record.failed?.uncertainIds??[]).map(id=>({id})),...[...(record.additionalUncertainAttempts??[]),...(record.additionalRejectedAttempts??[])].map(x=>({id:x.jobId,officialUrl:x.canonicalUrl,requisitionId:x.requisitionId,company:x.company,title:x.title,location:x.location}))];
+export const readPersistedQuarantine=runtime=>fs.readFile(path.join(runtime,'PENDING_PERSISTENCE_RECONCILIATION.json'),'utf8').then(x=>persistedQuarantine(JSON.parse(x)),e=>{if(e.code==='ENOENT')return [];throw e;});
 export async function revalidateDispatch(row,candidate,local,saved,{request=fetch,asOf=new Date().toISOString()}={}) {
  if(local?.title&&norm(local.title)!==norm(row.title)||local?.company&&norm(local.company)!==norm(row.company)||local?.location&&norm(local.location)!==norm(row.location)||candidate.requisitionId&&norm(candidate.requisitionId)!==norm(row.requisitionId))return {ok:false,reason:'fresh durable identity changed'};
  if(norm(row.title)!==norm(candidate.title??row.title)||candidate.officialUrl&&canon(candidate.officialUrl)!==canon(row.officialUrl))return {ok:false,reason:'fresh identity changed'};

@@ -10,7 +10,7 @@ export function sentences(text) {
  // Slice source spans: abbreviations retain every internal byte, never crossing a newline.
  return String(text??'').split(/[\r\n]+/).flatMap(line=>{
   const out=[];let start=0;
-  for(const m of line.matchAll(/(?=\s*[·•]\s)|(?<=[.!?])\s+(?=[A-Z*•-])/g)){
+  for(const m of line.matchAll(/(?=\s*[·•]\s)|(?<=[.!?])\s+(?=[A-Z*•-])|(?<=[a-z0-9)])\s+(?=Must (?:be|have)\b)/g)){
    if(m[0]&&/(?:\bU\.S\.|\bPh\.|\bB\.|\bM\.|\be\.g\.|\bi\.e\.)$/.test(line.slice(start,m.index)))continue;
    out.push(line.slice(start,m.index).trim());start=m.index+m[0].length;
   }
@@ -18,9 +18,9 @@ export function sentences(text) {
  });
 }
 // These restrictions survive both boilerplate filtering and rationale budgeting.
-export const protectedCaveat=t=>/\bvisa\b|sponsorship|\bsponsor(?:ed|ing)?\b.*(?:applicants?|candidates?|employment)|work authoriz|authorized to work|legally authoriz|eligible to work|right to work|immigration|\b[FCJH]-?1\b|\bCPT\b|\bOPT\b|export licen|citizen|U\.S\. Person|clearance|matriculat|graduat|class of|rising|sophomore|junior (?:year|standing|level)|senior (?:year|standing|level)|freshm[ae]n|year of (?:study|college)|academic (?:year|standing)|continuing education|preferred majors?\s*:|majoring|technical major|working towards?|pursuing a (?:BS|BA|MS|MA)\b|enroll|degree|bachelor|undergrad|master[’'s]|masters|doctoral|doctorate|ph\.?\s?d|college|university|high school/i.test(t);
+export const protectedCaveat=t=>/\bvisa\b|sponsorship|\bsponsor(?:ed|ing)?\b.*(?:applicants?|candidates?|employment)|work authoriz|authorized to work|legally authoriz|legal authoriz|authorization to work|eligible to work|right to work|immigration|\b[FCJH]-?1\b|\bCPT\b|\bOPT\b|export licen|citizen|U\.S\. Person|clearance|matriculat|graduat|class of|rising|sophomore|junior (?:year|standing|level)|senior (?:year|standing|level)|freshm[ae]n|year of (?:study|college)|academic (?:year|standing)|continuing education|preferred majors?\s*:|majoring|technical major|working towards?|pursuing a (?:BS|BA|MS|MA)\b|enroll|degree|bachelor|undergrad|master[’'s]|masters|doctoral|doctorate|ph\.?\s?d|college|university|high school/i.test(t);
 export function caveatClass(t) {
- if(/\bvisa\b|sponsor|work authoriz|authorized to work|legally authoriz|eligible to work|right to work|immigration|\b[FCJH]-?1\b|\bCPT\b|\bOPT\b|export licen/i.test(t))return 'authorization';
+ if(/\bvisa\b|sponsor|work authoriz|authorized to work|legally authoriz|legal authoriz|authorization to work|eligible to work|right to work|immigration|\b[FCJH]-?1\b|\bCPT\b|\bOPT\b|export licen/i.test(t))return 'authorization';
  if(/citizen|U\.S\. Person|clearance/i.test(t))return 'citizenship/clearance';
  if(/(?:based|location).*office|on[ -]?site|hybrid|in[ -]office|\boffice\b.*(?:days|week|based)|(?:days|week).*\boffice\b|commut|relocat|resid(?:e|ing)|50-mile/i.test(t))return 'attendance';
  if(/coursework|course work|prerequisite|completed an? .*(?:introduction|course)/i.test(t))return 'coursework';
@@ -36,6 +36,8 @@ export function extractCaveats(text) {
  const pieces=sentences(text),out=[];
  for(let i=0;i<pieces.length;i++){
   let t=pieces[i];
+  // Equal-opportunity text names citizenship without restricting anyone.
+  if(/\b(?:qualified applicants|consideration for employment)\b.*without regard to/i.test(t))continue;
   if(!protectedCaveat(t)&&(/caf[eé]|dining options|fitness cent(?:er|re)|^(?:[·•*\-]\s*)?(?:Create|Analyze|Build|Develop|Support|Maintain|Design|Fix|Coordinate|Present|Assist)\b/i.test(t)))continue;
   if(!protectedCaveat(t)&&(/privacy|accommodation|\b(?:benefits?|privileges|travel credits)\b|equal (?:employment )?opportunity|without regard to|all personnel actions/i.test(t)||/^#\S+$/.test(t)||/^(?:[·•*\-]\s*)?(?:required|preferred|qualifications|requirements|eligibility|minimum requirements|preferred qualifications|required qualifications)\s*:?$/i.test(t)))continue;
   if(!caveatClass(t))continue;

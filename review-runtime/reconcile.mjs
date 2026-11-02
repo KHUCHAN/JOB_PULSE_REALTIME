@@ -6,14 +6,24 @@ import fs from 'node:fs/promises';import path from 'node:path';import {createReq
 const require=createRequire(import.meta.url),{atomic}=require('./atomic-state.cjs'),config=require('./live-config.cjs');
 const norm=s=>String(s??'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
 export async function attempts(runtime){const found=[];for(const dir of await fs.readdir(path.join(runtime,'live-runs')).catch(()=>[]))for(const name of await fs.readdir(path.join(runtime,'live-runs',dir)))if(name.startsWith('post-attempt-')){const file=path.join(runtime,'live-runs',dir,name);found.push({file,...JSON.parse(await fs.readFile(file))});}return found;}
+async function recordNonDurable(runtime,attempt,items){
+ const file=path.join(runtime,'PENDING_PERSISTENCE_RECONCILIATION.json');
+ const record=await fs.readFile(file,'utf8').then(JSON.parse,e=>{if(e.code==='ENOENT')return {};throw e;});
+ const known=new Set((record.additionalUncertainAttempts??[]).map(x=>x.jobId));
+ const added=items.filter(x=>!known.has(x.row.id)).map(({row,review})=>({jobId:row.id,requisitionId:row.requisitionId??null,company:row.company,title:row.title,location:row.location,canonicalUrl:row.officialUrl,expectedDecision:review.decision,receiptStatus:attempt.httpStatus,receiptAt:attempt.at,serverDecisionAfterReadOnlyRecheck:null,serverNotifiedAt:null,localRecordWritten:false,reason:'accepted_but_review_not_durable',noRetry:true,excludeFromDispatchAndFutureReviews:true,noStateSubstitution:true}));
+ atomic(file,JSON.stringify({...record,additionalUncertainAttempts:[...(record.additionalUncertainAttempts??[]),...added]},null,2));
+}
 export async function reconcile({root=path.join(config.base,'runtime-root'),runtime=path.join(config.base,'review-runtime'),request=fetch,finish=false}={}){
  const file=path.join(root,'.codex_tmp/codex-direct-db-gmail-state.json'),state=JSON.parse(await fs.readFile(file));let unresolved=0,resolved=0;
  for(const a of await attempts(runtime)){
   if(a.status==='completed')continue;
-  const rows=[];let proven=true;
+  const rows=[],nonDurable=[];let proven=true;
   for(const id of a.ids){const response=await request(config.endpoint+'/api/pulse?resource=job&id='+encodeURIComponent(id),{signal:AbortSignal.timeout(20000)});if(!response.ok){proven=false;break;}const j=await response.json(),old=a.identities.find(x=>x.id===id);
    if(!old||j.id!==id||j.officialUrl!==old.officialUrl||norm(j.company)!==norm(old.company)||norm(j.title)!==norm(old.title)||norm(j.location)!==norm(old.location)||norm(j.requisitionId)!==norm(old.requisitionId)){proven=false;break;}
-   if(a.action==='submitCodexReview'){const r=a.payload.reviews.find(r=>r.jobId===id);if(j.resumeReviewDecision!==r.decision){proven=false;break;}}
+   if(a.action==='submitCodexReview'){const r=a.payload.reviews.find(r=>r.jobId===id);if(j.resumeReviewDecision!==r.decision){
+    // HTTP 200 yet nothing stored: quarantine for good, no retry and no local record.
+    if(a.httpStatus===200&&j.resumeReviewDecision==null&&!j.resumeNotifiedAt){nonDurable.push({row:j,review:r});continue;}
+    proven=false;break;}}
    else if(!j.resumeNotifiedAt&&!j.resumeIdentityAlreadyNotified){proven=false;break;}
    rows.push(j);
   }
@@ -27,7 +37,8 @@ export async function reconcile({root=path.join(config.base,'runtime-root'),runt
   }
   if(!proven){unresolved++;continue;}
   atomic(file,JSON.stringify(state),{state:true});
-  atomic(a.file,JSON.stringify({...a,file:undefined,status:'completed',resolvedAt:new Date().toISOString(),resolution:'server GET exact identity and durable review/delivery'}));resolved++;if(finish)await compressEvidence(path.dirname(a.file));
+  if(nonDurable.length)await recordNonDurable(runtime,a,nonDurable);
+  atomic(a.file,JSON.stringify({...a,file:undefined,status:'completed',resolvedAt:new Date().toISOString(),resolution:'server GET exact identity and durable review/delivery',nonDurableIds:nonDurable.map(x=>x.row.id)}));resolved++;if(finish)await compressEvidence(path.dirname(a.file));
  }
  if(!unresolved&&finish){atomic(path.join(root,'live-inflight.json'),JSON.stringify({status:'completed',resolvedAt:new Date().toISOString()}));
   // Retain the hold as evidence. Startup and rollback accept only a resolved hold.

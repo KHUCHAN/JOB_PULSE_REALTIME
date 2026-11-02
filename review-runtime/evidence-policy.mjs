@@ -35,6 +35,8 @@ export function evaluateEvidence({row,evidence,officialDate,officialCountry,offi
  const d=dateFromOfficial(row,officialDate,evidence,fallback);
  const country=storedCountry(row)==='non-US'?'non-US':officialCountry??(collectorEvidence?storedCountry(row):null);
  const programText=(title||row.title)+' '+body;
+ const internTopic=/\bintern\s+(?:conversion|experience|recruit\w*|coordinator|manager|onboarding|engagement)\b/i,titleText=title||row.title;
+ const aboutInterns=internTopic.test(titleText)&&!/\binternships?\b|\bco[ -]?op\b|\binterns?\b/i.test(titleText.replace(internTopic,' '));
  const program=!( /continuity\s+of\s+operations/i.test(programText)&&!/\bintern(?:s|ships?)?\b|\bco[ -]op\b/i.test(programText))&&/\bintern(?:s|ships?)?\b|\bco[ -]?op\b/i.test(programText);
  const checks={live:!!live||collectorEvidence,location:country==='United States',program,date:recent(d.date,asOf),fit:labels.length>0};
  const failed=Object.keys(checks).filter(k=>!checks[k]);
@@ -49,6 +51,7 @@ export function evaluateEvidence({row,evidence,officialDate,officialCountry,offi
  if(!d.date||!Number.isFinite(Date.parse(d.date)))return hold('official date missing, relative or visibly unparsed');
  if(Date.parse(d.date)>Date.parse(asOf))return hold('future date');
  if(!checks.date)return {...hold(d.basis==='firstSeenAt'?'collection older than 72h':'old official date'),decision:d.basis==='firstSeenAt'?'hold':'reject'};
+ if(aboutInterns)return hold('title concerns an intern program or conversion, not an internship');
  if(body.length<160)return hold('posting text unavailable or too short to judge');
  if(!program&&live&&body.length>=160)return {...hold('affirmative non-internship program'),decision:'reject'};
  if(!labels.length)return {...hold('affirmative no keyword fit on available text'),decision:'reject'};

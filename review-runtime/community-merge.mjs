@@ -15,7 +15,8 @@ const reqs=new Set(records.filter(r=>r.requisitionId).map(r=>companyKey(r.compan
 const fps=new Set(records.map(r=>[companyKey(r.company),norm(r.title),norm(r.location)].join('|')));
 const report={stamp,runAt:scan.runAt,merged:[],excluded:[],requiresFullExistingOfficialKeywordAndDispatchGates:true,reviewWrites:0,emailsSent:0};
 for(const d of discovery.details){if(scan.details.some(x=>x.row.id===d.row.id)){report.excluded.push({id:d.row.id,reason:'Already in this run raw scan'});continue;}
- const r=await fetch('https://job-pulse-realtime.autodev61.chatgpt.site/api/pulse?resource=job&id='+encodeURIComponent(d.row.id),{signal:AbortSignal.timeout(30000)});assert(r.ok,'Fresh exact DB GET failed');const j=await r.json();assert(j.id===d.row.id&&canonical(j.officialUrl)===canonical(d.row.officialUrl),'Exact DB identity changed');
+ // Offline replay has no network; it decides on the row saved at discovery.
+ let j=d.row;if(!process.env.JOB_PULSE_REPLAY_ASOF){const r=await fetch('https://job-pulse-realtime.autodev61.chatgpt.site/api/pulse?resource=job&id='+encodeURIComponent(d.row.id),{signal:AbortSignal.timeout(30000)});assert(r.ok,'Fresh exact DB GET failed');j=await r.json();assert(j.id===d.row.id&&canonical(j.officialUrl)===canonical(d.row.officialUrl),'Exact DB identity changed');}
  const known=urls.has(canonical(j.officialUrl))||(j.requisitionId&&reqs.has(companyKey(j.company)+'|'+norm(j.requisitionId)))||fps.has([companyKey(j.company),norm(j.title),norm(j.location)].join('|'));
  if(known||j.resumeReviewDecision||j.resumeNotifiedAt||j.resumeIdentityAlreadyNotified||j.status==='closed'){report.excluded.push({id:j.id,reason:'Durable known/reviewed/delivered or closed'});continue;}
  scan.details.push({...d,row:j,country:'United States',secondarySource:'community',requiresOfficialVerification:true});report.merged.push(j.id);

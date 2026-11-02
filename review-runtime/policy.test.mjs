@@ -111,3 +111,14 @@ test('bare country/state collisions hold without affirmative country evidence',(
  assert.equal(storedCountry({location:'Pune, IN',locationCountry:'India'}),'non-US');
  assert.equal(storedCountry({location:'Unknown City, IN',locationState:'IN'}),null);
 });
+test('authorization wording survives filtering and equal-opportunity text is dropped',()=>{
+ const legal='Legal authorization to work in the United States, now and in the future.';
+ assert(extractCaveats(legal).includes(legal));
+ assert.deepEqual(extractCaveats('All qualified applicants will receive consideration for employment without regard to national origin or citizenship.'),[]);
+ assert.deepEqual(sentences('Tasks include drafting reports Must be currently enrolled at a university Must have a Minimum GPA of 3.0'),['Tasks include drafting reports','Must be currently enrolled at a university','Must have a Minimum GPA of 3.0']);
+});
+test('titles about an intern program hold instead of counting as internships',()=>{
+ const body='An official posting that describes the responsibilities of this position. '.repeat(4);
+ for(const title of ['Confluent - Software Developer - Intern Conversion','Business Program Manager, Global Intern Experience & Innovation']){const r=evaluateEvidence({...base,live:true,title,officialBody:body});assert.equal(r.decision,'hold');assert.match(r.reason,/intern program or conversion/);}
+ assert.notEqual(evaluateEvidence({...base,live:true,title:'Intern Experience Analyst Internship',officialBody:body}).reason,'title concerns an intern program or conversion, not an internship');
+});

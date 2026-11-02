@@ -1,10 +1,12 @@
 import {storedCaveats} from './caveats.mjs';
 const key=r=>r?.rationale??'';
-const date=r=>key(r).match(/게시일 미표기 · 수집일 \d{4}-\d\d-\d\d 기준|Official date: [^. ]+(?:\.\d+Z)?/)?.[0]??null;
+const date=r=>key(r).match(/게시일 미표기 · 수집일 \d{4}-\d\d-\d\d 기준|(?:Stored official|Official) date: [^. ]+(?:\.\d+Z)?/)?.[0]?.replace(/^Stored official/,'Official')??null;
 // Legacy rendered major lists with semicolons. Compare the same ordered values
 // against verbatim multiline source blocks; no value may be added or removed.
 const majorList=t=>{const m=t.match(/^(PREFERRED MAJORS?:)\s*([\s\S]+)$/);return m?[m[1],...m[2].split(/[;\n]/).map(x=>x.trim()).filter(Boolean)]:null;};
 const containsCaveat=(r,caveats,text)=>key(r).includes(text)||!!majorList(text)&&caveats.some(c=>key(r).includes(c)&&JSON.stringify(majorList(c))===JSON.stringify(majorList(text)));
+// A run may lose planned approvals after POST; only IDs the run itself explains may leave the dispatch.
+export const legacySelectionAgrees=(selected,dispatch,summary)=>{if(!dispatch)return true;const explained=new Set([...(dispatch.excluded??[]).map(x=>x.id),...(summary?.uncertainPersistenceIds??[])]);return JSON.stringify(selected.filter(id=>!explained.has(id)))===JSON.stringify(dispatch.selected);};
 export function comparePolicy({legacy,fresh,rows,audit,legacySelected,freshSelected,keywordLabels,heartbeat,reviewedExceptions:entries=[]}) {
  const old=new Map(legacy.map(r=>[r.jobId,r])),next=new Map(fresh.map(r=>[r.jobId,r])),explained=[],missingEvidence=[],unexplained=[],caveats=[],labels=[];
  const used=new Set(),reviewedExceptions=[];

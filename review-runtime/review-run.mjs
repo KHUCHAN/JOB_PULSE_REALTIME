@@ -1,6 +1,7 @@
 import './evidence-io.cjs';
 import './desktop-guard.cjs';
 import {acquireReviewLock} from './lane-lock.mjs';
+import {readPersistedQuarantine} from './dispatch-policy.mjs';
 await acquireReviewLock();
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -29,6 +30,7 @@ const stateHash=createHash('sha256').update(stateBefore).digest('hex');
 const heldIds=['0372c3b6-f552-4eda-b4cc-4e7d1e807664','035b9146-f749-4e3f-8d85-2c753e4287ab','6507b05a-279b-4bba-9bb7-14e60bc9db9f','90f82229-368f-49cc-8f9a-5f48b3ce0f6c','eaf48f95-7b8b-4e63-aaf9-b2f27453c13e'];
 const env={...process.env,JOB_PULSE_PROJECT_ROOT:project,JOB_PULSE_SHADOW_OUTPUT:out};
 let quarantine=[];if(process.env.JOB_PULSE_QUARANTINE)quarantine=JSON.parse(await fs.readFile(process.env.JOB_PULSE_QUARANTINE));
+if(!replay)quarantine.push(...await readPersistedQuarantine(runtime));
 const norm=s=>String(s??'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
 const canon=s=>{try{const u=new URL(s);u.hash='';for(const k of [...u.searchParams.keys()])if(/^(utm_|source$|src$|ref$|gh_src$|_ccid$)/i.test(k))u.searchParams.delete(k);return u.href.replace(/\/$/,'');}catch{return null;}};
 const uncertain=j=>quarantine.some(q=>q.id===j.id||(q.officialUrl&&canon(q.officialUrl)===canon(j.officialUrl))||(q.requisitionId&&norm(q.company)===norm(j.company)&&norm(q.requisitionId)===norm(j.requisitionId))||(q.company&&[q.company,q.title,q.location].map(norm).join('|')===[j.company,j.title,j.location].map(norm).join('|')));

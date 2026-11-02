@@ -27,7 +27,7 @@ async function fixture(mode='normal',n=3){
   all.push(req.method+' '+(payload?.action??u.searchParams.get('resource')??u.pathname));const send=(value,status=200)=>{res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify(value));};
   if(u.pathname.startsWith('/official/')){const j=rows.find(j=>j.officialUrl.endsWith(u.pathname));res.writeHead(200,{'content-type':'text/html'});res.end('<script type="application/ld+json">'+JSON.stringify({'@type':'JobPosting',title:j.title,description:body,datePosted:now,jobLocation:{address:{addressCountry:'US'}}})+'</script>');return;}
   if(req.method==='POST'){
-   if(payload.action==='submitCodexReview'){if(mode==='401'){send({error:'unauthorized'},401);return;}for(const r of payload.reviews)rows.find(j=>j.id===r.jobId).resumeReviewDecision=r.decision;send({accepted:payload.reviews.length,missing:[],suppressedAlreadyNotified:[]});return;}
+   if(payload.action==='submitCodexReview'){if(mode==='401'){send({error:'unauthorized'},401);return;}for(const r of payload.reviews)if(mode!=='nondurable'||r.jobId!=='round6-0')rows.find(j=>j.id===r.jobId).resumeReviewDecision=r.decision;send({accepted:payload.reviews.length,missing:[],suppressedAlreadyNotified:[]});return;}
    for(const id of payload.jobIds)rows.find(j=>j.id===id).resumeNotifiedAt=now;
    if(mode==='timeout'){return;}
    send({alerts:{sent:1}},mode==='5xx'?500:200);return;
@@ -99,3 +99,10 @@ test('shared requisition verification failures hold only the affected row',async
   const prepared=await read(path.join(out,stamp+'-prepared.json'));assert.deepEqual(prepared.reviews.map(r=>r.jobId),['verify-0','verify-5']);assert.equal(prepared.audit.filter(a=>a.decision==='hold'&&/Exact visible requisition verification failed/.test(a.reason)).length,8);assert.equal(f.calls.length,0);
  }finally{await f.close();}
 });
+test('accepted review that is not durable is quarantined, skipped by mail and never repeated',async()=>{const f=await fixture('nondurable',3);try{
+ success(await f.run());assert.deepEqual(f.calls,['submitCodexReview','dispatchCodexReviewBatch']);
+ let state=await f.state();assert(!Object.values(state.records).some(x=>x.jobId==='round6-0'));for(const id of ['round6-1','round6-2'])assert(Object.values(state.records).some(x=>x.jobId===id&&x.sentAt));
+ const record=await read(path.join(f.rt,'PENDING_PERSISTENCE_RECONCILIATION.json'));assert.deepEqual(record.additionalUncertainAttempts.map(x=>x.jobId),['round6-0']);
+ const dirs=await fs.readdir(path.join(f.rt,'live-runs'));const summary=await read(path.join(f.rt,'live-runs',dirs[0],'summary.json'));assert.equal(summary.status,'complete');assert.equal(summary.persistenceFailures[0].jobId,'round6-0');
+ const oldCalls=[...f.calls];success(await f.run());assert.deepEqual(f.calls,oldCalls);
+}finally{await f.close();}});

@@ -67,5 +67,157 @@
     "legacyValue": "reject",
     "freshValue": "hold",
     "reason": "Supervisor reviewed: IBM page returned 202 and work location is ambiguous. Legacy rejected on unreadable evidence before the POLICY correction; POLICY now holds undecidable rows. Neither side mails it."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T205649",
+    "id": "438e24ab-273e-410a-b47f-3a2458b795a7",
+    "type": "decision",
+    "legacyValue": "reject",
+    "freshValue": "hold",
+    "reason": "Supervisor reviewed: Kroger page is unreadable to the script (too short); legacy rejected on Page not found. Hold sends nothing and posts nothing, so it cannot mail a dead posting."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T205649",
+    "id": "9bc4e839-4201-4e4b-9c4d-3521d57f0092",
+    "type": "decision",
+    "legacyValue": "hold",
+    "freshValue": "approve",
+    "reason": "Supervisor reviewed: same Mayo row and DB title suffix reviewed at heartbeat-20261102T175217; legacy reason is still the helper-title mismatch, official URL unchanged."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T205649",
+    "id": "776c15ab-fa22-4ea6-92b5-19b4f21a9f10",
+    "type": "missing caveat",
+    "legacyValue": "Experience in MS Databricks, Google BigQuery, PowerBI, Spotfire, or alternatives.",
+    "reason": "Supervisor reviewed: FedEx skill preferences, not eligibility restrictions; fresh keeps the program and enrollment caveats."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T205649",
+    "id": "776c15ab-fa22-4ea6-92b5-19b4f21a9f10",
+    "type": "missing caveat",
+    "legacyValue": "Basic skills in SQL or Python.",
+    "reason": "Supervisor reviewed: FedEx skill preferences, not eligibility restrictions; fresh keeps the program and enrollment caveats."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T205649",
+    "id": "776c15ab-fa22-4ea6-92b5-19b4f21a9f10",
+    "type": "missing caveat",
+    "legacyValue": "Strong communication skills and ability to speak to both technical and business audiences.",
+    "reason": "Supervisor reviewed: FedEx skill preferences, not eligibility restrictions; fresh keeps the program and enrollment caveats."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T205649",
+    "id": "776c15ab-fa22-4ea6-92b5-19b4f21a9f10",
+    "type": "missing caveat",
+    "legacyValue": "Familiarity with simple predictive modeling (ex. linear regression), evaluating model performance (ex.",
+    "reason": "Supervisor reviewed: FedEx skill preferences, not eligibility restrictions; fresh keeps the program and enrollment caveats."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T205649",
+    "id": "776c15ab-fa22-4ea6-92b5-19b4f21a9f10",
+    "type": "missing caveat",
+    "legacyValue": "R-squared), and using results to inform decisions.",
+    "reason": "Supervisor reviewed: FedEx skill preferences, not eligibility restrictions; fresh keeps the program and enrollment caveats."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T205649",
+    "id": "e1621119-b28d-4a1b-a3b8-bea156547efe",
+    "type": "missing caveat",
+    "legacyValue": "If you are passionate, collaborative, and growth-minded, a co-op at Vertex will help you gain meaningful experience in our Corporate Responsibility functional areas and serve as a launchpad for your career.",
+    "reason": "Supervisor reviewed: Vertex marketing sentence, not a restriction; the authorization line is now retained."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T205649",
+    "id": "d39ab7ab-fae2-44c3-b062-f86881963e1d",
+    "type": "missing caveat",
+    "legacyValue": "Sponsorship Candidates must be authorized to work in the U.S. for the duration of this program.",
+    "reason": "Supervisor reviewed: Same Amgen authorization sentence; legacy text fused the Sponsorship heading, fresh keeps heading and sentence separately."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T205649",
+    "id": "7fc634f3-e4e4-4650-95af-ecf402f9ab44",
+    "type": "missing caveat",
+    "legacyValue": "Depending on the area of focus, recent completion of an accredited certificate program is required.",
+    "reason": "Supervisor reviewed: Banner Health conditional certificate wording, department-specific; recipients confirm on the official page. Accepted once for this row."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T205649",
+    "id": "64cd62f3-dff0-4f37-b365-833d05ba84e9",
+    "type": "keyword labels",
+    "legacyValue": "[\"Applied or research scientist role\",\"Machine-learning stack\",\"Software development stack\"]",
+    "freshValue": "[\"Applied or research scientist role\",\"Python, PySpark, or Pandas\",\"Machine-learning stack\",\"Software development stack\"]",
+    "reason": "Supervisor reviewed: fit labels annotate the mail only and do not change the decision; differences come from keyword rules versus model-written labels, including removed BMS and Micron fraud-boilerplate matches."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T205649",
+    "id": "282df584-e31e-4614-8b14-7432f5316159",
+    "type": "keyword labels",
+    "legacyValue": "[\"Python, PySpark, or Pandas\"]",
+    "freshValue": "[\"AI or machine learning role\",\"Python, PySpark, or Pandas\",\"Machine-learning stack\",\"Analytics tooling\"]",
+    "reason": "Supervisor reviewed: fit labels annotate the mail only and do not change the decision; differences come from keyword rules versus model-written labels, including removed BMS and Micron fraud-boilerplate matches."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T205649",
+    "id": "ed6b1757-377c-4ecf-aa18-7d5e19962ac3",
+    "type": "keyword labels",
+    "legacyValue": "[\"Data science, business analysis, or analytics role\",\"Python, PySpark, or Pandas\",\"Software development stack\"]",
+    "freshValue": "[\"Data science, business analysis, or analytics role\",\"Python, PySpark, or Pandas\",\"Software development stack\",\"AML, risk, fraud, or data-quality domain\"]",
+    "reason": "Supervisor reviewed: fit labels annotate the mail only and do not change the decision; differences come from keyword rules versus model-written labels, including removed BMS and Micron fraud-boilerplate matches."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T205649",
+    "id": "bbd984b0-2507-4257-a27b-386f32d7a1b3",
+    "type": "keyword labels",
+    "legacyValue": "[\"Data science, business analysis, or analytics role\",\"Python, PySpark, or Pandas\",\"Software development stack\"]",
+    "freshValue": "[\"Data science, business analysis, or analytics role\",\"Python, PySpark, or Pandas\",\"Software development stack\",\"AML, risk, fraud, or data-quality domain\"]",
+    "reason": "Supervisor reviewed: fit labels annotate the mail only and do not change the decision; differences come from keyword rules versus model-written labels, including removed BMS and Micron fraud-boilerplate matches."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T205649",
+    "id": "ce85cbe9-b71b-425f-9ec2-70af7e6dde9d",
+    "type": "keyword labels",
+    "legacyValue": "[\"LLM, NLP, RAG, embedding, or knowledge systems\",\"Python, PySpark, or Pandas\",\"SQL and data systems\",\"Machine-learning stack\",\"Language, embedding, or knowledge systems\",\"AML, risk, fraud, or data-quality domain\"]",
+    "freshValue": "[\"LLM, NLP, RAG, embedding, or knowledge systems\",\"Python, PySpark, or Pandas\",\"SQL and data systems\",\"Machine-learning stack\",\"Language, embedding, or knowledge systems\"]",
+    "reason": "Supervisor reviewed: fit labels annotate the mail only and do not change the decision; differences come from keyword rules versus model-written labels, including removed BMS and Micron fraud-boilerplate matches."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T205649",
+    "id": "23a126f9-6e5c-4917-9ae1-232c5649011b",
+    "type": "keyword labels",
+    "legacyValue": "[\"AI or machine learning role\",\"Python, PySpark, or Pandas\",\"AML, risk, fraud, or data-quality domain\"]",
+    "freshValue": "[\"AI or machine learning role\",\"Python, PySpark, or Pandas\"]",
+    "reason": "Supervisor reviewed: fit labels annotate the mail only and do not change the decision; differences come from keyword rules versus model-written labels, including removed BMS and Micron fraud-boilerplate matches."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T205649",
+    "id": "5d4d2bc5-6293-446b-9f64-7acf30887e63",
+    "type": "keyword labels",
+    "legacyValue": "[\"Data science, business analysis, or analytics role\",\"AML, risk, fraud, or data-quality domain\"]",
+    "freshValue": "[\"Data science, business analysis, or analytics role\"]",
+    "reason": "Supervisor reviewed: fit labels annotate the mail only and do not change the decision; differences come from keyword rules versus model-written labels, including removed BMS and Micron fraud-boilerplate matches."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T205649",
+    "id": "5204779d-0035-4e54-9f88-f3087e41ba14",
+    "type": "keyword labels",
+    "legacyValue": "[\"Data science, business analysis, or analytics role\",\"AML, risk, fraud, or data-quality domain\"]",
+    "freshValue": "[\"Data science, business analysis, or analytics role\"]",
+    "reason": "Supervisor reviewed: fit labels annotate the mail only and do not change the decision; differences come from keyword rules versus model-written labels, including removed BMS and Micron fraud-boilerplate matches."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T205649",
+    "id": "18b3fd27-c7d2-4f65-bda0-0fed9ad015d9",
+    "type": "keyword labels",
+    "legacyValue": "[\"Risk or fraud analytics role\",\"Python, PySpark, or Pandas\",\"AML, risk, fraud, or data-quality domain\"]",
+    "freshValue": "[\"Python, PySpark, or Pandas\"]",
+    "reason": "Supervisor reviewed: fit labels annotate the mail only and do not change the decision; differences come from keyword rules versus model-written labels, including removed BMS and Micron fraud-boilerplate matches."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T205649",
+    "id": "e18674a7-ddf9-4dab-aa17-caedef9215d4",
+    "type": "keyword labels",
+    "legacyValue": "[\"Data science, business analysis, or analytics role\",\"AML, risk, fraud, or data-quality domain\"]",
+    "freshValue": "[\"Data science, business analysis, or analytics role\"]",
+    "reason": "Supervisor reviewed: fit labels annotate the mail only and do not change the decision; differences come from keyword rules versus model-written labels, including removed BMS and Micron fraud-boilerplate matches."
   }
 ]
