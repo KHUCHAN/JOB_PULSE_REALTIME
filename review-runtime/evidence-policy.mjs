@@ -15,15 +15,16 @@ export function collectorReady(row,health,asOf) {
 }
 export function evaluateEvidence({row,evidence,officialDate,officialCountry,officialBody,title,live,health,asOf,labels}) {
  const stored=postingText([row.description,row.responsibilities,row.qualifications].filter(Boolean).join('\n'));
- const fallback=!row.publishedAt&&!officialDate&&collectorReady(row,health,asOf);
- const body=postingText(officialBody)|| (fallback?stored:'');
+ const collectorEvidence=!officialDate&&(!live||!row.publishedAt)&&collectorReady(row,health,asOf);
+ const fallback=collectorEvidence&&!row.publishedAt;
+ const body=postingText(officialBody)|| (collectorEvidence?stored:'');
  const d=dateFromOfficial(row,officialDate,evidence,fallback);
- const country=storedCountry(row)==='non-US'?'non-US':officialCountry??(fallback?storedCountry(row):null);
- const programText=(title||row.title)+' '+(fallback?(row.employmentType??''):body);
+ const country=storedCountry(row)==='non-US'?'non-US':officialCountry??(collectorEvidence?storedCountry(row):null);
+ const programText=(title||row.title)+' '+(collectorEvidence?(row.employmentType??''):body);
  const program=!( /continuity\s+of\s+operations/i.test(programText)&&!/\bintern(?:s|ships?)?\b|\bco[ -]op\b/i.test(programText))&&/\bintern(?:s|ships?)?\b|\bco[ -]?op\b/i.test(programText);
- const checks={live:!!live||fallback,location:country==='United States',program,date:recent(d.date,asOf),fit:labels.length>0};
+ const checks={live:!!live||collectorEvidence,location:country==='United States',program,date:recent(d.date,asOf),fit:labels.length>0};
  const failed=Object.keys(checks).filter(k=>!checks[k]);
- const hold=reason=>({decision:'hold',reason,date:d.date,dateBasis:d.basis,country,checks,failed,labels,collectorFallback:fallback});
+ const hold=reason=>({decision:'hold',reason,date:d.date,dateBasis:d.basis,country,checks,failed,labels,collectorFallback:fallback,collectorEvidence,textLength:body.length});
  if(health!=='healthy')return hold('source unhealthy or unverified');
  if(!live&&!collectorReady(row,health,asOf))return hold('collector evidence stale or unverified');
  if(/^(?:closed|expired|removed|inactive)$/i.test(row.status??''))return {...hold('closed posting'),decision:'reject'};

@@ -9,7 +9,7 @@ export async function revalidateDispatch(row,candidate,local,saved,{request=fetc
  if(norm(row.title)!==norm(candidate.title??row.title)||candidate.officialUrl&&canon(candidate.officialUrl)!==canon(row.officialUrl))return {ok:false,reason:'fresh identity changed'};
  const sr=await request('https://job-pulse-realtime.autodev61.chatgpt.site/api/pulse?resource=sources');if(!sr.ok)return {ok:false,reason:'fresh source health unavailable'};
  const health=(await sr.json()).find(s=>s.id===row.sourceId)?.health;
- let page,html='';try{page=await request(candidate.verifiedUrl??row.officialUrl,{signal:AbortSignal.timeout(20000)});html=await page.text();}catch{/* An unreadable undated official page uses the fresh collector evidence. */}
+ let page,html='';try{page=await request(candidate.verifiedUrl??row.officialUrl,{signal:AbortSignal.timeout(20000)});html=await page.text();}catch{/* An unreadable official page uses the fresh collector evidence. */}
  if(page?.url&&canon(page.url)!==canon(candidate.verifiedUrl??row.officialUrl))return {ok:false,reason:'canonical official URL changed'};
  if(/job (?:is no longer|not found)|position (?:has been filled|is no longer available)/i.test(postingText(html)))return {ok:false,reason:'official posting closed'};
  const doc=new JSDOM(html).window.document,lds=[];

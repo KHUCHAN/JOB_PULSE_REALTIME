@@ -13,3 +13,11 @@ test('archived dispatch transformation removes specific caveats and missing-page
  assert(!patched.includes('Must be enrolled in second year'));assert(!patched.includes('Live official detail unavailable; approval retained'));assert(patched.includes('revalidateDispatch(j,candidate,local,evidence)'));
  const child=spawnSync(process.execPath,['--input-type=module','--check'],{input:patched,encoding:'utf8'});assert.equal(child.status,0,child.stderr);
 });
+
+test('read-only dispatch applies stored dated collector evidence, old, relative and empty guards',async()=>{
+ const dated={...row,publishedAt:asOf,sourcePostedText:'2026-11-02'};
+ const evaluated=evaluateEvidence({row:dated,health:'healthy',asOf,labels,evidence:{status:202,html:''}});assert.equal(evaluated.decision,'approve');
+ const c={...candidate,date:asOf},local={rationale:evaluated.rationale};
+ assert((await revalidateDispatch(dated,c,local,null,{request,asOf})).ok);
+ for(const patch of [{publishedAt:'2026-10-28'},{sourcePostedText:'2 days ago'},{description:'',responsibilities:'',qualifications:''}])assert(!(await revalidateDispatch({...dated,...patch},c,local,null,{request,asOf})).ok);
+});

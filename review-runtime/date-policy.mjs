@@ -5,7 +5,7 @@ export function effectiveDate(row, officialDate, absenceVerified = false) {
   const present = value => value !== null && value !== undefined && String(value).trim() !== '';
   if (present(officialDate)) return { date: officialDate, basis: 'official' };
   if (present(row.publishedAt)) {
-    if (/posted\s+(?:today|yesterday|\d+\s+days?\s+ago)/i.test(row.sourcePostedText??'')) return { date: null, basis: 'relative-unverified' };
+    if (/\b(?:today|yesterday|\d+\s+(?:minutes?|hours?|days?|weeks?|months?)\s+ago)\b/i.test(row.sourcePostedText??'')) return { date: null, basis: 'relative-unverified' };
     return { date: row.publishedAt, basis: 'stored-official' };
   }
   if (!absenceVerified) return { date: null, basis: 'unverified' };

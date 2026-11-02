@@ -33,3 +33,13 @@ test('continuity of operations COOP is not a student program',()=>{
  const row={...base.row,title:'COOP Analyst - Continuity of Operations',employmentType:null};
  assert.equal(evaluateEvidence({...base,row}).decision,'hold');
 });
+
+test('unreadable dated pages use stored official date and DB text with all guards',()=>{
+ const row={...base.row,publishedAt:fixtures.asOf,sourcePostedText:'2026-11-02'};
+ const r=evaluateEvidence({...base,row});assert.equal(r.decision,'approve',JSON.stringify(r));assert.equal(r.date,row.publishedAt);assert.equal(r.dateBasis,'stored-official');assert.equal(r.collectorFallback,false);assert(!r.rationale.includes('게시일 미표기'));assert(r.rationale.includes('Official date: '+row.publishedAt));
+ const old=evaluateEvidence({...base,row:{...row,publishedAt:'2026-10-28'}});assert.equal(old.decision,'reject');assert.equal(old.reason,'old official date');
+ for(const sourcePostedText of ['Posted Today','2 days ago','3 hours ago'])assert.equal(evaluateEvidence({...base,row:{...row,sourcePostedText}}).decision,'hold');
+ assert.equal(evaluateEvidence({...base,row:{...row,description:'',responsibilities:'',qualifications:''}}).decision,'hold');
+ assert.equal(evaluateEvidence({...base,row,health:'failed'}).decision,'hold');
+ assert.equal(evaluateEvidence({...base,row:{...row,lastConfirmedAt:'2026-10-28'}}).decision,'hold');
+});
