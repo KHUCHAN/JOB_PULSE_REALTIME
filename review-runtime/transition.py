@@ -64,9 +64,12 @@ def copy_verified(source,target,secret=False):
 
 def service_plist():
     template=plistlib.loads((Path.home()/'Library/LaunchAgents/com.jobpulse.review-shadow.plist').read_bytes())
-    template['Label']=LABEL;template['ProgramArguments'][-1]='live';template.pop('StartCalendarInterval',None);template['StartInterval']=10800;template['RunAtLoad']=False
+    template['Label']=LABEL;template['ProgramArguments'][-1]='live';template.pop('StartCalendarInterval',None);template['StartInterval']=10800;template['RunAtLoad']=False;template['KeepAlive']=False
     template['StandardOutPath']=str(RUNTIME/'live-launchd.stdout.log');template['StandardErrorPath']=str(RUNTIME/'live-launchd.stderr.log')
     return plistlib.dumps(template)
+
+def watchdog_plist():
+    return plistlib.dumps({'Label':'com.jobpulse.live-watchdog','ProgramArguments':[shutil.which('node') or 'node',str(REPO/'review-runtime/watchdog.mjs')],'StartInterval':1800,'RunAtLoad':True,'KeepAlive':False,'StandardOutPath':str(RUNTIME/'watchdog.stdout.log'),'StandardErrorPath':str(RUNTIME/'watchdog.stderr.log')})
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('action',choices=['cutover','rollback','assert-paused']);p.add_argument('--dry-run',action='store_true');p.add_argument('--execute',action='store_true');p.add_argument('--go',action='store_true');a=p.parse_args()
@@ -75,18 +78,20 @@ def main():
         if row['status']!='PAUSED':raise RuntimeError('Legacy automation is not PAUSED')
         idle(row['target_thread_id']);print(json.dumps({'status':'paused-idle'}));return
     idle(row['target_thread_id'])
+    launchd=json.loads(subprocess.check_output([shutil.which('node') or 'node',str(REPO/'review-runtime/launchd-audit.mjs'),*(['--legacy'] if row['status']=='ACTIVE' else [])],text=True))
     canonical=Path(json.loads((RUNTIME/'config.local.json').read_text())['canonicalProject'])
     if a.action=='cutover':
         if row['status']!='ACTIVE':raise RuntimeError('Cutover requires ACTIVE legacy owner')
-        preflight=json.loads((RUNTIME/'round2-launchd-preflight.json').read_text());assert preflight['status']=='passed'
-        latest=json.loads((RUNTIME/'shadow-launchd.stdout.log').read_text().splitlines()[-1]);assert latest['status']=='completed-shadow' and latest['posts']==latest['llmTokens']==0
+        preflight=json.loads((RUNTIME/'round2-launchd-preflight.json').read_text());preflight_blockers=[] if preflight['status']=='passed' else ['launchd preflight: '+preflight['status']]
+        latest=json.loads((RUNTIME/'shadow-launchd.stdout.log').read_text().splitlines()[-1]);
+        if latest['status']!='completed-shadow' or latest['posts']!=0 or latest['llmTokens']!=0:preflight_blockers.append('scheduled shadow not completed with POST0/LLM0')
         ready=json.loads(subprocess.check_output([shutil.which('node') or 'node',str(REPO/'review-runtime/coverage-check.mjs')],text=True))
-        blockers=ready['blockers']
-        steps=['verify idle metadata and exact automation CAS','acquire shared review-owner lock; disable/unload idle shadow lane','CAS ACTIVE -> PAUSED in both DB mirrors and TOML','foreground hash-verified final snapshot and final-copy manifest files','copy token in-process with mode 0600, never output value/hash','enable live launchd lane every 10800 seconds','one admitted crawl dispatch, deterministic review, final gates, persist, at most one mail; uncertain POST -> durable hold']
+        blockers=preflight_blockers+ready['blockers']+[x['label']+': '+x['reason'] for x in launchd['blockers']]
+        steps=['verify idle metadata and exact automation CAS','acquire shared review-owner lock; disable/unload idle shadow lane','CAS ACTIVE -> PAUSED in both DB mirrors and TOML','foreground hash-verified final snapshot and final-copy manifest files','copy token in-process with mode 0600, never output value/hash','enable live launchd lane every 10800 seconds and 9-hour completion watchdog (KeepAlive false)','one admitted crawl dispatch, deterministic review, final gates, persist, at most one mail; uncertain POST -> durable hold']
     else:
-        blockers=[];steps=['disable and unload live lane; require no live process remains','hash-check runtime canonical state and all durable receipts/checkpoints back to original manifest paths','CAS PAUSED -> ACTIVE in both DB mirrors and TOML; preserve originals and all evidence']
-    plan={'action':a.action,'dryRun':not a.execute,'automationStatus':row['status'],'idleObserved':True,'steps':steps,'blockers':blockers,'changesMade':False,'livePostAuth':'runtime-root token, mode 0600 -> server CODEX_REVIEW_TOKEN','dispatchAuth':'gh macOS Keychain credential; launchd read-only authentication observed'}
-    if not a.execute:print(json.dumps(plan,indent=2));return
+        blockers=[x['label']+': '+x['reason'] for x in launchd['blockers']];steps=['disable and unload live lane; require no live process remains','hash-check runtime canonical state and all durable receipts/checkpoints back to original manifest paths','CAS PAUSED -> ACTIVE in both DB mirrors and TOML; preserve originals and all evidence']
+    plan={'action':a.action,'dryRun':not a.execute,'automationStatus':row['status'],'launchdAudit':launchd,'idleObserved':True,'steps':steps,'blockers':blockers,'changesMade':False,'livePostAuth':'runtime-root token, mode 0600 -> server CODEX_REVIEW_TOKEN','dispatchAuth':'gh macOS Keychain credential; launchd read-only authentication observed'}
+    if not a.execute:print(json.dumps(plan,indent=2));sys.exit(1 if launchd['blockers'] else 0)
     if not a.go:raise RuntimeError('Separate supervisor go required; use --dry-run until then')
     if blockers:raise RuntimeError('Cutover readiness held: '+', '.join(blockers))
     owner_lock=(RUNTIME/'review-owner.lock').open('a+')
@@ -116,12 +121,15 @@ def main():
         (ROOT/'live-authorization.json').write_text(json.dumps({'at':time.time(),'files':copied,'legacyStateSha256':next(e['sha256'] for e in copied if e['relative'].endswith('codex-direct-db-gmail-state.json'))}));(ROOT/'live-authorization.json').chmod(0o600)
         PLIST.write_bytes(service_plist());subprocess.run(['plutil','-lint',str(PLIST)],check=True)
         subprocess.run(['launchctl','enable','gui/'+UID+'/'+LABEL],check=True);subprocess.run(['launchctl','bootstrap','gui/'+UID,str(PLIST)],check=True)
+        watchdog=Path.home()/'Library/LaunchAgents/com.jobpulse.live-watchdog.plist';watchdog.write_bytes(watchdog_plist())
+        subprocess.run(['launchctl','bootstrap','gui/'+UID,str(watchdog)],check=True)
         print(json.dumps({'status':'cutover-enabled','legacy':'PAUSED','intervalSeconds':10800,'tokenPrinted':False}))
     else:
         subprocess.run(['launchctl','disable','gui/'+UID+'/'+LABEL],check=True)
         service=subprocess.run(['launchctl','print','gui/'+UID+'/'+LABEL],capture_output=True,text=True)
         if 'state = running' in service.stdout:raise RuntimeError('Live run active; hold rollback until idle, never interrupt an uncertain POST')
         if service.returncode==0:subprocess.run(['launchctl','bootout','gui/'+UID+'/'+LABEL],check=True)
+        subprocess.run(['launchctl','bootout','gui/'+UID+'/com.jobpulse.live-watchdog'],capture_output=True)
         auth=json.loads((ROOT/'live-authorization.json').read_text())
         if row['status']!='PAUSED':raise RuntimeError('Rollback requires legacy PAUSED')
         for entry in auth['files']:

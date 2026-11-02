@@ -1,0 +1,4 @@
+import fs from 'node:fs/promises';import ts from 'typescript';
+const source=await fs.readFile(new URL('../lib/resume-match.ts',import.meta.url),'utf8');
+const {normalize,roleEvidence,skillEvidence,domainEvidence}=await import('data:text/javascript;base64,'+Buffer.from(ts.transpileModule(source+'\nexport {normalize,roleEvidence,skillEvidence,domainEvidence};',{compilerOptions:{module:ts.ModuleKind.ESNext}}).outputText).toString('base64'));
+export function keywordLabels(row,body){const input={...row,description:body,skills:row.skills??[]};const hay=normalize([row.title,body,row.summary,row.responsibilities,row.jobFamily,row.jobFunction].filter(Boolean).join(' '));return [...new Set([roleEvidence(normalize(row.title))??roleEvidence(hay),...skillEvidence(input),domainEvidence(hay)].filter(Boolean).map(x=>x.label))];}

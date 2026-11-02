@@ -31,7 +31,7 @@ let quarantine=[];if(process.env.JOB_PULSE_QUARANTINE)quarantine=JSON.parse(awai
 const norm=s=>String(s??'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
 const canon=s=>{try{const u=new URL(s);u.hash='';for(const k of [...u.searchParams.keys()])if(/^(utm_|source$|src$|ref$|gh_src$|_ccid$)/i.test(k))u.searchParams.delete(k);return u.href.replace(/\/$/,'');}catch{return null;}};
 const uncertain=j=>quarantine.some(q=>q.id===j.id||(q.officialUrl&&canon(q.officialUrl)===canon(j.officialUrl))||(q.requisitionId&&norm(q.company)===norm(j.company)&&norm(q.requisitionId)===norm(j.requisitionId))||(q.company&&[q.company,q.title,q.location].map(norm).join('|')===[j.company,j.title,j.location].map(norm).join('|')));
-const codeEvidence=Object.fromEntries(await Promise.all(['review-run.mjs','community-discovery.mjs','community-merge.mjs','inbox-stage.mjs','shadow-guard.cjs','source-guard.mjs','date-policy.mjs'].map(async n=>[n,createHash('sha256').update(await fs.readFile(path.join(codeDir,n))).digest('hex')])));
+const codeEvidence=Object.fromEntries(await Promise.all(['review-run.mjs','community-discovery.mjs','community-merge.mjs','inbox-stage.mjs','shadow-guard.cjs','source-guard.mjs','date-policy.mjs','prepare-shadow.mjs','evidence-policy.mjs','caveats.mjs','policy-gates.mjs','comparison-policy.mjs','keyword-policy.mjs','dispatch-policy.mjs','live-dispatch.mjs','live-run.mjs','run-status.mjs','watchdog.mjs','launchd-audit.mjs','../scripts/check-production-crawl.mjs','../lib/resume-match.ts'].map(async n=>[n,createHash('sha256').update(await fs.readFile(path.join(codeDir,n))).digest('hex')])));
 const stages=[];let result={kind:replay?'offline-gate-replay':'live-shadow',stamp,runAt,out,posts:0,llmTokens:0,selectedIds:[],held:[],stages};
 const read=async suffix=>JSON.parse(await fs.readFile(path.join(out,stamp+suffix+'.json'),'utf8'));
 async function run(name,script,extra=[]){
@@ -41,6 +41,7 @@ async function run(name,script,extra=[]){
 const stage=(name,...extra)=>run(name,path.join(runtime,'review-stage.mjs'),[project,stamp,runAt,...extra]);
 try{
  if(replay){
+   try{await fs.copyFile(path.join(replay,'source-health-after-delivery.json'),path.join(out,'source-health.json'));}catch(e){if(e.code!=='ENOENT')throw e;}
    for(const suffix of ['', '-official','-pending-official','-pending','-secondary']){try{await fs.copyFile(path.join(replay,stamp+suffix+'.json'),path.join(out,stamp+suffix+'.json'));await fs.chmod(path.join(out,stamp+suffix+'.json'),0o600);}catch(e){if(e.code!=='ENOENT')throw e;}}
    const scan=await read('');const candidates=scan.details.map(x=>x.row.id);await fs.writeFile(path.join(out,'replay-candidates.json'),JSON.stringify(candidates));
    env.JOB_PULSE_REPLAY_CANDIDATES=path.join(out,'replay-candidates.json');env.JOB_PULSE_REPLAY_ASOF=runAt;
@@ -51,7 +52,7 @@ try{
  }else{
    const {execFile}=await import('node:child_process');
    const {promisify}=await import('node:util');
-   const guard=await promisify(execFile)(process.execPath,[path.resolve(codeDir,'../scripts/check-production-crawl.mjs')],{cwd:path.resolve(codeDir,'..'),timeout:180000,maxBuffer:16*1024*1024});result.crawlGuard=JSON.parse(guard.stdout);
+   const guard=process.env.JOB_PULSE_CRAWL_RESULT?{stdout:process.env.JOB_PULSE_CRAWL_RESULT}:await promisify(execFile)(process.execPath,[path.resolve(codeDir,'../scripts/check-production-crawl.mjs')],{cwd:path.resolve(codeDir,'..'),timeout:180000,maxBuffer:16*1024*1024});result.crawlGuard=JSON.parse(guard.stdout);
    await run('scan',path.join(project,'.codex_tmp/heartbeat-20260910T073856-scan.mjs'),[stamp.replace('heartbeat-',''),runAt]);
    const freshScan=await read('');const excluded=freshScan.details.filter(x=>uncertain(x.row));
    result.held.push(...excluded.map(x=>({id:x.row.id,reason:'Prior transport attempt excluded; read-only reconciliation required'})));
@@ -93,13 +94,13 @@ try{
  const prep=await read('-prepared');
  if(replay){const saved=JSON.parse(await fs.readFile(path.join(replay,stamp+'-us-plan.json')));await fs.writeFile(path.join(out,stamp+'-us-plan.json'),JSON.stringify({...saved,reviews:prep.reviews,audit:prep.audit,pending:[]}));}
  else await stage('plan','run','transport','plan');
- await stage('precision','final-precision-2');await stage('source-precision','source-precision');
- for(const n of ['source-clean-prepersist','final-gates','caveat-audit-prepersist'])await run(n,path.join(runtime,n+'.mjs'),[project,stamp]);
- await run('complete-caveats',path.join(codeDir,'complete-caveats.mjs'),[project,stamp]);
- await run('post-caveat-gates',path.join(runtime,'final-gates.mjs'),[project,stamp,'post-caveats']);
+ // The prepared policy result is authoritative; archived per-company precision
+ // and rejection branches cannot amend it. Keep the legacy plan's pending scope.
+ const deterministicPlan=await read('-us-plan');deterministicPlan.reviews=prep.reviews;deterministicPlan.audit=prep.audit;
+ await fs.writeFile(path.join(out,stamp+'-us-plan.json'),JSON.stringify(deterministicPlan));
+ await run('policy-gates',path.join(codeDir,'policy-gates.mjs'),[project,stamp]);
  const plan=await read('-us-plan');
- const caveatText=await fs.readFile(path.join(out,'caveat-audit-prepersist.log'),'utf8');const caveatMissing=JSON.parse(caveatText.slice(0,caveatText.lastIndexOf(']')+1));
- const caveatHolds=JSON.parse(await fs.readFile(path.join(out,'caveat-holds.json')));const caveatIds=new Set(caveatHolds.map(x=>x.id));result.caveatHolds=caveatHolds;
+ const caveatIds=new Set();result.caveatHolds=[];
  result.selectedIds=plan.reviews.filter(r=>r.decision==='approve'&&!heldIds.includes(r.jobId)&&!caveatIds.has(r.jobId)).map(r=>r.jobId).concat(plan.pending.filter(r=>!heldIds.includes(r.jobId)).map(r=>r.jobId));
  const scan=await read('');const expectedRecipients=['kimchany@usc.edu','lupeter@usc.edu','xinjiaz@usc.edu','skazimi@usc.edu'];result.recipientCheck=expectedRecipients.every(x=>scan.mail?.recipients?.includes(x));
  if(result.selectedIds.length>500)throw Error('Combined selection exceeds 500 IDs');

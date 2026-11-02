@@ -24,11 +24,18 @@ export async function checkProductionCrawl({ request, dispatch, now = Date.now()
   return { ...decision, dispatchRequested: true };
 }
 
+export const GITHUB_CALL_CAP=40;
+export const rateLimited=error=>/rate limit|secondary rate|HTTP 403|HTTP 429/i.test(String(error?.stderr??'')+' '+String(error?.message??error));
+export async function boundedCrawlCheck({request,dispatch,repair=false,now=Date.now(),cap=GITHUB_CALL_CAP}) {
+ let calls=0;
+ const bounded=fn=>async p=>{if(calls>=cap)throw Error('GitHub per-run call cap reached');calls++;return fn(p);};
+ try{return {...await checkProductionCrawl({request:bounded(request),dispatch:bounded(dispatch),repair,now}),githubCalls:calls,githubCallCap:cap};}
+ catch(error){if(rateLimited(error))return {reason:'github-rate-limited',status:'crawl-dispatch-skipped-rate-limit',dispatchRequested:false,reviewExistingData:true,githubCalls:calls,githubCallCap:cap};throw error;}
+}
 export async function main() {
-  const request = async path => JSON.parse(execFileSync('gh', ['api', path], { encoding: 'utf8', timeout: 30000, maxBuffer: 16 * 1024 * 1024 }));
-  const dispatch = async path => { execFileSync('gh', ['api', '--method', 'POST', path, '-f', 'ref=main'],
-    { encoding: 'utf8', timeout: 30000 }); };
-  console.log(JSON.stringify(await checkProductionCrawl({ request, dispatch, repair: process.argv.includes('--dispatch') }), null, 2));
+ const request = async path => JSON.parse(execFileSync('gh', ['api', path], { encoding: 'utf8', timeout: 30000, maxBuffer: 16 * 1024 * 1024,stdio:['ignore','pipe','pipe'] }));
+ const dispatch = async path => { execFileSync('gh', ['api', '--method', 'POST', path, '-f', 'ref=main'], { encoding: 'utf8', timeout: 30000,stdio:['ignore','pipe','pipe'] }); };
+ console.log(JSON.stringify(await boundedCrawlCheck({ request, dispatch, repair: process.argv.includes('--dispatch') }), null, 2));
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
   main().catch(error => { console.error(error.message); process.exitCode = 1; });

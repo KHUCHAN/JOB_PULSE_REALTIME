@@ -20,7 +20,7 @@ with (runtime/(lane+'.lock')).open('a+') as lock:
   day=datetime.datetime.now(datetime.timezone.utc).date().isoformat();usage=runtime/'platform-runs'/day/'usage.json'
   if usage.exists() and any(x.get('inputTokens',0)>0 for x in json.loads(usage.read_text())):
    print(json.dumps({'status':'already-completed-today','lane':lane}));sys.exit(0)
- env={**os.environ,'JOB_PULSE_RUNTIME':str(runtime)}
+ env={**os.environ,'JOB_PULSE_RUNTIME':str(runtime),'JOB_PULSE_STATUS_RUN_ID':datetime.datetime.now(datetime.timezone.utc).isoformat()+'-'+str(os.getpid())}
  node=env.get('JOB_PULSE_NODE','/opt/homebrew/bin/node')
  if not Path(node).exists():node=subprocess.check_output(['/usr/bin/which','node'],text=True).strip()
  script=repo/'review-runtime'/('review-run.mjs' if lane=='shadow' else 'live-run.mjs' if lane=='live' else 'platform-run.mjs')
@@ -29,4 +29,6 @@ with (runtime/(lane+'.lock')).open('a+') as lock:
   day=subprocess.check_output(['/bin/date','-u','+%Y-%m-%d'],text=True).strip()
   result=bounded_run([node,str(repo/'review-runtime/community-resolve.mjs'),str(runtime/'platform-runs'/day/'candidates.json')],cwd=repo,env=env)
   if result.returncode==0:result=bounded_run([node,str(repo/'review-runtime/platform-reconcile.mjs'),str(runtime/'platform-runs'/day/'resolved-candidates.json'),'--publish-queue'],cwd=repo,env=env)
+ if lane=='live' and result.returncode!=0:
+  subprocess.run([node,str(repo/'review-runtime/run-status.mjs'),'--scheduler-failure'],cwd=repo,env=env,timeout=15)
  sys.exit(result.returncode)

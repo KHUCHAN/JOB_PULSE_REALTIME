@@ -28,12 +28,14 @@ export function undatedGuard(rows, sourceEpochs = {}) {
   });
 }
 
-export function dateFromOfficial(row, date, evidence) {
-  if (date || row.publishedAt) return effectiveDate(row,date,false);
+export function dateFromOfficial(row, date, evidence, collectorAbsence = false) {
+  if (date) return effectiveDate(row,date,false);
   // A visible but unparsed/relative posting date is not proof of absence.
   const body=String(evidence?.html??evidence?.text??'');
-  const hasUnparsedDate=/(?:datePosted|dateModified|posted[-_ ]?date|date published|posted on|posted \d+ (?:days?|hours?)|published on)/i.test(body);
-  return effectiveDate(row,null,evidence?.status===200 && !hasUnparsedDate);
+  const hasUnparsedDate=/(?:datePosted|dateModified|posted[-_ ]?date|date published|posted on|posted(?:\s+date)?\s*[:：]|posted (?:today|yesterday|\d+ (?:days?|hours?))|published on|posting date|updated(?:\s+on)?\s*[:：])/i.test(body);
+  if(hasUnparsedDate)return {date:null,basis:'visible-unparsed'};
+  if(row.publishedAt)return effectiveDate(row,null,false);
+  return effectiveDate(row,null,!hasUnparsedDate && (collectorAbsence || evidence?.status===200));
 }
 export function pendingEffectiveDate(record, row) {
   const official=record.rationale?.match(/Official date: (\d{4}-\d\d-\d\d(?:T[^ ]+)?)/)?.[1]?.replace(/\.$/,'');
