@@ -17755,3 +17755,14 @@ it("stops CGI on a challenge without a reader or proxy request",async()=>{
  const result=await crawlSource({id:"p4-0241-cgi",company:"CGI",postingUrl:"https://cgi.njoyn.com/CORP/xweb/xweb.asp",adapter:"custom"},async input=>{requests.push(String(input));return new Response("Radware Block Page",{status:403})},new Date());
  expect(result.status).toBe("blocked");expect(requests).toHaveLength(1);
 });
+
+
+it("checkpoints O'Reilly's large newest-first widget feed and preserves a fresh first window",async()=>{
+ const offsets:number[]=[];
+ const result=await crawlSource({id:"audit-row-407",company:"O'Reilly",postingUrl:"https://careers.oreillyauto.com/us/en/search-results",adapter:"phenom"},async(input,init)=>{
+  expect(String(input)).toContain("/widgets");const body=JSON.parse(String(init?.body));expect(body.sort).toEqual({order:"desc",field:"postedDate"});offsets.push(body.from);
+  const jobs=[0,1].map(i=>({jobId:`R${body.from+i}`,title:"Software Engineering Intern",location:"Houston TX",country:"United States",postedDate:"2026-11-01",jobUrl:`https://careers.oreillyauto.com/us/en/job/R${body.from+i}/intern`}));
+  return new Response(JSON.stringify({refineSearch:{hits:2,totalHits:19070,data:{jobs}}}));
+ },new Date("2026-11-02"));
+ expect(result.status).toBe("succeeded");expect(result.error).toBeNull();expect(result.jobs).toHaveLength(8);expect(result.completeListing).toBe(false);expect(result.pagination).toEqual({nextPage:5,cycleComplete:false,totalPages:9535});expect(offsets).toEqual([0,2,4,6,0]);
+});

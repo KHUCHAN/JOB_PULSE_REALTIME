@@ -3314,6 +3314,32 @@ const crawlPhenomWidgets = async (source: CrawlSource, fetcher: typeof fetch): P
     jobs: [],
     error: "Phenom widgets did not return a usable catalog page.",
   };
+  // O'Reilly has >19k roles. A complete widgets sweep exceeds the bounded
+  // window and generic rendered recovery sees old relevance-ranked cards.
+  // Keep page one fresh and checkpoint validated posted-date windows instead.
+  if (source.id === "audit-row-407") {
+    const pageSize = index.pageHits;
+    const totalPages = Math.ceil(index.totalHits / pageSize);
+    const start = Math.max(1, Math.min(source.crawlPageCursor ?? 1, totalPages));
+    const end = Math.min(totalPages, start + 3);
+    const pages = [index];
+    let failedPage: number | null = null;
+    for (let page = Math.max(2, start); page <= end; page++) {
+      const next = await fetchPage((page - 1) * pageSize);
+      const expected = Math.min(pageSize, index.totalHits - (page - 1) * pageSize);
+      if (!next || next.totalHits !== index.totalHits || next.jobs.length !== expected
+        || new Set(next.jobs.map(job => job.externalId)).size !== expected) { failedPage = page; break; }
+      pages.push(next);
+    }
+    const verified = await fetchPage(0);
+    if (!verified || verified.totalHits !== index.totalHits
+      || verified.jobs.map(job => job.externalId).join() !== index.jobs.map(job => job.externalId).join())
+      return { status: "failed", responseStatus, completeListing: false, jobs: [], error: "O'Reilly newest window changed during pagination." };
+    return { status: "succeeded", responseStatus, completeListing: start === 1 && end === totalPages && failedPage === null,
+      jobs: uniqueJobs(pages.flatMap(page => page.jobs)), resolvedListingUrl: listingUrl,
+      pagination: { nextPage: failedPage ?? (end === totalPages ? 1 : end + 1), cycleComplete: failedPage === null && end === totalPages, totalPages },
+      error: failedPage === null ? null : `O'Reilly widget page ${failedPage} was incomplete.` };
+  }
   const boundedTotal = Math.min(index.totalHits, 10_000);
   const pageSize = index.pageHits;
   const step = Math.max(1, Math.floor(pageSize * 0.8));
