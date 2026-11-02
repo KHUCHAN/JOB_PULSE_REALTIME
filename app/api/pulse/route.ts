@@ -344,12 +344,12 @@ async function availableFilterOptions(): Promise<Awaited<ReturnType<typeof query
   return value;
 }
 
-async function jobsFor(url: URL): Promise<JobSearchResult> {
+async function jobsFor(url: URL, reviewDateFallback = false): Promise<JobSearchResult> {
   validateExplicitJobFilterValues(url.searchParams);
   const filters: JobFilters = parseJobFilterParams(url.searchParams);
   const snapshotAt = filters.snapshotAt || new Date().toISOString();
   filters.snapshotAt = snapshotAt;
-  const plan = buildJobSearchPlan(filters);
+  const plan = buildJobSearchPlan(filters, { reviewDateFallback });
   const database = db();
   const statements = bindJobSearchStatements(database.prepare.bind(database), plan);
   const [pageResult, countResult] = await Promise.all([
@@ -580,6 +580,7 @@ export async function GET(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const resource = url.searchParams.get("resource");
     if (resource === "jobs") return json(await jobsFor(url));
+    if (resource === "reviewJobs") return json(await jobsFor(url, true));
     if (resource === "jobFilterOptions") return json(await availableFilterOptions());
     if (resource === "job") {
       const sourceId = url.searchParams.get("sourceId");

@@ -544,3 +544,15 @@ describe("parameterized job search SQL", () => {
     } finally { database.close(); }
   });
 });
+
+
+describe("review-only effective-date scan", () => {
+  it("includes undated first-seen rows without resetting dated old rows or changing website filtering", () => {
+    const filters = { ...defaultJobFilters, companies: ["Date Order Inc."], postedAfter: "2026-08-15T00:00:00.000Z" };
+    const review = buildJobSearchPlan(filters, { reviewDateFallback: true });
+    const website = buildJobSearchPlan(filters);
+    expect(executePlan(review.pageSql, review.bindings, review.limit, review.offset).map((r: any) => r.id)).toEqual(["unknown-posted-date"]);
+    expect(executePlan(website.pageSql, website.bindings, website.limit, website.offset)).toEqual([]);
+    expect(review.pageSql).toContain("ORDER BY CAST(coalesce(j.published_at, j.first_seen_at) AS TEXT) DESC");
+  });
+});

@@ -177,7 +177,9 @@ const jobListProjection = (withResumeMatch: boolean): string => [
     : "0 AS resume_identity_already_notified",
 ].join(",\n       ");
 
-export function buildJobSearchPlan(filters: JobFilters): JobSearchPlan {
+export function buildJobSearchPlan(filters: JobFilters, options: { reviewDateFallback?: boolean } = {}): JobSearchPlan {
+  // Dedicated review scan; interactive postedAfter retains published-date semantics.
+  const reviewDate = options.reviewDateFallback ? "CAST(coalesce(j.published_at, j.first_seen_at) AS TEXT)" : "j.published_at";
   const clauses = [
     "j.status = 'open'",
     "(j.valid_through IS NULL OR j.valid_through >= date('now'))",
@@ -343,10 +345,10 @@ JOIN job_matches resume_match
   }
 
   if (filters.postedAfter || filters.postedBefore) {
-    add("j.published_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 minutes')");
+    add(`${reviewDate} <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 minutes')`);
   }
-  if (filters.postedAfter) add("j.published_at >= ?", [filters.postedAfter]);
-  if (filters.postedBefore) add("j.published_at < ?", [dayAfter(filters.postedBefore)]);
+  if (filters.postedAfter) add(`${reviewDate} >= ?`, [filters.postedAfter]);
+  if (filters.postedBefore) add(`${reviewDate} < ?`, [dayAfter(filters.postedBefore)]);
 
   addAnyEquals("j.department", filters.departments);
   addAnyEquals("j.team", filters.teams);
@@ -378,7 +380,7 @@ JOIN job_matches resume_match
     pageSql: `SELECT ${jobListProjection(resumeMatchSelected)}
 ${fromSql}
 WHERE ${clauses.join(" AND ")}
-ORDER BY j.published_at IS NULL ASC, j.published_at DESC${resumeMatchSelected ? ", resume_match.score DESC" : ""}, j.first_seen_at DESC, j.company ASC, j.id ASC
+ORDER BY ${options.reviewDateFallback ? `${reviewDate} DESC` : "j.published_at IS NULL ASC, j.published_at DESC"}${resumeMatchSelected ? ", resume_match.score DESC" : ""}, j.first_seen_at DESC, j.company ASC, j.id ASC
 LIMIT ? OFFSET ?`,
     countSql: `SELECT count(*) AS total
 ${fromSql}
