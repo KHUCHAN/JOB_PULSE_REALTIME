@@ -3338,9 +3338,16 @@ const crawlPhenomWidgets = async (source: CrawlSource, fetcher: typeof fetch): P
       pages.push(next);
     }
     const verified = await fetchPage(0);
-    if (!verified || verified.totalHits !== index.totalHits
-      || verified.jobs.map(job => job.externalId).join() !== index.jobs.map(job => job.externalId).join())
-      return { status: "failed", responseStatus, completeListing: false, jobs: [], error: "O'Reilly newest window changed during pagination." };
+    // Equal-date ties may be returned in a different order. Verify the same
+    // complete identity/date set, without treating harmless ordering as churn.
+    const signature = (page: PhenomPage) => page.jobs.map(job => `${job.externalId}|${job.publishedAt}`).sort().join();
+    const uniqueCount = (page: PhenomPage) => new Set(page.jobs.map(job => job.externalId)).size;
+    const expectedHead = Math.min(pageSize, index.totalHits);
+    if (!verified || verified.totalHits !== index.totalHits || index.jobs.length !== expectedHead
+      || verified.jobs.length !== expectedHead || uniqueCount(index) !== expectedHead || uniqueCount(verified) !== expectedHead
+      || signature(verified) !== signature(index))
+      return { status: "failed", responseStatus, completeListing: false, jobs: [],
+        error: `O'Reilly newest window changed during pagination (total ${index.totalHits}->${verified?.totalHits ?? "unavailable"}; head ${index.jobs.length}->${verified?.jobs.length ?? 0}; unique ${uniqueCount(index)}->${verified ? uniqueCount(verified) : 0}; identity/date set ${verified && signature(verified) === signature(index) ? "same" : "changed"}).` };
     return { status: "succeeded", responseStatus, completeListing: start === 1 && end === totalPages && failedPage === null,
       jobs: uniqueJobs(pages.flatMap(page => page.jobs)), resolvedListingUrl: listingUrl,
       pagination: { nextPage: failedPage ?? (end === totalPages ? 1 : end + 1), cycleComplete: failedPage === null && end === totalPages, totalPages },

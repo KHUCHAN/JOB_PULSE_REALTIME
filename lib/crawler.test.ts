@@ -17785,3 +17785,18 @@ it("keeps O'Reilly widgets failures visible instead of falling through to stale 
  expect(result.status).toBe("failed");expect(result.jobs).toEqual([]);
  expect(requests.every(url=>url==="https://careers.oreillyauto.com/widgets")).toBe(true);
 });
+
+
+it("accepts reordered O'Reilly ties but holds a changed identity window with diagnostics", async () => {
+ for(const churn of [false,true]){
+  let heads=0;
+  const result=await crawlSource({id:"audit-row-407",company:"O'Reilly",postingUrl:"https://careers.oreillyauto.com/us/en/search-results",adapter:"phenom"},async(_input,init)=>{
+   const {from}=JSON.parse(String(init?.body));if(from===0)heads++;
+   const jobs=[0,1].map(i=>({jobId:`R${from+i}`,title:"Software Engineering Intern",location:"Houston TX",country:"United States",postedDate:"2026-11-01",jobUrl:`https://careers.oreillyauto.com/us/en/job/R${from+i}/intern`}));
+   if(from===0&&heads>1){jobs.reverse();if(churn)jobs[0]={...jobs[0],jobId:"Rchanged",jobUrl:"https://careers.oreillyauto.com/us/en/job/Rchanged/intern"};}
+   return new Response(JSON.stringify({refineSearch:{hits:2,totalHits:19070,data:{jobs}}}));
+  },new Date("2026-11-02"));
+  expect(result.status).toBe(churn?"failed":"succeeded");
+  if(churn){expect(result.jobs).toEqual([]);expect(result.error).toContain("identity/date set changed");}
+ }
+});
