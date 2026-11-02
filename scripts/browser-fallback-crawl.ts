@@ -770,6 +770,13 @@ export const recoverNativeOutsideWorker = async (
     source, status: result.responseStatus, finalUrl: source.postingUrl,
     jobs: [], completeListing: false, error: result.error,
   };
+  // O'Reilly rendered relevance cards were all older than retention in the
+  // production artifact. Preserve a widgets failure instead of reporting a
+  // successful stale HTML fallback that silently ingests zero fresh rows.
+  if (source.id === "audit-row-407" && result.status !== "succeeded") return {
+    source, status: result.responseStatus, finalUrl: source.postingUrl,
+    jobs: [], completeListing: false, error: result.error ?? "O'Reilly official newest window unavailable.",
+  };
   // Provider maintenance is not a browser challenge. Do not spend a second
   // HTTP retry and a rendered browser slot on the same published outage.
   if (/upstream maintenance/i.test(result.error ?? "")) return {

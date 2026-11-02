@@ -1981,6 +1981,8 @@ const crawlIcims = async (source: CrawlSource, fetcher: typeof fetch): Promise<S
 
   const jobs: CrawledJob[] = [];
   const seen = new Set<string>();
+  const sasVisibleSlots = source.id === "p4-0343-sas" && new URL(source.postingUrl).hostname === "globalcareers-sas.icims.com";
+  let unevenVisibleSlots = false;
   let firstFailedPage: number | null = null;
   for (let page = startPage; page <= endPage; page += 1) {
     const result = pages.get(page);
@@ -1988,12 +1990,13 @@ const crawlIcims = async (source: CrawlSource, fetcher: typeof fetch): Promise<S
       && result.totalPages === totalPages
       && result.jobs.length === result.rawCount
       && result.rawCount > 0
-      && (page === totalPages ? result.rawCount <= index.rawCount : result.rawCount === index.rawCount);
+      && (sasVisibleSlots || (page === totalPages ? result.rawCount <= index.rawCount : result.rawCount === index.rawCount));
     const identities = result?.jobs.map((job) => job.externalId ?? job.officialUrl) ?? [];
     if (!validCount || identities.some((identity) => seen.has(identity))) {
       firstFailedPage = page;
       break;
     }
+    if (sasVisibleSlots && result!.rawCount !== index.rawCount && page !== totalPages) unevenVisibleSlots = true;
     identities.forEach((identity) => seen.add(identity));
     jobs.push(...result!.jobs);
   }
@@ -2019,13 +2022,15 @@ const crawlIcims = async (source: CrawlSource, fetcher: typeof fetch): Promise<S
     error: "iCIMS returned an incomplete or unstable catalog page.",
   };
   const canonicalListingUrl = icimsCanonicalListingUrl(index.finalUrl);
-  const completeListing = startPage === 1 && cycleComplete;
+  // SAS hides individual slots (observed 19/20/19 cards). Retain every exact
+  // visible row, but never treat that uneven catalog as closure authority.
+  const completeListing = startPage === 1 && cycleComplete && !unevenVisibleSlots;
   return {
     status: "succeeded",
     responseStatus: index.status,
     completeListing,
     jobs: uniqueJobs(jobs),
-    ...(totalPages > 1 || source.crawlPageCursor != null ? {
+    ...(!unevenVisibleSlots && (totalPages > 1 || source.crawlPageCursor != null) ? {
       pagination: {
         nextPage: cycleComplete ? 1 : firstFailedPage ?? endPage + 1,
         cycleComplete,
@@ -11915,7 +11920,7 @@ async function crawlJsonLd(source: CrawlSource, fetcher: typeof fetch, now: Date
   try {
     if (source.adapter === "phenom" && (source.regionScope === "us" || source.id === "p5-0660-masimo")) {
       const widgets = await crawlPhenomWidgets(source, fetcher);
-      if (widgets.status === "succeeded" || source.id === "p5-0660-masimo") return widgets;
+      if (widgets.status === "succeeded" || ["p5-0660-masimo", "audit-row-407"].includes(source.id)) return widgets;
     }
     const response = await fetchWithTimeout(fetcher, source.postingUrl);
     if (!response.ok) {

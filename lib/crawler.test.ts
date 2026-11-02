@@ -1782,6 +1782,18 @@ Wrong description.
     expect(result.jobs.map((job) => job.externalId)).toEqual(["101"]);
   });
 
+  it("retains uneven visible SAS pages without enabling closures or changing other tenants", async () => {
+    const fetcher: typeof fetch = async input => {
+      const page = Number(new URL(String(input)).searchParams.get("pr")) + 1;
+      return new Response(icimsPage(page, 3, Array.from({length: page === 2 ? 2 : 1}, (_, i) => ({id: `${page}${i}`, title: "Engineer"}))), {status: 200});
+    };
+    const result = await crawlSource({id: "p4-0343-sas", company: "SAS", postingUrl: "https://globalcareers-sas.icims.com/jobs/search?ss=1", adapter: "icims"}, fetcher, new Date());
+    expect(result.status).toBe("succeeded");expect(result.jobs).toHaveLength(4);
+    expect(result.completeListing).toBe(false);expect(result.pagination).toBeUndefined();
+    const other = await crawlSource({id: "another-icims", company: "Other", postingUrl: "https://careers-acme.icims.com/jobs/search?ss=1", adapter: "icims"}, fetcher, new Date());
+    expect(other.jobs).toHaveLength(1);expect(other.completeListing).toBe(false);
+  });
+
   it("fully crawls the largest current iCIMS catalog within the source request budget", async () => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input) => {
@@ -17765,4 +17777,11 @@ it("checkpoints O'Reilly's large newest-first widget feed and preserves a fresh 
   return new Response(JSON.stringify({refineSearch:{hits:2,totalHits:19070,data:{jobs}}}));
  },new Date("2026-11-02"));
  expect(result.status).toBe("succeeded");expect(result.error).toBeNull();expect(result.jobs).toHaveLength(8);expect(result.completeListing).toBe(false);expect(result.pagination).toEqual({nextPage:5,cycleComplete:false,totalPages:9535});expect(offsets).toEqual([0,2,4,6,0]);
+});
+
+it("keeps O'Reilly widgets failures visible instead of falling through to stale rendered cards", async () => {
+ const requests: string[] = [];
+ const result = await crawlSource({id:"audit-row-407",company:"O'Reilly",postingUrl:"https://careers.oreillyauto.com/us/en/search-results",adapter:"phenom"},async input=>{requests.push(String(input));return new Response("unavailable",{status:500});},new Date());
+ expect(result.status).toBe("failed");expect(result.jobs).toEqual([]);
+ expect(requests.every(url=>url==="https://careers.oreillyauto.com/widgets")).toBe(true);
 });
