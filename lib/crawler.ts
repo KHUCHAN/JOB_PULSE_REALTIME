@@ -3107,6 +3107,7 @@ const phenomJobs = (html: string, source: CrawlSource): PhenomPage | null => {
     // route is live, while applyUrl is intentionally only the application form.
     const isMastercard = listing.hostname.toLocaleLowerCase() === "careers.mastercard.com";
     const officialUrl = asText(job.jobUrl)
+      ?? (source.id === "audit-row-407" ? asText(job.applyUrl)?.replace(/\/apply\/?(?:\?.*)?$/, "") : null)
       ?? (isMastercard || source.id === "p5-0660-masimo" ? generatedDetailUrl : null)
       ?? asText(job.applyUrl)
       ?? asText(job.actionUrl)
@@ -23034,9 +23035,9 @@ const crawlCgiNjoyn = async (
     } : undefined, true, { attempts: 1, timeoutMs: 15_000 });
     responseStatus = direct.status;
     const content = await direct.text();
-    if (!direct.ok || /Radware Block Page|Just a moment|captcha/i.test(content)) {
+    if (!direct.ok || /Radware Block Page|<title[^>]*>\s*Just a moment/i.test(content)) {
       throw Object.assign(new Error(`CGI official catalog unavailable (HTTP ${direct.status}); no reader/proxy fallback.`), {
-        responseStatus: isBlockedHttpStatus(direct.status) || /Radware Block Page|Just a moment|captcha/i.test(content) ? 403 : direct.status,
+        responseStatus: isBlockedHttpStatus(direct.status) || /Radware Block Page|<title[^>]*>\s*Just a moment/i.test(content) ? 403 : direct.status,
       });
     }
     const parsed = parseCgiNjoynPage(content, source, page, expectedCatalog);
