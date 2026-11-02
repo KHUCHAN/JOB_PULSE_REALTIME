@@ -5708,7 +5708,7 @@ const coastCentralOpenings = (html: string): CoastCentralOpening[] | null => {
     const description = icimsText(descriptionHtml);
     if (!title || !descriptionHtml || !description) return null;
     const pdf = anchorsFromHtml(descriptionHtml).find(({ href, text }) =>
-      /full job description/i.test(text) && /\.pdf(?:[?#]|$)/i.test(href));
+      /\b(?:full )?job description\b/i.test(text) && /\.pdf(?:[?#]|$)/i.test(href));
     if (/^secret shoppers?$/i.test(title) && !pdf) continue;
     // Partner roles (e.g. a TruStage advisor) are listed with an explicit
     // "this position is with X, not Coast Central" notice; they are not this
@@ -5717,7 +5717,8 @@ const coastCentralOpenings = (html: string): CoastCentralOpening[] | null => {
     // Branch-specific openings are titled "Role (Branch)" while the PDF anchor
     // names only the role.
     const roleTitle = title.replace(/\s*\([^()]+\)$/, "") || title;
-    if (!pdf || !jobIdentityText(pdf.text).startsWith(jobIdentityText(roleTitle))) return null;
+    // The official Specialist PDF label currently spells it "Sepecialist".
+    if (!pdf || !jobIdentityText(pdf.text).replace(/\bsepecialist\b/g, "specialist").startsWith(jobIdentityText(roleTitle))) return null;
     let officialUrl: URL;
     try {
       officialUrl = new URL(pdf.href, COAST_CENTRAL_LISTING_URL);
@@ -21622,7 +21623,8 @@ const crawlPepsiCo = async (source: CrawlSource, fetcher: typeof fetch): Promise
         sourceUpdatedAt: normalizedDate(asText(data?.update_date)),
       }];
     });
-    if (jobs.length !== records.length || new Set(jobs.map((job) => job.externalId)).size !== records.length) {
+    const usRecords = records.filter(record => asText(record.data?.country) === "United States");
+    if (jobs.length !== usRecords.length || new Set(jobs.map((job) => job.externalId)).size !== jobs.length) {
       throw new Error("PepsiCo jobs API contained invalid or duplicate US jobs.");
     }
     return {
@@ -24183,7 +24185,12 @@ const fetchVerifiedStaticCareerHtml = async (
   if (response.status === 202) throw Object.assign(new Error("Official careers page remained pending after a bounded retry."), { responseStatus: response.status });
   if (!response.ok) throw Object.assign(new Error(`Official careers page returned HTTP ${response.status}.`), { responseStatus: response.status });
   const final = new URL(response.url || expected.href);
-  if (final.origin !== expected.origin) throw Object.assign(new Error("Official careers page redirected outside its verified origin."), { responseStatus: response.status });
+  const royalCanonicalRedirect = source.id === "p2-0058-royal-business-bank"
+    && expected.origin === "https://www.royalbusinessbankusa.com"
+    && final.origin === "https://royalbusinessbankusa.com"
+    && final.pathname.replace(/\/$/, "") === expected.pathname.replace(/\/$/, "")
+    && final.search === expected.search && !final.username && !final.password;
+  if (final.origin !== expected.origin && !royalCanonicalRedirect) throw Object.assign(new Error("Official careers page redirected outside its verified origin."), { responseStatus: response.status });
   return { html: await response.text(), status: response.status, url: final.href };
 };
 
