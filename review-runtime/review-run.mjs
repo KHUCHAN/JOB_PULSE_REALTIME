@@ -16,7 +16,9 @@ const label=(replay?'replay-':'shadow-')+stamp+'-'+Date.now();
 const out=path.join(runtime,'shadow-runs',label);await fs.mkdir(out,{recursive:true});
 try{await fs.copyFile(path.join(runtime,'undated-source-observations.json'),path.join(out,'undated-source-observations.json'));}catch(error){if(error.code!=='ENOENT')throw error;}
 const statePath=path.join(project,'.codex_tmp/codex-direct-db-gmail-state.json');
-const stateBefore=await fs.readFile(statePath),stateHash=createHash('sha256').update(stateBefore).digest('hex');
+const boundedStateRead=()=>new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('Canonical state read did not finish within 30 seconds')),30000);fs.readFile(statePath).then(resolve,reject).finally(()=>clearTimeout(timer));});
+let stateBefore;try{stateBefore=await boundedStateRead();}catch(error){const report={kind:replay?'offline-gate-replay':'live-shadow',stamp,runAt,out,status:'hold-state-access',error:error.message,posts:0,llmTokens:0};await fs.writeFile(path.join(out,'summary.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));process.exit(1);}
+const stateHash=createHash('sha256').update(stateBefore).digest('hex');
 const heldIds=['0372c3b6-f552-4eda-b4cc-4e7d1e807664','035b9146-f749-4e3f-8d85-2c753e4287ab','6507b05a-279b-4bba-9bb7-14e60bc9db9f','90f82229-368f-49cc-8f9a-5f48b3ce0f6c','eaf48f95-7b8b-4e63-aaf9-b2f27453c13e'];
 const env={...process.env,JOB_PULSE_PROJECT_ROOT:project,JOB_PULSE_SHADOW_OUTPUT:out};
 const stages=[];let result={kind:replay?'offline-gate-replay':'live-shadow',stamp,runAt,out,posts:0,llmTokens:0,selectedIds:[],held:[],stages};
@@ -75,7 +77,7 @@ try{
  if(args.includes('--exceptions')){const {exceptionForRow}=await import('./exception-run.mjs');const scan=await read(''),official=await read('-official'),context={calls:0,output:out};result.exceptions=[];for(const issue of plan.audit.filter(a=>a.error)){const row=scan.details.find(x=>x.row.id===issue.id)?.row;if(!row)continue;const evidence=official.find(x=>x.id===row.id);result.exceptions.push(await exceptionForRow(row,evidence?.text??'',issue.error,context));}result.llmTokens=result.exceptions.reduce((n,x)=>n+(x.usage?.input_tokens??0),0);}
  result.status='completed-shadow';
 }catch(error){result.status='hold-pipeline-error';result.error=error.message;}
-const after=await fs.readFile(statePath);result.canonicalStateUnchanged=createHash('sha256').update(after).digest('hex')===stateHash;
+const after=await boundedStateRead();result.canonicalStateUnchanged=createHash('sha256').update(after).digest('hex')===stateHash;
 if(!result.canonicalStateUnchanged)result.stateObservation='state changed externally during run; shadow state writes are prohibited by guard';
 result.finishedAt=new Date().toISOString();await fs.writeFile(path.join(out,'summary.json'),JSON.stringify(result,null,2));console.log(JSON.stringify(result));
 if(result.status!=='completed-shadow')process.exitCode=1;
