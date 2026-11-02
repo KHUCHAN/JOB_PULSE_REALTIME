@@ -12,14 +12,10 @@ def bounded_run(args,**kwargs):
 
 runtime=Path.home()/'Library/Application Support/Job Pulse/review-runtime'
 repo=runtime.parent/'repo';lane=sys.argv[1]
-assert lane in ('shadow','platform')
+assert lane in ('shadow','platform','live')
 with (runtime/(lane+'.lock')).open('a+') as lock:
  try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
  except BlockingIOError:print(json.dumps({'status':'skipped-active-lane','lane':lane}));sys.exit(0)
- if lane=='shadow':
-  marker=runtime/'shadow-state-access-hold.json'
-  if marker.exists() and json.loads(marker.read_text()).get('status')=='hold':
-   print(json.dumps({'status':'hold-state-access','reason':'known blocker; no repeated private-file read','posts':0}));sys.exit(0)
  if lane=='platform':
   day=datetime.datetime.now(datetime.timezone.utc).date().isoformat();usage=runtime/'platform-runs'/day/'usage.json'
   if usage.exists() and any(x.get('inputTokens',0)>0 for x in json.loads(usage.read_text())):
@@ -27,7 +23,7 @@ with (runtime/(lane+'.lock')).open('a+') as lock:
  env={**os.environ,'JOB_PULSE_RUNTIME':str(runtime)}
  node=env.get('JOB_PULSE_NODE','/opt/homebrew/bin/node')
  if not Path(node).exists():node=subprocess.check_output(['/usr/bin/which','node'],text=True).strip()
- script=repo/'review-runtime'/('review-run.mjs' if lane=='shadow' else 'platform-run.mjs')
+ script=repo/'review-runtime'/('review-run.mjs' if lane=='shadow' else 'live-run.mjs' if lane=='live' else 'platform-run.mjs')
  result=bounded_run([node,str(script)],cwd=repo,env=env)
  if lane=='platform' and result.returncode==0:
   day=subprocess.check_output(['/bin/date','-u','+%Y-%m-%d'],text=True).strip()

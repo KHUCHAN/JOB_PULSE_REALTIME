@@ -6,7 +6,7 @@ results=[]
 for p in (r/'shadow-runs').glob('*/summary.json'):
  try:d=json.loads(p.read_text())
  except:continue
- results.append({k:d.get(k) for k in ['kind','runAt','status','llmTokens','posts','canonicalStateUnchanged','selectedIds']})
+ results.append({k:d.get(k) for k in ['kind','runAt','status','llmTokens','posts','canonicalStateUnchanged','snapshotStateUnchanged','selectedIds']})
 platform=[]
 for p in (r/'platform-runs').glob('*/usage.json'):
  platform.append({'day':p.parent.name,'usage':json.loads(p.read_text())})
