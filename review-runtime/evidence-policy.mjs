@@ -35,7 +35,7 @@ export function evaluateEvidence({row,evidence,officialDate,officialCountry,offi
  const d=dateFromOfficial(row,officialDate,evidence,fallback);
  const country=storedCountry(row)==='non-US'?'non-US':officialCountry??(collectorEvidence?storedCountry(row):null);
  const programText=(title||row.title)+' '+body;
- const internTopic=/\bintern\s+(?:conversion|experience|recruit\w*|coordinator|manager|onboarding|engagement)\b/i,titleText=title||row.title;
+ const internTopic=/\bintern(?:ship)?\s+(?:program\s+(?:coordinator|manager)|conversion|experience|recruit\w*|coordinator|manager|onboarding|engagement)\b/i,titleText=title||row.title;
  const aboutInterns=internTopic.test(titleText)&&!/\binternships?\b|\bco[ -]?op\b|\binterns?\b/i.test(titleText.replace(internTopic,' '));
  const program=!( /continuity\s+of\s+operations/i.test(programText)&&!/\bintern(?:s|ships?)?\b|\bco[ -]op\b/i.test(programText))&&/\bintern(?:s|ships?)?\b|\bco[ -]?op\b/i.test(programText);
  const checks={live:!!live||collectorEvidence,location:country==='United States',program,date:recent(d.date,asOf),fit:labels.length>0};

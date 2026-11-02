@@ -37,7 +37,7 @@ export function extractCaveats(text) {
  for(let i=0;i<pieces.length;i++){
   let t=pieces[i];
   // Equal-opportunity text names citizenship without restricting anyone.
-  if(/\b(?:qualified applicants|consideration for employment)\b.*without regard to/i.test(t))continue;
+  if(/\b(?:qualified applicants|consideration for employment)\b.*without regard to/i.test(t)&&!/\b(?:must|requires?|required|requirement|only|clearance|sponsor\w*|visa|authoriz\w*|U\.S\. Person)\b/i.test(t))continue;
   if(!protectedCaveat(t)&&(/caf[eé]|dining options|fitness cent(?:er|re)|^(?:[·•*\-]\s*)?(?:Create|Analyze|Build|Develop|Support|Maintain|Design|Fix|Coordinate|Present|Assist)\b/i.test(t)))continue;
   if(!protectedCaveat(t)&&(/privacy|accommodation|\b(?:benefits?|privileges|travel credits)\b|equal (?:employment )?opportunity|without regard to|all personnel actions/i.test(t)||/^#\S+$/.test(t)||/^(?:[·•*\-]\s*)?(?:required|preferred|qualifications|requirements|eligibility|minimum requirements|preferred qualifications|required qualifications)\s*:?$/i.test(t)))continue;
   if(!caveatClass(t))continue;
