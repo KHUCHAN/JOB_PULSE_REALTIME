@@ -1,8 +1,17 @@
 import {storedCaveats} from './caveats.mjs';
 const key=r=>r?.rationale??'';
 const date=r=>key(r).match(/게시일 미표기 · 수집일 \d{4}-\d\d-\d\d 기준|Official date: [^. ]+(?:\.\d+Z)?/)?.[0]??null;
-export function comparePolicy({legacy,fresh,rows,audit,legacySelected,freshSelected,keywordLabels}) {
+// Legacy rendered major lists with semicolons. Compare the same ordered values
+// against verbatim multiline source blocks; no value may be added or removed.
+const majorList=t=>{const m=t.match(/^(PREFERRED MAJORS?:)\s*([\s\S]+)$/);return m?[m[1],...m[2].split(/[;\n]/).map(x=>x.trim()).filter(Boolean)]:null;};
+const containsCaveat=(r,caveats,text)=>key(r).includes(text)||!!majorList(text)&&caveats.some(c=>key(r).includes(c)&&JSON.stringify(majorList(c))===JSON.stringify(majorList(text)));
+export function comparePolicy({legacy,fresh,rows,audit,legacySelected,freshSelected,keywordLabels,heartbeat,reviewedExceptions:entries=[]}) {
  const old=new Map(legacy.map(r=>[r.jobId,r])),next=new Map(fresh.map(r=>[r.jobId,r])),explained=[],missingEvidence=[],unexplained=[],caveats=[],labels=[];
+ const used=new Set(),reviewedExceptions=[];
+ const reviewed=(id,type,value,allowed)=>{
+  const index=entries.findIndex(e=>e.heartbeat===heartbeat&&e.id===id&&e.type===type&&e.legacyValue===value&&typeof e.reason==='string'&&e.reason.length>0&&allowed(e));
+  if(index<0)return false;used.add(index);reviewedExceptions.push(entries[index]);return true;
+ };
  for(const id of new Set([...old.keys(),...next.keys()])){
   const a=old.get(id),b=next.get(id),j=rows.find(x=>x.id===id),e=audit.find(x=>x.id===id);
   const changed=a?.decision!==b?.decision;
@@ -12,7 +21,7 @@ export function comparePolicy({legacy,fresh,rows,audit,legacySelected,freshSelec
   const correction=changed&&b?.decision==='approve'&&a?.decision==='reject'&&!j?.publishedAt&&/required evidence failed/.test(key(a))&&/(?:live|location|date)/.test(key(a).split('required evidence failed')[1]??'')&&e&&(e.dateBasis==='firstSeenAt'||e.collectorFallback===true);
   if(changed)(missing?missingEvidence:correction?explained:unexplained).push({id,legacy:a?.decision??'hold',fresh:b?.decision??'hold',reason:missing?'legacy rejected on missing evidence, fresh holds because the text cannot be judged':correction?'POLICY undated collector evidence':e?.reason??'unexplained gate difference',audit:e});
   if(a?.decision==='approve'){
-   const legacyC=storedCaveats(key(a)),freshC=e?.caveats??[],missing=legacyC.filter(s=>!key(b).includes(s)),extra=freshC.filter(s=>!legacyC.some(t=>t.includes(s)));
+   const legacyC=storedCaveats(key(a)),freshC=e?.caveats??[],missing=legacyC.filter(s=>!containsCaveat(b,freshC,s)),extra=freshC.filter(s=>!legacyC.some(t=>t.includes(s)||!!majorList(t)&&JSON.stringify(majorList(t))===JSON.stringify(majorList(s))));
    caveats.push({id,missing,extra,extrasVerbatim:e?.caveatsVerbatim===true});
   }
   if(!correction&&a?.decision==='approve'&&b?.decision==='approve'){
@@ -20,7 +29,10 @@ export function comparePolicy({legacy,fresh,rows,audit,legacySelected,freshSelec
    labels.push({id,legacy:before,fresh:after,keywordMatch:JSON.stringify(before)===JSON.stringify(after),dateMatch:date(a)===date(b),legacyDate:date(a),freshDate:date(b)});
   }
  }
- const excluded=new Set([...explained,...missingEvidence].map(x=>x.id)),selectedDifference=[...new Set([...legacySelected,...freshSelected])].filter(id=>!excluded.has(id)&&legacySelected.includes(id)!==freshSelected.includes(id));
- const blockers=[...unexplained.map(x=>'decision '+x.id),...selectedDifference.map(id=>'selection '+id),...caveats.filter(x=>x.missing.length||!x.extrasVerbatim).map(x=>'caveats '+x.id),...labels.filter(x=>!x.keywordMatch||!x.dateMatch).map(x=>'labels '+x.id)];
- return {accepted:!blockers.length,explainedUndatedDifferences:explained,explainedMissingEvidenceDifferences:missingEvidence,unexplainedDecisionDifferences:unexplained,selectedDifference,caveats,labels,blockers};
+ const remainingDecisions=unexplained.filter(x=>!reviewed(x.id,'decision',x.legacy,e=>e.freshValue===x.fresh));
+ for(const c of caveats)c.unreviewedMissing=c.missing.filter(text=>!reviewed(c.id,'missing caveat',text,e=>!e.requiredFreshCaveat||containsCaveat(next.get(c.id),audit.find(x=>x.id===c.id)?.caveats??[],e.requiredFreshCaveat)));
+ const reviewedSelections=reviewedExceptions.filter(e=>e.type==='decision'&&e.legacyValue==='hold'&&e.freshValue==='approve'&&!legacySelected.includes(e.id)&&freshSelected.includes(e.id));
+ const excluded=new Set([...explained,...missingEvidence,...reviewedSelections].map(x=>x.id)),selectedDifference=[...new Set([...legacySelected,...freshSelected])].filter(id=>!excluded.has(id)&&legacySelected.includes(id)!==freshSelected.includes(id));
+ const blockers=[...remainingDecisions.map(x=>'decision '+x.id),...selectedDifference.map(id=>'selection '+id),...caveats.filter(x=>x.unreviewedMissing.length||!x.extrasVerbatim).map(x=>'caveats '+x.id),...labels.filter(x=>!x.dateMatch||!x.keywordMatch&&!reviewed(x.id,'keyword labels',JSON.stringify(x.legacy),e=>e.freshValue===JSON.stringify(x.fresh))).map(x=>'labels '+x.id)];
+ return {accepted:!blockers.length,explainedUndatedDifferences:explained,explainedMissingEvidenceDifferences:missingEvidence,unexplainedDecisionDifferences:remainingDecisions,selectedDifference,caveats,labels,blockers,reviewedExceptions,unusedExceptions:entries.filter((_,i)=>!used.has(i))};
 }

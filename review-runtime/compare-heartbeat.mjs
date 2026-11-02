@@ -1,3 +1,4 @@
+import './evidence-io.cjs';
 import {comparePolicy} from './comparison-policy.mjs';
 // Read-only aligned comparison: saved evidence first; explicit fixed-boundary re-fetch fallback.
 import fs from 'node:fs/promises';import path from 'node:path';import {fileURLToPath} from 'node:url';import {spawn} from 'node:child_process';
@@ -45,7 +46,8 @@ const payload=(review,row)=>({company:row.company,title:row.title,location:row.l
 const differences=[];for(const id of new Set([...old.keys(),...fresh.keys()])){const a=old.get(id),b=fresh.get(id);if(a?.decision!==b?.decision)differences.push({id,legacy:a?.decision??null,shadow:b?.decision??null,legacyRationale:a?.rationale,shadowRationale:b?.rationale,audit:plan.audit.find(x=>x.id===id),cause:!b?'Candidate excluded by deterministic identity/source/gate audit; see audit':!a?'Additional candidate in saved input; legacy withheld it outside its decision set':'Deterministic gate result differs; failed gate names and saved rationale identify the cause'});}
 const ruleSource=await fs.readFile(path.join(code,'../lib/resume-match.ts'),'utf8');
 const keywordLabels=[...ruleSource.slice(ruleSource.indexOf('const roleEvidence'),ruleSource.indexOf('const educationEvidence')).matchAll(/label: "([^"]+)"/g)].map(m=>m[1]);
-const comparisonInputs={legacy:[...old.values()],fresh:[...fresh.values()],rows:scan.details.map(x=>x.row),audit:plan.audit,legacySelected:selection.selectedIds,freshSelected:report.selectedIds,keywordLabels};
+const reviewedExceptions=JSON.parse(await fs.readFile(path.join(code,'comparison-exceptions.json'),'utf8'));
+const comparisonInputs={legacy:[...old.values()],fresh:[...fresh.values()],rows:scan.details.map(x=>x.row),audit:plan.audit,legacySelected:selection.selectedIds,freshSelected:report.selectedIds,keywordLabels,heartbeat:stamp,reviewedExceptions};
 const acceptance=comparePolicy(comparisonInputs);
 for(const difference of differences){const explanation=[...acceptance.explainedUndatedDifferences,...acceptance.explainedMissingEvidenceDifferences].find(x=>x.id===difference.id);if(explanation)difference.cause=explanation.reason;}
 const approved=[...old.values()].filter(a=>a.decision==='approve').map(a=>({id:a.jobId,legacyRationale:a.rationale,shadowRationale:fresh.get(a.jobId)?.rationale}));

@@ -1,0 +1,71 @@
+[
+  {
+    "heartbeat": "heartbeat-20261102T175217",
+    "id": "e2134852-299a-41af-ac75-c1723ab7e89a",
+    "type": "decision",
+    "legacyValue": "hold",
+    "freshValue": "approve",
+    "reason": "Supervisor reviewed: legacy Oracle dispatch guard required a non-null official date; policy retains a stored non-relative official date."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T175217",
+    "id": "9bc4e839-4201-4e4b-9c4d-3521d57f0092",
+    "type": "decision",
+    "legacyValue": "hold",
+    "freshValue": "approve",
+    "reason": "Supervisor reviewed: DB title appends Rochester, Minnesota. Saved HTTP 200 evidence URL and JSON-LD posting URL both exactly equal the candidate official URL: https://jobs.mayoclinic.org/job/rochester/undergraduate-engineering-intern-microfabrication/33647/102769541488; JSON-LD Job ID 394834."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T175217",
+    "id": "ec78326b-c7f0-46db-bd74-539b15f89bbd",
+    "type": "missing caveat",
+    "legacyValue": "PREFERRED MAJORS: Management Information Systems; Computer Science; Project Management; Business Analytics; OUR BENEFITS TO INTERNS (some benefits are subject to being onsite):; Professional development opportunities; Networking; MARTA passes provided; Free LinkedIn Learning access; Free access to our FedFuel career development tool; Café and dining options on-site; Dress for your day; Flexible hours; Access to on-site fitness center",
+    "reason": "Supervisor reviewed: legacy fused the majors line with a benefits list. Only the benefits difference is accepted; all major values must remain.",
+    "requiredFreshCaveat": "PREFERRED MAJORS: Management Information Systems; Computer Science; Project Management; Business Analytics"
+  },
+  {
+    "heartbeat": "heartbeat-20261102T175217",
+    "id": "f42d49b8-4491-44ca-8e8e-f1c6bb507ae8",
+    "type": "missing caveat",
+    "legacyValue": "While a majority of the principal accountabilities are assigned by the intern's direct manager, there is a determined effort across the Bank to make each intern a dynamic part of the team with interesting projects.",
+    "reason": "Supervisor reviewed: legacy descriptive prose is not an application condition."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T175217",
+    "id": "4dc4c392-e403-4729-8be5-47290330707a",
+    "type": "missing caveat",
+    "legacyValue": "Teams have also helped to develop an app that gives military commanders an easy way to track real-time and open-source information about developing situations, including sudden attacks, fighting human trafficking, and even tracking the spread of a disease worldwide.",
+    "reason": "Supervisor reviewed: legacy descriptive prose is not an application condition."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T175217",
+    "id": "cbc6501a-ef81-47ae-9db7-0233dd3bc281",
+    "type": "missing caveat",
+    "legacyValue": "For more than three decades, investors worldwide have benefited from our disciplined, precise investment process and powerful global platform offering access to every major asset class, capitalization range and style across the indexing and active spectrums.",
+    "reason": "Supervisor reviewed: legacy descriptive prose is not an application condition."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T175217",
+    "id": "b554c712-05fb-4952-93f8-244c204b9a45",
+    "type": "decision",
+    "legacyValue": "hold",
+    "freshValue": "reject",
+    "reason": "Supervisor reviewed: official title is Reuters News Internship Program 2027 (Temp Guild) - Graphics, New York. Legacy held on a title guard; no keyword fit remains after fit cleanup. Neither side mails it."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T175217",
+    "id": "29cc4e5c-d7b9-4d02-9e75-f32682d06cde",
+    "type": "keyword labels",
+    "legacyValue": "[\"Data science, business analysis, or analytics role\",\"Python, PySpark, or Pandas\",\"AML, risk, fraud, or data-quality domain\"]",
+    "freshValue": "[\"Data science, business analysis, or analytics role\",\"Python, PySpark, or Pandas\"]",
+    "reason": "Supervisor reviewed: the removed label came from the careers.bms.com/fraud-protection link in the posting's recruiting-scam notice, not from the role."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T084513",
+    "id": "e28b6383-408c-452a-9e7c-baba74888dc3",
+    "type": "decision",
+    "legacyValue": "reject",
+    "freshValue": "hold",
+    "reason": "Supervisor reviewed: IBM page returned 202 and work location is ambiguous. Legacy rejected on unreadable evidence before the POLICY correction; POLICY now holds undecidable rows. Neither side mails it."
+  }
+]

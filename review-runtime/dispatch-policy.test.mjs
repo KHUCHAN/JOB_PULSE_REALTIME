@@ -10,7 +10,7 @@ test('fresh visible date, closed page and new caveat prevent dispatch',async()=>
 });
 test('archived dispatch transformation removes specific caveats and missing-page gates; syntax remains valid',async()=>{
  const old=await fs.readFile(new URL('../../runtime-root/current-snapshot/.codex_tmp/us-dispatch-20260930.mjs',import.meta.url),'utf8'),patched=patchDispatchBody(old);
- assert(!patched.includes('Must be enrolled in second year'));assert(!patched.includes('Live official detail unavailable; approval retained'));assert(patched.includes('revalidateDispatch(j,candidate,local,evidence)'));
+ assert(!patched.includes('if(!internshipProgram(j.title,officialBody))'));assert(!patched.includes('Must be enrolled in second year'));assert(!patched.includes('Live official detail unavailable; approval retained'));assert(patched.includes('revalidateDispatch(j,candidate,local,evidence)'));
  const child=spawnSync(process.execPath,['--input-type=module','--check'],{input:patched,encoding:'utf8'});assert.equal(child.status,0,child.stderr);
 });
 
@@ -20,4 +20,9 @@ test('read-only dispatch applies stored dated collector evidence, old, relative 
  const c={...candidate,date:asOf},local={rationale:evaluated.rationale};
  assert((await revalidateDispatch(dated,c,local,null,{request,asOf})).ok);
  for(const patch of [{publishedAt:'2026-10-28'},{sourcePostedText:'2 days ago'},{description:'',responsibilities:'',qualifications:''}])assert(!(await revalidateDispatch({...dated,...patch},c,local,null,{request,asOf})).ok);
+});
+
+test('404 and 410 hold dispatch; sources infrastructure throws instead of excluding silently',async()=>{
+ for(const status of [404,410])await assert.rejects(revalidateDispatch(row,candidate,{rationale:result.rationale},null,{asOf,request:async url=>url.includes('resource=sources')?new Response(JSON.stringify([{id:row.sourceId,health:'healthy'}])):new Response('',{status})}),/hold-official-detail/);
+ await assert.rejects(revalidateDispatch(row,candidate,{rationale:result.rationale},null,{asOf,request:async()=>new Response('',{status:503})}),/hold-infrastructure/);
 });

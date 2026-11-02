@@ -7,9 +7,11 @@ const flatten=x=>Array.isArray(x)?x.flatMap(flatten):x&&typeof x==='object'?[x,.
 export async function revalidateDispatch(row,candidate,local,saved,{request=fetch,asOf=new Date().toISOString()}={}) {
  if(local?.title&&norm(local.title)!==norm(row.title)||local?.company&&norm(local.company)!==norm(row.company)||local?.location&&norm(local.location)!==norm(row.location)||candidate.requisitionId&&norm(candidate.requisitionId)!==norm(row.requisitionId))return {ok:false,reason:'fresh durable identity changed'};
  if(norm(row.title)!==norm(candidate.title??row.title)||candidate.officialUrl&&canon(candidate.officialUrl)!==canon(row.officialUrl))return {ok:false,reason:'fresh identity changed'};
- const sr=await request('https://job-pulse-realtime.autodev61.chatgpt.site/api/pulse?resource=sources');if(!sr.ok)return {ok:false,reason:'fresh source health unavailable'};
+ const sr=await request('https://job-pulse-realtime.autodev61.chatgpt.site/api/pulse?resource=sources');if(!sr.ok)throw Error('hold-infrastructure: fresh source health unavailable');
  const health=(await sr.json()).find(s=>s.id===row.sourceId)?.health;
  let page,html='';try{page=await request(candidate.verifiedUrl??row.officialUrl,{signal:AbortSignal.timeout(20000)});html=await page.text();}catch{/* An unreadable official page uses the fresh collector evidence. */}
+ if(page?.status===404||page?.status===410)throw Error('hold-official-detail: '+page.status);
+ if(!page||![200,202,403,429].includes(page.status))throw Error('hold-infrastructure: official page unavailable');
  if(page?.url&&canon(page.url)!==canon(candidate.verifiedUrl??row.officialUrl))return {ok:false,reason:'canonical official URL changed'};
  if(/job (?:is no longer|not found)|position (?:has been filled|is no longer available)/i.test(postingText(html)))return {ok:false,reason:'official posting closed'};
  const doc=new JSDOM(html).window.document,lds=[];
@@ -29,9 +31,10 @@ export async function revalidateDispatch(row,candidate,local,saved,{request=fetc
  return {ok:true,date:evaluation.date,country:storedCountry(row),collectorFallback:evaluation.collectorFallback};
 }
 export function patchDispatchBody(code){
+ code=code.replace('required.some(x=>!mail.recipients.includes(x))','mail.recipients.length!==required.length||new Set(mail.recipients).size!==required.length||required.some(x=>!mail.recipients.includes(x))');
  const required=(s)=>{if(!code.includes(s))throw Error('Archived dispatch structure changed: '+s);};
  const caveatStart=code.includes('let authHtml=')?'let authHtml=':'const enrollmentCaveat=';required(caveatStart);
- const start=code.indexOf(caveatStart),end=code.indexOf('if(!internshipProgram(j.title,officialBody))',start);if(end<0)throw Error('Archived program marker missing');
+ const start=code.indexOf(caveatStart),end=code.indexOf('const identity=j.requisitionId?',start);if(end<0)throw Error('Archived identity marker missing');
  code=code.slice(0,start)+`const policyCheck=await revalidateDispatch(j,candidate,local,evidence);if(!policyCheck.ok){excluded.push({id:j.id,reason:policyCheck.reason});continue;}\n `+code.slice(end);
  // Replace the old unreadable-page exclusion with the complete generic check
  // above. Vendor API identity/date checks immediately before this stay intact.

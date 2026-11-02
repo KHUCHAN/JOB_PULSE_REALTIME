@@ -10,10 +10,20 @@ def sha(data): return hashlib.sha256(data).hexdigest()
 def stable_read(p):
     if p.is_symlink(): raise RuntimeError('Symlink input denied: '+str(p))
     before=p.stat(); data=p.read_bytes(); after=p.stat()
-    if len(data)!=before.st_size or (before.st_size,before.st_mtime_ns)!=(after.st_size,after.st_mtime_ns):
+    if not data or len(data)!=before.st_size or (before.st_size,before.st_mtime_ns)!=(after.st_size,after.st_mtime_ns):
         raise RuntimeError('Empty/changed input: '+str(p))
     if sha(data)!=sha(p.read_bytes()): raise RuntimeError('Source changed during hash verification: '+str(p))
     return data
+
+def latest_completed_heartbeat(runs):
+    complete=[]
+    for summary in runs.glob('heartbeat-*/summary.json'):
+        try:
+            data=json.loads(summary.read_text())
+            if data.get('status')=='complete' or (data.get('status')=='complete_with_integrity_holds' and data.get('reviewCompletionEstablished') is True):complete.append(summary.parent.name)
+        except (OSError,ValueError):pass
+    if not complete:raise RuntimeError('No completed heartbeat evidence')
+    return max(complete)
 
 def snapshot(heartbeat=None, live_source=False):
     project=ROOT if live_source else Path(json.loads((RUNTIME/'config.local.json').read_text())['canonicalProject'])
@@ -75,13 +85,7 @@ def snapshot(heartbeat=None, live_source=False):
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--heartbeat');p.add_argument('--latest-heartbeat',action='store_true');p.add_argument('--live-source',action='store_true');p.add_argument('--worker',action='store_true');a=p.parse_args()
     if a.latest_heartbeat:
-        complete=[]
-        for summary in (RUNTIME/'runs').glob('heartbeat-*/summary.json'):
-            try:
-                if json.loads(summary.read_text()).get('status')=='complete':complete.append(summary.parent.name)
-            except (OSError,ValueError):pass
-        if not complete:raise RuntimeError('No completed heartbeat evidence')
-        a.heartbeat=max(complete)
+        a.heartbeat=latest_completed_heartbeat(RUNTIME/'runs')
     if a.worker: snapshot(a.heartbeat,a.live_source)
     else:
         cmd=[sys.executable,__file__,'--worker']+(['--heartbeat',a.heartbeat] if a.heartbeat else [])+(['--live-source'] if a.live_source else [])

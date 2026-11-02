@@ -94,8 +94,9 @@ const rawLocation = (value: unknown): RegionEvidence => {
   if (!location) return null;
   if (["remote", "location not specified", "multiple locations", "flexible any site"].includes(location)) return null;
   if (/^\d+ locations?$/.test(location)) return null;
+  if (/\b(?:Markham|Toronto|Ottawa|Vancouver|Montreal|Waterloo|Mississauga|Calgary|Edmonton)\b.*(?:,\s*CA\b|Canada)/i.test(original)) return "non_us";
   if ([...usCountryAliases].some((country) => containsPhrase(location, country))) return "us";
-  if (nonUsCountryNames.some((country) => containsPhrase(location, country))) return "non_us";
+  if (nonUsCountryNames.some((country) => containsPhrase(country === "mexico" ? location.replace(/\bnew mexico\b/g, "") : location, country))) return "non_us";
   if (usStateNames.some((state) => containsPhrase(location, state))) return "us";
   // Explicit city + uppercase subdivision without a comma (ATS display labels).
   const bare = original.match(/^([A-Z][A-Za-z.' -]+?)\s+([A-Z]{2})(?:\s+\d{5}(?:-\d{4})?)?$/);

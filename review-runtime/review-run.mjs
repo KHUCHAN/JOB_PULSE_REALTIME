@@ -1,3 +1,4 @@
+import './evidence-io.cjs';
 import './desktop-guard.cjs';
 import {acquireReviewLock} from './lane-lock.mjs';
 await acquireReviewLock();
@@ -31,7 +32,7 @@ let quarantine=[];if(process.env.JOB_PULSE_QUARANTINE)quarantine=JSON.parse(awai
 const norm=s=>String(s??'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
 const canon=s=>{try{const u=new URL(s);u.hash='';for(const k of [...u.searchParams.keys()])if(/^(utm_|source$|src$|ref$|gh_src$|_ccid$)/i.test(k))u.searchParams.delete(k);return u.href.replace(/\/$/,'');}catch{return null;}};
 const uncertain=j=>quarantine.some(q=>q.id===j.id||(q.officialUrl&&canon(q.officialUrl)===canon(j.officialUrl))||(q.requisitionId&&norm(q.company)===norm(j.company)&&norm(q.requisitionId)===norm(j.requisitionId))||(q.company&&[q.company,q.title,q.location].map(norm).join('|')===[j.company,j.title,j.location].map(norm).join('|')));
-const codeEvidence=Object.fromEntries(await Promise.all(['review-run.mjs','community-discovery.mjs','community-merge.mjs','inbox-stage.mjs','shadow-guard.cjs','source-guard.mjs','date-policy.mjs','prepare-shadow.mjs','evidence-policy.mjs','caveats.mjs','policy-gates.mjs','comparison-policy.mjs','compare-heartbeat.mjs','coverage-check.mjs','keyword-policy.mjs','dispatch-policy.mjs','live-dispatch.mjs','live-run.mjs','run-status.mjs','watchdog.mjs','launchd-audit.mjs','../scripts/check-production-crawl.mjs','../lib/resume-match.ts'].map(async n=>[n,createHash('sha256').update(await fs.readFile(path.join(codeDir,n))).digest('hex')])));
+const codeEvidence=Object.fromEntries(await Promise.all(['review-run.mjs','community-discovery.mjs','community-merge.mjs','inbox-stage.mjs','shadow-guard.cjs','source-guard.mjs','date-policy.mjs','prepare-shadow.mjs','evidence-policy.mjs','caveats.mjs','policy-gates.mjs','comparison-policy.mjs','compare-heartbeat.mjs','coverage-check.mjs','keyword-policy.mjs','dispatch-policy.mjs','live-dispatch.mjs','live-run.mjs','live-config.cjs','assert-paused.cjs','atomic-state.cjs','evidence-io.cjs','disk-evidence.mjs','reconcile.mjs','../lib/job-region-classifier.ts','run-status.mjs','watchdog.mjs','launchd-audit.mjs','../scripts/check-production-crawl.mjs','../lib/resume-match.ts'].map(async n=>[n,createHash('sha256').update(await fs.readFile(path.join(codeDir,n))).digest('hex')])));
 const stages=[];let result={kind:replay?'offline-gate-replay':'live-shadow',stamp,runAt,out,posts:0,llmTokens:0,selectedIds:[],held:[],stages};
 const read=async suffix=>JSON.parse(await fs.readFile(path.join(out,stamp+suffix+'.json'),'utf8'));
 async function run(name,script,extra=[]){
@@ -97,12 +98,24 @@ try{
  // The prepared policy result is authoritative; archived per-company precision
  // and rejection branches cannot amend it. Keep the legacy plan's pending scope.
  const deterministicPlan=await read('-us-plan');deterministicPlan.reviews=prep.reviews;deterministicPlan.audit=prep.audit;
+ if(!replay){
+  // Pending approvals use the same evidence path as final dispatch, including
+  // collector-backed undated pages. A prior persist receipt is not delivery.
+  const {revalidateDispatch}=await import('./dispatch-policy.mjs'),pending=await read('-pending'),evidence=await read('-pending-official'),records=Object.values(JSON.parse(stateBefore).records);
+  deterministicPlan.pending=[];
+  for(const {row} of pending.details){const local=records.find(r=>r.jobId===row.id);if(!local||local.sentAt||local.identityAlreadyNotified||heldIds.includes(row.id))continue;
+   const candidate={jobId:row.id,title:row.title,officialUrl:row.officialUrl,verifiedUrl:row.officialUrl,date:pendingEffectiveDate(local,row)};
+   const check=await revalidateDispatch(row,candidate,local,evidence.find(e=>e.id===row.id),{asOf:runAt});
+   if(check.ok)deterministicPlan.pending.push({...candidate,date:check.date,country:check.country,rationale:local.rationale});
+   else deterministicPlan.pendingExcluded.push({id:row.id,reason:check.reason});
+  }
+ }
  await fs.writeFile(path.join(out,stamp+'-us-plan.json'),JSON.stringify(deterministicPlan));
  await run('policy-gates',path.join(codeDir,'policy-gates.mjs'),[project,stamp]);
  const plan=await read('-us-plan');
  const caveatIds=new Set();result.caveatHolds=[];
  result.selectedIds=plan.reviews.filter(r=>r.decision==='approve'&&!heldIds.includes(r.jobId)&&!caveatIds.has(r.jobId)).map(r=>r.jobId).concat(plan.pending.filter(r=>!heldIds.includes(r.jobId)).map(r=>r.jobId));
- const scan=await read('');const expectedRecipients=['kimchany@usc.edu','lupeter@usc.edu','xinjiaz@usc.edu','skazimi@usc.edu'];result.recipientCheck=expectedRecipients.every(x=>scan.mail?.recipients?.includes(x));
+ const scan=await read('');const expectedRecipients=['kimchany@usc.edu','lupeter@usc.edu','xinjiaz@usc.edu','skazimi@usc.edu'];result.recipientCheck=Array.isArray(scan.mail?.recipients)&&scan.mail.recipients.length===expectedRecipients.length&&new Set(scan.mail.recipients).size===expectedRecipients.length&&expectedRecipients.every(x=>scan.mail.recipients.includes(x));
  if(result.selectedIds.length>500)throw Error('Combined selection exceeds 500 IDs');
  for(const review of plan.reviews.filter(r=>result.selectedIds.includes(r.jobId))){const audit=plan.audit.find(a=>a.id===review.jobId);if(!audit||audit.country!=='United States'||audit.failed?.length||!Number.isFinite(Date.parse(audit.date))||Date.parse(audit.date)<Date.parse(runAt)-72*3600000||Date.parse(audit.date)>Date.parse(runAt)||!review.rationale.startsWith('Keyword match (not individually reviewed)')||review.rationale.length>2000)throw Error('Final policy check failed: '+review.jobId);}
  result.reviewIds=plan.reviews.map(r=>({id:r.jobId,decision:r.decision}));

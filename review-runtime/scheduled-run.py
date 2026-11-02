@@ -5,6 +5,9 @@ def bounded_run(args,**kwargs):
  process=subprocess.Popen(args,start_new_session=True,**kwargs)
  try:return types.SimpleNamespace(returncode=process.wait(timeout=1200))
  except subprocess.TimeoutExpired:
+  if kwargs.get('env',{}).get('JOB_PULSE_LANE')=='live':
+   print(json.dumps({'status':'live-deadline-exceeded-waiting-for-safe-exit'}),flush=True)
+   return types.SimpleNamespace(returncode=process.wait())
   os.killpg(process.pid,signal.SIGTERM)
   try:process.wait(timeout=5)
   except subprocess.TimeoutExpired:os.killpg(process.pid,signal.SIGKILL);process.wait()
@@ -20,7 +23,7 @@ with (runtime/(lane+'.lock')).open('a+') as lock:
   day=datetime.datetime.now(datetime.timezone.utc).date().isoformat();usage=runtime/'platform-runs'/day/'usage.json'
   if usage.exists() and any(x.get('inputTokens',0)>0 for x in json.loads(usage.read_text())):
    print(json.dumps({'status':'already-completed-today','lane':lane}));sys.exit(0)
- env={**os.environ,'JOB_PULSE_RUNTIME':str(runtime),'JOB_PULSE_STATUS_RUN_ID':datetime.datetime.now(datetime.timezone.utc).isoformat()+'-'+str(os.getpid())}
+ env={**os.environ,'JOB_PULSE_LANE':lane,'JOB_PULSE_RUNTIME':str(runtime),'JOB_PULSE_STATUS_RUN_ID':datetime.datetime.now(datetime.timezone.utc).isoformat()+'-'+str(os.getpid())}
  node=env.get('JOB_PULSE_NODE','/opt/homebrew/bin/node')
  if not Path(node).exists():node=subprocess.check_output(['/usr/bin/which','node'],text=True).strip()
  script=repo/'review-runtime'/('review-run.mjs' if lane=='shadow' else 'live-run.mjs' if lane=='live' else 'platform-run.mjs')

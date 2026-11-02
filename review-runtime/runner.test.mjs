@@ -1,3 +1,4 @@
+import {temporary} from './rehearsal-support.mjs';
 import {test} from 'node:test';import assert from 'node:assert/strict';import {mkdtempSync,mkdirSync,writeFileSync,readFileSync} from 'node:fs';import os from 'node:os';import path from 'node:path';import {spawnSync} from 'node:child_process';import {exceptionForRow} from './exception-run.mjs';
 test('shadow transport and original durable writes fail before any effect',()=>{
  const root=mkdtempSync(path.join(os.tmpdir(),'job-pulse-guard-test-')),out=path.join(root,'evidence');mkdirSync(out);mkdirSync(path.join(root,'.codex_tmp'));
@@ -34,8 +35,8 @@ test('a shared fcntl owner lock rejects a second shadow or live invocation',()=>
  const code=`import fcntl,subprocess,os\nf=open(os.path.join(os.environ['JOB_PULSE_RUNTIME'],'review-owner.lock'),'a+')\nfcntl.flock(f,fcntl.LOCK_EX|fcntl.LOCK_NB)\nr=subprocess.run(['/usr/local/bin/python3',${JSON.stringify(path.resolve('review-runtime/lane-lock.py'))},'/bin/echo','MUST_NOT_RUN'],capture_output=True,text=True)\nassert r.returncode==1 and 'hold-review-owner-active' in r.stdout and 'MUST_NOT_RUN' not in r.stdout\n`;
  const result=spawnSync('/usr/local/bin/python3',['-c',code],{env:{...process.env,JOB_PULSE_RUNTIME:runtime},encoding:'utf8'});assert.equal(result.status,0,result.stderr);
 });
-test('a shadow refuses a live-authorized root before opening state',()=>{
- const base=mkdtempSync(path.join(os.tmpdir(),'job-pulse-live-guard-test-')),runtime=path.join(base,'review-runtime'),root=path.join(base,'runtime-root'),snapshot=path.join(root,'current-snapshot');mkdirSync(runtime);mkdirSync(snapshot,{recursive:true});
+test('a shadow refuses a live-authorized root before opening state',async()=>{
+ const base=await temporary('job-pulse-guard-test-'),runtime=path.join(base,'review-runtime'),root=path.join(base,'runtime-root'),snapshot=path.join(root,'current-snapshot');mkdirSync(runtime);mkdirSync(snapshot,{recursive:true});
  writeFileSync(path.join(snapshot,'snapshot-manifest.json'),'{"files":[]}');writeFileSync(path.join(root,'live-authorization.json'),'{}');
  const child=spawnSync(process.execPath,[path.resolve('review-runtime/review-run.mjs')],{env:{...process.env,JOB_PULSE_RUNTIME:runtime},encoding:'utf8'});assert.equal(child.status,1);assert.match(child.stderr,/hold-shadow-live-authorized/);
 });
