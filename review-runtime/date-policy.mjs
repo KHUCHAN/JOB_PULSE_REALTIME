@@ -4,7 +4,10 @@ export function effectiveDate(row, officialDate, absenceVerified = false) {
   // Never mask an old or malformed official date with firstSeenAt.
   const present = value => value !== null && value !== undefined && String(value).trim() !== '';
   if (present(officialDate)) return { date: officialDate, basis: 'official' };
-  if (present(row.publishedAt)) return { date: row.publishedAt, basis: 'stored-official' };
+  if (present(row.publishedAt)) {
+    if (/posted\s+(?:today|yesterday|\d+\s+days?\s+ago)/i.test(row.sourcePostedText??'')) return { date: null, basis: 'relative-unverified' };
+    return { date: row.publishedAt, basis: 'stored-official' };
+  }
   if (!absenceVerified) return { date: null, basis: 'unverified' };
   return { date: row.firstSeenAt, basis: 'firstSeenAt', label: `게시일 미표기 · 수집일 ${String(row.firstSeenAt).slice(0,10)} 기준` };
 }

@@ -18,3 +18,8 @@ test('bulk undated is held and recovered inventory baselined',()=>{
  assert(undatedGuard(rows,{source:now}).every(x=>x.action==='baseline'));
  assert(undatedGuard(rows.slice(0,20)).every(x=>x.action==='candidate'));
 });
+
+test('relative Workday card dates cannot masquerade as exact stored official dates',()=>{
+ const row={firstSeenAt:'2026-10-01',publishedAt:now,sourcePostedText:'Posted Today'};
+ assert.equal(effectiveDate(row,null,true).date,null);assert.equal(effectiveDate(row,'2026-11-01',true).date,'2026-11-01');
+});
