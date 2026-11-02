@@ -33,6 +33,7 @@ transport='us-dispatch-20260930.mjs'
 patch(transport,"import fs from 'node:fs/promises';",f"import fs from 'node:fs/promises';\nimport {{effectiveDate,dateFromOfficial}} from '{uri}';")
 patch(transport,'title&&datePosted&&description?','title&&description?')
 patch(transport,'w?.startDate??ld?.datePosted,locations',"dateFromOfficial(j,w?.startDate??ld?.datePosted??ld?.dateModified,e).date,locations")
+patch(transport,'identities.add(identity);identities.add(fp(j));selected.push(j.id);',"if(candidate.dateBasis==='firstSeenAt'){const fresh=dateFromOfficial(j,null,{status:live.status,html});if(fresh.basis!=='firstSeenAt'||!isRecentOfficialDate(fresh.date,new Date().toISOString())){excluded.push({id:j.id,reason:'Live absence/date changed'});continue;}} identities.add(identity);identities.add(fp(j));selected.push(j.id);")
 stage=runtime/'stage-template.mjs'
 shutil.copy2(stage,backup/stage.name)
 stagecode=stage.read_text()
