@@ -43,7 +43,20 @@ export async function crawlSanmina(source: CrawlSource, fetcher: typeof fetch): 
       if (!response.ok) throw Error(`Sanmina returned HTTP ${response.status}.`);
       if (response.url && new URL(response.url).hostname !== new URL(sanminaListing).hostname)
         throw Error("Sanmina catalog redirected outside its verified tenant.");
-      const parsed = sanminaPage(await response.text(), source);
+      const html = await response.text();
+      // The former Deltek tenant now returns an empty shell, while the
+      // employer's careers page links to jobs.sanmina.com. Do not close the
+      // retained inventory or pretend this is a healthy empty catalog.
+      if (/There is no data to display/i.test(html)) {
+        const feed = await fetcher("https://jobs.sanmina.com/search/jobs.json?per_page=100&page=1", {
+          signal: AbortSignal.timeout(15_000), headers: { accept: "application/json" },
+        });
+        await feed.body?.cancel();
+        return { status: feed.status === 403 || feed.status === 429 ? "blocked" : "failed",
+          responseStatus: feed.status, jobs: [], completeListing: false,
+          error: `Sanmina migrated to https://jobs.sanmina.com/search/jobs; public catalog HTTP ${feed.status}. Prior inventory retained; no challenge bypass.` };
+      }
+      const parsed = sanminaPage(html, source);
       total ??= parsed.total;
       if (parsed.total !== total || parsed.start !== jobs.length + 1
         || parsed.end !== jobs.length + parsed.jobs.length || !parsed.jobs.length)
