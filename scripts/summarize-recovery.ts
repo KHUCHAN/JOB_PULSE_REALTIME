@@ -7,7 +7,7 @@ export function summarizeRecovery(request: unknown, ripplematch: unknown, browse
   // Missing/truncated evidence must fail, not silently become zero failures.
   const failed = new Set([...failedRecoveryIds(request), ...failedRecoveryIds(ripplematch)]);
   const evidence = browser as { completed?: boolean; results?: BrowserFallbackResult[] };
-  const coverage = audit as { sources?: Array<{ id?: string; error?: string; collectionStatus?: string }> };
+  const coverage = audit as { sources?: Array<{ id?: string; error?: string; collectionStatus?: string; currentJobs?: number }> };
   if (evidence?.completed !== true || !Array.isArray(evidence.results)
     || evidence.results.some(r => !r?.source?.id || !Array.isArray(r.jobs)
       || !(r.error === null || typeof r.error === "string")
@@ -21,21 +21,28 @@ export function summarizeRecovery(request: unknown, ripplematch: unknown, browse
   const recoveredAfterRequestFailure = [...failed].filter(id => recovered.has(id));
   for (const id of recovered) failed.delete(id);
   for (const id of browserFailed) failed.add(id);
-  const auditErrors = coverage.sources.filter(r => r.error || (r.collectionStatus !== "succeeded" && !recovered.has(r.id ?? "")));
+  // A current verified challenge with retained inventory is an availability
+  // warning. Never infer a block from stale DB health or request error text.
+  const verifiedBlocks = new Set(summary.unresolved.filter(r => r.code === "blocked_challenge").map(r => r.sourceId));
+  const blockedWarnings = coverage.sources.filter(r => !r.error && verifiedBlocks.has(r.id ?? "")
+    && typeof r.currentJobs === "number" && r.currentJobs > 0);
+  const degradedCritical = new Set(blockedWarnings.map(r => r.id));
+  const auditErrors = coverage.sources.filter(r => r.error || (r.collectionStatus !== "succeeded"
+    && !recovered.has(r.id ?? "") && !degradedCritical.has(r.id)));
   const requestRows = [request, ripplematch].flatMap(r => (r as RecoveryHandoff).summaries);
   // The owner run fails only when the pipeline itself broke: missing evidence
   // (thrown above), recovered jobs whose write failed in transport or D1, or
   // a critical employer the raw DB audit still sees as uncollected. Long-tail
-  // bot walls, parser misses, a server policy rejection (ingest_rejected) and
-  // a missed failure-status write are reported, not fatal. Failing on them
-  // kept every run red for weeks and hid the outages that did matter.
-  const persistenceFailed = summary.unresolved.some(r => r.code === "ingest_error" && r.jobs > 0);
+  // bot walls and a server policy rejection (ingest_rejected) are
+  // reported; actual failed writes remain fatal. Long-tail parser misses
+  // remain visible without masking pipeline outages.
+  const persistenceFailed = summary.unresolved.some(r => r.code === "ingest_error");
   return {
     status: persistenceFailed || auditErrors.length ? "partial_failure" : failed.size ? "degraded" : "succeeded",
     attemptedSources: new Set([...requestRows.map(r => r.sourceId), ...evidence.results.map(r => r.source.id)]).size,
     unresolvedSourceIds: [...failed].sort(), recoveredAfterRequestFailure,
     authoritativeEmpty: summary.authoritativeEmpty,
-    browserFailures: summary.unresolved, auditErrors,
+    browserFailures: summary.unresolved, auditErrors, blockedWarnings,
   };
 }
 

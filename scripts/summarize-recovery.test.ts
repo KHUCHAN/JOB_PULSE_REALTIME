@@ -56,12 +56,12 @@ describe("final owner recovery outcome", () => {
       status: "degraded", browserFailures: [expect.objectContaining({ code: "ingest_rejected" })],
     });
   });
-  it("reports a missed failure-status write as degraded because no collected rows were lost", () => {
+  it("keeps a missed failure-status write fatal", () => {
     const deadPage: BrowserFallbackResult = { ...row, status: 404, authoritativeEmpty: false,
       persistenceError: "Production browser result recording failed: The operation was aborted due to timeout" };
     expect(summarizeRecovery(emptyRequest, emptyRequest, { completed: true, results: [deadPage] },
       { sources: [{ id: "google", collectionStatus: "succeeded" }] })).toMatchObject({
-      status: "degraded", browserFailures: [expect.objectContaining({ code: "ingest_error" })],
+      status: "partial_failure", browserFailures: [expect.objectContaining({ code: "ingest_error" })],
     });
   });
   it("keeps an unrecovered critical employer fatal", () => {
@@ -76,4 +76,19 @@ describe("final owner recovery outcome", () => {
     expect(summarizeRecovery(request, emptyRequest, { completed: true, results: [row] }, { sources: [{ id: "amd", error: "DB HTTP 503" }] }).status)
       .toBe("partial_failure");
   });
+  it("degrades a verified critical block only with retained inventory and readable audit", () => {
+    const blocked = { ...row, status: 403, authoritativeEmpty: false, error: "Official host HTTP 403 challenge" };
+    const browser = { completed: true, results: [blocked] };
+    const coverage = { id: "amd", collectionStatus: "failed", currentJobs: 425 };
+    expect(summarizeRecovery(request, emptyRequest, browser, { sources: [coverage] }))
+      .toMatchObject({ status: "degraded", auditErrors: [], blockedWarnings: [coverage] });
+    for (const source of [{ ...coverage, currentJobs: 0 }, { ...coverage, currentJobs: undefined },
+      { ...coverage, error: "DB HTTP 503" }])
+      expect(summarizeRecovery(request, emptyRequest, browser, { sources: [source] }).status).toBe("partial_failure");
+    expect(summarizeRecovery(request, emptyRequest, { completed: true, results: [{ ...blocked, status: 500, error: "HTTP 500" }] },
+      { sources: [coverage] }).status).toBe("partial_failure");
+    expect(summarizeRecovery(request, emptyRequest, { completed: true, results: [{ ...blocked, persistenceError: "write failed" }] },
+      { sources: [coverage] }).status).toBe("partial_failure");
+  });
+
 });

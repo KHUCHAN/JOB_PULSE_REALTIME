@@ -46,7 +46,14 @@ export const browserRecoveryDue = (
 export const shouldRecordBrowserResult = (
   previousStatus: LatestCrawlSummary["status"],
   browserStatus: Exclude<LatestCrawlSummary["status"], "running" | null>,
+  previousStartedAt?: string,
+  now = Date.now(),
 ): boolean => browserStatus === "succeeded"
+  // Protect a fresh native success, but an expired observation cannot mask
+  // a newly verified challenge forever (Sanmina retained an October success).
+  || (browserStatus === "blocked" && previousStatus === "succeeded"
+    && Number.isFinite(Date.parse(previousStartedAt ?? ""))
+    && Date.parse(previousStartedAt!) < now - 2 * 60 * 60_000)
   || (browserStatus === "blocked" && previousStatus === "failed")
   // A repeated confirmed challenge is still a new attempt. Suppressing it
   // forever left lastCheckedAt/nextRunAt days behind (notably Tesla).

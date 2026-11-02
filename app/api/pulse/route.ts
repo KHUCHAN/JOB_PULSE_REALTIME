@@ -228,13 +228,13 @@ async function recordBrowserCrawlResult(
   const nextCrawlAt = new Date(now.getTime() + browserCrawlBackoffHours(status) * 60 * 60 * 1_000).toISOString();
   const store = new D1CrawlStore(database);
   const previous = await database.prepare(`
-    SELECT status, jobs_seen
+    SELECT status, jobs_seen, started_at
     FROM crawl_runs
     WHERE source_id = ? AND status <> 'running'
     ORDER BY started_at DESC, id DESC
     LIMIT 1
-  `).bind(sourceId).first<{ status: "succeeded" | "failed" | "blocked"; jobs_seen: number }>();
-  if (!shouldRecordBrowserResult(previous?.status ?? null, status)) {
+  `).bind(sourceId).first<{ status: "succeeded" | "failed" | "blocked"; jobs_seen: number; started_at: string }>();
+  if (!shouldRecordBrowserResult(previous?.status ?? null, status, previous?.started_at, now.getTime())) {
     // A weaker browser shell failure must not overwrite a successful native
     // observation or stretch its healthy two-hour schedule to six/24 hours.
     // The browser priority queue has its own rotation and can retry later.

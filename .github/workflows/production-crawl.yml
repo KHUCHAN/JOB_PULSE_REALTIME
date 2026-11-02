@@ -212,7 +212,8 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: request-recovery-results
-          path: output/request-recovery
+          # Upload includes two directories: its archive root is output/.
+          path: output
       - name: Recover browser-only problem sources
         continue-on-error: true
         # Request failures are passed via the same workflow's artifact below.

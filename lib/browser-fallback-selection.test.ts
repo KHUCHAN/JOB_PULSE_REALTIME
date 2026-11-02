@@ -31,6 +31,13 @@ describe("browser fallback result precedence", () => {
     expect(shouldRecordBrowserResult("succeeded", status)).toBe(false);
   });
 
+  it("records a verified challenge after an expired success without weakening fresh-success protection", () => {
+    const now = Date.parse("2026-11-02T07:39:00Z");
+    expect(shouldRecordBrowserResult("succeeded", "blocked", "2026-10-14T16:27:42Z", now)).toBe(true);
+    expect(shouldRecordBrowserResult("succeeded", "blocked", "2026-11-02T07:00:00Z", now)).toBe(false);
+    expect(shouldRecordBrowserResult("succeeded", "failed", "2026-10-14T16:27:42Z", now)).toBe(false);
+    expect(shouldRecordBrowserResult("succeeded", "blocked", "invalid", now)).toBe(false);
+  });
   it("records a browser recovery that finds jobs", () => {
     expect(shouldRecordBrowserResult("failed", "succeeded")).toBe(true);
   });
