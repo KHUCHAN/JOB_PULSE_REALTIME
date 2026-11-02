@@ -149,3 +149,12 @@ describe("browser crawl ingestion", () => {
     expect(result.jobs[0]).toEqual(expect.objectContaining({ externalId: "7001" }));
   });
 });
+
+
+it("accepts all five source-pinned SAS tenants even when the transport origin list was capped", () => {
+  const sas = { id: "p4-0343-sas", company: "SAS", postingUrl: "https://globalcareers-sas.icims.com/jobs/search?ss=1", adapter: "icims" as const };
+  const rows=["global-sas", "careers-sas", "jmpglobal-sas", "ideas-sas", "jmp-sas"].map((host,i)=>({title:"Software Intern",officialUrl:`https://${host}.icims.com/jobs/${100+i}/intern/job`}));
+  expect(normalizeBrowserJobSnapshot(sas,rows,[]).jobs).toHaveLength(5);
+  expect(()=>normalizeBrowserJobSnapshot(sas,[{title:"Fake",officialUrl:"https://other-sas.icims.com/jobs/100/job"}],[])).toThrow(/official careers origin/);
+  expect(()=>normalizeBrowserJobSnapshot(source,rows,[])).toThrow(/official careers origin/);
+});

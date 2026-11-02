@@ -90,6 +90,14 @@ export function normalizeBrowserJobSnapshot(
       return [];
     }
   }));
+  // SAS's official global catalog links five regional/product iCIMS tenants.
+  // The transport's five-origin cap includes the listing itself and omitted
+  // jmp-sas (the sixth origin), causing a 500 for the whole 19-job snapshot.
+  // Pin the observed tenants to this exact source; no wildcard ATS trust.
+  if (source.id === "p4-0343-sas" && new URL(source.postingUrl).hostname === "globalcareers-sas.icims.com") {
+    for (const host of ["global-sas", "careers-sas", "jmpglobal-sas", "ideas-sas", "jmp-sas"])
+      officialOrigins.add(`https://${host}.icims.com`);
+  }
   if (!Array.isArray(input) || input.length > 10_000) throw new Error("Browser snapshot must contain at most 10,000 jobs.");
 
   const jobs = new Map<string, CrawledJob>();
