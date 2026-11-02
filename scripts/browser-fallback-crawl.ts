@@ -836,7 +836,7 @@ export const recoverNativeOutsideWorker = async (
     // Native recovery starts at page one. Preserve completeness only when the
     // adapter proves the full catalog directly or reaches its validated final
     // checkpoint, so production can safely close rows no longer upstream.
-    completeListing: result.completeListing || result.pagination?.cycleComplete === true,
+    completeListing: result.completeListing || (source.id !== "audit-row-407" && result.pagination?.cycleComplete === true),
     ...(verifiedJobs.length === 0 ? { authoritativeEmpty: true } : {}),
     error: null,
   };
