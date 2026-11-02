@@ -2,8 +2,8 @@ import fs from 'node:fs/promises';import path from 'node:path';import os from 'n
 const exec=promisify(execFile);
 export const statusFile=path.join(os.homedir(),'Library/Application Support/Job Pulse/review-runtime/live-status.jsonl');
 export async function localNotify(kind){
- const message=kind==='watchdog'?'No completed live review in 9 hours. Check local Job Pulse status.':'Live review held or failed. Check local Job Pulse status.';
- await exec('/usr/bin/osascript',['-e',`display notification ${JSON.stringify(message)} with title "Job Pulse"`],{timeout:10000});
+ const message=kind==='test'?'This is a Job Pulse test notification.':kind==='watchdog'?'No completed live review in 9 hours. Check local Job Pulse status.':'Live review held or failed. Check local Job Pulse status.';
+ return await exec('/usr/bin/osascript',['-e',`display notification ${JSON.stringify(message)} with title "Job Pulse"`],{timeout:10000});
 }
 export async function recordRun({status,out,at=new Date().toISOString()}, {file=statusFile,notify=localNotify}={}){
  const runId=process.env.JOB_PULSE_STATUS_RUN_ID??out??at;
