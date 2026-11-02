@@ -1,0 +1,25 @@
+{
+  "observedAt": "2026-11-02T07:17:50.537Z",
+  "candidates": [
+    {
+      "company": "Microsoft",
+      "title": "Data Science - Forward Deployed Engineer: PhD Internship Opportunities",
+      "location": "Redmond, WA",
+      "platform": "SpeedyApply",
+      "platformUrl": "https://github.com/speedyapply/2027-AI-College-Jobs",
+      "displayDate": "12d",
+      "officialUrl": "https://apply.careers.microsoft.com/careers/job/1970393557040991",
+      "sourceId": "p4-0309-microsoft"
+    },
+    {
+      "company": "Adobe",
+      "title": "2027 Intern - Data - AI & Innovation",
+      "location": "San Jose, CA",
+      "platform": "SpeedyApply",
+      "platformUrl": "https://github.com/speedyapply/2027-AI-College-Jobs",
+      "displayDate": "13d",
+      "officialUrl": "https://adobe.wd5.myworkdayjobs.com/en-US/external_experienced/job/San-Jose/XMLNAME-2027-Intern---Data--AI---Innovation_R172997",
+      "sourceId": "p4-0210-adobe"
+    }
+  ]
+}
