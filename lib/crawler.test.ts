@@ -17787,7 +17787,7 @@ it("keeps O'Reilly widgets failures visible instead of falling through to stale 
 });
 
 
-it("accepts reordered O'Reilly ties but holds a changed identity window with diagnostics", async () => {
+it("accepts reordered O'Reilly ties and the union of changing heads with diagnostics", async () => {
  for(const churn of [false,true]){
   let heads=0;
   const result=await crawlSource({id:"audit-row-407",company:"O'Reilly",postingUrl:"https://careers.oreillyauto.com/us/en/search-results",adapter:"phenom"},async(_input,init)=>{
@@ -17796,7 +17796,17 @@ it("accepts reordered O'Reilly ties but holds a changed identity window with dia
    if(from===0&&heads>1){jobs.reverse();if(churn)jobs[0]={...jobs[0],jobId:"Rchanged",jobUrl:"https://careers.oreillyauto.com/us/en/job/Rchanged/intern"};}
    return new Response(JSON.stringify({refineSearch:{hits:2,totalHits:19070,data:{jobs}}}));
   },new Date("2026-11-02"));
-  expect(result.status).toBe(churn?"failed":"succeeded");
-  if(churn){expect(result.jobs).toEqual([]);expect(result.error).toContain("identity/date set changed");}
+  expect(result.status).toBe("succeeded");expect(result.error).toBeNull();expect(result.completeListing).toBe(false);expect(result.closureAuthority).toBe(false);
+  expect(result.jobs).toHaveLength(churn?9:8);
+  if(churn){expect(result.jobs.some(job=>job.externalId==="Rchanged")).toBe(true);expect(result.diagnostics?.join()).toContain("identity/date set changed");}
  }
+});
+
+it("retains O'Reilly valid rows through total drift, duplicates and invalid identities without closure authority",async()=>{
+ const result=await crawlSource({id:"audit-row-407",company:"O'Reilly",postingUrl:"https://careers.oreillyauto.com/us/en/search-results",adapter:"phenom"},async(_input,init)=>{
+  const {from}=JSON.parse(String(init?.body));
+  const valid={jobId:`R${from}`,title:"Software Engineering Intern",postedDate:"2026-11-01",jobUrl:`https://careers.oreillyauto.com/us/en/job/R${from}/intern`};
+  return new Response(JSON.stringify({refineSearch:{hits:2,totalHits:from?3:4,data:{jobs:[valid,valid,{...valid,jobId:"R0",jobUrl:"https://careers.oreillyauto.com/us/en/job/R0/new-slug"},{title:"No identity"},{...valid,jobId:"bad",jobUrl:"https://other.example/job/bad"},{...valid,jobId:"mismatch"}]}}}));
+ },new Date("2026-11-02"));
+ expect(result.status).toBe("succeeded");expect(result.error).toBeNull();expect(result.jobs.map(job=>job.externalId)).toEqual(["R0","R2"]);expect(result.completeListing).toBe(false);expect(result.closureAuthority).toBe(false);expect(result.pagination?.cycleComplete).toBe(true);expect(result.diagnostics?.length).toBeGreaterThan(0);
 });

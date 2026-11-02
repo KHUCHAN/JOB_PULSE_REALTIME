@@ -225,6 +225,7 @@ const persist = async (source: CrawlSource, catalog: Awaited<ReturnType<typeof c
       verifyMs,
       ingestChunks: ingested.chunks,
       error: result.error,
+      ...(result.diagnostics?.length ? { diagnostics: result.diagnostics } : {}),
     };
 };
 

@@ -159,3 +159,15 @@ describe("request fallback checkpoint recovery", () => {
     expect(result.pagination).toBeUndefined();
   });
 });
+
+it("keeps non-authoritative churn diagnostics and unions rows across changing page counts only for opted-in feeds",async()=>{
+ for(const partial of [false,true]){
+  let pass=0;
+  const crawl=vi.fn(async():Promise<SourceCrawlResult>=>{
+   pass++;return {status:"succeeded",responseStatus:200,error:null,completeListing:false,...(partial?{closureAuthority:false as const}:{}),jobs:[job("a"),job(String(pass))],diagnostics:[`churn ${pass}`],pagination:{nextPage:pass===1?2:1,totalPages:pass===1?3:2,cycleComplete:pass>1}};
+  });
+  if(!partial){await expect(recoverCheckpointedCatalog(source,fetch,crawl)).rejects.toThrow("page count changed");continue;}
+  const result=await recoverCheckpointedCatalog({...source,id:"audit-row-407"},fetch,crawl);
+  expect(result.jobs.map(row=>row.externalId)).toEqual(["a","1","2"]);expect(result.error).toBeNull();expect(result.completeListing).toBe(false);expect(result.closureAuthority).toBe(false);expect(result.pagination).toBeUndefined();expect(result.diagnostics).toEqual(["churn 1","churn 2"]);
+ }
+});

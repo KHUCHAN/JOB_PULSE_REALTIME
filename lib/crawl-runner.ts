@@ -97,14 +97,14 @@ const runSource = async (
       changes = await store.syncJobs(
         source.id,
         crawl.jobs,
-        crawl.completeListing,
+        crawl.completeListing && crawl.closureAuthority !== false,
         crawl.facets,
         { suppressNotifications: suppressInitialCatalogNotifications },
       );
       if (crawl.pagination) {
         const paged = await store.advancePagedCrawl(
           source,
-          crawl.pagination,
+          crawl.closureAuthority === false ? { ...crawl.pagination, cycleComplete: false } : crawl.pagination,
           source.crawlCycleStartedAt ?? scheduledFor,
           source.crawlPreviousCycleStartedAt ?? null,
         );

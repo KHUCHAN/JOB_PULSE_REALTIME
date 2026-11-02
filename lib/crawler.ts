@@ -82,6 +82,9 @@ export type SourceCrawlResult = {
   completeListing: boolean;
   jobs: CrawledJob[];
   facets?: CrawledFacet[];
+  diagnostics?: string[];
+  /** Traversal completion never authorizes closures for a changing sampled feed. */
+  closureAuthority?: false;
   pagination?: { nextPage: number; cycleComplete: boolean; totalPages: number };
   resolvedListingUrl?: string;
   error: string | null;
@@ -3118,6 +3121,13 @@ const phenomJobs = (html: string, source: CrawlSource): PhenomPage | null => {
       ?? asText(job.actionUrl)
       ?? generatedDetailUrl;
     if (!officialUrl) return [];
+    if (source.id === "audit-row-407") {
+      if (typeof externalId !== "string" || !externalId.trim()) return [];
+      try {
+        const detail = new URL(officialUrl);
+        if (detail.origin !== listing.origin || !detail.pathname.split("/").some(part => decodeURIComponent(part) === externalId)) return [];
+      } catch { return []; }
+    }
     const workplace = `${job.checkRemote ?? ""} ${job.workplaceType ?? ""} ${job.location ?? ""}`.toLowerCase();
     const latitude = typeof job.latitude === "number" ? job.latitude : Number.parseFloat(job.latitude ?? "");
     const longitude = typeof job.longitude === "number" ? job.longitude : Number.parseFloat(job.longitude ?? "");
@@ -3329,30 +3339,34 @@ const crawlPhenomWidgets = async (source: CrawlSource, fetcher: typeof fetch): P
     const start = Math.max(1, Math.min(source.crawlPageCursor ?? 1, totalPages));
     const end = Math.min(totalPages, start + 3);
     const pages = [index];
+    const diagnostics: string[] = [];
     let failedPage: number | null = null;
     for (let page = Math.max(2, start); page <= end; page++) {
       const next = await fetchPage((page - 1) * pageSize);
-      const expected = Math.min(pageSize, index.totalHits - (page - 1) * pageSize);
-      if (!next || next.totalHits !== index.totalHits || next.jobs.length !== expected
-        || new Set(next.jobs.map(job => job.externalId)).size !== expected) { failedPage = page; break; }
+      if (!next) { failedPage = page; break; }
+      // Parsing still drops rows without a valid identity. Count drift, ties
+      // and overlaps are harmless in this non-authoritative bounded snapshot.
       pages.push(next);
+      const expected = Math.min(pageSize, index.totalHits - (page - 1) * pageSize);
+      if (next.totalHits !== index.totalHits || next.jobs.length !== expected
+        || new Set(next.jobs.map(job => job.externalId)).size !== expected)
+        diagnostics.push(`O'Reilly widget page ${page} changed or contained dropped/duplicate rows (total ${next.totalHits}; valid ${next.jobs.length}; expected ${expected}).`);
     }
     const verified = await fetchPage(0);
-    // Equal-date ties may be returned in a different order. Verify the same
-    // complete identity/date set, without treating harmless ordering as churn.
     const signature = (page: PhenomPage) => page.jobs.map(job => `${job.externalId}|${job.publishedAt}`).sort().join();
     const uniqueCount = (page: PhenomPage) => new Set(page.jobs.map(job => job.externalId)).size;
     const expectedHead = Math.min(pageSize, index.totalHits);
+    if (verified) pages.push(verified);
     if (!verified || verified.totalHits !== index.totalHits || index.jobs.length !== expectedHead
       || verified.jobs.length !== expectedHead || uniqueCount(index) !== expectedHead || uniqueCount(verified) !== expectedHead
       || signature(verified) !== signature(index))
-      return { status: "failed", responseStatus, completeListing: false, jobs: [],
-        error: `O'Reilly newest window changed during pagination (total ${index.totalHits}->${verified?.totalHits ?? "unavailable"}; head ${index.jobs.length}->${verified?.jobs.length ?? 0}; unique ${uniqueCount(index)}->${verified ? uniqueCount(verified) : 0}; identity/date set ${verified && signature(verified) === signature(index) ? "same" : "changed"}).` };
-    return { status: "succeeded", responseStatus, completeListing: start === 1 && end === totalPages && failedPage === null,
-      jobs: uniqueJobs(pages.flatMap(page => page.jobs)), resolvedListingUrl: listingUrl,
+      diagnostics.push(`O'Reilly newest window changed during pagination (total ${index.totalHits}->${verified?.totalHits ?? "unavailable"}; head ${index.jobs.length}->${verified?.jobs.length ?? 0}; unique ${uniqueCount(index)}->${verified ? uniqueCount(verified) : 0}; identity/date set ${verified && signature(verified) === signature(index) ? "same" : "changed"}).`);
+    return { status: "succeeded", responseStatus, completeListing: false, closureAuthority: false,
+      jobs: [...new Map(pages.flatMap(page => page.jobs).map(job => [job.externalId, job])).values()], resolvedListingUrl: listingUrl, diagnostics,
       pagination: { nextPage: failedPage ?? (end === totalPages ? 1 : end + 1), cycleComplete: failedPage === null && end === totalPages, totalPages },
-      error: failedPage === null ? null : `O'Reilly widget page ${failedPage} was incomplete.` };
+      error: failedPage === null ? null : `O'Reilly widget page ${failedPage} was unavailable.` };
   }
+
   const boundedTotal = Math.min(index.totalHits, 10_000);
   const pageSize = index.pageHits;
   const step = Math.max(1, Math.floor(pageSize * 0.8));

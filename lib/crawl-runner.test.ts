@@ -266,3 +266,10 @@ describe("runDueCrawls", () => {
   });
 
 });
+
+it("never closes jobs for a non-authoritative O'Reilly traversal, even at cycle end",async()=>{
+ const source:PersistedSource={id:"audit-row-407",company:"O'Reilly",postingUrl:"https://careers.oreillyauto.com/us/en/search-results",adapter:"phenom",nextCrawlAt:null,crawlPreviousCycleStartedAt:"2026-10-30T00:00:00Z"};
+ const store=new MemoryStore([source]);
+ const spy=vi.spyOn(crawlerModule,"crawlSource").mockResolvedValue({status:"succeeded",responseStatus:200,jobs:[],error:null,completeListing:false,closureAuthority:false,pagination:{nextPage:1,cycleComplete:true,totalPages:1}});
+ try{const result=await runDueCrawls(store,fetch,new Date("2026-11-02"));expect(result.closed).toBe(0);expect(store.paged[0].cycleComplete).toBe(false);expect(store.synced[0].completeListing).toBe(false);}finally{spy.mockRestore();}
+});

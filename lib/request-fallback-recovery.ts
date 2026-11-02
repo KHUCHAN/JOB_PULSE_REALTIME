@@ -54,6 +54,7 @@ export const recoverCheckpointedCatalog = async (
   const maxStalls = options.maxStalls ?? 1;
   const stallDelayMs = options.stallDelayMs ?? 65_000;
   const wait = options.wait ?? defaultWait;
+  const diagnostics = new Set<string>();
   let cursor = 1;
   let totalPages: number | null = null;
   let stalls = 0;
@@ -63,6 +64,8 @@ export const recoverCheckpointedCatalog = async (
     options.checkBudget?.();
     const result = await crawl({ ...source, crawlPageCursor: cursor }, fetcher, new Date());
     options.checkBudget?.();
+    for (const diagnostic of result.diagnostics ?? []) diagnostics.add(diagnostic);
+    if (diagnostics.size) result.diagnostics = [...diagnostics];
     lastResult = result;
     if (result.status !== "succeeded" || result.jobs.length === 0) {
       if (deferRecovery(result.error ?? "")) throw new Error(result.error!);
@@ -83,7 +86,7 @@ export const recoverCheckpointedCatalog = async (
     }
     if (!result.pagination) return { ...result, jobs: [...jobs.values()] };
     if (totalPages == null) totalPages = result.pagination.totalPages;
-    if (result.pagination.totalPages !== totalPages) {
+    if (result.pagination.totalPages !== totalPages && result.closureAuthority !== false) {
       throw new Error("Checkpointed catalog page count changed during request recovery.");
     }
     if (result.pagination.cycleComplete) {
