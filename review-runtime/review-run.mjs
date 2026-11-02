@@ -3,6 +3,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
+import { pendingEffectiveDate } from './date-policy.mjs';
 const codeDir=path.dirname(fileURLToPath(import.meta.url));
 const runtime=process.env.JOB_PULSE_RUNTIME??path.resolve(codeDir,'../../review-runtime');
 const project=process.env.JOB_PULSE_CANONICAL_PROJECT??JSON.parse(await fs.readFile(path.join(runtime,'config.local.json'))).canonicalProject;
@@ -41,9 +42,10 @@ try{
    const state=JSON.parse(stateBefore),pending={details:[],excluded:[]};
    for(const r of Object.values(state.records).filter(r=>r.decision==='approve'&&!r.sentAt&&!r.identityAlreadyNotified)){
      if(heldIds.includes(r.jobId)){pending.excluded.push({jobId:r.jobId,reason:'immutable user hold'});continue;}
-     const date=r.rationale?.match(/Official date: (\d{4}-\d\d-\d\d(?:T[^ ]+)?)/)?.[1]?.replace(/\.$/,'');
+     let date=pendingEffectiveDate(r),row;
+     if(!date&&r.rationale?.includes('게시일 미표기 · 수집일 ')){const response=await fetch('https://job-pulse-realtime.autodev61.chatgpt.site/api/pulse?resource=job&id='+encodeURIComponent(r.jobId));if(!response.ok)throw Error('Pending fallback GET failed');row=await response.json();date=pendingEffectiveDate(r,row);}
      if(!date||Date.parse(date)<Date.parse(runAt)-72*3600000){pending.excluded.push({jobId:r.jobId,reason:'old/unverified pending date'});continue;}
-     const response=await fetch('https://job-pulse-realtime.autodev61.chatgpt.site/api/pulse?resource=job&id='+encodeURIComponent(r.jobId));if(!response.ok)throw Error('Pending GET failed');const row=await response.json();
+     if(!row){const response=await fetch('https://job-pulse-realtime.autodev61.chatgpt.site/api/pulse?resource=job&id='+encodeURIComponent(r.jobId));if(!response.ok)throw Error('Pending GET failed');row=await response.json();}
      if(!row.resumeNotifiedAt&&!row.resumeIdentityAlreadyNotified)pending.details.push({row});
    }
    await fs.writeFile(path.join(out,stamp+'-pending.json'),JSON.stringify(pending));
@@ -66,7 +68,7 @@ try{
  result.selectedIds=plan.reviews.filter(r=>r.decision==='approve'&&!heldIds.includes(r.jobId)&&!caveatIds.has(r.jobId)).map(r=>r.jobId).concat(plan.pending.filter(r=>!heldIds.includes(r.jobId)).map(r=>r.jobId));
  const scan=await read('');const expectedRecipients=['kimchany@usc.edu','lupeter@usc.edu','xinjiaz@usc.edu','skazimi@usc.edu'];result.recipientCheck=expectedRecipients.every(x=>scan.mail?.recipients?.includes(x));
  if(result.selectedIds.length>500)throw Error('Combined selection exceeds 500 IDs');
- for(const review of plan.reviews.filter(r=>result.selectedIds.includes(r.jobId))){const audit=plan.audit.find(a=>a.id===review.jobId);if(!audit||audit.country!=='United States'||audit.failed?.length||Date.parse(audit.date)<Date.parse(runAt)-72*3600000||Date.parse(audit.date)>Date.parse(runAt)||!review.rationale.startsWith('Keyword match (not individually reviewed)')||review.rationale.length>2000)throw Error('Final policy check failed: '+review.jobId);}
+ for(const review of plan.reviews.filter(r=>result.selectedIds.includes(r.jobId))){const audit=plan.audit.find(a=>a.id===review.jobId);if(!audit||audit.country!=='United States'||audit.failed?.length||!Number.isFinite(Date.parse(audit.date))||Date.parse(audit.date)<Date.parse(runAt)-72*3600000||Date.parse(audit.date)>Date.parse(runAt)||!review.rationale.startsWith('Keyword match (not individually reviewed)')||review.rationale.length>2000)throw Error('Final policy check failed: '+review.jobId);}
  result.reviewIds=plan.reviews.map(r=>({id:r.jobId,decision:r.decision}));
  result.held=plan.audit.filter(a=>a.error||a.failed?.length).map(a=>({id:a.id,reason:a.error??a.failed}));
  if(replay){const baseline=JSON.parse(await fs.readFile(path.join(replay,'summary.json'))),old=new Set(baseline.selectedIds??[]),fresh=new Set(result.selectedIds);result.comparison={original:[...old],added:[...fresh].filter(id=>!old.has(id)),removed:[...old].filter(id=>!fresh.has(id))}; const previous=JSON.parse(await fs.readFile(path.join(replay,stamp+'-prepared.json')));result.comparison.differences=[...result.comparison.added,...result.comparison.removed].map(id=>({id,old:previous.audit.find(x=>x.id===id),replayed:plan.audit.find(x=>x.id===id),caveatHold:result.caveatHolds.find(x=>x.id===id)}));}

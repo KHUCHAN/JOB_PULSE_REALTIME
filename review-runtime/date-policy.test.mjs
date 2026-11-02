@@ -23,3 +23,10 @@ test('relative Workday card dates cannot masquerade as exact stored official dat
  const row={firstSeenAt:'2026-10-01',publishedAt:now,sourcePostedText:'Posted Today'};
  assert.equal(effectiveDate(row,null,true).date,null);assert.equal(effectiveDate(row,'2026-11-01',true).date,'2026-11-01');
 });
+
+test('pending fallback uses the fresh exact firstSeen timestamp, never the date-only label',async()=>{
+ const {pendingEffectiveDate}=await import('./date-policy.mjs');
+ const r={rationale:'Keyword match (not individually reviewed). 게시일 미표기 · 수집일 2026-11-02 기준'};
+ assert.equal(pendingEffectiveDate(r),null);assert.equal(pendingEffectiveDate(r,{firstSeenAt:now}),now);
+ assert.equal(pendingEffectiveDate({rationale:'Official date: 2026-10-01.'},{firstSeenAt:now}),'2026-10-01');
+});

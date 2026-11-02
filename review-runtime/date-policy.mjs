@@ -35,3 +35,9 @@ export function dateFromOfficial(row, date, evidence) {
   const hasUnparsedDate=/(?:datePosted|dateModified|posted[-_ ]?date|date published|posted on|posted \d+ (?:days?|hours?)|published on)/i.test(body);
   return effectiveDate(row,null,evidence?.status===200 && !hasUnparsedDate);
 }
+export function pendingEffectiveDate(record, row) {
+  const official=record.rationale?.match(/Official date: (\d{4}-\d\d-\d\d(?:T[^ ]+)?)/)?.[1]?.replace(/\.$/,'');
+  if(official)return official;
+  // The date-only disclosure is a label, never the exact 72-hour timestamp.
+  return record.rationale?.includes('게시일 미표기 · 수집일 ') ? row?.firstSeenAt??null : null;
+}
