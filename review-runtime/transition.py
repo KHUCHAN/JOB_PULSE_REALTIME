@@ -1,7 +1,7 @@
 """Cutover/rollback preparation. Only --dry-run is exercised in maintenance.
 Execution requires separate supervisor go and verified secondary coverage.
 """
-import argparse, hashlib, json, os, plistlib, shutil, sqlite3, subprocess, sys, time, tomllib
+import argparse, fcntl, hashlib, json, os, plistlib, shutil, sqlite3, subprocess, sys, time, tomllib
 from pathlib import Path
 BASE=Path.home()/'Library/Application Support/Job Pulse';RUNTIME=BASE/'review-runtime';ROOT=BASE/'runtime-root';REPO=BASE/'repo'
 ID='job-pulse-2-hour-crawl';DBS=[Path.home()/'.codex/sqlite'/n for n in ['codex.db','codex-dev.db']]
@@ -80,19 +80,27 @@ def main():
         if row['status']!='ACTIVE':raise RuntimeError('Cutover requires ACTIVE legacy owner')
         preflight=json.loads((RUNTIME/'round2-launchd-preflight.json').read_text());assert preflight['status']=='passed'
         latest=json.loads((RUNTIME/'shadow-launchd.stdout.log').read_text().splitlines()[-1]);assert latest['status']=='completed-shadow' and latest['posts']==latest['llmTokens']==0
-        coverage=ROOT/'coverage-readiness.json';ready=json.loads(coverage.read_text()) if coverage.exists() else {}
-        blockers=[name+' coverage not verified' for name in ['community','inbox','platforms'] if ready.get(name) is not True]
-        steps=['verify idle metadata and exact automation CAS','CAS ACTIVE -> PAUSED in both DB mirrors and TOML','foreground hash-verified final snapshot and final-copy manifest files','copy token in-process with mode 0600, never output value/hash','enable live launchd lane every 10800 seconds','one admitted crawl dispatch, deterministic review, final gates, persist, at most one mail; uncertain POST -> durable hold']
+        ready=json.loads(subprocess.check_output([shutil.which('node') or 'node',str(REPO/'review-runtime/coverage-check.mjs')],text=True))
+        blockers=ready['blockers']
+        steps=['verify idle metadata and exact automation CAS','acquire shared review-owner lock; disable/unload idle shadow lane','CAS ACTIVE -> PAUSED in both DB mirrors and TOML','foreground hash-verified final snapshot and final-copy manifest files','copy token in-process with mode 0600, never output value/hash','enable live launchd lane every 10800 seconds','one admitted crawl dispatch, deterministic review, final gates, persist, at most one mail; uncertain POST -> durable hold']
     else:
         blockers=[];steps=['disable and unload live lane; require no live process remains','hash-check runtime canonical state and all durable receipts/checkpoints back to original manifest paths','CAS PAUSED -> ACTIVE in both DB mirrors and TOML; preserve originals and all evidence']
     plan={'action':a.action,'dryRun':not a.execute,'automationStatus':row['status'],'idleObserved':True,'steps':steps,'blockers':blockers,'changesMade':False,'livePostAuth':'runtime-root token, mode 0600 -> server CODEX_REVIEW_TOKEN','dispatchAuth':'gh macOS Keychain credential; launchd read-only authentication observed'}
     if not a.execute:print(json.dumps(plan,indent=2));return
     if not a.go:raise RuntimeError('Separate supervisor go required; use --dry-run until then')
     if blockers:raise RuntimeError('Cutover readiness held: '+', '.join(blockers))
+    owner_lock=(RUNTIME/'review-owner.lock').open('a+')
+    try:fcntl.flock(owner_lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+    except BlockingIOError:raise RuntimeError('Review owner active; shadow/live cannot overlap transition')
+    shadow_label='com.jobpulse.review-shadow';shadow_service='gui/'+UID+'/'+shadow_label
     journal=ROOT/'cutover-journal.json'
     if a.action=='cutover':
         if journal.exists():raise RuntimeError('Prior cutover journal exists; reconcile read-only')
         journal.write_text(json.dumps({'phase':'before-pause','row':row,'toml':text}));journal.chmod(0o600)
+        shadow=subprocess.run(['launchctl','print',shadow_service],capture_output=True,text=True)
+        if 'state = running' in shadow.stdout:raise RuntimeError('Shadow scheduler active; retry only when idle')
+        subprocess.run(['launchctl','disable',shadow_service],check=True)
+        if shadow.returncode==0:subprocess.run(['launchctl','bootout',shadow_service],check=True)
         cas(row,text,'PAUSED')
         subprocess.run([sys.executable,str(REPO/'review-runtime/snapshot-runtime.py')],check=True,timeout=60)
         snapshot=(ROOT/'current-snapshot').resolve();meta=json.loads((snapshot/'snapshot-manifest.json').read_text())
@@ -117,14 +125,20 @@ def main():
         auth=json.loads((ROOT/'live-authorization.json').read_text())
         if row['status']!='PAUSED':raise RuntimeError('Rollback requires legacy PAUSED')
         for entry in auth['files']:
-            if entry['relative'].startswith('.codex_tmp/') and not entry['relative'].endswith(('.mjs','.ts')):
+            if (entry['relative'].startswith('.codex_tmp/') and not entry['relative'].endswith(('.mjs','.ts'))) or entry['relative'] in ['review-runtime/undated-source-observations.json','review-runtime/community-lookup-checkpoints.json']:
                 source=ROOT/entry['relative'];original=Path(entry['source'])
-                if str(original).startswith(str(canonical)):copy_verified(source,original)
+                if str(original).startswith(str(canonical)) or original in [RUNTIME/'undated-source-observations.json',RUNTIME/'community-lookup-checkpoints.json']:copy_verified(source,original)
         # Preserve attempt receipts for quarantine before restoring legacy.
         # Legacy does not understand the new attempt ledger: unresolved attempts
         # must be reconciled read-only before re-enabling its writer.
         if (ROOT/'live-hold.json').exists():raise RuntimeError('Uncertain live attempt: reconciliation required before legacy ACTIVE')
-        cas(row,text,'ACTIVE');print(json.dumps({'status':'rollback-restored','legacy':'ACTIVE','tokenPrinted':False}))
+        cas(row,text,'ACTIVE')
+        subprocess.run([sys.executable,str(REPO/'review-runtime/snapshot-runtime.py')],check=True,timeout=60)
+        # Authorization remains as a retained record; shadow resumes only after explicit rollback marker.
+        (ROOT/'rollback-completed.json').write_text(json.dumps({'at':time.time()}))
+        subprocess.run(['launchctl','enable',shadow_service],check=True)
+        subprocess.run(['launchctl','bootstrap','gui/'+UID,str(Path.home()/'Library/LaunchAgents/com.jobpulse.review-shadow.plist')],check=True)
+        print(json.dumps({'status':'rollback-restored','legacy':'ACTIVE','tokenPrinted':False}))
 if __name__=='__main__':
     try:main()
     except Exception as e:print(json.dumps({'status':'hold-transition','reason':str(e),'changesMade':'see phase journal if --execute was used'}));sys.exit(1)

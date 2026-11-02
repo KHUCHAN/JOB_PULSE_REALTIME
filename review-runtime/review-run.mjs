@@ -1,4 +1,6 @@
 import './desktop-guard.cjs';
+import {acquireReviewLock} from './lane-lock.mjs';
+await acquireReviewLock();
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -9,14 +11,16 @@ const codeDir=path.dirname(fileURLToPath(import.meta.url));
 const runtime=process.env.JOB_PULSE_RUNTIME??path.resolve(codeDir,'../../review-runtime');
 const snapshotLink=path.resolve(runtime,'../runtime-root/current-snapshot');
 let project;try{project=await fs.realpath(snapshotLink);const manifest=JSON.parse(await fs.readFile(path.join(project,'snapshot-manifest.json')));for(const entry of manifest.files){const bytes=await fs.readFile(path.join(project,entry.relative));if(createHash('sha256').update(bytes).digest('hex')!==entry.sha256)throw Error('Snapshot hash mismatch: '+entry.relative);}}catch(error){console.log(JSON.stringify({status:'hold-snapshot-missing-or-invalid',error:error.message,posts:0,llmTokens:0}));process.exit(1);}
+if(process.env.JOB_PULSE_LANE!=='live'){try{await fs.access(path.resolve(runtime,'../runtime-root/live-authorization.json'));try{await fs.access(path.resolve(runtime,'../runtime-root/rollback-completed.json'));}catch{throw Error('hold-shadow-live-authorized');}}catch(e){if(e.code!=='ENOENT')throw e;}}
 const args=process.argv.slice(2),replayIndex=args.indexOf('--replay'),replay=replayIndex>=0?path.resolve(args[replayIndex+1]):null;
 if(args.some(x=>['--write','--dispatch','--persist'].includes(x)))throw Error('Phase 3 not authorized; runner is shadow-only');
 if(project.startsWith(path.join(process.env.HOME,'Desktop')+path.sep))throw Error('Desktop project forbidden');
 let runAt=new Date().toISOString(),stamp='heartbeat-'+runAt.replace(/[-:]/g,'').slice(0,15);
 if(replay){const summary=JSON.parse(await fs.readFile(path.join(replay,'summary.json')));runAt=summary.runAt;stamp=summary.stamp;}
 const label=(replay?'replay-':'shadow-')+stamp+'-'+Date.now();
-const out=path.join(runtime,'shadow-runs',label);await fs.mkdir(out,{recursive:true});
+const out=process.env.JOB_PULSE_LANE==='live'&&process.env.JOB_PULSE_EVIDENCE_OUTPUT?path.resolve(process.env.JOB_PULSE_EVIDENCE_OUTPUT):path.join(runtime,'shadow-runs',label);await fs.mkdir(out,{recursive:true});
 try{await fs.copyFile(path.join(project,'review-runtime/undated-source-observations.json'),path.join(out,'undated-source-observations.json'));await fs.chmod(path.join(out,'undated-source-observations.json'),0o600);}catch(error){if(error.code!=='ENOENT')throw error;}
+for(const name of ['community-lookup-checkpoints.json'])try{await fs.copyFile(path.join(project,'review-runtime',name),path.join(out,name));await fs.chmod(path.join(out,name),0o600);}catch(e){if(e.code!=='ENOENT')throw e;}
 const statePath=path.join(project,'.codex_tmp/codex-direct-db-gmail-state.json');
 const boundedStateRead=()=>fs.readFile(statePath);
 const stateBefore=await boundedStateRead();
@@ -27,6 +31,7 @@ let quarantine=[];if(process.env.JOB_PULSE_QUARANTINE)quarantine=JSON.parse(awai
 const norm=s=>String(s??'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
 const canon=s=>{try{const u=new URL(s);u.hash='';for(const k of [...u.searchParams.keys()])if(/^(utm_|source$|src$|ref$|gh_src$|_ccid$)/i.test(k))u.searchParams.delete(k);return u.href.replace(/\/$/,'');}catch{return null;}};
 const uncertain=j=>quarantine.some(q=>q.id===j.id||(q.officialUrl&&canon(q.officialUrl)===canon(j.officialUrl))||(q.requisitionId&&norm(q.company)===norm(j.company)&&norm(q.requisitionId)===norm(j.requisitionId))||(q.company&&[q.company,q.title,q.location].map(norm).join('|')===[j.company,j.title,j.location].map(norm).join('|')));
+const codeEvidence=Object.fromEntries(await Promise.all(['review-run.mjs','community-discovery.mjs','community-merge.mjs','inbox-stage.mjs','shadow-guard.cjs','source-guard.mjs','date-policy.mjs'].map(async n=>[n,createHash('sha256').update(await fs.readFile(path.join(codeDir,n))).digest('hex')])));
 const stages=[];let result={kind:replay?'offline-gate-replay':'live-shadow',stamp,runAt,out,posts:0,llmTokens:0,selectedIds:[],held:[],stages};
 const read=async suffix=>JSON.parse(await fs.readFile(path.join(out,stamp+suffix+'.json'),'utf8'));
 async function run(name,script,extra=[]){
@@ -42,6 +47,7 @@ try{
    // The replay uses saved official bodies; it does not claim a frozen pre-run
    // history snapshot, which was not retained. No durable state file is created.
    result.identityReplay='current history projected before runAt; not a frozen historical state';
+   try{await fs.copyFile(path.join(replay,'community-discovery.json'),path.join(out,'community-discovery.json'));await fs.chmod(path.join(out,'community-discovery.json'),0o600);await run('community-replay-merge',path.join(codeDir,'community-merge.mjs'),[project,runtime,stamp]);result.communityReplay=JSON.parse(await fs.readFile(path.join(out,'community-merge.json')));}catch(e){if(e.code!=='ENOENT')throw e;}
  }else{
    const {execFile}=await import('node:child_process');
    const {promisify}=await import('node:util');
@@ -63,6 +69,15 @@ try{
      if(!row.resumeNotifiedAt&&!row.resumeIdentityAlreadyNotified)pending.details.push({row});
    }
    await fs.writeFile(path.join(out,stamp+'-pending.json'),JSON.stringify(pending));
+   await run('community-discovery',path.join(codeDir,'community-discovery.mjs'),[project,runtime,stamp,runAt]);
+   await run('community-merge',path.join(codeDir,'community-merge.mjs'),[project,runtime,stamp]);
+   await run('inbox',path.join(codeDir,'inbox-stage.mjs'),[project,stamp]);
+   const inbox=JSON.parse(await fs.readFile(path.join(out,'inbox-stage.json')));result.inbox=inbox;result.held.push(...inbox.held);
+   const combined=await read(''),sourcesResponse=await fetch('https://job-pulse-realtime.autodev61.chatgpt.site/api/pulse?resource=sources');if(!sourcesResponse.ok)throw Error('Combined source guard GET failed');
+   const sources=await sourcesResponse.json();await fs.writeFile(path.join(out,'source-health.json'),JSON.stringify(sources));
+   const {guardScan}=await import('./source-guard.mjs');await guardScan(combined,sources,out);
+   result.held.push(...combined.details.filter(x=>uncertain(x.row)).map(x=>({id:x.row.id,reason:'Prior uncertain transport identity in secondary stage'})));combined.details=combined.details.filter(x=>!uncertain(x.row));
+   await fs.writeFile(path.join(out,stamp+'.json'),JSON.stringify(combined));stages.push({name:'combined-source-guard',status:'passed'});
    await stage('official-fast','official-fast');await stage('enrich','enrich');await stage('vendor-details','vendor-details');
    try{await stage('microsoft-epochs','microsoft-epochs');}catch(error){
      const scan=await read(''),held=scan.details.filter(x=>x.row.company==='Microsoft');
@@ -93,6 +108,7 @@ try{
  result.held=result.held.concat(plan.audit.filter(a=>a.error||a.failed?.length).map(a=>({id:a.id,reason:a.error??a.failed})));
  if(replay){const baseline=JSON.parse(await fs.readFile(path.join(replay,'summary.json'))),old=new Set(baseline.selectedIds??[]),fresh=new Set(result.selectedIds);result.comparison={original:[...old],added:[...fresh].filter(id=>!old.has(id)),removed:[...old].filter(id=>!fresh.has(id))}; const previous=JSON.parse(await fs.readFile(path.join(replay,stamp+'-prepared.json')));result.comparison.differences=[...result.comparison.added,...result.comparison.removed].map(id=>({id,old:previous.audit.find(x=>x.id===id),replayed:plan.audit.find(x=>x.id===id),caveatHold:result.caveatHolds.find(x=>x.id===id)}));}
  if(args.includes('--exceptions')){const {exceptionForRow}=await import('./exception-run.mjs');const scan=await read(''),official=await read('-official'),context={calls:0,output:out};result.exceptions=[];for(const issue of plan.audit.filter(a=>a.error)){const row=scan.details.find(x=>x.row.id===issue.id)?.row;if(!row)continue;const evidence=official.find(x=>x.id===row.id);result.exceptions.push(await exceptionForRow(row,evidence?.text??'',issue.error,context));}result.llmTokens=result.exceptions.reduce((n,x)=>n+(x.usage?.input_tokens??0),0);}
+ result.codeEvidence=codeEvidence;
  result.status='completed-shadow';
 }catch(error){result.status='hold-pipeline-error';result.error=error.message;}
 const after=await boundedStateRead();result.snapshotStateUnchanged=createHash('sha256').update(after).digest('hex')===stateHash;

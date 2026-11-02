@@ -22,3 +22,20 @@ test('missing snapshot holds before a shadow can read a legacy project',()=>{
  const child=spawnSync(process.execPath,[path.resolve('review-runtime/review-run.mjs')],{env:{...process.env,JOB_PULSE_RUNTIME:runtime},encoding:'utf8'});
  assert.equal(child.status,1);assert.equal(JSON.parse(child.stdout).status,'hold-snapshot-missing-or-invalid');assert.equal(JSON.parse(child.stdout).posts,0);
 });
+test('unstructured and unresolved inbox inputs are explicit holds and leave the scan usable',()=>{
+ const root=mkdtempSync(path.join(os.tmpdir(),'job-pulse-inbox-test-')),out=path.join(root,'evidence'),tmp=path.join(root,'.codex_tmp'),inbox=path.join(tmp,'review-inbox');mkdirSync(out);mkdirSync(inbox,{recursive:true});
+ const stamp='heartbeat-20261102T084513';writeFileSync(path.join(tmp,'codex-direct-db-gmail-state.json'),'{"records":{}}');
+ writeFileSync(path.join(out,stamp+'.json'),JSON.stringify({details:[],inbox:['lead.pdf','lead.json']}));writeFileSync(path.join(inbox,'lead.pdf'),'unstructured fixture');writeFileSync(path.join(inbox,'lead.json'),'[{"title":"ambiguous"}]');
+ const child=spawnSync(process.execPath,['--require',path.resolve('review-runtime/shadow-guard.cjs'),path.resolve('review-runtime/inbox-stage.mjs'),root,stamp],{env:{...process.env,JOB_PULSE_PROJECT_ROOT:root,JOB_PULSE_SHADOW_OUTPUT:out},encoding:'utf8'});
+ assert.equal(child.status,0,child.stderr);const report=JSON.parse(child.stdout);assert.equal(report.held.length,2);assert.equal(report.posts,0);assert.equal(report.llmTokens,0);assert.equal(JSON.parse(readFileSync(path.join(out,stamp+'.json'))).details.length,0);
+});
+test('a shared fcntl owner lock rejects a second shadow or live invocation',()=>{
+ const runtime=mkdtempSync(path.join(os.tmpdir(),'job-pulse-lock-test-'));
+ const code=`import fcntl,subprocess,os\nf=open(os.path.join(os.environ['JOB_PULSE_RUNTIME'],'review-owner.lock'),'a+')\nfcntl.flock(f,fcntl.LOCK_EX|fcntl.LOCK_NB)\nr=subprocess.run(['/usr/local/bin/python3',${JSON.stringify(path.resolve('review-runtime/lane-lock.py'))},'/bin/echo','MUST_NOT_RUN'],capture_output=True,text=True)\nassert r.returncode==1 and 'hold-review-owner-active' in r.stdout and 'MUST_NOT_RUN' not in r.stdout\n`;
+ const result=spawnSync('/usr/local/bin/python3',['-c',code],{env:{...process.env,JOB_PULSE_RUNTIME:runtime},encoding:'utf8'});assert.equal(result.status,0,result.stderr);
+});
+test('a shadow refuses a live-authorized root before opening state',()=>{
+ const base=mkdtempSync(path.join(os.tmpdir(),'job-pulse-live-guard-test-')),runtime=path.join(base,'review-runtime'),root=path.join(base,'runtime-root'),snapshot=path.join(root,'current-snapshot');mkdirSync(runtime);mkdirSync(snapshot,{recursive:true});
+ writeFileSync(path.join(snapshot,'snapshot-manifest.json'),'{"files":[]}');writeFileSync(path.join(root,'live-authorization.json'),'{}');
+ const child=spawnSync(process.execPath,[path.resolve('review-runtime/review-run.mjs')],{env:{...process.env,JOB_PULSE_RUNTIME:runtime},encoding:'utf8'});assert.equal(child.status,1);assert.match(child.stderr,/hold-shadow-live-authorized/);
+});

@@ -1,41 +1,53 @@
-// Foreground, offline aligned comparison. Never rescan today's mutable DB.
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import {fileURLToPath} from 'node:url';
-import {spawn} from 'node:child_process';
-const code=path.dirname(fileURLToPath(import.meta.url));
-const runtime=process.env.JOB_PULSE_RUNTIME??path.resolve(code,'../../review-runtime');
-const stamp=process.argv[2];if(!/^heartbeat-\d{8}T\d{6}$/.test(stamp??''))throw Error('Pass exact legacy heartbeat name');
-const snapshot=await fs.realpath(path.resolve(runtime,'../runtime-root/current-snapshot'));
-const meta=JSON.parse(await fs.readFile(path.join(snapshot,'snapshot-manifest.json')));
-if(meta.heartbeat!==stamp)throw Error('Snapshot does not contain that heartbeat; foreground snapshot --heartbeat '+stamp+' first');
-const legacy=path.join(snapshot,'legacy'),read=async name=>JSON.parse(await fs.readFile(path.join(legacy,name)));
-const scan=await read(stamp+'.json'),selection=await read('selection-manifest.json'),dispatch=await read(stamp+'-us-dispatch-plan.json');
-if(!Array.isArray(selection.selectedIds)||JSON.stringify(selection.selectedIds)!==JSON.stringify(dispatch.selected))throw Error('Actual legacy selection evidence disagrees');
+// Read-only aligned comparison: saved evidence first; explicit fixed-boundary re-fetch fallback.
+import fs from 'node:fs/promises';import path from 'node:path';import {fileURLToPath} from 'node:url';import {spawn} from 'node:child_process';
+const code=path.dirname(fileURLToPath(import.meta.url)),runtime=process.env.JOB_PULSE_RUNTIME??path.resolve(code,'../../review-runtime');
+const snapshot=await fs.realpath(path.resolve(runtime,'../runtime-root/current-snapshot')),meta=JSON.parse(await fs.readFile(path.join(snapshot,'snapshot-manifest.json')));
+const stamp=process.argv[2]==='--snapshot-heartbeat'?meta.heartbeat:process.argv[2];if(!/^heartbeat-\d{8}T\d{6}$/.test(stamp??''))throw Error('Pass exact legacy heartbeat name');
+if(meta.heartbeat!==stamp)throw Error('Foreground snapshot --heartbeat '+stamp+' first');
+const legacy=path.join(snapshot,'legacy'),read=async n=>JSON.parse(await fs.readFile(path.join(legacy,n))),optional=async n=>read(n).catch(e=>{if(e.code==='ENOENT')return null;throw e;});
+const summary=await optional('summary.json'),selection=await read('selection-manifest.json'),dispatch=await optional(stamp+'-us-dispatch-plan.json');
+if(dispatch&&JSON.stringify(selection.selectedIds)!==JSON.stringify(dispatch.selected))throw Error('Legacy selection evidence disagrees');
 const baseline=path.join(runtime,'aligned-inputs',stamp+'-'+Date.now());await fs.mkdir(baseline,{recursive:true});
-for(const name of await fs.readdir(legacy))if(name.startsWith(stamp)&&name.endsWith('.json')){await fs.copyFile(path.join(legacy,name),path.join(baseline,name));await fs.chmod(path.join(baseline,name),0o600);}
-await fs.writeFile(path.join(baseline,'summary.json'),JSON.stringify({stamp,runAt:scan.runAt,selectedIds:selection.selectedIds}));
-const child=spawn(process.execPath,[path.join(code,'review-run.mjs'),'--replay',baseline],{env:process.env,stdio:['ignore','pipe','inherit']});
-const finished=new Promise(resolve=>child.on('close',resolve));let stdout='';for await(const chunk of child.stdout)stdout+=chunk;const exit=await finished;
-const report=JSON.parse(stdout.trim());
-report.alignment={legacyHeartbeat:stamp,runAt:scan.runAt,snapshotAt:Object.fromEntries(Object.entries(scan.scans).map(([country,s])=>[country,s.snapshotAt])),actualLegacySelectedIds:selection.selectedIds,scan:'saved raw pages and saved official evidence; offline network denied',history:'current snapshot projected before legacy run; original pre-run state was not retained'};
-const original=new Set(selection.selectedIds),fresh=new Set(report.selectedIds??[]);
-const prep=JSON.parse(await fs.readFile(path.join(report.out,stamp+'-prepared.json')));
-report.alignment.differences=[...new Set([...original,...fresh])].filter(id=>original.has(id)!==fresh.has(id)).map(id=>({id,legacySelected:original.has(id),shadowSelected:fresh.has(id),legacyAudit:selection.reviews.find(r=>r.jobId===id)??null,shadowAudit:prep.audit.find(r=>r.id===id)??null,caveatHold:report.caveatHolds?.find(r=>r.id===id)??null,explanation:'Compare saved legacy decision and deterministic gate evidence; historical identity history is projected, not a frozen pre-run state.'}));
-// Explain the supervisor's earlier unaligned 07:11/07:19 comparisons using
-// their saved inputs, never by comparing against today's mutable DB.
-report.priorUnalignedComparisons=[];
-if(stamp==='heartbeat-20261102T055005'){
- const rawIds=new Set(Object.values(scan.scans).flatMap(s=>s.pages.flatMap(p=>p.items.map(j=>j.id))));
- const boundary=Math.max(...Object.values(scan.scans).map(s=>Date.parse(s.snapshotAt)));
- for(const name of await fs.readdir(path.join(runtime,'shadow-runs'))){
-  if(!/^shadow-heartbeat-20261102T07(?:11|19)/.test(name))continue;
-  const dir=path.join(runtime,'shadow-runs',name),previous=JSON.parse(await fs.readFile(path.join(dir,'summary.json'))),input=JSON.parse(await fs.readFile(path.join(dir,previous.stamp+'.json')));
-  report.priorUnalignedComparisons.push({runAt:previous.runAt,selected:previous.selectedIds.map(id=>{
-   const row=input.details.find(x=>x.row.id===id)?.row;
-   return {id,title:row?.title,firstSeenAt:row?.firstSeenAt,publishedAt:row?.publishedAt,inLegacyRawPages:rawIds.has(id),
-    explanation:Date.parse(row?.firstSeenAt)>boundary?'Collected after the legacy fixed scan boundary; absent from that heartbeat input.':!rawIds.has(id)&&!row?.publishedAt?'Undated DB row absent from the legacy saved pages. The pre-policy helper used jobs/postedAfter; the later reviewJobs scan includes undated first-seen candidates. Input/query coverage differs; no aligned gate-selection difference was observed.':!rawIds.has(id)?'Absent from legacy saved raw pages; different scan input, not an observed aligned gate disagreement.':'Present in both inputs; compare gate audit evidence.'};
-  })});
+for(const n of await fs.readdir(legacy))if(n.endsWith('.json')){await fs.copyFile(path.join(legacy,n),path.join(baseline,n));await fs.chmod(path.join(baseline,n),0o600);}
+let scan=await optional(stamp+'.json'),provenance='saved raw pages and saved official evidence; network denied during gate replay';
+if(process.argv.includes('--refetch')||!scan||!Object.values(scan.scans).every(s=>Array.isArray(s.pages)&&s.pages.every(p=>Array.isArray(p.items)))){
+ const runAt=summary?.runAt??scan?.runAt,cutoff=new Date(Date.parse(runAt)-72*3600000).toISOString();
+ const scans={},details=[];const records=Object.values(JSON.parse(await fs.readFile(path.join(snapshot,'.codex_tmp/codex-direct-db-gmail-state.json'))).records).filter(r=>r.persistedAt&&r.persistedAt<runAt);
+ const prior=new Set(records.map(r=>r.jobId));
+ for(const [country,s]of Object.entries(summary?.rawScan??scan?.scans??{})){
+  if(!s.snapshotAt)throw Error('No heartbeat fixed snapshotAt evidence');const pages=[];
+  for(let page=1;page<=5;page++){
+   // Omit current unreviewed filter: it is not time-travel aware. Project local history before runAt instead.
+   const q=new URLSearchParams({resource:'reviewJobs',region:'us',postedAfter:cutoff.slice(0,10),resumeMatch:'chanyoung-resume',sort:'publishedAt',order:'desc',pageSize:'100',page:String(page),snapshotAt:s.snapshotAt});q.append('program','internship');q.append('program','coop');
+   const response=await fetch('https://job-pulse-realtime.autodev61.chatgpt.site/api/pulse?'+q,{signal:AbortSignal.timeout(55000)});if(!response.ok)throw Error('Re-fetch HTTP '+response.status);const data=await response.json();if(data.snapshotAt!==s.snapshotAt)throw Error('Re-fetch snapshot mismatch');pages.push(data);
+   for(const row of data.items)if(!prior.has(row.id))details.push({country,page,row});if(data.items.length<100||page*100>=data.total)break;if(page===5)break;
+  }scans[country]={pages,snapshotAt:s.snapshotAt,stop:pages.at(-1).total>pages.length*100?'five-page backlog':'end'};
  }
+ const decisionIds=new Set(selection.reviews.map(r=>r.jobId));
+ const historicalDetails=scan?.details??details.filter(x=>decisionIds.has(x.row.id));
+ for(const review of selection.reviews)if(!historicalDetails.some(x=>x.row.id===review.jobId)){const response=await fetch('https://job-pulse-realtime.autodev61.chatgpt.site/api/pulse?resource=job&id='+encodeURIComponent(review.jobId));if(!response.ok)throw Error('Historical decision row unavailable '+review.jobId);const row=await response.json();if(Date.parse(row.firstSeenAt)>Math.max(...Object.values(scans).map(x=>Date.parse(x.snapshotAt))))throw Error('Row after heartbeat boundary');historicalDetails.push({country:'United States',row});}
+ scan={...scan,runAt,cutoff,scans,details:historicalDetails,mail:scan?.mail??{recipients:summary.gmailVerification.recipients},inbox:scan?.inbox??[],skipped:scan?.skipped??[]};
+ provenance='RE-FETCH of reviewJobs at heartbeat fixed snapshotAt; current unreviewed filter omitted and history projected before runAt. snapshotAt bounds firstSeenAt only; mutable catalog/body fields are not historical snapshots. Saved candidate details retained when available.';
+ await fs.writeFile(path.join(baseline,stamp+'.json'),JSON.stringify(scan));
 }
-await fs.writeFile(path.join(report.out,'aligned-comparison.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));process.exitCode=exit;
+if(!await optional(stamp+'-official.json')){
+ const env={...process.env,JOB_PULSE_PROJECT_ROOT:snapshot,JOB_PULSE_SHADOW_OUTPUT:baseline};
+ for(const mode of ['official-fast','enrich','vendor-details']){const child=spawn(process.execPath,['--require',path.join(code,'desktop-guard.cjs'),'--require',path.join(runtime,'preload.cjs'),'--require',path.join(code,'shadow-guard.cjs'),path.join(runtime,'review-stage.mjs'),snapshot,stamp,scan.runAt,mode],{env,stdio:['ignore','ignore','inherit']});const exit=await new Promise(r=>child.on('close',r));if(exit)throw Error('Official evidence re-fetch failed '+mode);}
+ provenance+=' OFFICIAL EVIDENCE RE-FETCHED NOW; this is not historical body equivalence.';
+}
+for(const suffix of ['-prepared','-us-plan'])if(!await optional(stamp+suffix+'.json'))await fs.writeFile(path.join(baseline,stamp+suffix+'.json'),JSON.stringify({reviews:selection.reviews,audit:[],pending:[]}));
+await fs.writeFile(path.join(baseline,'summary.json'),JSON.stringify({stamp,runAt:scan.runAt,selectedIds:selection.selectedIds}));
+const child=spawn(process.execPath,[path.join(code,'review-run.mjs'),'--replay',baseline],{env:process.env,stdio:['ignore','pipe','inherit']});const finished=new Promise(resolve=>child.on('close',resolve));let stdout='';for await(const chunk of child.stdout)stdout+=chunk;const exit=await finished,report=JSON.parse(stdout.trim());
+if(!report.out)throw Error('Gate replay did not start: '+JSON.stringify(report));
+const plan=JSON.parse(await fs.readFile(path.join(report.out,stamp+'-us-plan.json'))),old=new Map(selection.reviews.map(r=>[r.jobId,r])),fresh=new Map(plan.reviews.map(r=>[r.jobId,r]));
+const payload=(review,row)=>({company:row.company,title:row.title,location:row.location||'Location not specified',timing:row.publishedAt?`Posted ${row.publishedAt.slice(0,10)}`:`First seen ${row.firstSeenAt.slice(0,10)}`,reasons:[review.rationale.trim()],officialUrl:review.verifiedUrl||row.officialUrl,score:row.resumeMatchScore??row.matchScore,program:/co[- ]?op/i.test(row.title+' '+row.employmentType)?'Co-op':'Internship',scheduleNote:null});
+const differences=[];for(const id of new Set([...old.keys(),...fresh.keys()])){const a=old.get(id),b=fresh.get(id);if(a?.decision!==b?.decision)differences.push({id,legacy:a?.decision??null,shadow:b?.decision??null,legacyRationale:a?.rationale,shadowRationale:b?.rationale,audit:plan.audit.find(x=>x.id===id),cause:!b?'Candidate excluded by deterministic identity/source/gate audit; see audit':!a?'Additional candidate in saved input; legacy withheld it outside its decision set':'Deterministic gate result differs; failed gate names and saved rationale identify the cause'});}
+const approved=[];for(const [id,a]of old)if(a.decision==='approve'){
+ const b=fresh.get(id),row=scan.details.find(x=>x.row.id===id)?.row;if(!row)throw Error('Missing approved row '+id);
+ const legacyPayload=payload(a,row),shadowPayload=b?.decision==='approve'?payload(b,row):null,exactRationale=a.rationale===b?.rationale;
+ approved.push({id,exactRationale,legacyRationale:a.rationale,shadowRationale:b?.rationale??null,legacyMailPayload:legacyPayload,shadowMailPayload:shadowPayload,exactMailPayload:JSON.stringify(legacyPayload)===JSON.stringify(shadowPayload),cause:exactRationale?'Exact stored rationale, keyword reasons, caveats and projected mail date label agree.':{reason:'Fresh deterministic rationale text differs; original stored rationale is unchanged.',causes:[...(b?.rationale.includes('2027 recruiting cycle')&&!a.rationale.includes('2027 recruiting cycle')?['prepare preserves DB resumeMatchEvidence year/date metadata; legacy removed those non-keyword notices. No year selection gate.']:[]),...(a.rationale.includes('Completed an Introduction')&&!b?.rationale.includes('Completed an Introduction')?['prepare/caveat audit require degree or enrollment wording; prerequisite coursework sentence has neither, so it is omitted.']:[]),...(a.rationale.includes('Matriculating')&&!b?.rationale.includes('Matriculating')?['caveat extractor does not match matriculating/graduate-year/hybrid-office wording, so three exact source caveats are omitted.']:[]),...(a.rationale.includes('Currently has, or is in the process')?['prepare initially extracts authorization but misses the PhD sentence; complete-caveats appends that exact sentence later, changing order.']:[])],legacyOnly:a.rationale,shadowOnly:b?.rationale,audit:plan.audit.find(x=>x.id===id),caveatHold:report.caveatHolds?.find(x=>x.id===id)}});
+}
+const stored=Object.values(JSON.parse(await fs.readFile(path.join(snapshot,'.codex_tmp/codex-direct-db-gmail-state.json'))).records);
+for(const row of approved)row.legacyMatchesStoredRationale=stored.find(r=>r.jobId===row.id)?.rationale===row.legacyRationale;
+report.alignment={legacyHeartbeat:stamp,runAt:scan.runAt,snapshotAt:Object.fromEntries(Object.entries(scan.scans).map(([k,s])=>[k,s.snapshotAt])),scan:provenance,history:'Current history projected strictly before runAt in memory; no frozen pre-run state was retained',legacyDecisions:old.size,shadowDecisions:fresh.size,legacyApproved:[...old.values()].filter(x=>x.decision==='approve').length,shadowApproved:[...fresh.values()].filter(x=>x.decision==='approve').length,decisionDifferences:differences,approved,rawPageCounts:Object.fromEntries(Object.entries(scan.scans).map(([k,s])=>[k,{pages:s.pages.length,rows:s.pages.reduce((n,p)=>n+p.items.length,0),stop:s.stop}])),mailPayloadMethod:'Projected using lib/resume-alert-store.ts: stored rationale is the entire reasons[0], timing uses DB publishedAt/firstSeenAt. No mail POST; original rendered MIME was not retained.',actualLegacySelectedIds:selection.selectedIds};
+await fs.writeFile(path.join(report.out,'aligned-comparison.json'),JSON.stringify(report,null,2));console.log(JSON.stringify({status:report.status,out:report.out,scan:provenance,legacyDecisions:old.size,shadowDecisions:fresh.size,decisionDifferences:differences.length,legacyApproved:report.alignment.legacyApproved,shadowApproved:report.alignment.shadowApproved,selected:report.selectedIds.length,rationaleDifferences:approved.filter(x=>!x.exactRationale).length,mailPayloadDifferences:approved.filter(x=>!x.exactMailPayload).length}));process.exitCode=exit;

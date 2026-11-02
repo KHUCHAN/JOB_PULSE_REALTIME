@@ -7,10 +7,10 @@ if(!root||!out)throw Error('Shadow project/output required');
 const original={read:fsp.readFile.bind(fsp),readSync:fs.readFileSync.bind(fs),write:fsp.writeFile.bind(fsp),readdir:fsp.readdir.bind(fsp)};
 const filename=v=>v instanceof URL?require('node:url').fileURLToPath(v):String(v);
 const isState=p=>path.basename(p)==='codex-direct-db-gmail-state.json';
-const redirected=p=>((path.dirname(p)===path.join(root,'.codex_tmp')&&p.endsWith('.json')&&!isState(p)&&!p.endsWith('-external-delivery-exclusion.review.json'))||path.basename(p)==='undated-source-observations.json')?path.join(out,path.basename(p)):p;
+const redirected=p=>((path.dirname(p)===path.join(root,'.codex_tmp')&&p.endsWith('.json')&&!isState(p)&&!p.endsWith('-external-delivery-exclusion.review.json'))||['undated-source-observations.json','community-lookup-checkpoints.json'].includes(path.basename(p)))?path.join(out,path.basename(p)):p;
 async function read(p,opts){const file=filename(p);if(isState(file)&&process.env.JOB_PULSE_REPLAY_CANDIDATES){
  const current=JSON.parse(await original.read(file,'utf8')),ids=new Set(JSON.parse(await original.read(process.env.JOB_PULSE_REPLAY_CANDIDATES,'utf8'))),asOf=process.env.JOB_PULSE_REPLAY_ASOF;
- const projected={...current,records:Object.fromEntries(Object.entries(current.records).filter(([,r])=>!ids.has(r.jobId)&&(!r.persistedAt||r.persistedAt<asOf)))};
+ const projected={...current,records:Object.fromEntries(Object.entries(current.records).filter(([,r])=>!r.persistedAt||r.persistedAt<asOf))};
  const text=JSON.stringify(projected);return opts==='utf8'||opts?.encoding==='utf8'?text:Buffer.from(text);
 }return original.read(redirected(file),opts);}
 fsp.readFile=read;

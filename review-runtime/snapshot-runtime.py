@@ -57,6 +57,10 @@ def snapshot(heartbeat=None, live_source=False):
     if heartbeat:
         if not __import__('re').fullmatch(r'heartbeat-\d{8}T\d{6}',heartbeat): raise RuntimeError('Exact heartbeat required')
         legacy=RUNTIME/'runs'/heartbeat
+        # Preserve exact supporting gate inputs even when the run directory uses the new compact layout.
+        for p in original.glob(heartbeat+'*.json'):
+            p.read_bytes() # foreground hydration; stable_read still verifies the final bytes twice
+            save(Path('legacy')/p.name,stable_read(p),p)
         for p in legacy.iterdir():
             if p.is_file() and p.suffix=='.json': save(Path('legacy')/p.name,stable_read(p),p)
     # Recheck the state at publication: never publish an inconsistent heartbeat.
@@ -69,7 +73,15 @@ def snapshot(heartbeat=None, live_source=False):
     print(json.dumps({'status':'snapshot-published','project':str(generation),'files':len(records),'stateSha256':sha(state),'tokenCopied':False}))
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser();p.add_argument('--heartbeat');p.add_argument('--live-source',action='store_true');p.add_argument('--worker',action='store_true');a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('--heartbeat');p.add_argument('--latest-heartbeat',action='store_true');p.add_argument('--live-source',action='store_true');p.add_argument('--worker',action='store_true');a=p.parse_args()
+    if a.latest_heartbeat:
+        complete=[]
+        for summary in (RUNTIME/'runs').glob('heartbeat-*/summary.json'):
+            try:
+                if json.loads(summary.read_text()).get('status')=='complete':complete.append(summary.parent.name)
+            except (OSError,ValueError):pass
+        if not complete:raise RuntimeError('No completed heartbeat evidence')
+        a.heartbeat=max(complete)
     if a.worker: snapshot(a.heartbeat,a.live_source)
     else:
         cmd=[sys.executable,__file__,'--worker']+(['--heartbeat',a.heartbeat] if a.heartbeat else [])+(['--live-source'] if a.live_source else [])
