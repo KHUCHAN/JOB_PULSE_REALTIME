@@ -150,3 +150,8 @@ test('narrow fit and caveat rules keep technical evidence and real residence or 
  for(const line of ['Based in Waltham, MA in our main building.','Jackson, MS in the south.','Keep response under 50 ms in production.'])assert(!protectedCaveat(line),line);
  assert.deepEqual(extractCaveats('Tools are available for intern teams.'),[]);
 });
+test('equal-opportunity employment relationship text is not an application condition',()=>{
+ assert.deepEqual(extractCaveats('All decisions concerning the employment relationship will be made without regard to age, race, citizenship or disability.'),[]);
+ const real='All decisions concerning the employment relationship will be made without regard to race; U.S. citizenship is required.';
+ assert.deepEqual(extractCaveats(real),[real]);
+});
