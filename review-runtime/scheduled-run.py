@@ -21,7 +21,7 @@ with (runtime/(lane+'.lock')).open('a+') as lock:
  except BlockingIOError:print(json.dumps({'status':'skipped-active-lane','lane':lane}));sys.exit(0)
  if lane=='platform':
   day=datetime.datetime.now(datetime.timezone.utc).date().isoformat();usage=runtime/'platform-runs'/day/'usage.json'
-  if usage.exists() and any(x.get('inputTokens',0)>0 for x in json.loads(usage.read_text())):
+  if usage.exists() and any(x.get('status')=='completed' for x in json.loads(usage.read_text())):
    print(json.dumps({'status':'already-completed-today','lane':lane}));sys.exit(0)
  env={**os.environ,'JOB_PULSE_LANE':lane,'JOB_PULSE_RUNTIME':str(runtime),'JOB_PULSE_STATUS_RUN_ID':datetime.datetime.now(datetime.timezone.utc).isoformat()+'-'+str(os.getpid())}
  node=env.get('JOB_PULSE_NODE','/opt/homebrew/bin/node')
@@ -30,14 +30,18 @@ with (runtime/(lane+'.lock')).open('a+') as lock:
   # The Handshake read never blocks the rest of the daily lane.
   try:env['JOB_PULSE_NODE_REPL']=json.dumps(tomllib.loads((Path.home()/'.codex/config.toml').read_text())['mcp_servers']['node_repl'])
   except (OSError,KeyError,ValueError) as error:print(json.dumps({'status':'handshake-config-unavailable','error':type(error).__name__}),flush=True)
-  bounded_run([node,str(repo/'review-runtime/handshake-run.mjs')],cwd=repo,env=env)
- script=repo/'review-runtime'/('review-run.mjs' if lane=='shadow' else 'live-run.mjs' if lane=='live' else 'platform-run.mjs')
+  # Script readers run first so Codex only searches for rows they could not resolve. A failed read or search never blocks the queue.
+  review=repo/'review-runtime';day=datetime.datetime.now(datetime.timezone.utc).date().isoformat();base=runtime/'platform-runs'/day;candidates=base/'candidates.json';resolved=base/'resolved-candidates.json'
+  bounded_run([node,str(review/'handshake-run.mjs')],cwd=repo,env=env)
+  bounded_run([node,str(review/'linkedin-run.mjs')],cwd=repo,env=env)
+  result=bounded_run([node,str(review/'platform-run.mjs'),'--merge',str(candidates)],cwd=repo,env=env)
+  if result.returncode==0:result=bounded_run([node,str(review/'community-resolve.mjs'),str(candidates)],cwd=repo,env=env)
+  if result.returncode==0:
+   bounded_run([node,str(review/'platform-run.mjs'),str(resolved)],cwd=repo,env=env)
+   result=bounded_run([node,str(review/'platform-reconcile.mjs'),str(resolved),'--publish-queue'],cwd=repo,env=env)
+  sys.exit(result.returncode)
+ script=repo/'review-runtime'/('review-run.mjs' if lane=='shadow' else 'live-run.mjs')
  result=bounded_run([node,str(script)],cwd=repo,env=env)
- if lane=='platform' and result.returncode==0:
-  day=subprocess.check_output(['/bin/date','-u','+%Y-%m-%d'],text=True).strip()
-  bounded_run([node,str(repo/'review-runtime/handshake-run.mjs'),'--merge',str(runtime/'platform-runs'/day/'candidates.json')],cwd=repo,env=env)
-  result=bounded_run([node,str(repo/'review-runtime/community-resolve.mjs'),str(runtime/'platform-runs'/day/'candidates.json')],cwd=repo,env=env)
-  if result.returncode==0:result=bounded_run([node,str(repo/'review-runtime/platform-reconcile.mjs'),str(runtime/'platform-runs'/day/'resolved-candidates.json'),'--publish-queue'],cwd=repo,env=env)
  if lane=='live' and result.returncode!=0:
   subprocess.run([node,str(repo/'review-runtime/run-status.mjs'),'--scheduler-failure'],cwd=repo,env=env,timeout=15)
  sys.exit(result.returncode)
