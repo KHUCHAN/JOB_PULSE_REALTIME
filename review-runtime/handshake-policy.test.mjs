@@ -1,0 +1,26 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {parseCard,selectLeads,splitByInventory,mergeLeads,handshakeBrief} from './handshake-policy.mjs';
+const row=(id,company,title,meta,location,date='New')=>({id,lines:[company,title,meta,location,'∙',date]});
+test('parses a card',()=>{const c=parseCard(row('1','Amazon','SDE Intern','$50/hr · Internship','Irvine, CA + 8','3d ago'));assert.equal(c.location,'Irvine, CA + 8');assert.equal(c.displayDate,'3d ago');assert.equal(c.platformUrl,'https://usc.joinhandshake.com/job-search/1');});
+test('reads the location past an extra label line',()=>{const c=parseCard({id:'2',lines:['Bloomberg','Data Intern','Internship','USC collection','New York, NY','∙','New']});assert.equal(c.location,'New York, NY');assert.equal(c.displayDate,'New');});
+test('keeps recent US intern rows in the priority families only',()=>{
+ const got=selectLeads([
+  row('1','Amazon','Software Development Engineer Intern','$109K/yr · Internship','Irvine, CA + 8'),
+  row('2','Amazon','Software Development Engineer Intern','$109K/yr · Internship','Irvine, CA + 8'),
+  row('3','NYU Langone Health','Associate, Research Data','Full-time','Mineola, NY'),
+  row('4','Shanghai Sixie','Machine Learning Infrastructure Intern','Full-time',"Shanghai, People's Republic of China"),
+  row('5','Envoy Air','College Intern - Ground Support Equipment','Internship','Irving, TX'),
+  row('6','Brain Co.','Machine Learning Engineer Intern','Internship','San Francisco, CA','5d ago'),
+  row('7','Firework','Data Engineer Intern','Internship','San Mateo, CA','3d ago')]);
+ assert.deepEqual(got.map(g=>g.id),['1','7']);
+});
+test('splits leads by source inventory',()=>{const r=splitByInventory([{company:'Amazon Inc.'},{company:'Brain Co.'}],[{company:'Amazon'}]);assert.equal(r.inInventory.length,1);assert.equal(r.notInInventory.length,1);});
+test('merge reports the real status, dedupes and respects the cap',()=>{
+ const data={platforms:[{name:'Handshake',status:'unavailable'}],candidates:[{company:'Amazon',title:'SDE Intern'}]};
+ const gaps=[{company:'Amazon, Inc',title:'SDE Intern'},{company:'Adobe',title:'Data Intern',location:'San Jose, CA',platformUrl:'https://x/1',displayDate:'New'},{company:'IBM',title:'AI Intern'}];
+ const m=mergeLeads(data,{status:'checked',unique:9,gaps},2);
+ assert.equal(m.platforms.at(-1).status,'checked');assert.equal(m.platforms.filter(p=>p.name==='Handshake').length,1);
+ assert.deepEqual(m.candidates.map(c=>c.company),['Amazon','Adobe']);assert.equal(m.candidates[1].officialUrl,'');
+});
+test('unavailable report leaves candidates alone and keeps the reason',()=>{const m=mergeLeads({platforms:[],candidates:[]},{status:'unavailable',reason:'Chrome is not running'});assert.equal(m.platforms[0].reason,'Chrome is not running');assert.equal(m.candidates.length,0);});
+test('brief is empty without gaps and bounded with them',()=>{assert.equal(handshakeBrief({gaps:[]}),'');assert.equal(handshakeBrief(null),'');const b=handshakeBrief({gaps:Array.from({length:12},(_,i)=>({company:'C'+i,title:'T',secret:'x'}))},8);assert.ok(b.includes('C7'));assert.ok(!b.includes('C8'));assert.ok(!b.includes('secret'));});

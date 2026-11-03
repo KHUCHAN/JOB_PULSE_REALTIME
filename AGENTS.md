@@ -11,6 +11,7 @@ Read `WORKFLOW.md` first, then only the one doc you need. Do not scan the repo. 
 - Never reset dedupe state or held approvals.
 - GitHub Actions is the only crawler. No bot-challenge bypass.
 - No applying or messaging on platforms. LinkedIn: logged-out public pages only.
+- Handshake is the one login exception: `handshake-run.mjs` reads search results through the user's connected Chrome, once a day, read-only. Never click Apply, never log in or pass a challenge; stop and record `unavailable`.
 - Never print or log the review token.
 - No `launchctl submit`; no new launchd jobs without approval.
 - Cutover and rollback only via `review-runtime/transition.py`.

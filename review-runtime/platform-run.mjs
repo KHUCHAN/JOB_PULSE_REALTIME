@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { handshakeBrief } from './handshake-policy.mjs';
 const dir=path.dirname(fileURLToPath(import.meta.url)),runtime=process.env.JOB_PULSE_RUNTIME??path.resolve(dir,'../../review-runtime');
 const day=new Date().toISOString().slice(0,10),root=path.join(runtime,'platform-runs',day);await fs.mkdir(root,{recursive:true});
 let ledger=[];try{ledger=JSON.parse(await fs.readFile(path.join(root,'usage.json')))}catch(e){if(e.code!=='ENOENT')throw e;}
@@ -13,7 +14,7 @@ if(used>=300000)throw Error('Daily 300,000 input-token cap reached');
 const args=['exec','--ephemeral','--ignore-user-config','--strict-config','--sandbox','read-only','--skip-git-repo-check','--disable','apps','--disable','plugins','--disable','shell_tool','--disable','unified_exec','--disable','memories','-c','memories.use_memories=false','-c','web_search="live"','-c','model_context_window=20000','-c','model_auto_compact_token_limit=16000','--output-schema',path.join(dir,'platform.schema.json'),'--json','-C',root,'-'];
 const log=await fs.open(path.join(root,`session-${Date.now()}.jsonl`),'wx'),err=await fs.open(path.join(root,`session-${Date.now()}.stderr`),'wx');
 ledger.push({at:new Date().toISOString(),status:'running'});await fs.writeFile(path.join(root,'usage.json'),JSON.stringify(ledger,null,2));
-const child=spawn(process.env.JOB_PULSE_CODEX??'codex',args,{stdio:['pipe','pipe',err.fd]});child.stdin.end(await fs.readFile(path.join(dir,'platform-prompt.txt'),'utf8'));
+const child=spawn(process.env.JOB_PULSE_CODEX??'codex',args,{stdio:['pipe','pipe',err.fd]});let handshake=null;try{handshake=JSON.parse(await fs.readFile(path.join(root,'handshake-leads.json'),'utf8'))}catch(e){if(e.code!=='ENOENT')throw e;}child.stdin.end(await fs.readFile(path.join(dir,'platform-prompt.txt'),'utf8')+handshakeBrief(handshake));
 const finished=new Promise(resolve=>child.on('close',resolve));
 let buffer='',final='',usage=null,toolCalls=0;let counter=used;
 for await(const chunk of child.stdout){await log.write(chunk);buffer+=chunk;let index;while((index=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,index);buffer=buffer.slice(index+1);try{const event=JSON.parse(line);if(event.type==='item.started'&&event.item?.type==='web_search'&&++toolCalls>6)child.kill('SIGTERM');if(event.type==='item.completed'&&event.item?.type==='agent_message')final=event.item.text;if(event.type==='turn.completed'){usage=event.usage;counter=used+usage.input_tokens;if(counter>300000)child.kill('SIGTERM');}}catch{}}}

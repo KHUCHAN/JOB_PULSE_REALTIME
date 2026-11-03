@@ -6,6 +6,7 @@ GitHub Actions `.github/workflows/production-crawl.yml` (admission, crawl, reque
 ## Review lanes
 - Legacy: Codex automation `job-pulse-2-hour-crawl`. Still ACTIVE and the only sender and canonical-state writer.
 - Deterministic launchd lane in `review-runtime/`: `com.jobpulse.review-shadow` (every 3h, shadow only) and `com.jobpulse.platform-daily` (06:20 candidate discovery) are installed. `com.jobpulse.review-live` is NOT installed; it appears only at cutover, after a separate supervisor go.
+- Daily Handshake stage, before `platform-run.mjs`: one `codex exec` call reads newest search results in the connected Chrome and writes them to `platform-runs/<day>/handshake/rows.json`; the model sees only a status and a count. `handshake-leads.json` lists rows missing from the DB. The platform run searches their official URLs, and only rows with an official URL on a known source reach the crawl queue. Failures never block the daily lane.
 - Cutover status (Round 7): heartbeat 145302 comparison accepted; 175217 not accepted (22 blockers). See `docs/history/review-runtime-rounds.md`.
 
 ## Commands (from repo root; Python and Node as listed)
