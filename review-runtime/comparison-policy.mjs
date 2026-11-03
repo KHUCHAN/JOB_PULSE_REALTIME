@@ -6,7 +6,7 @@ const date=r=>key(r).match(/게시일 미표기 · 수집일 \d{4}-\d\d-\d\d 기
 const majorList=t=>{const m=t.match(/^(PREFERRED MAJORS?:)\s*([\s\S]+)$/);return m?[m[1],...m[2].split(/[;\n]/).map(x=>x.trim()).filter(Boolean)]:null;};
 const containsCaveat=(r,caveats,text)=>key(r).includes(text)||!!majorList(text)&&caveats.some(c=>key(r).includes(c)&&JSON.stringify(majorList(c))===JSON.stringify(majorList(text)));
 // A run may lose planned approvals after POST; only IDs the run itself explains may leave the dispatch.
-export const legacySelectionAgrees=(selected,dispatch,summary)=>{if(!dispatch)return true;const explained=new Set([...(dispatch.excluded??[]).map(x=>x.id),...(summary?.uncertainPersistenceIds??[])]);return JSON.stringify(selected.filter(id=>!explained.has(id)))===JSON.stringify(dispatch.selected);};
+export const legacySelectionAgrees=(selected,dispatch,summary)=>{if(!dispatch)return true;const explained=new Set([...(dispatch.excluded??[]).map(x=>x.id),...(summary?.uncertainPersistenceIds??[]),...(summary?.rejectedPersistenceIds??[])]);return JSON.stringify(selected.filter(id=>!explained.has(id)))===JSON.stringify(dispatch.selected);};
 export function comparePolicy({legacy,fresh,rows,audit,legacySelected,freshSelected,keywordLabels,heartbeat,reviewedExceptions:entries=[]}) {
  const old=new Map(legacy.map(r=>[r.jobId,r])),next=new Map(fresh.map(r=>[r.jobId,r])),explained=[],missingEvidence=[],unexplained=[],caveats=[],labels=[];
  const used=new Set(),reviewedExceptions=[];
@@ -24,7 +24,7 @@ export function comparePolicy({legacy,fresh,rows,audit,legacySelected,freshSelec
   if(changed)(missing?missingEvidence:correction?explained:unexplained).push({id,legacy:a?.decision??'hold',fresh:b?.decision??'hold',reason:missing?'legacy rejected on missing evidence, fresh holds because the text cannot be judged':correction?'POLICY undated collector evidence':e?.reason??'unexplained gate difference',audit:e});
   if(a?.decision==='approve'){
    const legacyC=storedCaveats(key(a)),freshC=e?.caveats??[],missing=legacyC.filter(s=>!containsCaveat(b,freshC,s)),extra=freshC.filter(s=>!legacyC.some(t=>t.includes(s)||!!majorList(t)&&JSON.stringify(majorList(t))===JSON.stringify(majorList(s))));
-   caveats.push({id,missing,extra,extrasVerbatim:e?.caveatsVerbatim===true});
+   caveats.push({id,missing,extra,extrasVerbatim:b?.decision!=='approve'||e?.caveatsVerbatim===true});
   }
   if(!correction&&a?.decision==='approve'&&b?.decision==='approve'){
    const before=keywordLabels.filter(l=>key(a).includes(l)),after=keywordLabels.filter(l=>key(b).includes(l));

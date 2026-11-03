@@ -1,5 +1,5 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs/promises';import ts from 'typescript';
-import {evaluateEvidence,storedCountry} from './evidence-policy.mjs';import {dateFromOfficial} from './date-policy.mjs';import {extractCaveats,sentences} from './caveats.mjs';
+import {evaluateEvidence,storedCountry} from './evidence-policy.mjs';import {dateFromOfficial} from './date-policy.mjs';import {extractCaveats,sentences,protectedCaveat} from './caveats.mjs';
 import {keywordLabels} from './keyword-policy.mjs';
 test('fit ignores recruiting warnings and employer AI, retaining real duties and education',()=>{
  const row={title:'Engineering Intern',summary:'Fraud and AI',responsibilities:'Fraud',skills:['Python'],jobFamily:'AI',jobFunction:'fraud'};
@@ -123,4 +123,30 @@ test('titles about an intern program hold instead of counting as internships',()
  const body='An official posting that describes the responsibilities of this position. '.repeat(4);
  for(const title of ['Confluent - Software Developer - Intern Conversion','Business Program Manager, Global Intern Experience & Innovation','Internship Program Manager','Intern Program Coordinator']){const r=evaluateEvidence({...base,live:true,title,officialBody:body});assert.equal(r.decision,'hold');assert.match(r.reason,/intern program or conversion/);}
  assert.notEqual(evaluateEvidence({...base,live:true,title:'Intern Experience Analyst Internship',officialBody:body}).reason,'title concerns an intern program or conversion, not an internship');
+});
+test('fit ignores employer job-family lists and verb uses of embedding',()=>{
+ const software='Direct software engineering role',llm='LLM, NLP, RAG, embedding, or knowledge systems';
+ const family='Performs assignments in technical/engineering organizations (e.g., Electronics Engineering, Software Engineering, Facilities Engineering, Manufacturing Engineering).';
+ assert(!keywordLabels({title:'Manufacturing Engineering - Intern'},family).includes(software));
+ assert(keywordLabels({title:'Intern'},family+'\nJoin our software engineering team building services.').includes(software));
+ assert(keywordLabels({title:'Software Engineering Intern'},family).includes(software));
+ assert(!keywordLabels({title:'Banking Analyst'},'Take responsibility for embedding new policies/ procedures adopted due to risk mitigation.').includes(llm));
+ assert(keywordLabels({title:'Intern'},'Train text embedding models and store embeddings for retrieval.').includes(llm));
+});
+test('caveats keep hard academic and timing requirements and skip substring lookalikes',()=>{
+ for(const line of ['Mechanical Engineering major required.','BS or MS in Electrical Engineering or Computer Engineering.','Candidates must be taking at least 6 credit hours and have an overall cumulative GPA of 3.3','Available for a full-time co-op starting January 2027','* Term: January–May 2027','Duration: Spring 2027 (with option for back-to-back Spring and Summer 2027)','Dates of Internship: January 2027-May 2027'])assert.deepEqual(extractCaveats(line),[line],line);
+ for(const line of ['On highways, construction sites, city streets, logging roads - everywhere our customers earn their living.','Resideo is a leading global provider of home comfort, safety, and security solutions.'])assert.deepEqual(extractCaveats(line),[],line);
+ assert.deepEqual(extractCaveats('This role is onsite in Austin.'),['This role is onsite in Austin.']);
+ assert.deepEqual(extractCaveats('Must reside within the United States.'),['Must reside within the United States.']);
+ assert(protectedCaveat('Must have an overall cumulative GPA of 3.3'));assert(protectedCaveat('Mechanical Engineering major required.'));
+});
+test('narrow fit and caveat rules keep technical evidence and real residence or degree conditions',()=>{
+ const llm='LLM, NLP, RAG, embedding, or knowledge systems';
+ assert(keywordLabels({title:'Intern'},'Interns will support engineering functions (such as software development, machine learning and data engineering).').length>0);
+ assert(keywordLabels({title:'Intern'},'Work on embedding the documents into a vector store.').includes(llm));
+ assert(keywordLabels({title:'Intern'},'Optimize the embedding process for retrieval.').includes(llm));
+ assert(!keywordLabels({title:'Analyst'},'Support embedding a culture of risk awareness and embedding best practices.').includes(llm));
+ for(const line of ['Candidates must be a resident of California.','Residency in New York is required.','Proof of residence in Texas is needed.'])assert.deepEqual(extractCaveats(line),[line],line);
+ for(const line of ['Based in Waltham, MA in our main building.','Jackson, MS in the south.','Keep response under 50 ms in production.'])assert(!protectedCaveat(line),line);
+ assert.deepEqual(extractCaveats('Tools are available for intern teams.'),[]);
 });

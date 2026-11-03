@@ -47,7 +47,7 @@ const differences=[];for(const id of new Set([...old.keys(),...fresh.keys()])){c
 const ruleSource=await fs.readFile(path.join(code,'../lib/resume-match.ts'),'utf8');
 const keywordLabels=[...ruleSource.slice(ruleSource.indexOf('const roleEvidence'),ruleSource.indexOf('const educationEvidence')).matchAll(/label: "([^"]+)"/g)].map(m=>m[1]);
 const reviewedExceptions=JSON.parse(await fs.readFile(path.join(code,'comparison-exceptions.json'),'utf8'));
-const comparisonInputs={legacy:[...old.values()],fresh:[...fresh.values()],rows:scan.details.map(x=>x.row),audit:plan.audit,legacySelected:selection.selectedIds,freshSelected:report.selectedIds,keywordLabels,heartbeat:stamp,reviewedExceptions};
+const comparisonInputs={legacy:[...old.values()],fresh:[...fresh.values()],rows:scan.details.map(x=>x.row),audit:plan.audit,legacySelected:selection.selectedIds.filter(id=>!(summary?.rejectedPersistenceIds??[]).includes(id)),freshSelected:report.selectedIds,keywordLabels,heartbeat:stamp,reviewedExceptions};
 const acceptance=comparePolicy(comparisonInputs);
 for(const difference of differences){const explanation=[...acceptance.explainedUndatedDifferences,...acceptance.explainedMissingEvidenceDifferences].find(x=>x.id===difference.id);if(explanation)difference.cause=explanation.reason;}
 const approved=[...old.values()].filter(a=>a.decision==='approve').map(a=>({id:a.jobId,legacyRationale:a.rationale,shadowRationale:fresh.get(a.jobId)?.rationale}));

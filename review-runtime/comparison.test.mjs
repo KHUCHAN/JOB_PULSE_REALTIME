@@ -55,9 +55,17 @@ test('keyword label exception needs exact heartbeat, id and both label sets',()=
 test('legacy selection may differ only by IDs the run explains',()=>{
  const dispatch={selected:['a','c'],excluded:[{id:'x'}]},summary={uncertainPersistenceIds:['u']};
  assert(legacySelectionAgrees(['a','u','x','c'],dispatch,summary));assert(legacySelectionAgrees(['a'],null,null));
+ assert(legacySelectionAgrees(['a','r','c'],{selected:['a','c']},{rejectedPersistenceIds:['r']}));
  assert(!legacySelectionAgrees(['a','z','c'],dispatch,summary));assert(!legacySelectionAgrees(['c','a'],dispatch,summary));assert(!legacySelectionAgrees(['a','u','c'],{selected:['a','c']},null));
 });
 test('stored official date label compares by date value',()=>{
  const stored=old.rationale.replace('Official date: 2026-11-01','Stored official date: 2026-11-01');assert.notEqual(stored,old.rationale);
  assert.equal(comparePolicy({...args,legacy:[{...old,rationale:stored}],fresh:[old]}).labels[0].dateMatch,true);
+});
+test('a legacy approval the fresh lane holds needs its decision reviewed but has no mailed caveats to verify',()=>{
+ const legacy=[{jobId:'s',decision:'approve',rationale:'x. Official date: 2026-11-02. Application caveats: Needs clearance.'}],fresh=[{jobId:'s',decision:'hold',rationale:null}],audit=[{id:'s',decision:'hold',reason:'exact caveats exceed 2000-character rationale limit'}];
+ const base={legacy,fresh,rows:[],audit,legacySelected:[],freshSelected:[],keywordLabels:[],heartbeat:'h'};
+ assert(!comparePolicy(base).accepted);
+ const reviewed=[{heartbeat:'h',id:'s',type:'decision',legacyValue:'approve',freshValue:'hold',reason:'r'},{heartbeat:'h',id:'s',type:'missing caveat',legacyValue:'Needs clearance.',reason:'r'}];
+ assert(comparePolicy({...base,reviewedExceptions:reviewed}).accepted);
 });

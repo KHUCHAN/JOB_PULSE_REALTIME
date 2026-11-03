@@ -219,5 +219,354 @@
     "legacyValue": "[\"Data science, business analysis, or analytics role\",\"AML, risk, fraud, or data-quality domain\"]",
     "freshValue": "[\"Data science, business analysis, or analytics role\"]",
     "reason": "Supervisor reviewed: fit labels annotate the mail only and do not change the decision; differences come from keyword rules versus model-written labels, including removed BMS and Micron fraud-boilerplate matches."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T235651",
+    "id": "671a78e9-8762-41a7-a0de-19c1e429e42c",
+    "type": "decision",
+    "legacyValue": "reject",
+    "freshValue": "hold",
+    "reason": "Supervisor reviewed: neither lane mails this row; fresh holds because the date or posting text cannot be judged, which is more conservative than the legacy rejection."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T235651",
+    "id": "0ead08fc-af81-4346-b11b-926c7cb24048",
+    "type": "decision",
+    "legacyValue": "reject",
+    "freshValue": "hold",
+    "reason": "Supervisor reviewed: neither lane mails this row; fresh holds because the date or posting text cannot be judged, which is more conservative than the legacy rejection."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T235651",
+    "id": "0cc2a641-420c-4519-ad97-d606a3be1c6e",
+    "type": "decision",
+    "legacyValue": "reject",
+    "freshValue": "hold",
+    "reason": "Supervisor reviewed: neither lane mails this row; fresh holds because the date or posting text cannot be judged, which is more conservative than the legacy rejection."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T235651",
+    "id": "495d8b3c-1e6a-4184-97b2-8a9296f764f0",
+    "type": "decision",
+    "legacyValue": "reject",
+    "freshValue": "hold",
+    "reason": "Supervisor reviewed: neither lane mails this row; fresh holds because the date or posting text cannot be judged, which is more conservative than the legacy rejection."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T235651",
+    "id": "fbe078e6-dada-4dd0-aa3b-099b90538526",
+    "type": "decision",
+    "legacyValue": "reject",
+    "freshValue": "hold",
+    "reason": "Supervisor reviewed: neither lane mails this row; fresh holds because the date or posting text cannot be judged, which is more conservative than the legacy rejection."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T235651",
+    "id": "9bc4e839-4201-4e4b-9c4d-3521d57f0092",
+    "type": "decision",
+    "legacyValue": "hold",
+    "freshValue": "approve",
+    "reason": "Supervisor reviewed: legacy held only because the DB title appends the Rochester, Minnesota location suffix; the official URL identifies the same internship, so fresh approval is correct."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T235651",
+    "id": "78fb9c93-8e93-414b-9daa-681286ebbae3",
+    "type": "decision",
+    "legacyValue": "hold",
+    "freshValue": "reject",
+    "reason": "Supervisor reviewed: neither lane mails this row; fresh rejects on an affirmative rule for no keyword fit or a non-internship program."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T235651",
+    "id": "84d77c0d-0106-493b-8de6-5a311bed3947",
+    "type": "decision",
+    "legacyValue": "hold",
+    "freshValue": "reject",
+    "reason": "Supervisor reviewed: neither lane mails this row; fresh rejects on an affirmative rule for no keyword fit or a non-internship program."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T235651",
+    "id": "880cfb1f-dd99-4398-b590-542fa8a56929",
+    "type": "decision",
+    "legacyValue": "hold",
+    "freshValue": "reject",
+    "reason": "Supervisor reviewed: neither lane mails this row; fresh rejects on an affirmative rule for no keyword fit or a non-internship program."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T235651",
+    "id": "2349c4b5-fd67-40b1-8b0b-11383e7658d3",
+    "type": "missing caveat",
+    "legacyValue": "The successful candidate will have experience with Java development, integration of COTS/FOSS and the ability to navigate multiple operating systems to include LINUX/Windows.",
+    "reason": "Supervisor reviewed: this sentence summarizes desired experience and sets no hard restriction."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T235651",
+    "id": "add7cd9f-f507-4a6c-af6e-cef8d53deb7b",
+    "type": "missing caveat",
+    "legacyValue": "VISA Sponsorship: No",
+    "reason": "Supervisor reviewed: fresh keeps this condition, split across adjacent caveat lines."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T235651",
+    "id": "a7761b12-42f3-4072-9e2f-a9a805a764e8",
+    "type": "missing caveat",
+    "legacyValue": "VISA Sponsorship: No",
+    "reason": "Supervisor reviewed: fresh keeps this condition, split across adjacent caveat lines."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T235651",
+    "id": "781c1b62-a302-4209-af40-d41b09756a43",
+    "type": "missing caveat",
+    "legacyValue": "This opening is for a Data Analyst Intern to add to our Greenhouse Gas team in Denton, Texas.",
+    "reason": "Supervisor reviewed: this sentence describes the role and sets no application condition."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T235651",
+    "id": "339f3d53-f8f9-4da6-9f14-ca762a8dd81f",
+    "type": "missing caveat",
+    "legacyValue": "Security Clearance Type: DoD Clearance: Secret",
+    "reason": "Supervisor reviewed: fresh keeps this condition, split across adjacent caveat lines."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T235651",
+    "id": "04faa296-daf4-4aba-abbe-6e3f00d57709",
+    "type": "missing caveat",
+    "legacyValue": "This opening is for an Engineering Intern to add to our Advanced Manufacturing Engineering team in Denton, Texas.",
+    "reason": "Supervisor reviewed: this sentence describes the role and sets no application condition."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T235651",
+    "id": "23de366d-78fa-43e0-b6f7-dbe6eba4c28f",
+    "type": "missing caveat",
+    "legacyValue": "This opening is for a Division Materials Intern to add to our North American Materials team in Denton, Texas.",
+    "reason": "Supervisor reviewed: this sentence describes the role and sets no application condition."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T235651",
+    "id": "3577470e-979f-4373-96bb-0c5b7873ef2d",
+    "type": "missing caveat",
+    "legacyValue": "This opening is for a Vehicle Performance, Test and Analysis Intern to add to our Vehicle Performance & Vehicle Properties team in Denton, Texas.",
+    "reason": "Supervisor reviewed: this sentence describes the role and sets no application condition."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T235651",
+    "id": "2572138f-6622-4aad-b30c-21d275e7eb7e",
+    "type": "missing caveat",
+    "legacyValue": "This opening is for a National Accounts Fleet Service Intern to add to our National Accounts team in Denton, Texas.",
+    "reason": "Supervisor reviewed: this sentence describes the role and sets no application condition."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T235651",
+    "id": "682ccfc4-f8d2-4af2-ae6a-085158a1b684",
+    "type": "missing caveat",
+    "legacyValue": "This opening is for a Resident Engineering Product Data Management Intern to add to our Engineering team in Denton, Texas.",
+    "reason": "Supervisor reviewed: this sentence describes the role and sets no application condition."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T235651",
+    "id": "ab8602f0-5744-4b55-83d2-f6a8495eae62",
+    "type": "missing caveat",
+    "legacyValue": "This opening is for a Business Intern to add to our Warranty team in Denton, Texas.",
+    "reason": "Supervisor reviewed: this sentence describes the role and sets no application condition."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T235651",
+    "id": "ae4cdde4-f7e9-42fb-bdec-dff3ffb9b517",
+    "type": "missing caveat",
+    "legacyValue": "This opening is for a Materials Systems Intern to add to our North American Materials team in Denton, Texas.",
+    "reason": "Supervisor reviewed: this sentence describes the role and sets no application condition."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T235651",
+    "id": "c148a3e4-3be9-470f-ae47-918c67ede42b",
+    "type": "missing caveat",
+    "legacyValue": "This opening is for a Truck Systems & Software Support Intern to add to our Resident Engineering team in Denton, Texas.",
+    "reason": "Supervisor reviewed: this sentence describes the role and sets no application condition."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T235651",
+    "id": "ecd592b9-eb9f-46b2-b893-3a84ed2f7332",
+    "type": "missing caveat",
+    "legacyValue": "This opening is for a Deman Planning Intern to add to our North American Materials team in Denton, Texas.",
+    "reason": "Supervisor reviewed: this sentence describes the role and sets no application condition."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T235651",
+    "id": "f71b46ef-faa7-43d3-86d8-cad6d7dfe5f4",
+    "type": "keyword labels",
+    "legacyValue": "[\"Direct software engineering role\",\"Python, PySpark, or Pandas\",\"SQL and data systems\",\"Software development stack\"]",
+    "freshValue": "[\"Direct software engineering role\"]",
+    "reason": "Supervisor reviewed: fit labels annotate the mail only and do not change the decision; differences come from keyword rules versus model-written labels."
+  },
+  {
+    "heartbeat": "heartbeat-20261102T235651",
+    "id": "2dccdedd-7189-4b46-a52b-cff7c7aef811",
+    "type": "keyword labels",
+    "legacyValue": "[\"AI or machine learning role\",\"AML, risk, fraud, or data-quality domain\"]",
+    "freshValue": "[\"AI or machine learning role\"]",
+    "reason": "Supervisor reviewed: fit labels annotate the mail only and do not change the decision; differences come from keyword rules versus model-written labels."
+  },
+  {
+    "heartbeat": "heartbeat-20261103T025831",
+    "id": "5dddb978-8592-42f4-b221-089a379aea88",
+    "type": "decision",
+    "legacyValue": "approve",
+    "freshValue": "hold",
+    "reason": "Supervisor reviewed: the server rejected the legacy POST for a verified URL mismatch, so the row was never mailed; fresh holds it on the rationale limit and it stays quarantined."
+  },
+  {
+    "heartbeat": "heartbeat-20261103T025831",
+    "id": "31c087dd-416b-43f3-80ed-634fe6dc90b3",
+    "type": "decision",
+    "legacyValue": "hold",
+    "freshValue": "approve",
+    "reason": "Supervisor reviewed: legacy held only because the DB title appends the Rochester, Minnesota location suffix; the official URL identifies the same internship, so fresh approval is correct."
+  },
+  {
+    "heartbeat": "heartbeat-20261103T025831",
+    "id": "5b0c7a05-9ada-44f5-bf66-5e30b00fb339",
+    "type": "decision",
+    "legacyValue": "hold",
+    "freshValue": "approve",
+    "reason": "Supervisor reviewed: legacy held only because the official API returned HTTP 429 during its run; saved evidence supports the approval."
+  },
+  {
+    "heartbeat": "heartbeat-20261103T025831",
+    "id": "9bc4e839-4201-4e4b-9c4d-3521d57f0092",
+    "type": "decision",
+    "legacyValue": "hold",
+    "freshValue": "approve",
+    "reason": "Supervisor reviewed: legacy held only because the DB title appends the Rochester, Minnesota location suffix; the official URL identifies the same internship, so fresh approval is correct."
+  },
+  {
+    "heartbeat": "heartbeat-20261103T025831",
+    "id": "78fb9c93-8e93-414b-9daa-681286ebbae3",
+    "type": "decision",
+    "legacyValue": "hold",
+    "freshValue": "reject",
+    "reason": "Supervisor reviewed: neither lane mails this row; fresh rejects on an affirmative rule for no keyword fit or a non-internship program."
+  },
+  {
+    "heartbeat": "heartbeat-20261103T025831",
+    "id": "84d77c0d-0106-493b-8de6-5a311bed3947",
+    "type": "decision",
+    "legacyValue": "hold",
+    "freshValue": "reject",
+    "reason": "Supervisor reviewed: neither lane mails this row; fresh rejects on an affirmative rule for no keyword fit or a non-internship program."
+  },
+  {
+    "heartbeat": "heartbeat-20261103T025831",
+    "id": "07ee9b1a-82f9-4320-9963-0798f09fad86",
+    "type": "decision",
+    "legacyValue": "hold",
+    "freshValue": "reject",
+    "reason": "Supervisor reviewed: neither lane mails this row; fresh rejects on an affirmative rule for no keyword fit or a non-internship program."
+  },
+  {
+    "heartbeat": "heartbeat-20261103T025831",
+    "id": "880cfb1f-dd99-4398-b590-542fa8a56929",
+    "type": "decision",
+    "legacyValue": "hold",
+    "freshValue": "reject",
+    "reason": "Supervisor reviewed: neither lane mails this row; fresh rejects on an affirmative rule for no keyword fit or a non-internship program."
+  },
+  {
+    "heartbeat": "heartbeat-20261103T025831",
+    "id": "eebf5226-0979-4cf4-87ea-2765ffee5250",
+    "type": "missing caveat",
+    "legacyValue": "Lockheed Martin Rotary and Mission Systems is seeking a Summer 2027 RMS Supply Chain Intern.",
+    "reason": "Supervisor reviewed: this sentence describes the role and sets no application condition."
+  },
+  {
+    "heartbeat": "heartbeat-20261103T025831",
+    "id": "eebf5226-0979-4cf4-87ea-2765ffee5250",
+    "type": "missing caveat",
+    "legacyValue": "In this role, you will support the Supply Chain Perofrmance Team.",
+    "reason": "Supervisor reviewed: this sentence describes the role and sets no application condition."
+  },
+  {
+    "heartbeat": "heartbeat-20261103T025831",
+    "id": "eebf5226-0979-4cf4-87ea-2765ffee5250",
+    "type": "missing caveat",
+    "legacyValue": "You will have the opportunity to collect, analyze, and interpret large datasets related to supply chain operations, including inventory levels, shipping and receiving, and supplier performance data.",
+    "reason": "Supervisor reviewed: this sentence describes the role and sets no application condition."
+  },
+  {
+    "heartbeat": "heartbeat-20261103T025831",
+    "id": "eebf5226-0979-4cf4-87ea-2765ffee5250",
+    "type": "missing caveat",
+    "legacyValue": "Develop and maintain reports, dashboards, and other visualizations to communicate complex data insights to stakeholders.",
+    "reason": "Supervisor reviewed: this sentence describes the role and sets no application condition."
+  },
+  {
+    "heartbeat": "heartbeat-20261103T025831",
+    "id": "eebf5226-0979-4cf4-87ea-2765ffee5250",
+    "type": "missing caveat",
+    "legacyValue": "Identify trends, patterns, and anomalies in supply chain data and provide recommendations for process improvements.",
+    "reason": "Supervisor reviewed: this sentence describes the role and sets no application condition."
+  },
+  {
+    "heartbeat": "heartbeat-20261103T025831",
+    "id": "eebf5226-0979-4cf4-87ea-2765ffee5250",
+    "type": "missing caveat",
+    "legacyValue": "The successful candidate will have experience and/or knowledge or will apply appropriate principles, theories, and concepts to complete assignments of limited scope.",
+    "reason": "Supervisor reviewed: this sentence describes the role and sets no application condition."
+  },
+  {
+    "heartbeat": "heartbeat-20261103T025831",
+    "id": "eebf5226-0979-4cf4-87ea-2765ffee5250",
+    "type": "missing caveat",
+    "legacyValue": "Some knowledge of industry practices and standards.",
+    "reason": "Supervisor reviewed: this sentence describes the role and sets no application condition."
+  },
+  {
+    "heartbeat": "heartbeat-20261103T025831",
+    "id": "5dddb978-8592-42f4-b221-089a379aea88",
+    "type": "missing caveat",
+    "legacyValue": "You bring the confidence and skills to be eligible for the job by meeting these minimum requirements: Earned bachelor's degree Currently attending and enrolled full time in the spring term immediately preceding the internship (or scheduled to graduate in the spring) in an accredited science, engineering, or math graduate program Minimum cumulative GPA of 3.0/4.0 Ability to work up to 40 hours per week during the summer Ability to secure and maintatin a U.S. security clearance which requires U.S. citizenship Note: If you have not yet started your graduate program, please apply to an undergraduate intern position.",
+    "reason": "Supervisor reviewed: the server rejected the legacy POST for a verified URL mismatch, so the row was never mailed; fresh holds it on the rationale limit and it stays quarantined."
+  },
+  {
+    "heartbeat": "heartbeat-20261103T025831",
+    "id": "5dddb978-8592-42f4-b221-089a379aea88",
+    "type": "missing caveat",
+    "legacyValue": "Have, or are pursuing, a PhD in materials science, materials engineering, mechanical engineering, or a related field Possess a bachelor's in science, technology, engineering, or mathematics (STEM)",
+    "reason": "Supervisor reviewed: the server rejected the legacy POST for a verified URL mismatch, so the row was never mailed; fresh holds it on the rationale limit and it stays quarantined."
+  },
+  {
+    "heartbeat": "heartbeat-20261103T025831",
+    "id": "5dddb978-8592-42f4-b221-089a379aea88",
+    "type": "missing caveat",
+    "legacyValue": "Possess a bachelor's in science, technology, engineering, or mathematics (STEM).",
+    "reason": "Supervisor reviewed: the server rejected the legacy POST for a verified URL mismatch, so the row was never mailed; fresh holds it on the rationale limit and it stays quarantined."
+  },
+  {
+    "heartbeat": "heartbeat-20261103T025831",
+    "id": "5dddb978-8592-42f4-b221-089a379aea88",
+    "type": "missing caveat",
+    "legacyValue": "Ability to obtain and maintain a DOE security clearance.",
+    "reason": "Supervisor reviewed: the server rejected the legacy POST for a verified URL mismatch, so the row was never mailed; fresh holds it on the rationale limit and it stays quarantined."
+  },
+  {
+    "heartbeat": "heartbeat-20261103T025831",
+    "id": "5dddb978-8592-42f4-b221-089a379aea88",
+    "type": "missing caveat",
+    "legacyValue": "Applicants for employment need to be able to obtain and maintain a DOE Q-level security clearance, which requires U.S. citizenship.",
+    "reason": "Supervisor reviewed: the server rejected the legacy POST for a verified URL mismatch, so the row was never mailed; fresh holds it on the rationale limit and it stays quarantined."
+  },
+  {
+    "heartbeat": "heartbeat-20261103T025831",
+    "id": "5dddb978-8592-42f4-b221-089a379aea88",
+    "type": "missing caveat",
+    "legacyValue": "If you hold more than one citizenship (i.e., of the U.S. and another country), your ability to obtain a security clearance may be impacted.",
+    "reason": "Supervisor reviewed: the server rejected the legacy POST for a verified URL mismatch, so the row was never mailed; fresh holds it on the rationale limit and it stays quarantined."
+  },
+  {
+    "heartbeat": "heartbeat-20261103T025831",
+    "id": "f7d9037e-5a76-4036-801e-e34dfa920872",
+    "type": "keyword labels",
+    "legacyValue": "[\"Direct software engineering role\"]",
+    "freshValue": "[\"Direct software engineering role\",\"Machine-learning stack\",\"Analytics tooling\"]",
+    "reason": "Supervisor reviewed: fit labels annotate the mail only and do not change the decision; differences come from keyword rules versus model-written labels."
   }
 ]
