@@ -6,7 +6,7 @@ Read `WORKFLOW.md` first, then only the one doc you need. Do not scan the repo. 
 
 ## Hard rules
 - `review-runtime/POLICY.md` is the authority for selection, dates, recipients. Do not restate it elsewhere.
-- US only; exact 72-hour effective date; no year or score gate.
+- US only; exact 72-hour effective date; no year or score gate. A title with 2027 and intern or co-op skips the keyword check; every other gate still applies.
 - At most one mail per run, no resends. Never retry an uncertain POST.
 - Never reset dedupe state or held approvals.
 - GitHub Actions is the only crawler. No bot-challenge bypass.

@@ -27,7 +27,10 @@ export function collectorReady(row,health,asOf) {
  const age=Date.parse(asOf)-Date.parse(row.lastConfirmedAt);
  return health==='healthy'&&Number.isFinite(age)&&age>=0&&age<=24*3600000;
 }
-export function evaluateEvidence({row,evidence,officialDate,officialCountry,officialBody,title,live,health,asOf,labels}) {
+// The user wants every 2027 internship or co-op mailed whatever its keywords. Every other gate still applies.
+export const YEAR_LABEL='Included as a 2027 internship or co-op, outside the keyword list';
+export const internship2027=title=>/\b2027\b/.test(title)&&/\bintern(?:s|ships?)?\b|\bco[ -]?op\b/i.test(title);
+export function evaluateEvidence({row,evidence,officialDate,officialCountry,officialBody,title,live,health,asOf,labels:keywords}) {
  const stored=postingText([row.description,row.responsibilities,row.qualifications].filter(Boolean).join('\n'));
  const collectorEvidence=!officialDate&&(!live||!row.publishedAt)&&collectorReady(row,health,asOf);
  const fallback=collectorEvidence&&!row.publishedAt;
@@ -35,7 +38,7 @@ export function evaluateEvidence({row,evidence,officialDate,officialCountry,offi
  const d=dateFromOfficial(row,officialDate,evidence,fallback);
  const country=storedCountry(row)==='non-US'?'non-US':officialCountry??(collectorEvidence?storedCountry(row):null);
  const programText=(title||row.title)+' '+body;
- const internTopic=/\bintern(?:ship)?\s+(?:program\s+(?:coordinator|manager)|conversion|experience|recruit\w*|coordinator|manager|onboarding|engagement)\b/i,titleText=title||row.title;
+ const internTopic=/\bintern(?:ship)?\s+(?:program\s+(?:coordinator|manager)|conversion|experience|recruit\w*|coordinator|manager|onboarding|engagement)\b/i,titleText=title||row.title,labels=keywords.length?keywords:internship2027(titleText)?[YEAR_LABEL]:[];
  const aboutInterns=internTopic.test(titleText)&&!/\binternships?\b|\bco[ -]?op\b|\binterns?\b/i.test(titleText.replace(internTopic,' '));
  const program=!( /continuity\s+of\s+operations/i.test(programText)&&!/\bintern(?:s|ships?)?\b|\bco[ -]op\b/i.test(programText))&&/\bintern(?:s|ships?)?\b|\bco[ -]?op\b/i.test(programText);
  const checks={live:!!live||collectorEvidence,location:country==='United States',program,date:recent(d.date,asOf),fit:labels.length>0};

@@ -1,5 +1,5 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs/promises';import ts from 'typescript';
-import {evaluateEvidence,storedCountry} from './evidence-policy.mjs';import {dateFromOfficial} from './date-policy.mjs';import {extractCaveats,sentences,protectedCaveat} from './caveats.mjs';
+import {evaluateEvidence,storedCountry,YEAR_LABEL} from './evidence-policy.mjs';import {dateFromOfficial} from './date-policy.mjs';import {extractCaveats,sentences,protectedCaveat} from './caveats.mjs';
 import {keywordLabels} from './keyword-policy.mjs';
 test('fit ignores recruiting warnings and employer AI, retaining real duties and education',()=>{
  const row={title:'Engineering Intern',summary:'Fraud and AI',responsibilities:'Fraud',skills:['Python'],jobFamily:'AI',jobFunction:'fraud'};
@@ -55,7 +55,16 @@ test('protected caveats alone exceeding the budget hold without truncation',()=>
 });
 test('missing evidence never writes reject; unhealthy, stale, short, unknown country hold',()=>{
  for(const patch of [{health:'failed'},{row:{...base.row,lastConfirmedAt:'2026-10-30'}},{row:{...base.row,description:'',qualifications:''}},{row:{...base.row,location:'Unknown',locationCountry:null}},{evidence:{status:200,html:'Posted on: November 1st'}}])assert.equal(evaluateEvidence({...base,...patch}).decision,'hold');
- assert.equal(evaluateEvidence({...base,labels:[]}).decision,'reject');assert.equal(evaluateEvidence({...base,labels:[]}).reason,'affirmative no keyword fit on available text');
+ const noFit=evaluateEvidence({...base,row:{...base.row,title:'Data Intern'},title:'Data Intern',labels:[]});assert.equal(noFit.decision,'reject');assert.equal(noFit.reason,'affirmative no keyword fit on available text');
+});
+test('a 2027 internship or co-op needs no keyword; every other gate still applies',()=>{
+ const year=(title,patch={})=>evaluateEvidence({...base,row:{...base.row,title},title,labels:[],...patch});
+ for(const title of ['Design Engineer Intern - Summer 2027','2027 Summer Internship: Service Engineer','Spring 2027 Co-op, Field Sales']){const r=year(title);assert.equal(r.decision,'approve',title);assert.match(r.rationale,/^Keyword match \(not individually reviewed\)\. United States\. Included as a 2027 internship/);assert.deepEqual(r.labels,[YEAR_LABEL]);}
+ for(const title of ['Design Engineer Intern - Summer 2028','2027 Summer Student Nursing Program','Design Engineer Intern R2027'])assert.equal(year(title).decision,'reject',title);
+ assert.equal(year('Design Engineer Intern - Summer 2027',{row:{...base.row,title:'Design Engineer Intern - Summer 2027',location:'Toronto, Canada',locationCountry:'Canada',locationRegion:'non-us'}}).decision==='approve',false);
+ assert.equal(year('Design Engineer Intern - Summer 2027',{officialDate:'2026-01-01',live:true,officialCountry:'United States',officialBody:base.row.description}).reason,'old official date');
+ assert.equal(year('Intern Program Coordinator 2027').decision,'hold');
+ const withFit=evaluateEvidence({...base,row:{...base.row,title:'Data Intern 2027'},title:'Data Intern 2027'});assert.deepEqual(withFit.labels,base.labels);assert(!withFit.rationale.includes(YEAR_LABEL));
 });
 test('readable date wins, visible unparsed and relative hold, old official rejects',()=>{
  assert.equal(evaluateEvidence({...base,officialDate:'2026-10-01'}).reason,'old official date');
