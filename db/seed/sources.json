@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-09-14",
-  "version": "v2:sha256:b4971dbb19c58c0f8d20459fe9c49fa37e2ee03055c1f9db72f297ca19c02f68",
+  "generatedAt": "2026-11-03",
+  "version": "v2:sha256:abb9fae7077fa20a2e5e6cbb23a09095c2d157651d26d94cb3d28bb303c85d39",
   "incrementalSourceIdsByPreviousVersion": {
     "v2:sha256:333ffa3b859e3c86ee7959b167dd80ec26b8318a1edfa51d5257e7d537bb1895": [
       "audit-row-3450"
@@ -84,6 +84,15 @@
       "ripplematch-kingspan",
       "ripplematch-amway",
       "ripplematch-mks"
+    ],
+    "v2:sha256:b4971dbb19c58c0f8d20459fe9c49fa37e2ee03055c1f9db72f297ca19c02f68": [
+      "platform-firework",
+      "platform-brain-co",
+      "platform-envoy-air",
+      "platform-tetramem",
+      "platform-drivetime",
+      "platform-wtw",
+      "platform-amtrak"
     ]
   },
   "sources": [
@@ -22225,6 +22234,111 @@
       "resumeUpload": "job_only",
       "jobAlerts": "unknown",
       "checkedAt": "2026-09-14",
+      "enabled": true
+    },
+    {
+      "id": "platform-firework",
+      "masterRow": 3470,
+      "company": "Firework",
+      "postingUrl": "https://jobs.lever.co/fireworkhq",
+      "talentUrl": null,
+      "channel": "Official board for an employer first seen on a job platform",
+      "adapter": "lever",
+      "verification": "valid_official_board",
+      "confidence": "high",
+      "resumeUpload": "job_only",
+      "jobAlerts": "unknown",
+      "checkedAt": "2026-11-03",
+      "enabled": true
+    },
+    {
+      "id": "platform-brain-co",
+      "masterRow": 3471,
+      "company": "Brain Co.",
+      "postingUrl": "https://jobs.ashbyhq.com/brainco",
+      "talentUrl": null,
+      "channel": "Official board for an employer first seen on a job platform",
+      "adapter": "ashby",
+      "verification": "valid_official_board",
+      "confidence": "high",
+      "resumeUpload": "job_only",
+      "jobAlerts": "unknown",
+      "checkedAt": "2026-11-03",
+      "enabled": true
+    },
+    {
+      "id": "platform-envoy-air",
+      "masterRow": 3472,
+      "company": "Envoy Air",
+      "postingUrl": "https://us-envoyair.icims.com/jobs/search",
+      "talentUrl": null,
+      "channel": "Official board for an employer first seen on a job platform",
+      "adapter": "icims",
+      "verification": "valid_official_board",
+      "confidence": "high",
+      "resumeUpload": "job_only",
+      "jobAlerts": "unknown",
+      "checkedAt": "2026-11-03",
+      "enabled": true
+    },
+    {
+      "id": "platform-tetramem",
+      "masterRow": 3473,
+      "company": "TetraMem Inc.",
+      "postingUrl": "https://careers.smartrecruiters.com/tetrameminc",
+      "talentUrl": null,
+      "channel": "Official board for an employer first seen on a job platform",
+      "adapter": "smartrecruiters",
+      "verification": "valid_official_board",
+      "confidence": "high",
+      "resumeUpload": "job_only",
+      "jobAlerts": "unknown",
+      "checkedAt": "2026-11-03",
+      "enabled": true
+    },
+    {
+      "id": "platform-drivetime",
+      "masterRow": 3474,
+      "company": "DriveTime Family of Brands",
+      "postingUrl": "https://drivetime.wd1.myworkdayjobs.com/DriveTime",
+      "talentUrl": null,
+      "channel": "Official board for an employer first seen on a job platform",
+      "adapter": "workday",
+      "verification": "valid_official_board",
+      "confidence": "high",
+      "resumeUpload": "job_only",
+      "jobAlerts": "unknown",
+      "checkedAt": "2026-11-03",
+      "enabled": true
+    },
+    {
+      "id": "platform-wtw",
+      "masterRow": 3475,
+      "company": "WTW",
+      "postingUrl": "https://careers.wtwco.com/jobs/search",
+      "talentUrl": null,
+      "channel": "Official board for an employer first seen on a job platform",
+      "adapter": "custom",
+      "verification": "valid_official_board",
+      "confidence": "high",
+      "resumeUpload": "job_only",
+      "jobAlerts": "unknown",
+      "checkedAt": "2026-11-03",
+      "enabled": true
+    },
+    {
+      "id": "platform-amtrak",
+      "masterRow": 3476,
+      "company": "Amtrak",
+      "postingUrl": "https://careers.amtrak.com/search/?q=&locationsearch=&sortColumn=referencedate&sortDirection=desc",
+      "talentUrl": null,
+      "channel": "Official board for an employer first seen on a job platform",
+      "adapter": "custom",
+      "verification": "valid_official_board",
+      "confidence": "high",
+      "resumeUpload": "job_only",
+      "jobAlerts": "unknown",
+      "checkedAt": "2026-11-03",
       "enabled": true
     }
   ],

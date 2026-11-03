@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {parseCard,selectLeads,splitByInventory,mergeLeads,handshakeBrief} from './handshake-policy.mjs';
+import {parseCard,selectLeads,splitByInventory,mergeLeads,handshakeBrief,updateSourceGaps} from './handshake-policy.mjs';
 const row=(id,company,title,meta,location,date='New')=>({id,lines:[company,title,meta,location,'∙',date]});
 test('parses a card',()=>{const c=parseCard(row('1','Amazon','SDE Intern','$50/hr · Internship','Irvine, CA + 8','3d ago'));assert.equal(c.location,'Irvine, CA + 8');assert.equal(c.displayDate,'3d ago');assert.equal(c.platformUrl,'https://usc.joinhandshake.com/job-search/1');});
 test('reads the location past an extra label line',()=>{const c=parseCard({id:'2',lines:['Bloomberg','Data Intern','Internship','USC collection','New York, NY','∙','New']});assert.equal(c.location,'New York, NY');assert.equal(c.displayDate,'New');});
@@ -24,3 +24,9 @@ test('merge reports the real status, dedupes and respects the cap',()=>{
 });
 test('unavailable report leaves candidates alone and keeps the reason',()=>{const m=mergeLeads({platforms:[],candidates:[]},{status:'unavailable',reason:'Chrome is not running'});assert.equal(m.platforms[0].reason,'Chrome is not running');assert.equal(m.candidates.length,0);});
 test('brief is empty without gaps and bounded with them',()=>{assert.equal(handshakeBrief({gaps:[]}),'');assert.equal(handshakeBrief(null),'');const b=handshakeBrief({gaps:Array.from({length:12},(_,i)=>({company:'C'+i,title:'T',secret:'x'}))},8);assert.ok(b.includes('C7'));assert.ok(!b.includes('C8'));assert.ok(!b.includes('secret'));});
+test('source gap ledger counts days once and drops employers added to the catalog',()=>{
+ const rows=[{company:'Credit One Bank',title:'A'},{company:'Credit One Bank',title:'B'},{company:'AMP Beauty',title:'C'}];
+ let l=updateSourceGaps({},rows,'2026-11-03',[]);assert.equal(l.creditonebank.days,1);assert.deepEqual(l.creditonebank.titles,['A','B']);
+ l=updateSourceGaps(l,rows,'2026-11-03',[]);assert.equal(l.creditonebank.days,1);
+ l=updateSourceGaps(l,rows.slice(0,1),'2026-11-04',[{company:'AMP Beauty'}]);assert.equal(l.creditonebank.days,2);assert.equal(l.creditonebank.firstSeen,'2026-11-03');assert.equal(l.ampbeauty,undefined);
+});

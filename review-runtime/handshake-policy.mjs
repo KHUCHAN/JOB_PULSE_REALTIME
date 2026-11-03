@@ -20,6 +20,18 @@ export function splitByInventory(leads,sources){
  const known=new Set(sources.map(s=>platformCompanyKey(s.company)));
  return {inInventory:leads.filter(l=>known.has(platformCompanyKey(l.company))),notInInventory:leads.filter(l=>!known.has(platformCompanyKey(l.company)))};
 }
+// Durable list of employers seen on Handshake but missing from the source catalog; entries leave once added.
+export function updateSourceGaps(ledger,rows,day,sources){
+ const known=new Set(sources.map(s=>platformCompanyKey(s.company))),next={};
+ for(const [key,entry] of Object.entries(ledger??{}))if(!known.has(key))next[key]=entry;
+ for(const {company,title,platformUrl} of rows){
+  const key=platformCompanyKey(company),entry=next[key]??{company,firstSeen:day,lastSeen:null,days:0,titles:[],platformUrl};
+  if(entry.lastSeen!==day){entry.lastSeen=day;entry.days++;}
+  if(!entry.titles.includes(title)&&entry.titles.length<3)entry.titles.push(title);
+  next[key]=entry;
+ }
+ return next;
+}
 export function mergeLeads(data,report,limit=20){
  const platforms=(data.platforms??[]).filter(p=>p.name!=='Handshake');
  platforms.push({name:'Handshake',status:report.status,reason:report.reason??`Read ${report.unique??0} rows through the connected Chrome; ${report.gaps?.length??0} missing from the DB.`,evidenceUrl:'https://usc.joinhandshake.com/job-search'});

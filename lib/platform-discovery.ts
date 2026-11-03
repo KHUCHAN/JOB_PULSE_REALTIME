@@ -1,7 +1,9 @@
 import { classifyJobRegion } from './job-region-classifier.ts';
 import type { CrawledJob, CrawlSource } from './crawler.ts';
 export type PlatformCandidate = { company:string; title:string; location:string; platform:string; platformUrl:string; displayDate:string; officialUrl:string; sourceId?:string };
-export const platformCompanyKey=(s:string)=>s.toLowerCase().replace(/\b(?:incorporated|inc|corporation|corp|llc)\b/g,'').replace(/[^a-z0-9]+/g,'');
+// Employers that platforms name differently from the source catalog, keyed by normalized name.
+const PLATFORM_COMPANY_ALIASES:Record<string,string>={statefarminsurancecompanies:'statefarm',siemensdigitalindustriessoftware:'siemensusdigitalindustries'};
+export const platformCompanyKey=(s:string)=>{const key=s.toLowerCase().replace(/\b(?:incorporated|inc|corporation|corp|llc)\b/g,'').replace(/[^a-z0-9]+/g,'');return PLATFORM_COMPANY_ALIASES[key]??key;};
 export function platformSource(candidate:PlatformCandidate,sources:CrawlSource[]):CrawlSource|null {
   const matches=sources.filter(s=>platformCompanyKey(s.company)===platformCompanyKey(candidate.company));
   let url:URL;try{url=new URL(candidate.officialUrl);}catch{return null;}

@@ -1,0 +1,9 @@
+[
+  {"slug":"firework","company":"Firework","postingUrl":"https://jobs.lever.co/fireworkhq","evidenceUrl":"https://firework.com/careers","evidenceNote":"Employer careers page links to this Lever board."},
+  {"slug":"brain-co","company":"Brain Co.","postingUrl":"https://jobs.ashbyhq.com/brainco","evidenceUrl":"https://brain.co/careers","evidenceNote":"Employer careers URL redirects to this Ashby board."},
+  {"slug":"envoy-air","company":"Envoy Air","postingUrl":"https://us-envoyair.icims.com/jobs/search","evidenceUrl":"https://www.envoyair.com/careers/","evidenceNote":"Tenant is named for the employer and lists its Irving, TX College Intern roles."},
+  {"slug":"tetramem","company":"TetraMem Inc.","postingUrl":"https://careers.smartrecruiters.com/tetrameminc","evidenceUrl":"https://careers.smartrecruiters.com/tetrameminc","evidenceNote":"Board carries the employer name and its Fremont roles; no employer page link was found."},
+  {"slug":"drivetime","company":"DriveTime Family of Brands","postingUrl":"https://drivetime.wd1.myworkdayjobs.com/DriveTime","evidenceUrl":"https://jobs.drivetime.com/jobs","evidenceNote":"Employer jobs site links to this Workday tenant."},
+  {"slug":"wtw","company":"WTW","postingUrl":"https://careers.wtwco.com/jobs/search","evidenceUrl":"https://careers.wtwco.com/jobs/search","evidenceNote":"Employer careers domain. Crawl reads a partial global listing, so it never closes roles."},
+  {"slug":"amtrak","company":"Amtrak","postingUrl":"https://careers.amtrak.com/search/?q=&locationsearch=&sortColumn=referencedate&sortDirection=desc","evidenceUrl":"https://careers.amtrak.com/","evidenceNote":"Employer SuccessFactors careers site, newest first."}
+]

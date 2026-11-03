@@ -1,7 +1,7 @@
 // One Codex call per UTC day reads Handshake through the user's connected Chrome. The page text goes
 // to a file, so the model only ever sees a status and a row count. A failure here never blocks the daily lane.
 import fs from 'node:fs/promises';import path from 'node:path';import {spawn,spawnSync} from 'node:child_process';import {fileURLToPath} from 'node:url';
-import {HANDSHAKE_QUERIES,selectLeads,splitByInventory,mergeLeads,norm} from './handshake-policy.mjs';
+import {HANDSHAKE_QUERIES,selectLeads,splitByInventory,mergeLeads,updateSourceGaps,norm} from './handshake-policy.mjs';
 const dir=path.dirname(fileURLToPath(import.meta.url)),runtime=process.env.JOB_PULSE_RUNTIME??path.resolve(dir,'../../review-runtime');
 const day=new Date().toISOString().slice(0,10),root=path.join(runtime,'platform-runs',day),work=path.join(root,'handshake'),reportPath=path.join(root,'handshake-leads.json'),ledgerPath=path.join(root,'handshake-usage.json');
 const api='https://job-pulse-realtime.autodev61.chatgpt.site/api/pulse';
@@ -37,7 +37,9 @@ let read;try{read=JSON.parse(await fs.readFile(out,'utf8'))}catch{await finish({
 if(read.status!=='checked'&&!read.rows.length)await finish({status:read.status,reason:read.reason});
 const leads=selectLeads(read.rows),unique=new Set(read.rows.map(r=>r.id)).size;
 const inventory=await fetch(api+'?resource=sources',{signal:AbortSignal.timeout(30000)});if(!inventory.ok)await finish({status:'checked',reason:'Source inventory unavailable; no gaps computed',rows:read.rows.length,unique,selected:leads.length});
-const {inInventory,notInInventory}=splitByInventory(leads,await inventory.json()),gaps=[];let inDb=0,lookupErrors=0;
+const sources=await inventory.json(),{inInventory,notInInventory}=splitByInventory(leads,sources),gaps=[];let inDb=0,lookupErrors=0;
+const gapsPath=path.join(runtime,'source-gaps.json');let gapLedger={};try{gapLedger=JSON.parse(await fs.readFile(gapsPath,'utf8'))}catch(e){if(e.code!=='ENOENT')throw e;}
+await fs.writeFile(gapsPath,JSON.stringify(updateSourceGaps(gapLedger,notInInventory,day,sources),null,2));
 for(const lead of inInventory.slice(0,40)){
  const u=new URL(api);u.search=new URLSearchParams({resource:'jobs',company:lead.company,q:lead.title,pageSize:'20',resumeMatch:'chanyoung-resume'}).toString();
  try{const r=await fetch(u,{signal:AbortSignal.timeout(20000)});if(!r.ok)throw Error('HTTP '+r.status);const {items}=await r.json();if(items.some(x=>norm(x.title)===norm(lead.title)))inDb++;else gaps.push(lead);}catch{lookupErrors++;}
