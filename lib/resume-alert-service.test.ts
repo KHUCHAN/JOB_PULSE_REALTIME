@@ -41,6 +41,32 @@ describe("resume alert delivery service", () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
+  it("adds platform rows to the exact digest once and reports the count", async () => {
+    const sqlite = alertDatabaseWithMatches(1);
+    const bodies: string[] = [];
+    const responses = [
+      new Response(JSON.stringify({ access_token: "access-leads" }), { status: 200 }),
+      new Response(JSON.stringify({ id: "message-leads" }), { status: 200 }),
+    ];
+    const fetcher = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      bodies.push(String(init?.body ?? ""));
+      return responses.shift()!;
+    });
+    const result = await processDueResumeAlerts(
+      createD1ForSqlite(sqlite),
+      config,
+      new Date("2026-08-10T12:00:00.000Z"),
+      fetcher as unknown as typeof fetch,
+      ["job-1"],
+      [{ platform: "LinkedIn", company: "Acme", title: "ML Intern", location: "Austin, TX", firstSeen: "2026-08-10", url: "https://www.linkedin.com/jobs/view/1" }],
+    );
+    expect(result).toMatchObject({ planned: 1, sent: 1, platformLeadsSent: 1 });
+    const raw = Buffer.from(String(JSON.parse(bodies[1]).raw).replaceAll("-", "+").replaceAll("_", "/"), "base64").toString("utf8");
+    expect(raw).toContain("Also on Handshake and LinkedIn (1)");
+    const subject = /Subject: =\?UTF-8\?B\?([^?]+)\?=/.exec(raw)?.[1] ?? "";
+    expect(Buffer.from(subject, "base64").toString("utf8")).toContain("+ 1 Handshake/LinkedIn");
+  });
+
   it("sends only the exact Codex batch and leaves older approvals pending", async () => {
     const sqlite = alertDatabaseWithMatches(3);
     const database = createD1ForSqlite(sqlite);

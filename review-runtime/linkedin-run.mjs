@@ -14,4 +14,4 @@ if(!rows.length)await finish({status:'unavailable',reason:stopped??'No job cards
 const leads=selectLinkedinLeads(rows),reason=stopped?`Stopped after ${read} of ${HANDSHAKE_QUERIES.length} queries: ${stopped}`:undefined,unique=new Set(rows.map(r=>r.platformUrl)).size;
 const found=await findGaps(leads,runtime,day);
 if(!found)await finish({status:'checked',reason:'Source inventory unavailable; no gaps computed',rows:rows.length,unique,selected:leads.length});
-await finish({status:'checked',reason,rows:rows.length,unique,selected:leads.length,inDb:found.inDb,lookupErrors:found.lookupErrors,gaps:found.gaps.slice(0,12),notInInventory:found.notInInventory.map(({company,title,location,platformUrl})=>({company,title,location,platformUrl}))});
+await finish({status:'checked',reason,rows:rows.length,unique,selected:leads.length,inDb:found.inDb,lookupErrors:found.lookupErrors,gaps:found.gaps,notInInventory:found.notInInventory.map(({company,title,location,platformUrl})=>({company,title,location,platformUrl}))});

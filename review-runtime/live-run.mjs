@@ -75,7 +75,10 @@ try{
  // Legacy dispatch rechecks exact fresh job and official evidence, records
  // alerts.sent=1, then verifies each durable delivered ID before state writes.
  await assertPaused();
+ const {reservePlatformLeads,settlePlatformLeads}=await import('./platform-mail.mjs');
+ const platformLeads=await reservePlatformLeads({runtime,root,out:report.out});
  await run('dispatch',path.join(code,'live-dispatch.mjs'),[root,stamp],'dispatch');
+ const platformLeadResult=await settlePlatformLeads({runtime,out:report.out,stamp,leads:platformLeads});
  await fs.mkdir(path.join(root,'review-runtime'),{recursive:true});for(const name of ['undated-source-observations.json','community-lookup-checkpoints.json'])if(await exists(path.join(report.out,name)))atomic(path.join(root,'review-runtime',name),await fs.readFile(path.join(report.out,name)));
  // Retain every scan page, official body, gate input/output and attempt receipt beside the summary.
  if(report.out!==out)for(const name of await fs.readdir(report.out))await fs.copyFile(path.join(report.out,name),path.join(out,name));
@@ -86,7 +89,7 @@ try{
   // The archived no-selection path exits before writing a mail outcome.
   outcome={sent:0,confirmed:0,jobIds:[],recipients:dispatch.recipients};
  }
- const summary={...report,status:'complete',reviewCompletionEstablished:true,finishedAt:new Date().toISOString(),requestedReviews:plan.reviews.length,acceptedReviews:accepted.accepted.length,persistenceFailures:accepted.durabilityFailures??[],newApprovals:plan.reviews.filter(r=>r.decision==='approve').length,rejections:plan.reviews.filter(r=>r.decision==='reject').length,selectedIds:dispatch.selected,emailsSent:outcome.sent,gmailVerification:{alertsSent:outcome.sent,durableDeliveryVerified:outcome.confirmed===dispatch.selected.length,recipients:outcome.recipients,durableDeliveredIds:outcome.jobIds},delivery:outcome.jobIds,reviewEvidence:out,posts:'see post-attempt receipts'};
+ const summary={...report,status:'complete',reviewCompletionEstablished:true,finishedAt:new Date().toISOString(),requestedReviews:plan.reviews.length,acceptedReviews:accepted.accepted.length,persistenceFailures:accepted.durabilityFailures??[],newApprovals:plan.reviews.filter(r=>r.decision==='approve').length,rejections:plan.reviews.filter(r=>r.decision==='reject').length,selectedIds:dispatch.selected,emailsSent:outcome.sent,platformLeads:platformLeadResult,gmailVerification:{alertsSent:outcome.sent,durableDeliveryVerified:outcome.confirmed===dispatch.selected.length,recipients:outcome.recipients,durableDeliveredIds:outcome.jobIds},delivery:outcome.jobIds,reviewEvidence:out,posts:'see post-attempt receipts'};
  const resolution=await reconcile({root,runtime});if(resolution.unresolved)throw Error('hold-unresolved-server-durability');
  await fs.writeFile(path.join(out,'summary.json'),JSON.stringify(summary,null,2));
  atomic(inflight,JSON.stringify({status:'completed',stamp,out,at:new Date().toISOString()}));

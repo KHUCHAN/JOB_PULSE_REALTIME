@@ -1,3 +1,4 @@
+import type { PlatformLead } from "./platform-leads";
 import { GmailDeliveryError, sendGmailMessage } from "./gmail-client";
 import {
   claimDueNotifications,
@@ -22,6 +23,7 @@ export interface ResumeDispatchResult {
   authBlocked: number;
   failed: number;
   skipped: boolean;
+  platformLeadsSent?: number;
 }
 
 export interface TestEmailResult {
@@ -54,6 +56,7 @@ export const processDueResumeAlerts = async (
   now: Date,
   fetcher: typeof fetch = fetch,
   exactJobIds: string[] | null = null,
+  platformLeads: PlatformLead[] = [],
 ): Promise<ResumeDispatchResult> => {
   if (!config) {
     await database.prepare(`
@@ -95,6 +98,8 @@ export const processDueResumeAlerts = async (
   const result = { ...emptyResult(), planned: planned.length };
   for (const [index, notification] of claimed.entries()) {
     try {
+      // One digest carries the platform rows, even if a later envelope was also claimed.
+      const leads = index === 0 ? platformLeads : [];
       const sent = await sendGmailMessage({
         clientId: config.clientId,
         clientSecret: config.clientSecret,
@@ -102,12 +107,14 @@ export const processDueResumeAlerts = async (
       }, {
         from: config.sender,
         to: notification.recipient,
-        subject: `[Job Pulse] ${notification.jobCount} new resume match${notification.jobCount === 1 ? "" : "es"}`,
+        subject: `[Job Pulse] ${notification.jobCount} new resume match${notification.jobCount === 1 ? "" : "es"}${leads.length ? ` + ${leads.length} Handshake/LinkedIn` : ""}`,
         jobs: notification.jobs,
         siteUrl: config.siteUrl,
+        platformLeads: leads,
       }, fetcher);
       await markNotificationSent(database, notification.id, sent.messageId, nowIso);
       result.sent += 1;
+      if (exactTargets !== null && index === 0) result.platformLeadsSent = leads.length;
     } catch (error) {
       const delivery = error instanceof GmailDeliveryError
         ? error

@@ -1,3 +1,5 @@
+import type { PlatformLead } from "./platform-leads";
+
 export interface DigestJob {
   company: string;
   title: string;
@@ -17,6 +19,7 @@ export interface GmailMessageInput {
   jobs: DigestJob[];
   siteUrl: string;
   testOnly?: boolean;
+  platformLeads?: PlatformLead[];
 }
 
 const cleanHeader = (value: string): string => {
@@ -59,7 +62,11 @@ const validated = (input: GmailMessageInput) => ({
   subject: cleanHeader(input.subject),
   siteUrl: assertHttpUrl(input.siteUrl),
   jobs: input.jobs.map((job) => ({ ...job, officialUrl: assertHttpUrl(job.officialUrl), reasons: job.reasons.slice(0, 4) })),
+  platformLeads: (input.platformLeads ?? []).map((lead) => ({ ...lead, url: assertHttpUrl(lead.url) })),
 });
+
+const LEADS_NOTE = "Collected from platform listings and not checked against an official page. A listing date can be a repost, and Handshake links need your USC login.";
+const leadLine = (lead: PlatformLead): string => [lead.location, `First seen ${lead.firstSeen}`].filter(Boolean).join(" · ");
 
 const renderPlainText = (input: ReturnType<typeof validated>): string => [
   input.testOnly ? "Job Pulse Gmail connection test" : `${input.jobs.length} new resume match${input.jobs.length === 1 ? "" : "es"}`,
@@ -73,6 +80,17 @@ const renderPlainText = (input: ReturnType<typeof validated>): string => [
     job.officialUrl,
     "",
   ]),
+  ...(input.platformLeads.length ? [
+    `Also on Handshake and LinkedIn (${input.platformLeads.length})`,
+    LEADS_NOTE,
+    "",
+    ...input.platformLeads.flatMap((lead, index) => [
+      `${index + 1}. ${lead.company} — ${lead.title}`,
+      leadLine(lead),
+      `${lead.platform}: ${lead.url}`,
+      "",
+    ]),
+  ] : []),
   `View all matches: ${input.siteUrl}`,
 ].join("\r\n");
 
@@ -87,6 +105,13 @@ ${job.scheduleNote ? `<div>Schedule: ${escapeHtml(job.scheduleNote)}</div>` : ""
 ${job.reasons.length ? `<div>Why: ${job.reasons.map(escapeHtml).join(" · ")}</div>` : ""}
 <a href="${escapeHtml(job.officialUrl)}">Open official posting</a>
 </article>`).join("")}
+${input.platformLeads.length ? `<h2 style="font-size:18px;margin-top:28px">Also on Handshake and LinkedIn (${input.platformLeads.length})</h2>
+<p style="color:#475569;font-size:14px">${escapeHtml(LEADS_NOTE)}</p>
+${input.platformLeads.map((lead) => `<article style="border:1px solid #e2e8f0;border-radius:12px;padding:12px 14px;margin:10px 0">
+<strong>${escapeHtml(lead.company)} — ${escapeHtml(lead.title)}</strong>
+<div>${escapeHtml(leadLine(lead))}</div>
+<a href="${escapeHtml(lead.url)}">Open on ${escapeHtml(lead.platform)}</a>
+</article>`).join("")}` : ""}
 <p><a href="${escapeHtml(input.siteUrl)}">View all matches in Job Pulse</a></p>
 </body></html>`;
 

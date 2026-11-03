@@ -22,15 +22,15 @@ async function fixture(mode='normal',n=3){
  await json(path.join(original,stateRel),projection.state);await json(path.join(snap,stateRel),projection.state);files.push({relative:stateRel,sha256:sha(await fs.readFile(path.join(snap,stateRel)))});
  await json(path.join(snap,'snapshot-manifest.json'),{files});await fs.symlink(snap,path.join(root,'current-snapshot'),'dir');await json(path.join(base,'automation.json'),{status:'ACTIVE'});
  const transfer=await child(path.join(code,'transition.py'),['cutover','--rehearsal-root',base],{});assert.equal(transfer.code,0,transfer.stderr);
- const calls=[],all=[],now=new Date().toISOString(),body='This internship works on data science and machine learning projects. Build analytical software with Python and communicate model results with the engineering team. '.repeat(2);
- let server;server=http.createServer(async(req,res)=>{const u=new URL(req.url,'http://localhost');let payload;if(req.method==='POST'){let text='';for await(const part of req)text+=part;payload=JSON.parse(text);calls.push(payload.action);}
+ const calls=[],posts=[],all=[],now=new Date().toISOString(),body='This internship works on data science and machine learning projects. Build analytical software with Python and communicate model results with the engineering team. '.repeat(2);
+ let server;server=http.createServer(async(req,res)=>{const u=new URL(req.url,'http://localhost');let payload;if(req.method==='POST'){let text='';for await(const part of req)text+=part;payload=JSON.parse(text);calls.push(payload.action);posts.push(payload);}
   all.push(req.method+' '+(payload?.action??u.searchParams.get('resource')??u.pathname));const send=(value,status=200)=>{res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify(value));};
   if(u.pathname.startsWith('/official/')){const j=rows.find(j=>j.officialUrl.endsWith(u.pathname));res.writeHead(200,{'content-type':'text/html'});res.end('<script type="application/ld+json">'+JSON.stringify({'@type':'JobPosting',title:j.title,description:body,datePosted:now,jobLocation:{address:{addressCountry:'US'}}})+'</script>');return;}
   if(req.method==='POST'){
    if(payload.action==='submitCodexReview'){if(mode==='401'){send({error:'unauthorized'},401);return;}for(const r of payload.reviews)if(mode!=='nondurable'||r.jobId!=='round6-0')rows.find(j=>j.id===r.jobId).resumeReviewDecision=r.decision;send({accepted:payload.reviews.length,missing:[],suppressedAlreadyNotified:[]});return;}
    for(const id of payload.jobIds)rows.find(j=>j.id===id).resumeNotifiedAt=now;
    if(mode==='timeout'){return;}
-   send({alerts:{sent:1}},mode==='5xx'?500:200);return;
+   send({alerts:{sent:1,...(payload.platformLeads?{platformLeadsSent:payload.platformLeads.length}:{})}},mode==='5xx'?500:200);return;
   }
   if(u.searchParams.get('resource')==='job'){const j=rows.find(j=>j.id===u.searchParams.get('id'));if(mode==='flip'&&!calls.length)await json(path.join(base,'automation.json'),{status:'ACTIVE'});send(j);}
   else if(u.searchParams.get('resource')==='sources')send(sources,mode==='sources'?503:200);
@@ -42,7 +42,7 @@ async function fixture(mode='normal',n=3){
  await json(path.join(base,'rehearsal-input.json'),{rows,sources,reviews,audit,official,mail:{recipients}});await fs.mkdir(path.join(root,'.codex_tmp/review-inbox'),{recursive:true});await fs.writeFile(path.join(root,'.codex_tmp/review-inbox/.codex-review-token'),'LOCAL-ONLY-NO-AUTHORITY');
  const env={JOB_PULSE_REHEARSAL:'1',JOB_PULSE_REHEARSAL_BASE:base,JOB_PULSE_RUNTIME:rt,JOB_PULSE_ENDPOINT:endpoint,JOB_PULSE_TEST_TIMEOUT:'150'};
  await measure(base,'live');
- return {base,rt,root,rows,calls,all,env,setMode:m=>mode=m,close:()=>removeFixture(base),run:(extra={})=>child(path.join(code,'live-run.mjs'),[],{...env,...extra}),reconcile:()=>child(path.join(code,'reconcile.mjs'),[],env),state:()=>read(path.join(root,stateRel))};
+ return {base,rt,root,rows,calls,posts,all,env,setMode:m=>mode=m,close:()=>removeFixture(base),run:(extra={})=>child(path.join(code,'live-run.mjs'),[],{...env,...extra}),reconcile:()=>child(path.join(code,'reconcile.mjs'),[],env),state:()=>read(path.join(root,stateRel))};
 }
 const success=r=>assert.equal(r.code,0,r.stderr+'\n'+r.stdout);
 for(let repeat=1;repeat<=3;repeat++)test('live rehearsal a–i iteration '+repeat,async t=>{
@@ -75,6 +75,14 @@ test('shared Los Alamos and MD Anderson identifiers retain distinct visible requ
 
 test('live disk preflight holds below 5GB with no POST',async()=>{const f=await fixture();try{const r=await f.run({JOB_PULSE_TEST_FREE_BYTES:'1000'});assert.notEqual(r.code,0);assert.match(r.stderr,/hold-disk: free disk below 5GB/);assert.deepEqual(f.calls,[]);const status=await fs.readFile(path.join(f.rt,'live-status.jsonl'),'utf8');assert.match(status,/hold-disk/);assert.match(await fs.readFile(path.join(f.base,'notifications.jsonl'),'utf8'),/hold/);}finally{await f.close();}});
 
+test('platform rows ride in the one dispatch POST, are recorded and are not sent twice',async()=>{const f=await fixture();try{
+ const lead=(company,firstSeenAt)=>({platform:'LinkedIn',company,title:'Data Science Intern',locations:['Austin, TX'],url:'https://www.linkedin.com/jobs/view/1',firstSeenAt});
+ await fs.writeFile(path.join(f.rt,'platform-mail-queue.json'),JSON.stringify([lead('Fresh Co',new Date().toISOString()),lead('Stale Co','2026-01-01T00:00:00.000Z')]));
+ const r=await f.run();assert.equal(r.code,0,r.stderr);
+ const posts=f.posts.filter(p=>p.action==='dispatchCodexReviewBatch');assert.equal(posts.length,1);assert.deepEqual(posts[0].platformLeads.map(l=>l.company),['Fresh Co']);
+ const ledger=await read(path.join(f.rt,'platform-mail-ledger.json'));assert.deepEqual(ledger.map(x=>[x.company,x.status]),[['Fresh Co','sent']]);
+ const dirs=await fs.readdir(path.join(f.rt,'live-runs'));assert.deepEqual((await read(path.join(f.rt,'live-runs',dirs[0],'summary.json'))).platformLeads,{offered:1,sent:1,released:0});
+}finally{await f.close();}});
 test('dispatch refuses an additional recipient after persistence',async()=>{const f=await fixture('extra-recipient');try{const r=await f.run();assert.notEqual(r.code,0);assert.deepEqual(f.calls,['submitCodexReview']);assert.match(r.stderr,/Gmail sender\/recipients guard failed/);}finally{await f.close();}});
 
 test('pending dispatch row absent from scan details reconciles and permits another run',async()=>{

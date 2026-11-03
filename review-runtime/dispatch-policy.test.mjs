@@ -10,10 +10,13 @@ test('fresh visible date, closed page and new caveat prevent dispatch',async()=>
 });
 test('archived dispatch transformation removes specific caveats and missing-page gates; syntax remains valid',async()=>{
  const old=await fs.readFile(new URL('../../runtime-root/current-snapshot/.codex_tmp/us-dispatch-20260930.mjs',import.meta.url),'utf8'),patched=patchDispatchBody(old);
- assert(!patched.includes('if(!internshipProgram(j.title,officialBody))'));assert(!patched.includes('Must be enrolled in second year'));assert(!patched.includes('Live official detail unavailable; approval retained'));assert(patched.includes('revalidateDispatch(j,candidate,local,evidence)'));
+ assert(!patched.includes('if(!internshipProgram(j.title,officialBody))'));assert(!patched.includes('Must be enrolled in second year'));assert(!patched.includes('Live official detail unavailable; approval retained'));assert(patched.includes('revalidateDispatch(j,candidate,local,evidence)'));assert(patched.includes('jobIds:selected,...(platformLeads.length?{platformLeads}:{})'));
  const child=spawnSync(process.execPath,['--input-type=module','--check'],{input:patched,encoding:'utf8'});assert.equal(child.status,0,child.stderr);
 });
 
+test('a role already mailed as a platform lead is not sent again',async()=>{
+ assert.deepEqual(await revalidateDispatch({...row,company:'Acme Corp'},candidate,{rationale:''},null,{request,asOf,sentLeads:[{company:'Acme',title:row.title}]}),{ok:false,reason:'already sent as a platform lead'});
+});
 test('read-only dispatch applies stored dated collector evidence, old, relative and empty guards',async()=>{
  const dated={...row,publishedAt:asOf,sourcePostedText:'2026-11-02'};
  const evaluated=evaluateEvidence({row:dated,health:'healthy',asOf,labels,evidence:{status:202,html:''}});assert.equal(evaluated.decision,'approve');

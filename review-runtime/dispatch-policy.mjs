@@ -1,4 +1,6 @@
 import {keywordLabels} from './keyword-policy.mjs';
+import {fileURLToPath} from 'node:url';import {readLedger,readPlanLeads,sameLead} from './platform-mail.mjs';
+export {readPlanLeads};
 // Final read-only revalidation shared by fresh and pending approvals.
 import fs from 'node:fs/promises';import path from 'node:path';import {JSDOM} from 'jsdom';import {evaluateEvidence,storedCountry} from './evidence-policy.mjs';import {postingText,sentences,protectedCaveat} from './caveats.mjs';
 const canon=s=>{const u=new URL(s);u.hash='';for(const k of [...u.searchParams.keys()])if(/^(utm_|source$|src$|ref$|gh_src$|_ccid$)/i.test(k))u.searchParams.delete(k);return u.href.replace(/\/$/,'');};
@@ -14,7 +16,9 @@ export function uncoveredCaveats(caveats,rationale){
  const stored=(rationale.split('Application caveats:')[1]??'').split(' | ').map(s=>s.trim()).filter(s=>/[\p{L}\p{N}]/u.test(s)).sort((a,b)=>b.length-a.length);
  return caveats.filter(caveat=>!rationale.includes(caveat)&&sentences(stored.reduce((rest,s)=>rest.replace(looseCaveat(s),' '),caveat)).some(protectedCaveat));
 }
-export async function revalidateDispatch(row,candidate,local,saved,{request=fetch,asOf=new Date().toISOString()}={}) {
+export async function revalidateDispatch(row,candidate,local,saved,{request=fetch,asOf=new Date().toISOString(),sentLeads}={}) {
+ const mailed=sentLeads??await readLedger(process.env.JOB_PULSE_RUNTIME??path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../../review-runtime'));
+ if(mailed.some(x=>sameLead(x,row)))return {ok:false,reason:'already sent as a platform lead'};
  if(local?.title&&norm(local.title)!==norm(row.title)||local?.company&&norm(local.company)!==norm(row.company)||local?.location&&norm(local.location)!==norm(row.location)||candidate.requisitionId&&norm(candidate.requisitionId)!==norm(row.requisitionId))return {ok:false,reason:'fresh durable identity changed'};
  if(norm(row.title)!==norm(candidate.title??row.title)||candidate.officialUrl&&canon(candidate.officialUrl)!==canon(row.officialUrl))return {ok:false,reason:'fresh identity changed'};
  const sr=await request('https://job-pulse-realtime.autodev61.chatgpt.site/api/pulse?resource=sources');if(!sr.ok)throw Error('hold-infrastructure: fresh source health unavailable');
@@ -50,6 +54,8 @@ export function patchDispatchBody(code){
  // above. Vendor API identity/date checks immediately before this stay intact.
  const a=code.indexOf('let live,html;try{live=await fetch(candidate.verifiedUrl'),b=code.indexOf('identities.add(identity);identities.add(fp(j));selected.push',a);
  if(a<0||b<0)throw Error('Archived live recheck markers missing');code=code.slice(0,a)+code.slice(b);
+ const send="const result=await post({action:'dispatchCodexReviewBatch',jobIds:selected},";required(send);
+ code=code.replace(send,"const platformLeads=await readPlanLeads();const result=await post({action:'dispatchCodexReviewBatch',jobIds:selected,...(platformLeads.length?{platformLeads}:{})},");
  code=code.replace(/from 'file:[^']*\/date-policy\.mjs'/,"from '"+new URL('./date-policy.mjs',import.meta.url).href+"'");
- return "import {revalidateDispatch} from '"+import.meta.url+"';\n"+code;
+ return "import {revalidateDispatch,readPlanLeads} from '"+import.meta.url+"';\n"+code;
 }

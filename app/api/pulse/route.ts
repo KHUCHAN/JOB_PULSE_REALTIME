@@ -1,3 +1,4 @@
+import { normalizePlatformLeads, type PlatformLead } from "@/lib/platform-leads";
 import { env } from "cloudflare:workers";
 import catalogSeed from "../../../db/seed/sources.json";
 import type {
@@ -144,10 +145,10 @@ const resumeStatus = async () => {
   return getResumeAlertStatus(db(), "chanyoung-resume", Boolean(config), config?.sender ?? "");
 };
 
-const runResumeAlerts = async (database: D1Database, exactJobIds: string[] | null = null) => {
+const runResumeAlerts = async (database: D1Database, exactJobIds: string[] | null = null, platformLeads: PlatformLead[] = []) => {
   let alerts: Awaited<ReturnType<typeof processDueResumeAlerts>> | { error: string };
   try {
-    alerts = await processDueResumeAlerts(database, gmailRuntimeConfig(), new Date(), fetch, exactJobIds);
+    alerts = await processDueResumeAlerts(database, gmailRuntimeConfig(), new Date(), fetch, exactJobIds, platformLeads);
   } catch (error) {
     const detail = error instanceof Error ? error.message.slice(0, 500) : "Unknown resume alert failure.";
     alerts = { error: `Resume alert processing failed: ${detail}` };
@@ -820,7 +821,7 @@ export async function POST(request: Request): Promise<Response> {
       if (exactJobIds.length === 0) {
         return json({ error: "dispatchCodexReviewBatch requires the exact approved job IDs." }, 400);
       }
-      const alerts = await runResumeAlerts(db(), exactJobIds);
+      const alerts = await runResumeAlerts(db(), exactJobIds, normalizePlatformLeads(body.platformLeads));
       return json({ alerts }, resumeAlertHttpStatus(alerts));
     }
     if (body.action === "repairBarclaysJobIdentity") {

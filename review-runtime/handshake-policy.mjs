@@ -3,7 +3,7 @@ import {platformCompanyKey} from '../lib/platform-discovery.ts';
 export const HANDSHAKE_QUERIES=['data science intern','machine learning intern','data engineer intern','software engineer intern','data analyst intern','business analyst intern','forward deployed engineer','co-op data'];
 const FAMILY=/\bdata\b|machine learning|\bml\b|\bai\b|artificial intelligence|analytics|\banalyst\b|software|forward deployed/i;
 const INTERN_TITLE=/\bintern(?:s|ship)?\b|\bco-?op\b/i,INTERN_TYPE=/\binternship\b|\bco-?op\b/i;
-const US_LOCATION=/,\s*[A-Z]{2}(?:\s*\+\s*\d+)?$|\bremote\b|\bunited states\b/i;
+export const US_LOCATION=/,\s*[A-Z]{2}(?:\s*\+\s*\d+)?$|\bremote\b|\bunited states\b/i;
 export const isPriorityIntern=title=>INTERN_TITLE.test(title)&&FAMILY.test(title);
 export const norm=s=>String(s??'').toLowerCase().replace(/[^a-z0-9]+/g,'');
 export function parseCard({id,lines}){
