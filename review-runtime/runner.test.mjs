@@ -40,3 +40,8 @@ test('a shadow refuses a live-authorized root before opening state',async()=>{
  writeFileSync(path.join(snapshot,'snapshot-manifest.json'),'{"files":[]}');writeFileSync(path.join(root,'live-authorization.json'),'{}');
  const child=spawnSync(process.execPath,[path.resolve('review-runtime/review-run.mjs')],{env:{...process.env,JOB_PULSE_RUNTIME:runtime},encoding:'utf8'});assert.equal(child.status,1);assert.match(child.stderr,/hold-shadow-live-authorized/);
 });
+test('an offline replay stays available on a live-authorized root so code changes can be compared',async()=>{
+ const base=await temporary('job-pulse-guard-test-'),runtime=path.join(base,'review-runtime'),root=path.join(base,'runtime-root'),snapshot=path.join(root,'current-snapshot');mkdirSync(runtime);mkdirSync(snapshot,{recursive:true});
+ writeFileSync(path.join(snapshot,'snapshot-manifest.json'),'{"files":[]}');writeFileSync(path.join(root,'live-authorization.json'),'{}');
+ const child=spawnSync(process.execPath,[path.resolve('review-runtime/review-run.mjs'),'--replay',path.join(base,'missing-replay')],{env:{...process.env,JOB_PULSE_RUNTIME:runtime},encoding:'utf8'});assert.doesNotMatch(child.stdout+child.stderr,/hold-shadow-live-authorized/);
+});

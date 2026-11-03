@@ -13,7 +13,8 @@ const codeDir=path.dirname(fileURLToPath(import.meta.url));
 const runtime=process.env.JOB_PULSE_RUNTIME??path.resolve(codeDir,'../../review-runtime');
 const snapshotLink=path.resolve(runtime,'../runtime-root/current-snapshot');
 let project;try{project=await fs.realpath(snapshotLink);const manifest=JSON.parse(await fs.readFile(path.join(project,'snapshot-manifest.json')));for(const entry of manifest.files){const bytes=await fs.readFile(path.join(project,entry.relative));if(createHash('sha256').update(bytes).digest('hex')!==entry.sha256)throw Error('Snapshot hash mismatch: '+entry.relative);}}catch(error){console.log(JSON.stringify({status:'hold-snapshot-missing-or-invalid',error:error.message,posts:0,llmTokens:0}));process.exit(1);}
-if(process.env.JOB_PULSE_LANE!=='live'){try{await fs.access(path.resolve(runtime,'../runtime-root/live-authorization.json'));try{await fs.access(path.resolve(runtime,'../runtime-root/rollback-completed.json'));}catch{throw Error('hold-shadow-live-authorized');}}catch(e){if(e.code!=='ENOENT')throw e;}}
+// Offline replay denies network and writes only its own output, so it stays available after cutover.
+if(process.env.JOB_PULSE_LANE!=='live'&&!process.argv.includes('--replay')){try{await fs.access(path.resolve(runtime,'../runtime-root/live-authorization.json'));try{await fs.access(path.resolve(runtime,'../runtime-root/rollback-completed.json'));}catch{throw Error('hold-shadow-live-authorized');}}catch(e){if(e.code!=='ENOENT')throw e;}}
 const args=process.argv.slice(2),replayIndex=args.indexOf('--replay'),replay=replayIndex>=0?path.resolve(args[replayIndex+1]):null;
 if(args.some(x=>['--write','--dispatch','--persist'].includes(x)))throw Error('Phase 3 not authorized; runner is shadow-only');
 if(project.startsWith(path.join(process.env.HOME,'Desktop')+path.sep))throw Error('Desktop project forbidden');
