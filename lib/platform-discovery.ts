@@ -9,7 +9,10 @@ export function platformSource(candidate:PlatformCandidate,sources:CrawlSource[]
   let url:URL;try{url=new URL(candidate.officialUrl);}catch{return null;}
   if(url.protocol!=='https:'||url.username||url.password)return null;
   const matching=matches.filter(s=>{const host=new URL(s.postingUrl).hostname.replace(/^www\./,'');return url.hostname.replace(/^www\./,'')===host||url.hostname.endsWith('.'+host);});
-  return matching.length===1?matching[0]:null;
+  if(matching.length)return matching.length===1?matching[0]:null;
+  // A Workday tenant named exactly after the employer is the employer's own board, even when the catalog lists another careers site.
+  const tenant=/^([a-z0-9-]+)\.wd\d+\.myworkdayjobs\.com$/.exec(url.hostname)?.[1]?.replace(/-/g,'');
+  return matches.length===1&&tenant===platformCompanyKey(candidate.company)?matches[0]:null;
 }
 export function officialPlatformJob(candidate:PlatformCandidate,source:CrawlSource,html:string):CrawledJob|null {
   if(platformSource(candidate,[source])?.id!==source.id)return null;

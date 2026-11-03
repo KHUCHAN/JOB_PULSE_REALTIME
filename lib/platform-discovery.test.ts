@@ -7,3 +7,13 @@ it('matches code-owned company/origin and never trusts platform date as official
 it('rejects wrong employer, landing-page HTML, missing official US evidence and malformed dates',()=>{expect(platformSource({...candidate,officialUrl:'https://jobs.attacker.com/123'},[source])).toBeNull();expect(officialPlatformJob(candidate,source,'<title>Search jobs</title>')).toBeNull();expect(officialPlatformJob(candidate,source,html({jobLocation:{address:{addressCountry:'CA'}}}))).toBeNull();expect(officialPlatformJob(candidate,source,html({datePosted:'yesterday'}))).toBeNull();});
 
 it('never converts a platform display date or a challenge into new official posting evidence',()=>{expect(officialPlatformJob(candidate,source,'<title>Just a moment...</title>'+html())).toBeNull();});
+it('accepts a Workday tenant named exactly after the employer, and nothing looser',()=>{
+ const workday=(company:string,host:string)=>({...candidate,company,officialUrl:`https://${host}/en-US/careers/job/X_R1`});
+ const danaher={...source,id:'danaher',company:'Danaher Corporation',postingUrl:'https://jobs.danaher.com/search'};
+ expect(platformSource(workday('Danaher Corporation','danaher.wd1.myworkdayjobs.com'),[danaher])).toEqual(danaher);
+ expect(platformSource(workday('Danaher Corporation','danaherlabs.wd1.myworkdayjobs.com'),[danaher])).toBeNull();
+ expect(platformSource(workday('Danaher Corporation','danaher.myworkdayjobs.com.attacker.com'),[danaher])).toBeNull();
+ expect(platformSource(workday('Danaher Corporation','danaher.wd1.myworkdayjobs.com'),[danaher,{...danaher,id:'second',postingUrl:'https://careers.danaher.com/'}])).toBeNull();
+ expect(platformSource(workday('Other Co','danaher.wd1.myworkdayjobs.com'),[danaher])).toBeNull();
+ expect(platformSource(workday('Pacific Life','pacific-life.wd1.myworkdayjobs.com'),[{...danaher,id:'pl',company:'Pacific Life',postingUrl:'https://careers.pacificlife.com/'}])?.id).toBe('pl');
+});
