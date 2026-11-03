@@ -1,4 +1,5 @@
 import {storedCaveats} from './caveats.mjs';
+import {YEAR_LABEL} from './evidence-policy.mjs';
 const key=r=>r?.rationale??'';
 const date=r=>key(r).match(/게시일 미표기 · 수집일 \d{4}-\d\d-\d\d 기준|(?:Stored official|Official) date: [^. ]+(?:\.\d+Z)?/)?.[0]?.replace(/^Stored official/,'Official')??null;
 // Legacy rendered major lists with semicolons. Compare the same ordered values
@@ -21,7 +22,9 @@ export function comparePolicy({legacy,fresh,rows,audit,legacySelected,freshSelec
   const legacyFailed=key(a).match(/required evidence failed\s*\(([^)]+)\)/)?.[1].split(',').map(s=>s.trim())??[];
   const missing=changed&&a?.decision==='reject'&&(!b||b.decision==='hold')&&e?.decision==='hold'&&e.reason==='posting text unavailable or too short to judge'&&Number.isInteger(e.textLength)&&e.textLength>=0&&e.textLength<160&&legacyFailed.some(k=>['live','location','date','program','fit'].includes(k));
   const correction=changed&&b?.decision==='approve'&&a?.decision==='reject'&&!j?.publishedAt&&/required evidence failed/.test(key(a))&&/(?:live|location|date)/.test(key(a).split('required evidence failed')[1]??'')&&e&&(e.dateBasis==='firstSeenAt'||e.collectorFallback===true);
-  if(changed)(missing?missingEvidence:correction?explained:unexplained).push({id,legacy:a?.decision??'hold',fresh:b?.decision??'hold',reason:missing?'legacy rejected on missing evidence, fresh holds because the text cannot be judged':correction?'POLICY undated collector evidence':e?.reason??'unexplained gate difference',audit:e});
+  // The user's rule: only a row approved on the 2027 label alone, which legacy never applied.
+  const yearRule=changed&&b?.decision==='approve'&&e?.decision==='approve'&&e.labels?.length===1&&e.labels[0]===YEAR_LABEL;
+  if(changed)(missing?missingEvidence:correction||yearRule?explained:unexplained).push({id,legacy:a?.decision??'hold',fresh:b?.decision??'hold',reason:missing?'legacy rejected on missing evidence, fresh holds because the text cannot be judged':yearRule?'User rule: a 2027 internship or co-op needs no keyword':correction?'POLICY undated collector evidence':e?.reason??'unexplained gate difference',audit:e});
   if(a?.decision==='approve'){
    const legacyC=storedCaveats(key(a)),freshC=e?.caveats??[],missing=legacyC.filter(s=>!containsCaveat(b,freshC,s)),extra=freshC.filter(s=>!legacyC.some(t=>t.includes(s)||!!majorList(t)&&JSON.stringify(majorList(t))===JSON.stringify(majorList(s))));
    caveats.push({id,missing,extra,extrasVerbatim:b?.decision!=='approve'||e?.caveatsVerbatim===true});

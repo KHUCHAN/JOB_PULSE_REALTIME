@@ -1,6 +1,14 @@
-import {test} from 'node:test';import assert from 'node:assert/strict';import {comparePolicy,legacySelectionAgrees} from './comparison-policy.mjs';
+import {test} from 'node:test';import assert from 'node:assert/strict';import {comparePolicy,legacySelectionAgrees} from './comparison-policy.mjs';import {YEAR_LABEL} from './evidence-policy.mjs';
 const old={jobId:'id',decision:'approve',rationale:'Keyword match (not individually reviewed). United States. Direct software engineering role. Official date: 2026-11-01. Application caveats: Must be enrolled. | No sponsorship.'};
 const args={legacy:[old],fresh:[{...old,rationale:old.rationale.replace('Must be enrolled. | No sponsorship.','No sponsorship. | Must be enrolled. | Must attend onsite.')}],rows:[{id:'id',publishedAt:'2026-11-01'}],audit:[{id:'id',caveats:['No sponsorship.','Must be enrolled.','Must attend onsite.'],caveatsVerbatim:true}],legacySelected:['id'],freshSelected:['id'],keywordLabels:['Direct software engineering role']};
+test('only a row approved on the 2027 label alone is explained by the user rule',()=>{
+ const year={id:'id',decision:'approve',labels:[YEAR_LABEL],caveats:[],caveatsVerbatim:true},fresh=[{...old,rationale:'Keyword match (not individually reviewed). United States. '+YEAR_LABEL+'. Official date: 2026-11-01.'}];
+ const input={...args,legacy:[{...old,decision:'reject',rationale:'Rejected'}],fresh,audit:[year],legacySelected:[],freshSelected:['id'],reviewedExceptions:[]};
+ const result=comparePolicy(input);assert(result.accepted,JSON.stringify(result.blockers));assert.equal(result.explainedUndatedDifferences[0].reason,'User rule: a 2027 internship or co-op needs no keyword');
+ for(const labels of [['Direct software engineering role'],[YEAR_LABEL,'Direct software engineering role'],[]])assert(!comparePolicy({...input,audit:[{...year,labels}]}).accepted,String(labels));
+ assert(!comparePolicy({...input,audit:[{...year,decision:'hold'}]}).accepted);
+ assert(!comparePolicy({...input,freshSelected:['id','other']}).accepted);
+});
 test('reviewed exceptions require exact heartbeat, id, type and legacy text',()=>{
  const entry={heartbeat:'heartbeat-20261102T175217',id:'id',type:'missing caveat',legacyValue:'Must be enrolled.',reason:'Supervisor reviewed descriptive prose'};
  const input={...args,heartbeat:entry.heartbeat,fresh:[{...old,rationale:old.rationale.replace('Must be enrolled. | ','')}],reviewedExceptions:[entry]};
