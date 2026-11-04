@@ -1,5 +1,5 @@
 {
-  "observedAt": "2026-11-03T09:25:53.811Z",
+  "observedAt": "2026-11-04T14:22:21.532Z",
   "candidates": [
     {
       "company": "Microsoft",
@@ -20,6 +20,16 @@
       "displayDate": "13d",
       "officialUrl": "https://adobe.wd5.myworkdayjobs.com/en-US/external_experienced/job/San-Jose/XMLNAME-2027-Intern---Data--AI---Innovation_R172997",
       "sourceId": "p4-0210-adobe"
+    },
+    {
+      "company": "Medpace",
+      "title": "Data Engineer Intern - Spring 2027",
+      "location": "Cincinnati, OH",
+      "platform": "LinkedIn",
+      "platformUrl": "https://www.linkedin.com/jobs/view/data-engineer-intern-spring-2027-at-medpace-4451463450",
+      "displayDate": "2026-11-04",
+      "officialUrl": "https://careers.medpace.com/jobs/12921?icims=1",
+      "sourceId": "p5-0979-medpace"
     }
   ]
 }
